@@ -132,6 +132,42 @@
     </dependency>
   </dependencies>
 
+  <dependencyManagement>
+    <dependencies>
+      <!--
+        firebase-admin:9.4.2 declares google-auth-library-oauth2-http:1.29.0 as a
+        direct (depth-1) dependency; postgres-socket-factory:1.30.2 pulls in
+        gax-grpc:2.87.0 which requires the com.google.auth.mtls package that was
+        only added in google-auth-library-oauth2-http:1.54.0.  Maven's nearest-wins
+        rule selects 1.29.0, causing NoClassDefFoundError for
+        com/google/auth/mtls/CertificateSourceUnavailableException at startup.
+        Pinning both auth artifacts here overrides that selection.
+      -->
+      <dependency>
+        <groupId>com.google.auth</groupId>
+        <artifactId>google-auth-library-oauth2-http</artifactId>
+        <version>1.54.0</version>
+      </dependency>
+      <dependency>
+        <groupId>com.google.auth</groupId>
+        <artifactId>google-auth-library-credentials</artifactId>
+        <version>1.54.0</version>
+      </dependency>
+      <!--
+        gax-grpc:2.87.0 (from postgres-socket-factory) requires grpc-api:1.84.2.
+        firebase-admin → google-cloud-storage pulls grpc-core/netty-shaded at 1.67.1.
+        All gRPC modules must be at the same version; align them here.
+      -->
+      <dependency>
+        <groupId>io.grpc</groupId>
+        <artifactId>grpc-bom</artifactId>
+        <version>1.84.2</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+
   <build>
     <plugins>
       <plugin>
