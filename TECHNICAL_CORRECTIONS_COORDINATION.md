@@ -48,7 +48,7 @@ The following two issues remain in the shared production migration scripts and r
 1. **Suppliers Individual Endpoints:**
    - In `10_API_CONTRACTS/openapi/master-data.yaml`, `/suppliers` (GET, POST) was documented, but individual resource endpoints `/suppliers/{supplierId}` (GET, PATCH, DELETE) were missing.
    - Per Issue #30 and PRD DoD, full CRUD support is required for Suppliers.
-   - **Resolution:** Updated `BOSS_PRD_AND_BACKLOG_v1.1.3/10_API_CONTRACTS/openapi/master-data.yaml` (and v1.1.2) to include `/suppliers/{supplierId}` with GET (200), PATCH (200), and DELETE (204) operations, matching `SupplierController`.
+   - **Resolution:** Updated `BOSS_PRD_AND_BACKLOG_v1.1.3/10_API_CONTRACTS/openapi/master-data.yaml` (v1.1.3 is the sole active baseline; legacy v1.1.2 is preserved untouched) to include `/suppliers/{supplierId}` with GET (200), PATCH (200), and DELETE (204) operations, matching `SupplierController`.
 
 2. **Idempotency Header Contract & Controller Alignment:**
    - Removed misleading `@RequestHeader(value = "Idempotency-Key", required = false)` method parameters from Master Data controllers (`ItemController`, `CustomerController`, `SupplierController`, `UomController`, `ItemCategoryController`).
