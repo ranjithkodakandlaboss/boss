@@ -1,43 +1,21 @@
--- V053: Additional constraints missed in initial table creation
+-- V053: Additional CHECK constraints for data integrity.
+-- Only adds constraints NOT already defined inline in table DDL.
 
--- Positive quantity guards on inventory
+-- Positive quantity on stock movements
 ALTER TABLE stock_movements
   ADD CONSTRAINT chk_stock_movements_qty CHECK (quantity > 0);
 
-ALTER TABLE material_lots
-  ADD CONSTRAINT chk_material_lots_qty_nn CHECK (quantity_on_hand >= 0);
-
-ALTER TABLE stock_reservation_records
-  ADD CONSTRAINT chk_stock_res_qty CHECK (reserved_qty > 0);
-
--- BOM: positive quantities
-ALTER TABLE bom_lines
-  ADD CONSTRAINT chk_bom_lines_qty CHECK (quantity > 0);
-
--- Invoice: amount consistency
+-- Invoice total non-negative
 ALTER TABLE invoices
   ADD CONSTRAINT chk_invoices_total_nn CHECK (total_amount >= 0);
 
+-- Invoice line unit price non-negative
 ALTER TABLE invoice_lines
-  ADD CONSTRAINT chk_invoice_lines_qty CHECK (quantity > 0),
   ADD CONSTRAINT chk_invoice_lines_price CHECK (unit_price >= 0);
 
--- Receipt: positive amount
-ALTER TABLE receipts
-  ADD CONSTRAINT chk_receipts_amount CHECK (amount > 0);
-
--- SPO lines: positive ordered qty
+-- SPO line unit price non-negative (quantity already has inline CHECK)
 ALTER TABLE spo_lines
-  ADD CONSTRAINT chk_spo_lines_qty CHECK (ordered_qty > 0),
   ADD CONSTRAINT chk_spo_lines_price CHECK (unit_price >= 0);
-
--- GRN lines: positive received qty
-ALTER TABLE grn_lines
-  ADD CONSTRAINT chk_grn_lines_qty CHECK (received_qty > 0);
-
--- Job costing: non-negative amounts
-ALTER TABLE job_costing_lines
-  ADD CONSTRAINT chk_job_costing_lines_amount CHECK (amount >= 0);
 
 -- Reorder policy: sensible thresholds
 ALTER TABLE reorder_policies
@@ -46,7 +24,3 @@ ALTER TABLE reorder_policies
 -- Routing stage: non-negative times
 ALTER TABLE routing_template_stages
   ADD CONSTRAINT chk_routing_stage_times CHECK (setup_time_min >= 0 AND run_time_min >= 0);
-
--- UOM conversion: positive factor
-ALTER TABLE uom_conversions
-  ADD CONSTRAINT chk_uom_conv_factor CHECK (conversion_factor > 0);
