@@ -1,6 +1,5 @@
 package in.boss.shared.config;
 
-import in.boss.shared.context.BossContextHolder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -14,12 +13,13 @@ import java.util.UUID;
 /**
  * Industry template service (issue #91).
  *
- * Applies one of the six pre-defined industry option sets to a tenant's
- * tenant_config_options table. Called once at tenant onboarding.
+ * Applies one of the six approved industry option sets to a tenant's
+ * tenant_config_options table.  Called once at tenant onboarding, but
+ * idempotent — safe to call multiple times on the same tenant.
  *
- * Supported industry types (defined in V062 industry_template_options):
- *   auto_components, sheet_metal, injection_moulding,
- *   precision_machining, electronic_assemblies, textiles
+ * Approved industry types (defined in V062 industry_template_options):
+ *   FABRICATION_STEEL, PRECISION_MACHINING, ELECTRONICS_ASSEMBLY,
+ *   FORGING, CASTING, GENERAL_MANUFACTURING
  */
 @Service
 public class IndustryTemplateService {
@@ -27,8 +27,12 @@ public class IndustryTemplateService {
     private static final Logger log = LoggerFactory.getLogger(IndustryTemplateService.class);
 
     public static final List<String> SUPPORTED_INDUSTRY_TYPES = List.of(
-            "auto_components", "sheet_metal", "injection_moulding",
-            "precision_machining", "electronic_assemblies", "textiles");
+            "FABRICATION_STEEL",
+            "PRECISION_MACHINING",
+            "ELECTRONICS_ASSEMBLY",
+            "FORGING",
+            "CASTING",
+            "GENERAL_MANUFACTURING");
 
     private final JdbcTemplate jdbc;
 
@@ -37,8 +41,9 @@ public class IndustryTemplateService {
     }
 
     /**
-     * Seeds config options for {@code industryType} into the current tenant.
+     * Seeds config options for {@code industryType} into the target tenant.
      * Idempotent — skips rows that already exist (ON CONFLICT DO NOTHING).
+     * Preserves any tenant-customized values (they have distinct codes).
      *
      * @param tenantId     target tenant (must already exist in tenant_registry)
      * @param industryType one of SUPPORTED_INDUSTRY_TYPES
@@ -46,7 +51,9 @@ public class IndustryTemplateService {
     @Transactional
     public void applyTemplate(UUID tenantId, String industryType) {
         if (!SUPPORTED_INDUSTRY_TYPES.contains(industryType)) {
-            throw new IllegalArgumentException("Unknown industry type: " + industryType);
+            throw new IllegalArgumentException(
+                    "Unknown industry type: " + industryType
+                    + ". Supported: " + SUPPORTED_INDUSTRY_TYPES);
         }
 
         List<Map<String, Object>> templateRows = jdbc.queryForList(
@@ -79,26 +86,27 @@ public class IndustryTemplateService {
     /**
      * Seeds standard UOMs for the tenant.
      * Common across all industries; called after applyTemplate.
+     * Idempotent — ON CONFLICT DO NOTHING.
      */
     @Transactional
     public void seedStandardUoms(UUID tenantId) {
         var uomData = List.of(
-            new Object[]{"NOS","Numbers","quantity",true},
-            new Object[]{"PCS","Pieces","quantity",false},
-            new Object[]{"KG","Kilogram","weight",true},
-            new Object[]{"G","Gram","weight",false},
-            new Object[]{"MT","Metric Tonne","weight",false},
-            new Object[]{"M","Metre","length",true},
-            new Object[]{"MM","Millimetre","length",false},
-            new Object[]{"CM","Centimetre","length",false},
-            new Object[]{"L","Litre","volume",true},
-            new Object[]{"ML","Millilitre","volume",false},
-            new Object[]{"SQM","Square Metre","area",true},
-            new Object[]{"HR","Hour","time",true},
-            new Object[]{"MIN","Minute","time",false},
-            new Object[]{"SET","Set","quantity",false},
-            new Object[]{"BOX","Box","quantity",false},
-            new Object[]{"CTN","Carton","quantity",false}
+            new Object[]{"NOS", "Numbers",       "quantity", true},
+            new Object[]{"PCS", "Pieces",        "quantity", false},
+            new Object[]{"KG",  "Kilogram",      "weight",   true},
+            new Object[]{"G",   "Gram",          "weight",   false},
+            new Object[]{"MT",  "Metric Tonne",  "weight",   false},
+            new Object[]{"M",   "Metre",         "length",   true},
+            new Object[]{"MM",  "Millimetre",    "length",   false},
+            new Object[]{"CM",  "Centimetre",    "length",   false},
+            new Object[]{"L",   "Litre",         "volume",   true},
+            new Object[]{"ML",  "Millilitre",    "volume",   false},
+            new Object[]{"SQM", "Square Metre",  "area",     true},
+            new Object[]{"HR",  "Hour",          "time",     true},
+            new Object[]{"MIN", "Minute",        "time",     false},
+            new Object[]{"SET", "Set",           "quantity", false},
+            new Object[]{"BOX", "Box",           "quantity", false},
+            new Object[]{"CTN", "Carton",        "quantity", false}
         );
 
         int inserted = 0;

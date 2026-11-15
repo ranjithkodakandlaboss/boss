@@ -7,7 +7,10 @@ import org.springframework.stereotype.Component;
 import java.util.*;
 
 /**
- * Resolves a Firebase UID to a BossContext by querying app_users + user_roles.
+ * Resolves a Firebase UID to a BossContext.
+ *
+ * Uses the SECURITY DEFINER function boss_resolve_firebase_uid() (V064) so the
+ * lookup runs as the function owner and is not blocked by RLS on app_users.
  * Returns null if the UID is not found (unauthenticated request continues without context).
  */
 @Component
@@ -20,28 +23,26 @@ public class TenantContextResolver {
     }
 
     public BossContext resolve(String firebaseUid) {
-        List<Map<String, Object>> rows = jdbc.queryForList("""
-                SELECT u.id, u.tenant_id, u.status, r.role, r.site_id
-                FROM app_users u
-                LEFT JOIN user_roles r ON r.user_id = u.id AND r.tenant_id = u.tenant_id
-                WHERE u.firebase_uid = ?
-                """, firebaseUid);
+        List<Map<String, Object>> rows = jdbc.queryForList(
+                "SELECT out_user_id, out_tenant_id, out_status, out_role, out_site_id " +
+                "FROM boss_resolve_firebase_uid(?)",
+                firebaseUid);
 
         if (rows.isEmpty()) return null;
 
         Map<String, Object> first = rows.get(0);
-        if (!"active".equals(first.get("status"))) return null;
+        if (!"active".equals(first.get("out_status"))) return null;
 
-        UUID userId = UUID.fromString(first.get("id").toString());
-        UUID tenantId = UUID.fromString(first.get("tenant_id").toString());
+        UUID userId = UUID.fromString(first.get("out_user_id").toString());
+        UUID tenantId = UUID.fromString(first.get("out_tenant_id").toString());
 
         Set<String> roles = new HashSet<>();
         UUID siteId = null;
         for (var row : rows) {
-            if (row.get("role") != null) {
-                roles.add(row.get("role").toString());
-                if (siteId == null && row.get("site_id") != null) {
-                    siteId = UUID.fromString(row.get("site_id").toString());
+            if (row.get("out_role") != null) {
+                roles.add(row.get("out_role").toString());
+                if (siteId == null && row.get("out_site_id") != null) {
+                    siteId = UUID.fromString(row.get("out_site_id").toString());
                 }
             }
         }

@@ -13,9 +13,13 @@ import java.io.IOException;
 import java.util.UUID;
 
 /**
- * Rejects requests from suspended tenants with HTTP 403.
+ * Rejects requests from suspended, archived, or unknown tenants.
  * Runs after FirebaseJwtFilter has populated BossContextHolder.
  * Tenant status is cached by TenantStatusCache to avoid per-request DB hits.
+ *
+ * "unknown" status (DB error or tenant not found) → 503 Service Unavailable.
+ * "suspended"/"archived" → 403 Forbidden.
+ * Any status other than "active" → blocked.
  */
 @Component
 public class SuspendedTenantInterceptor implements HandlerInterceptor {
@@ -40,15 +44,25 @@ public class SuspendedTenantInterceptor implements HandlerInterceptor {
         UUID tenantId = ctx.tenantId();
         String status = statusCache.getStatus(tenantId);
 
-        if ("suspended".equals(status) || "archived".equals(status)) {
+        if ("active".equals(status)) {
+            return true;
+        }
+
+        response.setContentType("application/json");
+
+        if (TenantStatusCache.STATUS_UNKNOWN.equals(status)) {
+            log.error("Tenant status unavailable for tenant={} — blocking request", tenantId);
+            response.setStatus(HttpServletResponse.SC_SERVICE_UNAVAILABLE);
+            response.getWriter().write(
+                    "{\"error\":\"TENANT_STATUS_UNAVAILABLE\","
+                    + "\"message\":\"Tenant status could not be verified. Please try again.\"}");
+        } else {
             log.warn("Blocking request for {} tenant={}", status, tenantId);
-            response.setContentType("application/json");
             response.setStatus(HttpServletResponse.SC_FORBIDDEN);
             response.getWriter().write(
                     "{\"error\":\"TENANT_SUSPENDED\","
                     + "\"message\":\"Your account has been suspended. Please contact support.\"}");
-            return false;
         }
-        return true;
+        return false;
     }
 }

@@ -1,5 +1,7 @@
 package in.boss.shared.rls;
 
+import com.google.firebase.FirebaseApp;
+import com.google.firebase.auth.FirebaseAuth;
 import in.boss.shared.context.BossContext;
 import in.boss.shared.context.BossContextHolder;
 import org.junit.jupiter.api.AfterEach;
@@ -8,6 +10,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.test.context.DynamicPropertyRegistry;
@@ -39,6 +42,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 class RlsTenantIsolationTest {
 
+    @MockBean FirebaseApp firebaseApp;
+    @MockBean FirebaseAuth firebaseAuth;
+
     private static final String APP_USER = "boss_app_user";
     private static final String APP_PASS = "boss_app_pass";
 
@@ -65,19 +71,20 @@ class RlsTenantIsolationTest {
      */
     @BeforeAll
     static void setupAppUser(@Autowired JdbcTemplate superJdbc) {
-        // Create login user; idempotent if already exists
+        // Create a non-superuser login with INHERIT so boss_app_role privileges flow through.
+        // INHERIT is required for the GRANT boss_app_role to take effect.
         superJdbc.execute("DO $$ BEGIN " +
                 "IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '" + APP_USER + "') THEN " +
                 "  CREATE ROLE " + APP_USER + " LOGIN PASSWORD '" + APP_PASS + "' " +
-                "    NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION; " +
+                "    NOSUPERUSER NOCREATEDB NOCREATEROLE INHERIT NOREPLICATION; " +
                 "END IF; " +
                 "END $$");
 
-        // Grant boss_app role (created by V061 migration)
+        // Grant boss_app_role (created by V061 migration — renamed from boss_app)
         try {
-            superJdbc.execute("GRANT boss_app TO " + APP_USER);
+            superJdbc.execute("GRANT boss_app_role TO " + APP_USER);
         } catch (Exception ignored) {
-            // boss_app role may not exist in test environment; grant table-level directly
+            // boss_app_role may not exist in older test environment; fall back to direct grants
             superJdbc.execute("GRANT USAGE ON SCHEMA public TO " + APP_USER);
             superJdbc.execute("GRANT SELECT, INSERT, UPDATE, DELETE " +
                     "ON ALL TABLES IN SCHEMA public TO " + APP_USER);

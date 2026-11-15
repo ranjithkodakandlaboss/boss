@@ -17,7 +17,7 @@ public final class BossConnectionWrapper {
 
     private static final Logger log = LoggerFactory.getLogger(BossConnectionWrapper.class);
     private static final String SET_TENANT =
-            "SELECT set_config('app.current_tenant_id', ?, false)";
+            "SELECT set_config('app.current_tenant_id', ?, true)";
 
     private BossConnectionWrapper() {}
 

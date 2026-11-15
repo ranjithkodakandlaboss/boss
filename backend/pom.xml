@@ -143,6 +143,11 @@
         <artifactId>maven-surefire-plugin</artifactId>
         <configuration>
           <argLine>-Djavax.net.ssl.trustStore=/etc/ssl/certs/java/cacerts</argLine>
+          <environmentVariables>
+            <DOCKER_HOST>unix:///tmp/docker-proxy.sock</DOCKER_HOST>
+            <TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE>/tmp/docker-proxy.sock</TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE>
+            <TESTCONTAINERS_RYUK_DISABLED>true</TESTCONTAINERS_RYUK_DISABLED>
+          </environmentVariables>
         </configuration>
       </plugin>
     </plugins>

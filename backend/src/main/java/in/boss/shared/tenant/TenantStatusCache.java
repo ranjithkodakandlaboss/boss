@@ -1,5 +1,8 @@
 package in.boss.shared.tenant;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
@@ -10,13 +13,23 @@ import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Caches tenant status from tenant_registry with a TTL of 60 seconds.
- * Avoids a DB lookup on every authenticated request while ensuring suspension
- * takes effect within one minute.
+ *
+ * Fail-closed policy:
+ *   - Tenant not found in DB → returns "unknown" (blocked by interceptor).
+ *   - DB error                → returns "unknown" with a short 5-second TTL,
+ *                               allowing the system to recover quickly without
+ *                               blocking every request indefinitely.
+ * Never defaults to "active" on error — that would allow unknown or forged
+ * tenant IDs to pass through unchecked.
  */
 @Component
 public class TenantStatusCache {
 
-    private static final long TTL_MS = 60_000L;
+    private static final Logger log = LoggerFactory.getLogger(TenantStatusCache.class);
+
+    public static final long TTL_MS = 60_000L;
+    public static final long ERROR_TTL_MS = 5_000L;
+    public static final String STATUS_UNKNOWN = "unknown";
 
     private final JdbcTemplate jdbc;
     private final Map<UUID, CachedStatus> cache = new ConcurrentHashMap<>();
@@ -31,7 +44,8 @@ public class TenantStatusCache {
             return cached.status;
         }
         String status = fetchStatus(tenantId);
-        cache.put(tenantId, new CachedStatus(status));
+        long ttl = STATUS_UNKNOWN.equals(status) ? ERROR_TTL_MS : TTL_MS;
+        cache.put(tenantId, new CachedStatus(status, ttl));
         return status;
     }
 
@@ -41,23 +55,29 @@ public class TenantStatusCache {
     }
 
     private String fetchStatus(UUID tenantId) {
-        // Uses superuser connection — tenant_registry has RLS policy USING (id = boss_current_tenant_id())
-        // but status checks are infrastructure, not tenant-data reads, so we query without RLS filtering.
-        // This runs on a connection that may not have tenant context (platform service call).
         try {
-            return jdbc.queryForObject(
+            String status = jdbc.queryForObject(
                     "SELECT status FROM tenant_registry WHERE id = ?",
                     String.class, tenantId);
+            return status != null ? status : STATUS_UNKNOWN;
+        } catch (EmptyResultDataAccessException e) {
+            log.warn("Tenant not found in registry: {} — blocking as unknown", tenantId);
+            return STATUS_UNKNOWN;
         } catch (Exception e) {
-            // If tenant not found, treat as active to avoid false-positive blocks.
-            return "active";
+            log.error("Failed to fetch tenant status for {} — failing closed: {}", tenantId, e.getMessage());
+            return STATUS_UNKNOWN;
         }
     }
 
-    private record CachedStatus(String status, long expiresAt) {
-        CachedStatus(String status) {
-            this(status, Instant.now().toEpochMilli() + TTL_MS);
+    private static final class CachedStatus {
+        final String status;
+        final long expiresAt;
+
+        CachedStatus(String status, long ttlMs) {
+            this.status = status;
+            this.expiresAt = Instant.now().toEpochMilli() + ttlMs;
         }
+
         boolean isExpired() {
             return Instant.now().toEpochMilli() > expiresAt;
         }

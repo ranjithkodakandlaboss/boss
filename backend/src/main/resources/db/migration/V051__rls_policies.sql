@@ -51,10 +51,7 @@ ALTER TABLE outbox_events ENABLE ROW LEVEL SECURITY;
 CREATE POLICY outbox_events_isolation ON outbox_events
   USING (tenant_id IS NULL OR tenant_id = boss_current_tenant_id());
 
--- idempotency_keys
-ALTER TABLE idempotency_keys ENABLE ROW LEVEL SECURITY;
-CREATE POLICY idempotency_keys_isolation ON idempotency_keys
-  USING (tenant_id = boss_current_tenant_id());
+-- idempotency_keys: RLS is applied in V063 after tenant_id column is added.
 
 -- legal_entities / gst_registrations
 ALTER TABLE legal_entities ENABLE ROW LEVEL SECURITY;
