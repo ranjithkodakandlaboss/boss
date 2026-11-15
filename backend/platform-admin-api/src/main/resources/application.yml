@@ -1,0 +1,36 @@
+spring:
+  application:
+    name: boss-admin-api
+  datasource:
+    url: ${ADMIN_DB_URL:jdbc:postgresql://localhost:5432/boss}
+    username: ${ADMIN_DB_USER:boss_admin}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 8
+      minimum-idle: 1
+      connection-timeout: 30000
+  flyway:
+    enabled: false
+  sql:
+    init:
+      mode: never
+  jackson:
+    default-property-inclusion: non_null
+
+server:
+  port: ${PORT:8080}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: never
+
+boss:
+  admin-firebase:
+    project-id: ${ADMIN_FIREBASE_PROJECT_ID}
+  admin-db:
+    password-file: ${ADMIN_DB_PASSWORD_FILE:/secrets/admin-db-password}
