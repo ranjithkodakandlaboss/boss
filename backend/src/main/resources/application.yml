@@ -33,6 +33,11 @@ spring:
     out-of-order: false
     validate-on-migrate: true
 
+  cloud:
+    gcp:
+      sql:
+        enabled: false
+
 management:
   endpoints:
     web:
