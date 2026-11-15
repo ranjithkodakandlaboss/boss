@@ -2,6 +2,16 @@ spring:
   jpa:
     hibernate:
       ddl-auto: validate
+  flyway:
+    locations: classpath:db/migration
+  cloud:
+    gcp:
+      pubsub:
+        enabled: false
+  autoconfigure:
+    exclude:
+      - com.google.cloud.spring.autoconfigure.firestore.GcpFirestoreAutoConfiguration
+      - com.google.cloud.spring.autoconfigure.pubsub.GcpPubSubAutoConfiguration
 
 boss:
   firebase:

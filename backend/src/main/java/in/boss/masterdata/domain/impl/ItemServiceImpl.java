@@ -1,0 +1,360 @@
+package in.boss.masterdata.domain.impl;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import in.boss.masterdata.api.dto.CreateItemRequest;
+import in.boss.masterdata.api.dto.ItemDto;
+import in.boss.masterdata.api.dto.PageResponse;
+import in.boss.masterdata.api.dto.UpdateItemRequest;
+import in.boss.masterdata.domain.DuplicateEntityException;
+import in.boss.masterdata.domain.EntityNotFoundException;
+import in.boss.masterdata.domain.ItemService;
+import in.boss.masterdata.domain.LifecycleException;
+import in.boss.masterdata.domain.ValidationException;
+import in.boss.masterdata.events.MasterDataEventPublisher;
+import in.boss.masterdata.persistence.HsnCodeEntity;
+import in.boss.masterdata.persistence.HsnCodeRepository;
+import in.boss.masterdata.persistence.ItemCategoryEntity;
+import in.boss.masterdata.persistence.ItemCategoryRepository;
+import in.boss.masterdata.persistence.ItemEntity;
+import in.boss.masterdata.persistence.ItemRepository;
+import in.boss.masterdata.persistence.UnitOfMeasureEntity;
+import in.boss.masterdata.persistence.UnitOfMeasureRepository;
+import in.boss.masterdata.persistence.BomHeaderRepository;
+import in.boss.masterdata.persistence.BomLineRepository;
+import in.boss.shared.audit.AuditService;
+import in.boss.shared.context.BossContextHolder;
+import jakarta.persistence.criteria.Predicate;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.jpa.domain.Specification;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.UUID;
+import java.util.stream.Collectors;
+
+@Service
+@Transactional
+public class ItemServiceImpl implements ItemService {
+
+    private final ItemRepository itemRepository;
+    private final UnitOfMeasureRepository uomRepository;
+    private final ItemCategoryRepository categoryRepository;
+    private final HsnCodeRepository hsnCodeRepository;
+    private final BomHeaderRepository bomHeaderRepository;
+    private final BomLineRepository bomLineRepository;
+    private final AuditService auditService;
+    private final MasterDataEventPublisher eventPublisher;
+    private final ObjectMapper objectMapper;
+
+    public ItemServiceImpl(ItemRepository itemRepository,
+                           UnitOfMeasureRepository uomRepository,
+                           ItemCategoryRepository categoryRepository,
+                           HsnCodeRepository hsnCodeRepository,
+                           BomHeaderRepository bomHeaderRepository,
+                           BomLineRepository bomLineRepository,
+                           AuditService auditService,
+                           MasterDataEventPublisher eventPublisher,
+                           ObjectMapper objectMapper) {
+        this.itemRepository = itemRepository;
+        this.uomRepository = uomRepository;
+        this.categoryRepository = categoryRepository;
+        this.hsnCodeRepository = hsnCodeRepository;
+        this.bomHeaderRepository = bomHeaderRepository;
+        this.bomLineRepository = bomLineRepository;
+        this.auditService = auditService;
+        this.eventPublisher = eventPublisher;
+        this.objectMapper = objectMapper;
+    }
+
+    private UUID getTenantId() {
+        var ctx = BossContextHolder.get();
+        if (ctx == null || ctx.tenantId() == null) {
+            throw new IllegalStateException("Tenant context is required");
+        }
+        return ctx.tenantId();
+    }
+
+    @Override
+    public ItemDto createItem(CreateItemRequest request) {
+        UUID tenantId = getTenantId();
+
+        if (itemRepository.existsByTenantIdAndCode(tenantId, request.getCode().trim())) {
+            throw new DuplicateEntityException("Item code already exists for this tenant: " + request.getCode());
+        }
+
+        UnitOfMeasureEntity uom = uomRepository.findByIdAndTenantId(request.getUomId(), tenantId)
+                .orElseThrow(() -> new ValidationException("Invalid UOM ID: " + request.getUomId()));
+
+        ItemCategoryEntity category = null;
+        if (request.getCategoryId() != null) {
+            category = categoryRepository.findByIdAndTenantId(request.getCategoryId(), tenantId)
+                    .orElseThrow(() -> new ValidationException("Invalid category ID: " + request.getCategoryId()));
+        }
+
+        UUID hsnCodeId = null;
+        java.math.BigDecimal gstRate = null;
+        if (request.getHsnCode() != null && !request.getHsnCode().isBlank()) {
+            var hsnOpt = hsnCodeRepository.findByCode(request.getHsnCode().trim());
+            if (hsnOpt.isPresent()) {
+                HsnCodeEntity hsn = hsnOpt.get();
+                hsnCodeId = hsn.getId();
+                gstRate = hsn.getGstRate();
+            }
+        }
+
+        String dbItemType = toDbItemType(request.getItemType());
+        Instant now = Instant.now();
+
+        ItemEntity entity = ItemEntity.builder()
+                .id(UUID.randomUUID())
+                .tenantId(tenantId)
+                .code(request.getCode().trim())
+                .name(request.getName().trim())
+                .description(request.getDescription())
+                .itemType(dbItemType)
+                .categoryId(category != null ? category.getId() : null)
+                .baseUomId(uom.getId())
+                .hsnCodeId(hsnCodeId)
+                .gstRate(gstRate)
+                .stdCost(request.getStandardCost())
+                .reorderQty(request.getReorderPoint())
+                .isActive(true)
+                .createdAt(now)
+                .updatedAt(now)
+                .build();
+
+        ItemEntity saved = itemRepository.save(entity);
+
+        ItemDto dto = toDto(saved, uom.getSymbol(), category != null ? category.getName() : request.getCategoryLabel(), request.getHsnCode());
+
+        auditService.record("ITEM", saved.getId(), "CREATE", null, toJson(dto));
+        eventPublisher.publishEvent("ITEM", saved.getId(), "ITEM_CREATED", dto);
+
+        return dto;
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public ItemDto getItem(UUID id) {
+        UUID tenantId = getTenantId();
+        ItemEntity entity = itemRepository.findByIdAndTenantId(id, tenantId)
+                .orElseThrow(() -> new EntityNotFoundException("Item not found: " + id));
+
+        return loadFullDto(entity, tenantId);
+    }
+
+    @Override
+    public ItemDto updateItem(UUID id, UpdateItemRequest request) {
+        UUID tenantId = getTenantId();
+        ItemEntity entity = itemRepository.findByIdAndTenantId(id, tenantId)
+                .orElseThrow(() -> new EntityNotFoundException("Item not found: " + id));
+
+        ItemDto oldDto = loadFullDto(entity, tenantId);
+
+        if (request.getStatus() != null) {
+            boolean newActive = "active".equalsIgnoreCase(request.getStatus());
+            if (!newActive && entity.isActive()) {
+                checkNoActiveBomReference(tenantId, id, "deactivate");
+            }
+            entity.setActive(newActive);
+        }
+
+        if (request.getName() != null && !request.getName().isBlank()) {
+            entity.setName(request.getName().trim());
+        }
+        if (request.getDescription() != null) {
+            entity.setDescription(request.getDescription());
+        }
+        if (request.getCategoryId() != null) {
+            ItemCategoryEntity cat = categoryRepository.findByIdAndTenantId(request.getCategoryId(), tenantId)
+                    .orElseThrow(() -> new ValidationException("Invalid category ID: " + request.getCategoryId()));
+            entity.setCategoryId(cat.getId());
+        }
+        if (request.getStandardCost() != null) {
+            entity.setStdCost(request.getStandardCost());
+        }
+        if (request.getReorderPoint() != null) {
+            entity.setReorderQty(request.getReorderPoint());
+        }
+        if (request.getHsnCode() != null && !request.getHsnCode().isBlank()) {
+            var hsnOpt = hsnCodeRepository.findByCode(request.getHsnCode().trim());
+            if (hsnOpt.isPresent()) {
+                HsnCodeEntity hsn = hsnOpt.get();
+                entity.setHsnCodeId(hsn.getId());
+                entity.setGstRate(hsn.getGstRate());
+            }
+        }
+
+        entity.setUpdatedAt(Instant.now());
+        ItemEntity saved = itemRepository.save(entity);
+
+        ItemDto newDto = loadFullDto(saved, tenantId);
+
+        auditService.record("ITEM", saved.getId(), "UPDATE", toJson(oldDto), toJson(newDto));
+        eventPublisher.publishEvent("ITEM", saved.getId(), "ITEM_UPDATED", newDto);
+
+        return newDto;
+    }
+
+    @Override
+    public void deleteItem(UUID id) {
+        UUID tenantId = getTenantId();
+        ItemEntity entity = itemRepository.findByIdAndTenantId(id, tenantId)
+                .orElseThrow(() -> new EntityNotFoundException("Item not found: " + id));
+
+        checkNoActiveBomReference(tenantId, id, "delete");
+
+        ItemDto oldDto = loadFullDto(entity, tenantId);
+        entity.setActive(false);
+        entity.setUpdatedAt(Instant.now());
+        itemRepository.save(entity);
+
+        auditService.record("ITEM", entity.getId(), "DELETE", toJson(oldDto), null);
+        eventPublisher.publishEvent("ITEM", entity.getId(), "ITEM_DELETED", Map.of("id", id, "status", "inactive"));
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public PageResponse<ItemDto> listItems(String itemType, UUID categoryId, String status, String q, int page, int size) {
+        UUID tenantId = getTenantId();
+
+        Specification<ItemEntity> spec = (root, query, cb) -> {
+            List<Predicate> predicates = new ArrayList<>();
+            predicates.add(cb.equal(root.get("tenantId"), tenantId));
+
+            if (itemType != null && !itemType.isBlank()) {
+                String dbType = toDbItemType(itemType);
+                predicates.add(cb.equal(root.get("itemType"), dbType));
+            }
+            if (categoryId != null) {
+                predicates.add(cb.equal(root.get("categoryId"), categoryId));
+            }
+            if (status != null && !status.isBlank()) {
+                boolean active = "active".equalsIgnoreCase(status);
+                predicates.add(cb.equal(root.get("isActive"), active));
+            } else {
+                // Default: exclude inactive items from lists unless explicitly requested
+                predicates.add(cb.isTrue(root.get("isActive")));
+            }
+            if (q != null && !q.isBlank()) {
+                String searchPattern = q.trim().toLowerCase(Locale.ROOT) + "%";
+                Predicate codeMatch = cb.like(cb.lower(root.get("code")), searchPattern);
+                Predicate nameMatch = cb.like(cb.lower(root.get("name")), searchPattern);
+                predicates.add(cb.or(codeMatch, nameMatch));
+            }
+
+            return cb.and(predicates.toArray(new Predicate[0]));
+        };
+
+        PageRequest pageRequest = PageRequest.of(page, Math.min(size, 200), Sort.by(Sort.Direction.DESC, "createdAt"));
+        Page<ItemEntity> entityPage = itemRepository.findAll(spec, pageRequest);
+
+        List<ItemDto> dtos = entityPage.getContent().stream()
+                .map(e -> loadFullDto(e, tenantId))
+                .collect(Collectors.toList());
+
+        return PageResponse.<ItemDto>builder()
+                .content(dtos)
+                .page(entityPage.getNumber())
+                .size(entityPage.getSize())
+                .totalElements(entityPage.getTotalElements())
+                .totalPages(entityPage.getTotalPages())
+                .build();
+    }
+
+    private void checkNoActiveBomReference(UUID tenantId, UUID itemId, String operation) {
+        boolean isFinishedItemInActiveBom = bomHeaderRepository
+                .existsByTenantIdAndFinishedItemIdAndStatus(tenantId, itemId, "approved");
+        if (isFinishedItemInActiveBom) {
+            throw new LifecycleException("Cannot " + operation + " item: referenced as finished item in active BOM");
+        }
+
+        boolean isComponentInActiveBom = bomLineRepository.isComponentInActiveBom(tenantId, itemId);
+        if (isComponentInActiveBom) {
+            throw new LifecycleException("Cannot " + operation + " item: referenced as component in active BOM");
+        }
+    }
+
+    private ItemDto loadFullDto(ItemEntity entity, UUID tenantId) {
+        String uomSymbol = uomRepository.findByIdAndTenantId(entity.getBaseUomId(), tenantId)
+                .map(UnitOfMeasureEntity::getSymbol)
+                .orElse(null);
+
+        String categoryLabel = null;
+        if (entity.getCategoryId() != null) {
+            categoryLabel = categoryRepository.findByIdAndTenantId(entity.getCategoryId(), tenantId)
+                    .map(ItemCategoryEntity::getName)
+                    .orElse(null);
+        }
+
+        String hsnCode = null;
+        if (entity.getHsnCodeId() != null) {
+            hsnCode = hsnCodeRepository.findById(entity.getHsnCodeId())
+                    .map(HsnCodeEntity::getCode)
+                    .orElse(null);
+        }
+
+        return toDto(entity, uomSymbol, categoryLabel, hsnCode);
+    }
+
+    private ItemDto toDto(ItemEntity entity, String uomSymbol, String categoryLabel, String hsnCode) {
+        return ItemDto.builder()
+                .id(entity.getId())
+                .code(entity.getCode())
+                .name(entity.getName())
+                .description(entity.getDescription())
+                .itemType(toApiItemType(entity.getItemType()))
+                .categoryId(entity.getCategoryId())
+                .categoryLabel(categoryLabel)
+                .uomId(entity.getBaseUomId())
+                .uomSymbol(uomSymbol)
+                .hsnCode(hsnCode)
+                .gstRate(entity.getGstRate())
+                .standardCost(entity.getStdCost())
+                .reorderPoint(entity.getReorderQty())
+                .status(entity.isActive() ? "active" : "inactive")
+                .createdAt(entity.getCreatedAt())
+                .build();
+    }
+
+    private String toDbItemType(String apiType) {
+        if (apiType == null) return "raw_material";
+        return switch (apiType.toUpperCase(Locale.ROOT)) {
+            case "RAW_MATERIAL" -> "raw_material";
+            case "CONSUMABLE" -> "consumable";
+            case "FINISHED_GOOD" -> "finished_goods";
+            case "SERVICE" -> "service";
+            case "SPARE_PART" -> "other";
+            case "SEMI_FINISHED" -> "semi_finished";
+            default -> apiType.toLowerCase(Locale.ROOT);
+        };
+    }
+
+    private String toApiItemType(String dbType) {
+        if (dbType == null) return "RAW_MATERIAL";
+        return switch (dbType.toLowerCase(Locale.ROOT)) {
+            case "raw_material" -> "RAW_MATERIAL";
+            case "consumable" -> "CONSUMABLE";
+            case "finished_goods" -> "FINISHED_GOOD";
+            case "service" -> "SERVICE";
+            case "other", "tool", "asset" -> "SPARE_PART";
+            case "semi_finished" -> "SEMI_FINISHED";
+            default -> dbType.toUpperCase(Locale.ROOT);
+        };
+    }
+
+    private String toJson(Object obj) {
+        try {
+            return objectMapper.writeValueAsString(obj);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+}
