@@ -5,11 +5,9 @@ import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.context.annotation.Profile;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 @Configuration
-@Profile("!test")
 public class DatabasePrivilegeGuard {
     private static final String TABLE_PRIVILEGES = """
             SELECT c.relname || ':' || p.privilege
@@ -18,10 +16,10 @@ public class DatabasePrivilegeGuard {
             CROSS JOIN (VALUES ('SELECT'), ('INSERT'), ('UPDATE'), ('DELETE'),
                                ('TRUNCATE'), ('REFERENCES'), ('TRIGGER')) AS p(privilege)
             LEFT JOIN (VALUES
-              ('customer_groups','SELECT'), ('customer_groups','INSERT'),
-              ('tenant_registry','SELECT'), ('tenant_registry','INSERT'), ('tenant_registry','UPDATE'),
-              ('legal_entities','INSERT'), ('gst_registrations','INSERT'),
-              ('physical_sites','INSERT'), ('tenant_onboarding_config','INSERT'),
+              ('customer_groups','INSERT'),
+              ('tenant_registry','SELECT'), ('tenant_registry','INSERT'),
+              ('legal_entities','INSERT'), ('physical_sites','INSERT'),
+              ('tenant_onboarding_config','SELECT'), ('tenant_onboarding_config','INSERT'),
               ('platform_admin_users','SELECT'), ('platform_audit_events','INSERT')
             ) AS allowed(table_name, privilege)
               ON allowed.table_name = c.relname AND allowed.privilege = p.privilege
@@ -42,6 +40,10 @@ public class DatabasePrivilegeGuard {
     @Bean
     ApplicationRunner verifyPlatformAdminDatabaseRole(JdbcTemplate jdbc) {
         return (ApplicationArguments args) -> {
+            String principal = jdbc.queryForObject("SELECT current_user", String.class);
+            if (!"boss_admin".equals(principal)) {
+                throw new IllegalStateException("Platform Admin must connect as the dedicated boss_admin role");
+            }
             Boolean unsafeRole = jdbc.queryForObject("""
                     SELECT EXISTS (
                       SELECT 1 FROM pg_roles r
@@ -62,10 +64,10 @@ public class DatabasePrivilegeGuard {
             List<String> missing = jdbc.queryForList("""
                     SELECT required.table_name || ':' || required.privilege
                     FROM (VALUES
-                      ('customer_groups','SELECT'), ('customer_groups','INSERT'),
+                      ('customer_groups','INSERT'),
                       ('tenant_registry','SELECT'), ('tenant_registry','INSERT'),
-                      ('legal_entities','INSERT'), ('gst_registrations','INSERT'),
-                      ('physical_sites','INSERT'), ('tenant_onboarding_config','INSERT'),
+                      ('legal_entities','INSERT'), ('physical_sites','INSERT'),
+                      ('tenant_onboarding_config','SELECT'), ('tenant_onboarding_config','INSERT'),
                       ('platform_admin_users','SELECT'), ('platform_audit_events','INSERT')
                     ) AS required(table_name, privilege)
                     WHERE NOT has_table_privilege(current_user,
@@ -73,8 +75,12 @@ public class DatabasePrivilegeGuard {
                     ORDER BY required.table_name, required.privilege
                     """, String.class);
             if (!jdbc.queryForObject("SELECT has_column_privilege(current_user, 'public.tenant_registry', 'status', 'UPDATE') " +
-                    "AND has_column_privilege(current_user, 'public.tenant_registry', 'updated_at', 'UPDATE')", Boolean.class)) {
-                missing.add("tenant_registry:UPDATE(status, updated_at)");
+                    "AND has_column_privilege(current_user, 'public.tenant_registry', 'updated_at', 'UPDATE') " +
+                    "AND has_column_privilege(current_user, 'public.customer_groups', 'id', 'SELECT') " +
+                    "AND has_column_privilege(current_user, 'public.tenant_registry', 'id', 'SELECT') " +
+                    "AND has_column_privilege(current_user, 'public.legal_entities', 'id', 'SELECT') " +
+                    "AND has_column_privilege(current_user, 'public.physical_sites', 'id', 'SELECT')", Boolean.class)) {
+                missing.add("required ID SELECT and tenant status/updated_at column privileges");
             }
             if (!missing.isEmpty()) {
                 throw new IllegalStateException("Platform Admin database role is missing required control-plane privileges: " + missing);

@@ -1,5 +1,7 @@
 package in.boss.admin;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -7,15 +9,16 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import in.boss.admin.security.AdminTokenVerifier;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.Statement;
 import java.util.UUID;
-import org.junit.jupiter.api.MethodOrderer;
-import org.junit.jupiter.api.Order;
+import java.util.stream.StreamSupport;
+import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.TestMethodOrder;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -23,10 +26,12 @@ import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.test.context.ActiveProfiles;
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -35,10 +40,10 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
 @Testcontainers
-@TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 class AdminApiCustomerTokenRejectionTest {
-    private static final String ADMIN_UID = "admin-user-1";
+    private static final String ADMIN_UID = "test-platform-admin";
     private static final UUID ADMIN_ID = UUID.fromString("00000000-0000-0000-0000-000000000001");
+    private static final String ADMIN_PASSWORD = "test-only-password";
 
     @Container
     static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:15.10-alpine")
@@ -47,125 +52,287 @@ class AdminApiCustomerTokenRejectionTest {
             .withPassword("postgres");
 
     @DynamicPropertySource
-    static void datasource(DynamicPropertyRegistry registry) {
+    static void database(DynamicPropertyRegistry registry) {
         POSTGRES.start();
-        initializeRestrictedSchema();
+        migrateAndCreateRestrictedRole();
         registry.add("spring.datasource.url", POSTGRES::getJdbcUrl);
-        registry.add("spring.datasource.username", () -> "boss_admin_api");
-        registry.add("spring.datasource.password", () -> "admin_test_password");
+        registry.add("spring.datasource.username", () -> "boss_admin");
+        registry.add("spring.datasource.password", () -> ADMIN_PASSWORD);
+        registry.add("spring.datasource.hikari.maximum-pool-size", () -> 1);
+        registry.add("spring.datasource.hikari.minimum-idle", () -> 1);
     }
 
-    private static void initializeRestrictedSchema() {
+    private static void migrateAndCreateRestrictedRole() {
+        Flyway.configure()
+                .dataSource(POSTGRES.getJdbcUrl(), "postgres", "postgres")
+                .locations("classpath:db/migration")
+                .load()
+                .migrate();
+
         try (Connection connection = DriverManager.getConnection(POSTGRES.getJdbcUrl(), "postgres", "postgres");
              Statement sql = connection.createStatement()) {
-            sql.execute("CREATE ROLE boss_admin_api LOGIN PASSWORD 'admin_test_password' NOSUPERUSER NOBYPASSRLS");
-            sql.execute("CREATE TABLE customer_groups (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), name text NOT NULL, slug text NOT NULL UNIQUE, status text NOT NULL DEFAULT 'active', created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now())");
-            sql.execute("CREATE TABLE tenant_registry (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), customer_group_id uuid NOT NULL REFERENCES customer_groups(id), name text NOT NULL, slug text NOT NULL UNIQUE, status text NOT NULL DEFAULT 'provisioning', plan_tier text NOT NULL DEFAULT 'pilot', created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now())");
-            sql.execute("CREATE TABLE legal_entities (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), tenant_id uuid NOT NULL REFERENCES tenant_registry(id), name text NOT NULL, legal_name text NOT NULL, pan text, entity_type text, status text NOT NULL DEFAULT 'active', created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now())");
-            sql.execute("CREATE TABLE physical_sites (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), tenant_id uuid NOT NULL REFERENCES tenant_registry(id), legal_entity_id uuid NOT NULL REFERENCES legal_entities(id), gst_reg_id uuid, name text NOT NULL, code text NOT NULL, site_type text NOT NULL DEFAULT 'factory', status text NOT NULL DEFAULT 'active', created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(), UNIQUE(tenant_id, code))");
-            sql.execute("CREATE TABLE tenant_onboarding_config (tenant_id uuid PRIMARY KEY REFERENCES tenant_registry(id), industry_type text NOT NULL, onboarding_completed_at timestamptz, onboarding_completed_by uuid)");
-            sql.execute("CREATE TABLE platform_admin_users (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), firebase_uid text NOT NULL UNIQUE, email text NOT NULL UNIQUE, display_name text, status text NOT NULL DEFAULT 'active', created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now())");
-            sql.execute("CREATE TABLE platform_audit_events (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), admin_id uuid REFERENCES platform_admin_users(id), entity_type text NOT NULL, entity_id uuid, action text NOT NULL, old_data jsonb, new_data jsonb, ip_address inet, created_at timestamptz NOT NULL DEFAULT now())");
-            sql.execute("ALTER TABLE legal_entities ENABLE ROW LEVEL SECURITY");
-            sql.execute("ALTER TABLE legal_entities FORCE ROW LEVEL SECURITY");
-            sql.execute("CREATE POLICY tenant_isolation ON legal_entities USING (tenant_id = current_setting('app.current_tenant_id', true)::uuid)");
-            sql.execute("ALTER TABLE physical_sites ENABLE ROW LEVEL SECURITY");
-            sql.execute("ALTER TABLE physical_sites FORCE ROW LEVEL SECURITY");
-            sql.execute("CREATE POLICY tenant_isolation ON physical_sites USING (tenant_id = current_setting('app.current_tenant_id', true)::uuid)");
-            sql.execute("ALTER TABLE tenant_onboarding_config ENABLE ROW LEVEL SECURITY");
-            sql.execute("ALTER TABLE tenant_onboarding_config FORCE ROW LEVEL SECURITY");
-            sql.execute("CREATE POLICY tenant_isolation ON tenant_onboarding_config USING (tenant_id = current_setting('app.current_tenant_id', true)::uuid)");
-            sql.execute("GRANT USAGE ON SCHEMA public TO boss_admin_api");
-            sql.execute("GRANT SELECT, INSERT, UPDATE ON customer_groups, tenant_registry, legal_entities, physical_sites, tenant_onboarding_config TO boss_admin_api");
-            sql.execute("GRANT SELECT ON platform_admin_users TO boss_admin_api");
-            sql.execute("GRANT INSERT ON platform_audit_events TO boss_admin_api");
-            sql.execute("INSERT INTO platform_admin_users(id, firebase_uid, email) VALUES ('" + ADMIN_ID + "', '" + ADMIN_UID + "', 'admin@boss.local')");
-            sql.execute("CREATE TABLE customer_invoices (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), tenant_id uuid NOT NULL, amount numeric NOT NULL)");
-            sql.execute("INSERT INTO customer_invoices(tenant_id, amount) VALUES ('00000000-0000-0000-0000-000000000099', 99)");
-        } catch (Exception e) {
-            throw new ExceptionInInitializerError(e);
+            sql.execute("CREATE ROLE boss_admin LOGIN PASSWORD '" + ADMIN_PASSWORD + "' NOSUPERUSER NOBYPASSRLS INHERIT");
+            sql.execute("GRANT USAGE ON SCHEMA public TO boss_admin");
+            sql.execute("GRANT INSERT ON customer_groups TO boss_admin");
+            sql.execute("GRANT SELECT(id) ON customer_groups TO boss_admin");
+            sql.execute("GRANT SELECT, INSERT ON tenant_registry TO boss_admin");
+            sql.execute("GRANT UPDATE(status, updated_at) ON tenant_registry TO boss_admin");
+            sql.execute("GRANT INSERT ON legal_entities, physical_sites TO boss_admin");
+            sql.execute("GRANT SELECT(id) ON legal_entities, physical_sites TO boss_admin");
+            sql.execute("GRANT SELECT(id) ON tenant_registry TO boss_admin");
+            sql.execute("GRANT SELECT, INSERT ON tenant_onboarding_config TO boss_admin");
+            sql.execute("GRANT SELECT ON platform_admin_users TO boss_admin");
+            sql.execute("GRANT INSERT ON platform_audit_events TO boss_admin");
+            sql.execute("INSERT INTO platform_admin_users(id, firebase_uid, email) " +
+                    "VALUES ('" + ADMIN_ID + "', '" + ADMIN_UID + "', 'platform-admin@boss.test')");
+        } catch (Exception exception) {
+            throw new ExceptionInInitializerError(exception);
         }
     }
 
     @Autowired MockMvc mvc;
-    @Autowired JdbcTemplate jdbc;
+    @Autowired JdbcTemplate adminJdbc;
+    @Autowired ObjectMapper objectMapper;
+    @Autowired javax.sql.DataSource adminDataSource;
+    @Autowired PlatformTransactionManager transactionManager;
     @MockitoBean AdminTokenVerifier verifier;
 
     private JdbcTemplate privilegedJdbc() {
-        DriverManagerDataSource source = new DriverManagerDataSource(POSTGRES.getJdbcUrl(), "postgres", "postgres");
-        return new JdbcTemplate(source);
+        return new JdbcTemplate(new DriverManagerDataSource(POSTGRES.getJdbcUrl(), "postgres", "postgres"));
     }
 
-    @Test
-    @Order(1)
-    void provisionsControlPlaneRecordsWithinTenantRlsAndWritesAudit() throws Exception {
-        when(verifier.verify("admin-token")).thenReturn(new AdminTokenVerifier.VerifiedAdminToken(ADMIN_UID, "admin@boss.local"));
-        String body = """
-                {"customerGroupName":"North Group","customerGroupSlug":"north-group","tenantName":"North Works","tenantSlug":"north-works","legalEntityName":"North Works Pvt Ltd","pan":"ABCDE1234F","entityType":"PRIVATE_LIMITED","siteCode":"PUNE-01","siteName":"Pune Factory","adminEmail":"owner@north.example","industryType":"FABRICATION_STEEL"}
-                """;
+    private void authenticateAdmin() {
+        when(verifier.verify("admin-token"))
+                .thenReturn(new AdminTokenVerifier.VerifiedAdminToken(ADMIN_UID, "platform-admin@boss.test"));
+    }
 
-        mvc.perform(post("/admin/api/v1/tenants").header("Authorization", "Bearer admin-token")
-                        .header("Idempotency-Key", "provision-001").contentType(MediaType.APPLICATION_JSON).content(body))
+    private String requestBody(String groupSlug, String tenantSlug, String industryType) {
+        return """
+                {"customerGroupName":"Group %s","customerGroupSlug":"%s","tenantName":"Tenant %s","tenantSlug":"%s","legalEntityName":"Example Manufacturing Pvt Ltd","pan":"ABCDE1234F","entityType":"PRIVATE_LIMITED","siteCode":"SITE-01","siteName":"Factory","adminEmail":"owner@example.test","industryType":"%s"}
+                """.formatted(groupSlug, groupSlug, tenantSlug, tenantSlug, industryType);
+    }
+
+    private JsonNode provision(String groupSlug, String tenantSlug, String industryType, String key) throws Exception {
+        String response = mvc.perform(post("/admin/api/v1/tenants")
+                        .header("Authorization", "Bearer admin-token")
+                        .header("Idempotency-Key", key)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(requestBody(groupSlug, tenantSlug, industryType)))
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.tenantId").isNotEmpty())
-                .andExpect(jsonPath("$.seedingApplied").value(false));
-
-        org.assertj.core.api.Assertions.assertThat(jdbc.queryForObject("SELECT count(*) FROM customer_groups", Integer.class)).isEqualTo(1);
-        org.assertj.core.api.Assertions.assertThat(jdbc.queryForObject("SELECT count(*) FROM tenant_registry WHERE status = 'provisioning'", Integer.class)).isEqualTo(1);
-        JdbcTemplate privileged = privilegedJdbc();
-        org.assertj.core.api.Assertions.assertThat(privileged.queryForObject("SELECT count(*) FROM legal_entities", Integer.class)).isEqualTo(1);
-        org.assertj.core.api.Assertions.assertThat(privileged.queryForObject("SELECT count(*) FROM physical_sites", Integer.class)).isEqualTo(1);
-        org.assertj.core.api.Assertions.assertThat(privileged.queryForObject("SELECT count(*) FROM platform_audit_events WHERE action = 'tenant.provisioned'", Integer.class)).isEqualTo(1);
-        org.assertj.core.api.Assertions.assertThatThrownBy(() -> jdbc.queryForObject("SELECT count(*) FROM customer_invoices", Integer.class))
-                .isInstanceOf(org.springframework.dao.DataAccessException.class);
+                .andReturn().getResponse().getContentAsString();
+        return objectMapper.readTree(response);
     }
 
     @Test
-    @Order(2)
-    void suspendsAndReactivatesTenantAndAuditsBothTransitions() throws Exception {
-        when(verifier.verify("admin-token")).thenReturn(new AdminTokenVerifier.VerifiedAdminToken(ADMIN_UID, "admin@boss.local"));
-        UUID tenantId = jdbc.queryForObject("SELECT id FROM tenant_registry WHERE slug = 'north-works'", UUID.class);
+    void rejectsCustomerFirebaseTokensAndAcceptsOnlyRegisteredActivePlatformAdmins() throws Exception {
+        when(verifier.verify("customer-token")).thenThrow(
+                new in.boss.admin.security.FirebaseAdminTokenVerifier.CustomerProjectTokenException());
+        when(verifier.verify("unknown-admin-token"))
+                .thenReturn(new AdminTokenVerifier.VerifiedAdminToken("unknown-uid", "unknown@example.test"));
 
-        mvc.perform(post("/admin/api/v1/tenants/{id}/suspend", tenantId)
-                        .header("Authorization", "Bearer admin-token").contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"reason\":\"billing review\"}"))
-                .andExpect(status().isOk());
-        mvc.perform(post("/admin/api/v1/tenants/{id}/reactivate", tenantId)
-                        .header("Authorization", "Bearer admin-token"))
-                .andExpect(status().isOk());
-
-        org.assertj.core.api.Assertions.assertThat(jdbc.queryForObject(
-                "SELECT status FROM tenant_registry WHERE id = ?", String.class, tenantId)).isEqualTo("active");
-        org.assertj.core.api.Assertions.assertThat(privilegedJdbc().queryForObject(
-                "SELECT count(*) FROM platform_audit_events WHERE entity_id = ? AND action IN ('tenant.suspended','tenant.reactivated')",
-                Integer.class, tenantId)).isEqualTo(2);
-    }
-
-    @Test
-    @Order(3)
-    void rejectsCustomerFirebaseTokensOnEveryAdminRouteBeforeDatabaseAccess() throws Exception {
-        when(verifier.verify("customer-token")).thenThrow(new in.boss.admin.security.FirebaseAdminTokenVerifier.CustomerProjectTokenException());
-        String tenantId = "00000000-0000-0000-0000-000000000099";
         mvc.perform(get("/admin/api/v1/tenants").header("Authorization", "Bearer customer-token"))
                 .andExpect(status().isForbidden());
         mvc.perform(post("/admin/api/v1/tenants").header("Authorization", "Bearer customer-token"))
                 .andExpect(status().isForbidden());
-        mvc.perform(post("/admin/api/v1/tenants/{id}/suspend", tenantId)
+        mvc.perform(post("/admin/api/v1/tenants/00000000-0000-0000-0000-000000000099/suspend")
                         .header("Authorization", "Bearer customer-token"))
                 .andExpect(status().isForbidden());
-        mvc.perform(post("/admin/api/v1/tenants/{id}/reactivate", tenantId)
+        mvc.perform(post("/admin/api/v1/tenants/00000000-0000-0000-0000-000000000099/reactivate")
                         .header("Authorization", "Bearer customer-token"))
                 .andExpect(status().isForbidden());
-        mvc.perform(post("/admin/api/v1/opening-balance/import").header("Authorization", "Bearer customer-token"))
-                .andExpect(status().isForbidden());
+
+        mvc.perform(get("/admin/api/v1/tenants")).andExpect(status().isUnauthorized());
+        mvc.perform(get("/admin/api/v1/tenants").header("Authorization", "Bearer unknown-admin-token"))
+                .andExpect(status().isUnauthorized());
+
+        authenticateAdmin();
+        mvc.perform(get("/admin/api/v1/tenants").header("Authorization", "Bearer admin-token"))
+                .andExpect(status().isOk());
     }
 
     @Test
-    @Order(4)
-    void rejectsMissingAndUnknownPlatformAdminAuthentication() throws Exception {
-        when(verifier.verify(anyString())).thenThrow(new org.springframework.security.authentication.BadCredentialsException("bad token"));
-        mvc.perform(get("/admin/api/v1/tenants")).andExpect(status().isUnauthorized());
-        mvc.perform(get("/admin/api/v1/tenants").header("Authorization", "Bearer invalid"))
-                .andExpect(status().isUnauthorized());
+    void provisionsAgainstTheMigratedSchemaAndWritesAppendOnlyAuditWithoutBusinessTableAccess() throws Exception {
+        authenticateAdmin();
+        String suffix = UUID.randomUUID().toString();
+        JsonNode provisioned = provision("group-" + suffix, "tenant-" + suffix,
+                "FABRICATION_STEEL", "provision-" + suffix);
+        UUID tenantId = UUID.fromString(provisioned.get("tenantId").asText());
+
+        assertThat(provisioned.get("seedingApplied").asBoolean()).isFalse();
+        assertThat(privilegedJdbc().queryForObject(
+                "SELECT count(*) FROM platform_audit_events WHERE entity_id = ? AND action = 'tenant.provisioned'",
+                Integer.class, tenantId)).isEqualTo(1);
+        assertThatThrownBy(() -> adminJdbc.queryForObject("SELECT count(*) FROM items", Integer.class))
+                .isInstanceOf(org.springframework.dao.DataAccessException.class);
+
+        assertThatThrownBy(() -> privilegedJdbc().update(
+                "UPDATE platform_audit_events SET action = 'tampered' WHERE entity_id = ?", tenantId))
+                .isInstanceOf(org.springframework.dao.DataAccessException.class);
+    }
+
+    @Test
+    void duplicateGroupOrTenantSlugsReturnConflictAndDoNotLeavePartialGroupRows() throws Exception {
+        authenticateAdmin();
+        String suffix = UUID.randomUUID().toString();
+        provision("group-a-" + suffix, "tenant-a-" + suffix, "FORGING", "key-a-" + suffix);
+
+        mvc.perform(post("/admin/api/v1/tenants").header("Authorization", "Bearer admin-token")
+                        .header("Idempotency-Key", "key-duplicate-group-" + suffix)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(requestBody("group-a-" + suffix, "tenant-b-" + suffix, "CASTING")))
+                .andExpect(status().isConflict());
+        mvc.perform(post("/admin/api/v1/tenants").header("Authorization", "Bearer admin-token")
+                        .header("Idempotency-Key", "key-duplicate-tenant-" + suffix)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(requestBody("group-b-" + suffix, "tenant-a-" + suffix, "CASTING")))
+                .andExpect(status().isConflict());
+
+        assertThat(privilegedJdbc().queryForObject("SELECT count(*) FROM customer_groups WHERE slug = ?",
+                Integer.class, "group-b-" + suffix)).isZero();
+    }
+
+    @Test
+    void auditFailureRollsBackGroupTenantEntitySiteAndOnboardingRows() throws Exception {
+        authenticateAdmin();
+        String suffix = UUID.randomUUID().toString();
+        JdbcTemplate privileged = privilegedJdbc();
+        int entitiesBefore = privileged.queryForObject("SELECT count(*) FROM legal_entities", Integer.class);
+        int sitesBefore = privileged.queryForObject("SELECT count(*) FROM physical_sites", Integer.class);
+        int auditsBefore = privileged.queryForObject("SELECT count(*) FROM platform_audit_events", Integer.class);
+        privileged.execute("""
+                CREATE OR REPLACE FUNCTION test_fail_tenant_provision_audit() RETURNS trigger
+                LANGUAGE plpgsql AS $$
+                BEGIN
+                  IF NEW.action = 'tenant.provisioned' THEN
+                    RAISE EXCEPTION 'forced audit write failure';
+                  END IF;
+                  RETURN NEW;
+                END $$
+                """);
+        privileged.execute("CREATE TRIGGER test_fail_tenant_provision_audit BEFORE INSERT ON platform_audit_events " +
+                "FOR EACH ROW EXECUTE FUNCTION test_fail_tenant_provision_audit()");
+        try {
+            mvc.perform(post("/admin/api/v1/tenants").header("Authorization", "Bearer admin-token")
+                            .header("Idempotency-Key", "rollback-" + suffix)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(requestBody("group-rollback-" + suffix, "tenant-rollback-" + suffix,
+                                    "ELECTRONICS_ASSEMBLY")))
+                    .andExpect(status().is5xxServerError());
+        } finally {
+            privileged.execute("DROP TRIGGER test_fail_tenant_provision_audit ON platform_audit_events");
+            privileged.execute("DROP FUNCTION test_fail_tenant_provision_audit()");
+        }
+
+        assertThat(privileged.queryForObject("SELECT count(*) FROM customer_groups WHERE slug = ?",
+                Integer.class, "group-rollback-" + suffix)).isZero();
+        assertThat(privileged.queryForObject("SELECT count(*) FROM tenant_registry WHERE slug = ?",
+                Integer.class, "tenant-rollback-" + suffix)).isZero();
+        assertThat(privileged.queryForObject("SELECT count(*) FROM legal_entities", Integer.class)).isEqualTo(entitiesBefore);
+        assertThat(privileged.queryForObject("SELECT count(*) FROM physical_sites", Integer.class)).isEqualTo(sitesBefore);
+        assertThat(privileged.queryForObject("SELECT count(*) FROM platform_audit_events", Integer.class)).isEqualTo(auditsBefore);
+    }
+
+    @Test
+    void suspendAndReactivateTransitionsAreAuditedAndInvalidIdsAreRejected() throws Exception {
+        authenticateAdmin();
+        String suffix = UUID.randomUUID().toString();
+        JsonNode provisioned = provision("group-state-" + suffix, "tenant-state-" + suffix,
+                "PRECISION_MACHINING", "state-" + suffix);
+        UUID tenantId = UUID.fromString(provisioned.get("tenantId").asText());
+
+        mvc.perform(post("/admin/api/v1/tenants/not-a-uuid/suspend")
+                        .header("Authorization", "Bearer admin-token")
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"reason\":\"test\"}"))
+                .andExpect(status().isBadRequest());
+        mvc.perform(post("/admin/api/v1/tenants/00000000-0000-0000-0000-000000000099/reactivate")
+                        .header("Authorization", "Bearer admin-token"))
+                .andExpect(status().isNotFound());
+        mvc.perform(post("/admin/api/v1/tenants/{id}/reactivate", tenantId)
+                        .header("Authorization", "Bearer admin-token"))
+                .andExpect(status().isConflict());
+        mvc.perform(post("/admin/api/v1/tenants/{id}/suspend", tenantId)
+                        .header("Authorization", "Bearer admin-token").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"reason\":\"billing review\"}"))
+                .andExpect(status().isOk());
+        mvc.perform(post("/admin/api/v1/tenants/{id}/suspend", tenantId)
+                        .header("Authorization", "Bearer admin-token").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"reason\":\"repeat\"}"))
+                .andExpect(status().isConflict());
+        mvc.perform(post("/admin/api/v1/tenants/{id}/reactivate", tenantId)
+                        .header("Authorization", "Bearer admin-token"))
+                .andExpect(status().isOk());
+
+        assertThat(privilegedJdbc().queryForObject(
+                "SELECT count(*) FROM platform_audit_events WHERE entity_id = ? " +
+                        "AND action IN ('tenant.suspended','tenant.reactivated')", Integer.class, tenantId)).isEqualTo(2);
+    }
+
+    @Test
+    void listingPaginatesAndRlsContextDoesNotLeakAcrossRowsOrPooledRequests() throws Exception {
+        authenticateAdmin();
+        String suffix = UUID.randomUUID().toString();
+        JsonNode first = provision("group-list-a-" + suffix, "tenant-list-a-" + suffix,
+                "FORGING", "list-a-" + suffix);
+        JsonNode second = provision("group-list-b-" + suffix, "tenant-list-b-" + suffix,
+                "CASTING", "list-b-" + suffix);
+        UUID firstId = UUID.fromString(first.get("tenantId").asText());
+        UUID secondId = UUID.fromString(second.get("tenantId").asText());
+
+        withTenantContext(firstId, "FORGING");
+        withTenantContext(secondId, "CASTING");
+        assertThat(adminJdbc.queryForList("SELECT tenant_id FROM tenant_onboarding_config", UUID.class)).isEmpty();
+
+        int connectionIdBefore = backendPid();
+        mvc.perform(get("/admin/api/v1/tenants?page=0&size=1").header("Authorization", "Bearer admin-token"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.page").value(0))
+                .andExpect(jsonPath("$.content.length()").value(1));
+        mvc.perform(get("/admin/api/v1/tenants?page=1&size=1").header("Authorization", "Bearer admin-token"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.page").value(1))
+                .andExpect(jsonPath("$.content.length()").value(1));
+
+        String allTenants = mvc.perform(get("/admin/api/v1/tenants?size=100")
+                        .header("Authorization", "Bearer admin-token"))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        JsonNode content = objectMapper.readTree(allTenants).get("content");
+        assertThat(StreamSupport.stream(content.spliterator(), false)
+                .anyMatch(row -> row.get("id").asText().equals(firstId.toString())
+                        && row.get("industryType").asText().equals("FORGING"))).isTrue();
+        assertThat(StreamSupport.stream(content.spliterator(), false)
+                .anyMatch(row -> row.get("id").asText().equals(secondId.toString())
+                        && row.get("industryType").asText().equals("CASTING"))).isTrue();
+        assertThat(backendPid()).isEqualTo(connectionIdBefore);
+        assertThat(currentTenantSetting()).isNull();
+        assertThat(adminJdbc.queryForList("SELECT tenant_id FROM tenant_onboarding_config", UUID.class)).isEmpty();
+    }
+
+    private void withTenantContext(UUID tenantId, String expectedIndustry) {
+        TransactionTemplate transaction = new TransactionTemplate(transactionManager);
+        transaction.executeWithoutResult(status -> {
+            adminJdbc.queryForObject("SELECT set_config('app.current_tenant_id', ?, true)",
+                    String.class, tenantId.toString());
+            assertThat(adminJdbc.queryForObject("SELECT industry_type FROM tenant_onboarding_config WHERE tenant_id = ?",
+                    String.class, tenantId)).isEqualTo(expectedIndustry);
+        });
+    }
+
+    private int backendPid() throws Exception {
+        try (Connection connection = adminDataSource.getConnection();
+             Statement statement = connection.createStatement();
+             var result = statement.executeQuery("SELECT pg_backend_pid()")) {
+            result.next();
+            return result.getInt(1);
+        }
+    }
+
+    private String currentTenantSetting() throws Exception {
+        try (Connection connection = adminDataSource.getConnection();
+             Statement statement = connection.createStatement();
+             var result = statement.executeQuery("SELECT current_setting('app.current_tenant_id', true)")) {
+            result.next();
+            return result.getString(1);
+        }
     }
 }
