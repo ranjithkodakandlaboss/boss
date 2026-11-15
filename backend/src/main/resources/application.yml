@@ -14,7 +14,7 @@ spring:
       idle-timeout: 600000
       max-lifetime: 1800000
       data-source-properties:
-        _refresh_ahead: "false"
+        cloudSqlRefreshStrategy: lazy
 
   jpa:
     hibernate:
