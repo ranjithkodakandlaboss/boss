@@ -1,0 +1,11 @@
+spring:
+  jpa:
+    hibernate:
+      ddl-auto: validate
+
+boss:
+  firebase:
+    project-id: boss-test
+    credential-path: ""
+
+# Testcontainers sets the datasource URL via DynamicPropertySource

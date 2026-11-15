@@ -1,0 +1,49 @@
+# Maven
+backend/target/
+backend/.mvn/
+*.jar
+*.war
+*.nar
+*.ear
+
+# Java
+*.class
+hs_err_pid*
+
+# IDE
+.idea/
+*.iws
+*.iml
+*.ipr
+.vscode/
+.classpath
+.project
+.settings/
+
+# Node / Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.env.local
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Firebase credentials (never commit)
+*.json
+!package.json
+!package-lock.json
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker local volumes
+docker/volumes/
+
+# OpenTofu / Terraform state
+infra/.terraform/
+infra/*.tfstate
+infra/*.tfstate.*
+infra/.terraform.lock.hcl

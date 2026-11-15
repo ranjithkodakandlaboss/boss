@@ -1,0 +1,18 @@
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/boss
+    username: boss
+    password: boss
+
+  jpa:
+    show-sql: false
+
+logging:
+  level:
+    in.boss: DEBUG
+    org.flywaydb: INFO
+
+boss:
+  firebase:
+    project-id: boss-local
+    credential-path: ""
