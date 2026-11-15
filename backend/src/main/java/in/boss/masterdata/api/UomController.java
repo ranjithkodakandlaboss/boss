@@ -3,6 +3,7 @@ package in.boss.masterdata.api;
 import in.boss.masterdata.api.dto.CreateUomRequest;
 import in.boss.masterdata.api.dto.UomDto;
 import in.boss.masterdata.domain.UomService;
+import in.boss.shared.security.BossPermissions;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -30,20 +31,20 @@ public class UomController {
     }
 
     @GetMapping
-    @PreAuthorize("hasAnyRole('OWNER','OPS_MANAGER','SALES_MANAGER','PURCHASE_MANAGER','PRODUCTION_SUPERVISOR','STORE_KEEPER','ACCOUNTS_STAFF','QUALITY_INSPECTOR')")
+    @PreAuthorize(BossPermissions.ANY_TENANT_USER)
     public ResponseEntity<List<UomDto>> listUoms(@RequestParam(required = false) String uomType) {
         return ResponseEntity.ok(uomService.listUoms(uomType));
     }
 
     @GetMapping("/{id}")
-    @PreAuthorize("hasAnyRole('OWNER','OPS_MANAGER','SALES_MANAGER','PURCHASE_MANAGER','PRODUCTION_SUPERVISOR','STORE_KEEPER','ACCOUNTS_STAFF','QUALITY_INSPECTOR')")
+    @PreAuthorize(BossPermissions.ANY_TENANT_USER)
     public ResponseEntity<UomDto> getUom(@PathVariable UUID id) {
         return ResponseEntity.ok(uomService.getUom(id));
     }
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
-    @PreAuthorize("hasAnyRole('OWNER','OPS_MANAGER')")
+    @PreAuthorize(BossPermissions.OWNER_OR_OPS)
     public ResponseEntity<UomDto> createUom(@Valid @RequestBody CreateUomRequest request) {
         UomDto created = uomService.createUom(request);
         return ResponseEntity.status(HttpStatus.CREATED).body(created);

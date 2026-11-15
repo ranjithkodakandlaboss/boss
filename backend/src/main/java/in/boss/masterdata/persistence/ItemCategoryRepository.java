@@ -14,4 +14,5 @@ public interface ItemCategoryRepository extends JpaRepository<ItemCategoryEntity
     Optional<ItemCategoryEntity> findByIdAndTenantId(UUID id, UUID tenantId);
     Optional<ItemCategoryEntity> findByTenantIdAndCode(UUID tenantId, String code);
     boolean existsByTenantIdAndCode(UUID tenantId, String code);
+    boolean existsByTenantIdAndParentIdAndIsActiveTrue(UUID tenantId, UUID parentId);
 }

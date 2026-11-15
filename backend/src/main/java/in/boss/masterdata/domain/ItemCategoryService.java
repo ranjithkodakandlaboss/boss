@@ -10,4 +10,5 @@ public interface ItemCategoryService {
     List<ItemCategoryDto> listCategories();
     ItemCategoryDto getCategory(UUID id);
     ItemCategoryDto createCategory(CreateItemCategoryRequest request);
+    void deleteCategory(UUID id);
 }

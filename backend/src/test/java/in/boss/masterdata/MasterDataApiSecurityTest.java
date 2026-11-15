@@ -66,6 +66,7 @@ class MasterDataApiSecurityTest extends BaseMasterDataIntegrationTest {
 
         mockMvc.perform(post("/api/v1/items")
                         .with(user("field-worker").roles("FIELD_WORKER"))
+                        .header("Idempotency-Key", UUID.randomUUID().toString())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isForbidden());

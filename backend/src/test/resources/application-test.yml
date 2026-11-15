@@ -3,7 +3,7 @@ spring:
     hibernate:
       ddl-auto: validate
   flyway:
-    locations: classpath:db/test-migration
+    locations: classpath:db/migration
   cloud:
     gcp:
       pubsub:

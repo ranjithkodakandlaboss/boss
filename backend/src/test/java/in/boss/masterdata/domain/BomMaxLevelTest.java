@@ -34,6 +34,7 @@ class BomMaxLevelTest {
     @Mock BomLineRepository bomLineRepo;
     @Mock ItemRepository itemRepo;
     @Mock UnitOfMeasureRepository uomRepo;
+    @Mock in.boss.masterdata.persistence.UomConversionRepository uomConversionRepo;
     @Mock AuditService auditService;
 
     private BomService bomService;
@@ -41,7 +42,7 @@ class BomMaxLevelTest {
 
     @BeforeEach
     void setUp() {
-        bomService = new BomServiceImpl(bomHeaderRepo, bomLineRepo, itemRepo, uomRepo, auditService, null, null);
+        bomService = new BomServiceImpl(bomHeaderRepo, bomLineRepo, itemRepo, uomRepo, uomConversionRepo, auditService, null, null);
         BossContextHolder.set(new BossContext(tenantId, UUID.randomUUID(), Set.of("OWNER"), null, null));
     }
 

@@ -17,6 +17,7 @@ import in.boss.masterdata.persistence.BomLineEntity;
 import in.boss.masterdata.persistence.BomLineRepository;
 import in.boss.masterdata.persistence.ItemEntity;
 import in.boss.masterdata.persistence.ItemRepository;
+import in.boss.masterdata.persistence.UomConversionRepository;
 import in.boss.masterdata.persistence.UnitOfMeasureEntity;
 import in.boss.masterdata.persistence.UnitOfMeasureRepository;
 import in.boss.shared.audit.AuditService;
@@ -44,6 +45,7 @@ public class BomServiceImpl implements BomService {
     private final BomLineRepository bomLineRepository;
     private final ItemRepository itemRepository;
     private final UnitOfMeasureRepository uomRepository;
+    private final UomConversionRepository uomConversionRepository;
     private final AuditService auditService;
     private final MasterDataEventPublisher eventPublisher;
     private final ObjectMapper objectMapper;
@@ -52,6 +54,7 @@ public class BomServiceImpl implements BomService {
                           BomLineRepository bomLineRepository,
                           ItemRepository itemRepository,
                           UnitOfMeasureRepository uomRepository,
+                          UomConversionRepository uomConversionRepository,
                           AuditService auditService,
                           MasterDataEventPublisher eventPublisher,
                           ObjectMapper objectMapper) {
@@ -59,6 +62,7 @@ public class BomServiceImpl implements BomService {
         this.bomLineRepository = bomLineRepository;
         this.itemRepository = itemRepository;
         this.uomRepository = uomRepository;
+        this.uomConversionRepository = uomConversionRepository;
         this.auditService = auditService;
         this.eventPublisher = eventPublisher;
         this.objectMapper = objectMapper;
@@ -102,7 +106,7 @@ public class BomServiceImpl implements BomService {
             throw new ValidationException("BOM must contain at least one line");
         }
 
-        // Validate each line and check for direct circular references
+        // Validate each line and check for direct circular references and UOM compatibility
         for (CreateBOMLineRequest line : request.getLines()) {
             if (line.getComponentItemId() == null) {
                 throw new ValidationException("Component item ID is required");
@@ -129,8 +133,26 @@ public class BomServiceImpl implements BomService {
                 throw new ValidationException("Component item is inactive: " + line.getComponentItemId());
             }
 
-            uomRepository.findByIdAndTenantId(line.getUomId(), tenantId)
+            UnitOfMeasureEntity lineUom = uomRepository.findByIdAndTenantId(line.getUomId(), tenantId)
                     .orElseThrow(() -> new ValidationException("Invalid UOM ID: " + line.getUomId()));
+
+            // UOM compatibility validation
+            if (!line.getUomId().equals(compItem.getBaseUomId())) {
+                UnitOfMeasureEntity itemUom = uomRepository.findByIdAndTenantId(compItem.getBaseUomId(), tenantId).orElse(null);
+                boolean hasConversion = uomConversionRepository
+                        .findByTenantIdAndFromUomIdAndToUomId(tenantId, compItem.getBaseUomId(), line.getUomId())
+                        .isPresent()
+                        || uomConversionRepository
+                        .findByTenantIdAndFromUomIdAndToUomId(tenantId, line.getUomId(), compItem.getBaseUomId())
+                        .isPresent();
+
+                if (!hasConversion && itemUom != null && !lineUom.getUomType().equalsIgnoreCase(itemUom.getUomType())) {
+                    throw new ValidationException(String.format(
+                            "Incompatible UOM '%s' (%s) for component '%s' with base UOM '%s' (%s)",
+                            lineUom.getSymbol(), lineUom.getUomType(), compItem.getName(),
+                            itemUom.getSymbol(), itemUom.getUomType()));
+                }
+            }
         }
 
         // Circular reference and depth validation across descendant BOMs
@@ -198,21 +220,19 @@ public class BomServiceImpl implements BomService {
                     .build();
 
             savedLines.add(bomLineRepository.save(lineEntity));
-            seq++;
         }
 
         BOMHeaderDto dto = buildHeaderDto(savedHeader, item, savedLines, tenantId);
 
-        String action = existingActiveOpt.isPresent() ? "REVISE" : "CREATE";
-        auditService.record("BOM", savedHeader.getId(), action, null, toJson(dto));
-        eventPublisher.publishEvent("BOM", savedHeader.getId(), action.equals("REVISE") ? "BOM_REVISED" : "BOM_CREATED", dto);
+        auditService.record("BOM", savedHeader.getId(), "CREATE", null, toJson(dto));
+        eventPublisher.publishEvent("BOM", savedHeader.getId(), "BOM_CREATED", dto);
 
         return dto;
     }
 
-    private void checkCircularReference(UUID tenantId, UUID currentItem, UUID rootItem, Set<UUID> visited) {
-        if (currentItem.equals(rootItem)) {
-            throw new CircularReferenceException("Circular reference detected: item " + rootItem + " is referenced in descendant BOM");
+    private void checkCircularReference(UUID tenantId, UUID currentItem, UUID targetItem, Set<UUID> visited) {
+        if (currentItem.equals(targetItem)) {
+            throw new CircularReferenceException("Circular reference detected in BOM involving item: " + targetItem);
         }
         if (visited.contains(currentItem)) {
             return;
@@ -221,22 +241,26 @@ public class BomServiceImpl implements BomService {
 
         Optional<BomHeaderEntity> activeBomOpt = bomHeaderRepository
                 .findByTenantIdAndFinishedItemIdAndStatus(tenantId, currentItem, "approved");
-        if (activeBomOpt.isPresent()) {
-            List<BomLineEntity> lines = bomLineRepository.findByTenantIdAndBomHeaderId(tenantId, activeBomOpt.get().getId());
-            for (BomLineEntity line : lines) {
-                checkCircularReference(tenantId, line.getComponentItemId(), rootItem, visited);
-            }
+
+        if (activeBomOpt.isEmpty()) {
+            return;
+        }
+
+        List<BomLineEntity> lines = bomLineRepository.findByTenantIdAndBomHeaderId(tenantId, activeBomOpt.get().getId());
+        for (BomLineEntity line : lines) {
+            checkCircularReference(tenantId, line.getComponentItemId(), targetItem, visited);
         }
     }
 
     private int computeMaxSubDepth(UUID tenantId, UUID currentItem, Set<UUID> path) {
         if (path.contains(currentItem)) {
-            throw new CircularReferenceException("Circular reference detected in component hierarchy: " + currentItem);
+            throw new CircularReferenceException("Cycle detected while computing BOM depth at item: " + currentItem);
         }
         path.add(currentItem);
 
         Optional<BomHeaderEntity> activeBomOpt = bomHeaderRepository
                 .findByTenantIdAndFinishedItemIdAndStatus(tenantId, currentItem, "approved");
+
         if (activeBomOpt.isEmpty()) {
             path.remove(currentItem);
             return 1;

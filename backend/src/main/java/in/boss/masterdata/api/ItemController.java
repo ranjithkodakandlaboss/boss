@@ -10,6 +10,7 @@ import in.boss.masterdata.api.dto.UpdateItemRequest;
 import in.boss.masterdata.domain.BomExplosionService;
 import in.boss.masterdata.domain.BomService;
 import in.boss.masterdata.domain.ItemService;
+import in.boss.shared.security.BossPermissions;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -20,7 +21,6 @@ import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
@@ -46,7 +46,7 @@ public class ItemController {
     }
 
     @GetMapping
-    @PreAuthorize("hasAnyRole('OWNER','OPS_MANAGER','SALES_MANAGER','PURCHASE_MANAGER','PRODUCTION_SUPERVISOR','STORE_KEEPER','ACCOUNTS_STAFF','QUALITY_INSPECTOR')")
+    @PreAuthorize(BossPermissions.ANY_TENANT_USER)
     public ResponseEntity<PageResponse<ItemDto>> listItems(
             @RequestParam(required = false) String itemType,
             @RequestParam(required = false) UUID categoryId,
@@ -59,22 +59,20 @@ public class ItemController {
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
-    @PreAuthorize("hasAnyRole('OWNER','OPS_MANAGER','PURCHASE_MANAGER','STORE_KEEPER')")
-    public ResponseEntity<ItemDto> createItem(
-            @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
-            @Valid @RequestBody CreateItemRequest request) {
+    @PreAuthorize(BossPermissions.INVENTORY_WRITE + " or " + BossPermissions.PURCHASE_ACCESS)
+    public ResponseEntity<ItemDto> createItem(@Valid @RequestBody CreateItemRequest request) {
         ItemDto created = itemService.createItem(request);
         return ResponseEntity.status(HttpStatus.CREATED).body(created);
     }
 
     @GetMapping("/{itemId}")
-    @PreAuthorize("hasAnyRole('OWNER','OPS_MANAGER','SALES_MANAGER','PURCHASE_MANAGER','PRODUCTION_SUPERVISOR','STORE_KEEPER','ACCOUNTS_STAFF','QUALITY_INSPECTOR')")
+    @PreAuthorize(BossPermissions.ANY_TENANT_USER)
     public ResponseEntity<ItemDto> getItem(@PathVariable UUID itemId) {
         return ResponseEntity.ok(itemService.getItem(itemId));
     }
 
     @PatchMapping("/{itemId}")
-    @PreAuthorize("hasAnyRole('OWNER','OPS_MANAGER','PURCHASE_MANAGER','STORE_KEEPER')")
+    @PreAuthorize(BossPermissions.INVENTORY_WRITE + " or " + BossPermissions.PURCHASE_ACCESS)
     public ResponseEntity<ItemDto> updateItem(
             @PathVariable UUID itemId,
             @RequestBody UpdateItemRequest request) {
@@ -83,21 +81,21 @@ public class ItemController {
 
     @DeleteMapping("/{itemId}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
-    @PreAuthorize("hasAnyRole('OWNER','OPS_MANAGER')")
+    @PreAuthorize(BossPermissions.OWNER_OR_OPS)
     public ResponseEntity<Void> deleteItem(@PathVariable UUID itemId) {
         itemService.deleteItem(itemId);
         return ResponseEntity.noContent().build();
     }
 
     @GetMapping("/{itemId}/bom")
-    @PreAuthorize("hasAnyRole('OWNER','OPS_MANAGER','SALES_MANAGER','PURCHASE_MANAGER','PRODUCTION_SUPERVISOR','STORE_KEEPER','ACCOUNTS_STAFF','QUALITY_INSPECTOR')")
+    @PreAuthorize(BossPermissions.ANY_TENANT_USER)
     public ResponseEntity<BOMHeaderDto> getItemBOM(@PathVariable UUID itemId) {
         return ResponseEntity.ok(bomService.getItemBOM(itemId));
     }
 
     @PostMapping("/{itemId}/bom")
     @ResponseStatus(HttpStatus.CREATED)
-    @PreAuthorize("hasAnyRole('OWNER','OPS_MANAGER','PRODUCTION_SUPERVISOR')")
+    @PreAuthorize(BossPermissions.PRODUCTION_ACCESS)
     public ResponseEntity<BOMHeaderDto> createOrReviseBOM(
             @PathVariable UUID itemId,
             @Valid @RequestBody CreateBOMRequest request) {
@@ -106,10 +104,10 @@ public class ItemController {
     }
 
     @GetMapping("/{itemId}/bom/explode")
-    @PreAuthorize("hasAnyRole('OWNER','OPS_MANAGER','SALES_MANAGER','PURCHASE_MANAGER','PRODUCTION_SUPERVISOR','STORE_KEEPER','ACCOUNTS_STAFF','QUALITY_INSPECTOR')")
+    @PreAuthorize(BossPermissions.ANY_TENANT_USER)
     public ResponseEntity<BOMExplosionResultDto> explodeBOM(
             @PathVariable UUID itemId,
-            @RequestParam(required = false, defaultValue = "1") BigDecimal qty) {
-        return ResponseEntity.ok(bomExplosionService.explodeBOM(itemId, qty));
+            @RequestParam(required = false) BigDecimal quantity) {
+        return ResponseEntity.ok(bomExplosionService.explodeBOM(itemId, quantity));
     }
 }

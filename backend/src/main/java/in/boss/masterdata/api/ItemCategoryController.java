@@ -3,10 +3,12 @@ package in.boss.masterdata.api;
 import in.boss.masterdata.api.dto.CreateItemCategoryRequest;
 import in.boss.masterdata.api.dto.ItemCategoryDto;
 import in.boss.masterdata.domain.ItemCategoryService;
+import in.boss.shared.security.BossPermissions;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -31,7 +33,7 @@ public class ItemCategoryController {
     }
 
     @GetMapping("/config/options/ITEM_CATEGORY")
-    @PreAuthorize("hasAnyRole('OWNER','OPS_MANAGER','SALES_MANAGER','PURCHASE_MANAGER','PRODUCTION_SUPERVISOR','STORE_KEEPER','ACCOUNTS_STAFF','QUALITY_INSPECTOR')")
+    @PreAuthorize(BossPermissions.ANY_TENANT_USER)
     public ResponseEntity<List<Map<String, Object>>> getItemCategoryConfigOptions() {
         List<ItemCategoryDto> categories = categoryService.listCategories();
         List<Map<String, Object>> options = categories.stream()
@@ -47,22 +49,30 @@ public class ItemCategoryController {
     }
 
     @GetMapping("/item-categories")
-    @PreAuthorize("hasAnyRole('OWNER','OPS_MANAGER','SALES_MANAGER','PURCHASE_MANAGER','PRODUCTION_SUPERVISOR','STORE_KEEPER','ACCOUNTS_STAFF','QUALITY_INSPECTOR')")
+    @PreAuthorize(BossPermissions.ANY_TENANT_USER)
     public ResponseEntity<List<ItemCategoryDto>> listCategories() {
         return ResponseEntity.ok(categoryService.listCategories());
     }
 
     @GetMapping("/item-categories/{id}")
-    @PreAuthorize("hasAnyRole('OWNER','OPS_MANAGER','SALES_MANAGER','PURCHASE_MANAGER','PRODUCTION_SUPERVISOR','STORE_KEEPER','ACCOUNTS_STAFF','QUALITY_INSPECTOR')")
+    @PreAuthorize(BossPermissions.ANY_TENANT_USER)
     public ResponseEntity<ItemCategoryDto> getCategory(@PathVariable UUID id) {
         return ResponseEntity.ok(categoryService.getCategory(id));
     }
 
     @PostMapping("/item-categories")
     @ResponseStatus(HttpStatus.CREATED)
-    @PreAuthorize("hasAnyRole('OWNER','OPS_MANAGER')")
+    @PreAuthorize(BossPermissions.OWNER_OR_OPS)
     public ResponseEntity<ItemCategoryDto> createCategory(@Valid @RequestBody CreateItemCategoryRequest request) {
         ItemCategoryDto created = categoryService.createCategory(request);
         return ResponseEntity.status(HttpStatus.CREATED).body(created);
+    }
+
+    @DeleteMapping("/item-categories/{id}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    @PreAuthorize(BossPermissions.OWNER_OR_OPS)
+    public ResponseEntity<Void> deleteCategory(@PathVariable UUID id) {
+        categoryService.deleteCategory(id);
+        return ResponseEntity.noContent().build();
     }
 }
