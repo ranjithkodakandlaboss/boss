@@ -1,5 +1,6 @@
 # Maven
 backend/target/
+backend/platform-admin-api/target/
 backend/.mvn/
 *.jar
 *.war
