@@ -1,0 +1,324 @@
+openapi: "3.1.0"
+info:
+  title: BOSS Finance API
+  version: "1.0.0"
+  description: |
+    Customer invoices (with GST), receipts and AR, supplier bills, three-way match, AP payments.
+
+    **IRN:** Blocked on FD-39. For customers with AATO > ₹5 crore, B2B invoices require IRN registration
+    via IRP. IRN integration endpoint is conditional — only enabled after FD-39 is resolved.
+
+    **Invoice numbering:** Sequential per financial year per GSTIN. Uses pessimistic lock to guarantee
+    no gaps. Financial year runs April–March.
+
+servers:
+  - url: https://api.boss.app/api/v1
+
+security:
+  - firebaseBearer: []
+
+components:
+  securitySchemes:
+    firebaseBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    Invoice:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        invoiceNumber: { type: string }
+        invoiceDate: { type: string, format: date }
+        customerId: { type: string, format: uuid }
+        customerName: { type: string }
+        customerGstin: { type: string, nullable: true }
+        gstRegId: { type: string, format: uuid }
+        supplyType: { type: string, enum: [INTRA_STATE, INTER_STATE, EXPORT] }
+        status:
+          type: string
+          enum: [draft, finalized, irn_pending, irn_registered, cancelled, credit_note_issued]
+        irn: { type: string, nullable: true }
+        irnAckNumber: { type: string, nullable: true }
+        irnAckDate: { type: string, format: date-time, nullable: true }
+        lines:
+          type: array
+          items: { $ref: '#/components/schemas/InvoiceLine' }
+        subTotal: { type: number }
+        cgstTotal: { type: number }
+        sgstTotal: { type: number }
+        igstTotal: { type: number }
+        totalAmount: { type: number }
+        amountPaid: { type: number }
+        amountDue: { type: number }
+        createdAt: { type: string, format: date-time }
+
+    InvoiceLine:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        dispatchLineId: { type: string, format: uuid }
+        itemId: { type: string, format: uuid }
+        itemCode: { type: string }
+        description: { type: string }
+        hsnCode: { type: string, nullable: true }
+        qty: { type: number }
+        uomSymbol: { type: string }
+        unitPrice: { type: number }
+        lineTotal: { type: number }
+        gstRate: { type: number }
+        cgstAmt: { type: number }
+        sgstAmt: { type: number }
+        igstAmt: { type: number }
+
+    Receipt:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        receiptNumber: { type: string }
+        customerId: { type: string, format: uuid }
+        customerName: { type: string }
+        amount: { type: number }
+        paymentMethodId: { type: string, format: uuid, nullable: true }
+        paymentMethodLabel: { type: string, nullable: true }
+        paymentDate: { type: string, format: date }
+        reference: { type: string, nullable: true }
+        allocations:
+          type: array
+          items: { $ref: '#/components/schemas/ReceiptAllocation' }
+        createdAt: { type: string, format: date-time }
+
+    ReceiptAllocation:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        invoiceId: { type: string, format: uuid }
+        invoiceNumber: { type: string }
+        allocatedAmount: { type: number }
+
+    SupplierBill:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        billNumber: { type: string }
+        supplierId: { type: string, format: uuid }
+        supplierName: { type: string }
+        spoId: { type: string, format: uuid, nullable: true }
+        grnId: { type: string, format: uuid, nullable: true }
+        status: { type: string, enum: [received, matched, discrepancy, approved, paid] }
+        threeWayMatchStatus: { type: string, enum: [pending, matched, discrepancy], nullable: true }
+        billDate: { type: string, format: date }
+        billAmount: { type: number }
+        paidAmount: { type: number }
+        amountDue: { type: number }
+
+paths:
+  /invoices:
+    get:
+      operationId: listInvoices
+      summary: List invoices
+      tags: [Invoices]
+      parameters:
+        - name: customerId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: status
+          in: query
+          schema: { type: string }
+        - name: fromDate
+          in: query
+          schema: { type: string, format: date }
+        - name: toDate
+          in: query
+          schema: { type: string, format: date }
+        - name: page
+          in: query
+          schema: { type: integer, default: 0 }
+        - name: size
+          in: query
+          schema: { type: integer, default: 50 }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  content: { type: array, items: { $ref: '#/components/schemas/Invoice' } }
+                  page: { type: integer }
+                  totalElements: { type: integer }
+
+    post:
+      operationId: createInvoice
+      summary: Create invoice from dispatch
+      description: |
+        Sequential number assigned with pessimistic lock (SELECT ... FOR UPDATE on invoice_sequence_counters).
+        GST calculated based on supply_type (CGST+SGST for intra-state; IGST for inter-state).
+      tags: [Invoices]
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [dispatchId, gstRegId, invoiceDate]
+              properties:
+                dispatchId: { type: string, format: uuid }
+                gstRegId: { type: string, format: uuid }
+                invoiceDate: { type: string, format: date }
+      responses:
+        '201':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Invoice' }
+        '400': { description: Dispatch not in delivered status or already invoiced }
+        '409': { description: Idempotency key already processed }
+
+  /invoices/{invoiceId}:
+    get:
+      operationId: getInvoice
+      tags: [Invoices]
+      parameters:
+        - name: invoiceId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Invoice' }
+
+  /receipts:
+    post:
+      operationId: createReceipt
+      summary: Record a customer payment receipt
+      tags: [Receipts]
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [customerId, amount, paymentDate]
+              properties:
+                customerId: { type: string, format: uuid }
+                amount: { type: number, minimum: 0.01 }
+                paymentDate: { type: string, format: date }
+                paymentMethodId: { type: string, format: uuid, nullable: true }
+                paymentMethodLabel: { type: string, nullable: true }
+                reference: { type: string, nullable: true }
+                allocations:
+                  type: array
+                  items:
+                    type: object
+                    required: [invoiceId, amount]
+                    properties:
+                      invoiceId: { type: string, format: uuid }
+                      amount: { type: number, minimum: 0.01 }
+      responses:
+        '201':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Receipt' }
+        '400': { description: Allocation total exceeds receipt amount or invoice amount due }
+
+  /supplier-bills:
+    get:
+      operationId: listSupplierBills
+      tags: [Supplier Bills]
+      parameters:
+        - name: supplierId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: status
+          in: query
+          schema: { type: string }
+        - name: page
+          in: query
+          schema: { type: integer, default: 0 }
+        - name: size
+          in: query
+          schema: { type: integer, default: 50 }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  content: { type: array, items: { $ref: '#/components/schemas/SupplierBill' } }
+                  page: { type: integer }
+                  totalElements: { type: integer }
+
+    post:
+      operationId: createSupplierBill
+      summary: Record a supplier invoice received
+      tags: [Supplier Bills]
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [supplierId, spoId, grnId, billDate, billAmount]
+              properties:
+                supplierId: { type: string, format: uuid }
+                spoId: { type: string, format: uuid }
+                grnId: { type: string, format: uuid }
+                billDate: { type: string, format: date }
+                billAmount: { type: number }
+                supplierBillRef: { type: string }
+      responses:
+        '201':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SupplierBill' }
+
+  /supplier-bills/{billId}/three-way-match:
+    post:
+      operationId: runThreeWayMatch
+      summary: Run three-way match (SPO qty vs GRN qty vs bill amount)
+      tags: [Supplier Bills]
+      parameters:
+        - name: billId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  billId: { type: string, format: uuid }
+                  matchStatus: { type: string, enum: [matched, discrepancy] }
+                  spoAmount: { type: number }
+                  grnAmount: { type: number }
+                  billAmount: { type: number }
+                  discrepancies:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        line: { type: string }
+                        expected: { type: number }
+                        actual: { type: number }
+                        variance: { type: number }

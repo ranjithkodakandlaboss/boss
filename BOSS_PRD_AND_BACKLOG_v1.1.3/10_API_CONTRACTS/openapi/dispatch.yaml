@@ -1,0 +1,223 @@
+openapi: "3.1.0"
+info:
+  title: BOSS Dispatch and Packing API
+  version: "1.0.0"
+  description: |
+    Packing specifications and dispatch execution.
+
+    Dispatch flow (gated by quality result — see quality.yaml for quality gate):
+    - Packing specifications are managed here (EPIC-17-S002)
+    - Dispatch creation, POD, and clearance certificates are in quality.yaml
+
+    Cross-reference quality.yaml paths:
+    - POST /dispatches          — create dispatch (requires quality PASS or CONCESSION_GRANTED)
+    - POST /dispatches/{id}/pod — record proof of delivery
+    - POST /clearance-certificates — customer clearance certificate
+
+servers:
+  - url: https://api.boss.app/api/v1
+
+security:
+  - firebaseBearer: []
+
+components:
+  securitySchemes:
+    firebaseBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    PackingSpec:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        itemId: { type: string, format: uuid }
+        itemCode: { type: string }
+        itemName: { type: string }
+        packingTypeId: { type: string, format: uuid, nullable: true }
+        packingTypeLabel: { type: string, nullable: true }
+        unitsPerPack: { type: integer, nullable: true }
+        packWeight: { type: number, nullable: true }
+        packWeightUom: { type: string, nullable: true }
+        packDimensions: { $ref: '#/components/schemas/Dimensions' }
+        labelInstructions: { type: string, nullable: true }
+        handlingInstructions: { type: string, nullable: true }
+        isActive: { type: boolean }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    Dimensions:
+      type: object
+      nullable: true
+      properties:
+        length: { type: number }
+        width: { type: number }
+        height: { type: number }
+        unit: { type: string, enum: [mm, cm, m, in] }
+
+    PackingSpecCreateRequest:
+      type: object
+      required: [itemId]
+      properties:
+        itemId: { type: string, format: uuid }
+        packingTypeId: { type: string, format: uuid, nullable: true }
+        unitsPerPack: { type: integer, nullable: true }
+        packWeight: { type: number, nullable: true }
+        packWeightUom: { type: string, nullable: true }
+        packDimensions: { $ref: '#/components/schemas/Dimensions' }
+        labelInstructions: { type: string, nullable: true }
+        handlingInstructions: { type: string, nullable: true }
+
+    DispatchPackingRecord:
+      type: object
+      description: Actual packing applied during dispatch execution (snapshot of spec at dispatch time)
+      properties:
+        id: { type: string, format: uuid }
+        dispatchId: { type: string, format: uuid }
+        packingSpecId: { type: string, format: uuid, nullable: true }
+        packingTypeId: { type: string, format: uuid, nullable: true }
+        packingTypeLabel: { type: string, nullable: true }
+        actualPacksCount: { type: integer }
+        actualGrossWeight: { type: number, nullable: true }
+        packingNote: { type: string, nullable: true }
+        recordedAt: { type: string, format: date-time }
+
+    PagedPackingSpecs:
+      type: object
+      properties:
+        content: { type: array, items: { $ref: '#/components/schemas/PackingSpec' } }
+        totalElements: { type: integer }
+        totalPages: { type: integer }
+        page: { type: integer }
+        size: { type: integer }
+
+paths:
+  /packing-specs:
+    get:
+      operationId: listPackingSpecs
+      summary: List packing specifications
+      tags: [Packing Specifications]
+      parameters:
+        - name: itemId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: isActive
+          in: query
+          schema: { type: boolean }
+        - name: page
+          in: query
+          schema: { type: integer, default: 0 }
+        - name: size
+          in: query
+          schema: { type: integer, default: 20 }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PagedPackingSpecs' }
+    post:
+      operationId: createPackingSpec
+      summary: Create packing specification for an item
+      tags: [Packing Specifications]
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PackingSpecCreateRequest' }
+      responses:
+        "201":
+          description: Packing spec created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PackingSpec' }
+        "409":
+          description: Active packing spec already exists for this item
+
+  /packing-specs/{id}:
+    get:
+      operationId: getPackingSpec
+      summary: Get packing spec by ID
+      tags: [Packing Specifications]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PackingSpec' }
+        "404": { description: Not found }
+    put:
+      operationId: updatePackingSpec
+      summary: Update packing specification
+      tags: [Packing Specifications]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PackingSpecCreateRequest' }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PackingSpec' }
+
+  /dispatches/{dispatchId}/packing:
+    post:
+      operationId: recordDispatchPacking
+      summary: Record actual packing for a dispatch (snapshot preserved on dispatch record)
+      description: |
+        Called during dispatch execution to record actual packing. The spec values are
+        snapshotted onto the dispatch record so historical display is accurate even if
+        the packing spec is later revised. Requires dispatch to be in `pending` status.
+      tags: [Packing Specifications]
+      parameters:
+        - name: dispatchId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [actualPacksCount]
+              properties:
+                packingSpecId: { type: string, format: uuid, nullable: true }
+                packingTypeId: { type: string, format: uuid, nullable: true }
+                actualPacksCount: { type: integer }
+                actualGrossWeight: { type: number, nullable: true }
+                packingNote: { type: string, nullable: true }
+      responses:
+        "201":
+          description: Packing recorded
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DispatchPackingRecord' }
+        "409":
+          description: Packing already recorded for this dispatch

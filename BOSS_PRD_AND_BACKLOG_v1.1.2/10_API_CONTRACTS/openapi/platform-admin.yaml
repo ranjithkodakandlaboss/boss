@@ -1,0 +1,211 @@
+openapi: "3.1.0"
+info:
+  title: BOSS Platform Admin API
+  version: "1.0.0"
+  description: |
+    Internal BOSS operations: tenant provisioning, activation/suspension,
+    industry defaults management, and opening balance migration.
+
+    **Auth:** This API uses a SEPARATE Firebase project. Customer JWTs are REJECTED
+    with 403 (AdminApiCustomerTokenRejectionTest must pass).
+
+    **Base URL:** Different service — boss-admin-api, NOT boss-api.
+
+servers:
+  - url: https://admin-api.boss.app/admin/api/v1
+    description: Production admin
+  - url: https://admin-api-dev.boss.app/admin/api/v1
+    description: Development admin
+
+security:
+  - adminFirebaseBearer: []
+
+components:
+  securitySchemes:
+    adminFirebaseBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Admin-specific Firebase ID token (separate Firebase project)
+
+  schemas:
+    TenantProvisionRequest:
+      type: object
+      required: [customerGroupName, tenantName, tenantSlug, legalEntityName, pan, entityType, siteCode, siteName, industryType]
+      properties:
+        customerGroupName: { type: string }
+        customerGroupSlug: { type: string }
+        tenantName: { type: string }
+        tenantSlug: { type: string }
+        planTier: { type: string, default: pilot }
+        legalEntityName: { type: string }
+        pan: { type: string, pattern: '^[A-Z]{5}[0-9]{4}[A-Z]$' }
+        entityType:
+          type: string
+          enum: [PRIVATE_LIMITED, LLP, SOLE_PROPRIETORSHIP, PARTNERSHIP, PUBLIC_LIMITED, HUF, OTHER]
+        siteCode: { type: string }
+        siteName: { type: string }
+        adminEmail: { type: string, format: email }
+        industryType:
+          type: string
+          enum: [FABRICATION_STEEL, PRECISION_MACHINING, ELECTRONICS_ASSEMBLY, FORGING, CASTING, GENERAL_MANUFACTURING]
+
+    ProvisionResult:
+      type: object
+      properties:
+        tenantId: { type: string, format: uuid }
+        customerGroupId: { type: string, format: uuid }
+        legalEntityId: { type: string, format: uuid }
+        siteId: { type: string, format: uuid }
+        adminInviteToken: { type: string }
+        seedingApplied: { type: boolean }
+
+    OpeningBalanceImportRequest:
+      type: object
+      required: [tenantId, importType]
+      properties:
+        tenantId: { type: string, format: uuid }
+        importType:
+          type: string
+          enum: [INVENTORY, AR, AP, ALL]
+        dryRun: { type: boolean, default: true }
+        fileGcsPath: { type: string }
+
+    OpeningBalanceResult:
+      type: object
+      properties:
+        tenantId: { type: string, format: uuid }
+        importType: { type: string }
+        dryRun: { type: boolean }
+        rowsProcessed: { type: integer }
+        rowsSucceeded: { type: integer }
+        rowsFailed: { type: integer }
+        errors:
+          type: array
+          items:
+            type: object
+            properties:
+              row: { type: integer }
+              field: { type: string }
+              message: { type: string }
+
+paths:
+  /tenants:
+    post:
+      operationId: provisionTenant
+      summary: Provision a new tenant (atomic — creates group, tenant, entity, site, seeds defaults)
+      tags: [Tenant Management]
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TenantProvisionRequest' }
+      responses:
+        '201':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProvisionResult' }
+        '400': { description: Validation error — invalid PAN, duplicate slug }
+        '409': { description: Tenant slug already exists }
+
+    get:
+      operationId: listTenants
+      summary: List all tenants
+      tags: [Tenant Management]
+      parameters:
+        - name: status
+          in: query
+          schema: { type: string, enum: [provisioning, active, suspended, archived] }
+        - name: page
+          in: query
+          schema: { type: integer, default: 0 }
+        - name: size
+          in: query
+          schema: { type: integer, default: 50 }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  content:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string, format: uuid }
+                        name: { type: string }
+                        slug: { type: string }
+                        status: { type: string }
+                        planTier: { type: string }
+                        industryType: { type: string }
+                  page: { type: integer }
+                  totalElements: { type: integer }
+
+  /tenants/{tenantId}/suspend:
+    post:
+      operationId: suspendTenant
+      summary: Suspend a tenant (all API calls return 403 immediately)
+      tags: [Tenant Management]
+      parameters:
+        - name: tenantId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason: { type: string }
+      responses:
+        '200': { description: Tenant suspended }
+        '409': { description: Tenant is already suspended }
+
+  /tenants/{tenantId}/reactivate:
+    post:
+      operationId: reactivateTenant
+      summary: Reactivate a suspended tenant
+      tags: [Tenant Management]
+      parameters:
+        - name: tenantId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200': { description: Tenant reactivated }
+
+  /opening-balance/import:
+    post:
+      operationId: importOpeningBalance
+      summary: Import opening balance data (inventory, AR, AP)
+      description: |
+        Run with dryRun=true first to preview errors.
+        Run with dryRun=false to commit.
+        CSV file must be uploaded to GCS and path provided.
+      tags: [Opening Balance Migration]
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/OpeningBalanceImportRequest' }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OpeningBalanceResult' }
+        '400': { description: File not found or malformed }

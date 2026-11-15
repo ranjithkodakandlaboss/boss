@@ -1,0 +1,111 @@
+openapi: "3.1.0"
+info:
+  title: BOSS WhatsApp Integration API
+  version: "1.0.0"
+  description: |
+    WhatsApp Business Platform webhook receiver and 4 confirmed workflows.
+
+    **BLOCKED:** FD-45/46 (WABA registration and BSP selection) must be resolved.
+
+    **HMAC verification:** All webhook requests must pass HMAC-SHA256 signature check
+    before processing. Invalid signatures return 401 and are not processed.
+
+    **Deterministic only:** No unstructured AI chatbot. Commands are fixed patterns.
+    Webhook: POST /api/v1/whatsapp/webhook (public, verified by HMAC)
+    Provider-independent: BSP adapter interface abstracts Interakt/Wati/others.
+
+servers:
+  - url: https://api.boss.app/api/v1
+
+components:
+  schemas:
+    WebhookPayload:
+      type: object
+      description: BSP-normalised webhook payload (provider-independent internal format)
+      properties:
+        wamid: { type: string, description: "WhatsApp message ID — used for deduplication" }
+        from: { type: string, description: "Sender phone number in E.164 format" }
+        type: { type: string, enum: [text, image, document, button_reply, list_reply] }
+        text: { type: string, nullable: true }
+        mediaId: { type: string, nullable: true }
+        timestamp: { type: string, format: date-time }
+
+paths:
+  /whatsapp/webhook:
+    get:
+      operationId: verifyWebhook
+      summary: WhatsApp webhook verification (GET — BSP hub.challenge)
+      description: |
+        BSP sends GET with hub.mode=subscribe, hub.challenge, hub.verify_token.
+        BOSS returns hub.challenge if verify_token matches configured secret.
+      tags: [Webhook]
+      parameters:
+        - name: hub.mode
+          in: query
+          schema: { type: string }
+        - name: hub.challenge
+          in: query
+          schema: { type: string }
+        - name: hub.verify_token
+          in: query
+          schema: { type: string }
+      responses:
+        '200':
+          description: Returns hub.challenge as plain text
+          content:
+            text/plain:
+              schema: { type: string }
+        '403': { description: Invalid verify token }
+
+    post:
+      operationId: receiveMessage
+      summary: Receive incoming WhatsApp message (POST — HMAC verified)
+      description: |
+        1. Verify HMAC-SHA256 signature in X-Hub-Signature-256 header.
+        2. Deduplicate by wamid (idempotency_keys table).
+        3. Dispatch to appropriate workflow handler.
+        4. Return 200 immediately (async processing via Cloud Tasks).
+
+        Workflow routing (by message text pattern):
+        - "JOB STATUS {job_number}" → Workflow 1: job status query
+        - "UPDATE {job_number} STAGE {stage} COMPLETE" → Workflow 2: stage update
+        - "INSPECT {job_number} STAGE {stage} PASS|FAIL" → Workflow 3: inspection update
+        - Photo/image message → Workflow 4: photo attachment
+      tags: [Webhook]
+      parameters:
+        - name: X-Hub-Signature-256
+          in: header
+          required: true
+          schema: { type: string }
+          description: "sha256={hmac_hex}"
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WebhookPayload' }
+      responses:
+        '200': { description: Acknowledged — processing async }
+        '401': { description: HMAC signature invalid }
+
+  /whatsapp/users/{phone}:
+    get:
+      operationId: lookupWhatsAppUser
+      summary: Look up BOSS user by WhatsApp phone number
+      description: Used internally to resolve tenant and permissions from phone number.
+      tags: [User Mapping]
+      parameters:
+        - name: phone
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  userId: { type: string, format: uuid }
+                  tenantId: { type: string, format: uuid }
+                  roles: { type: array, items: { type: string } }
+                  displayName: { type: string }
+        '404': { description: No BOSS user registered with this WhatsApp number }

@@ -1,0 +1,623 @@
+openapi: "3.1.0"
+info:
+  title: BOSS Sales API
+  version: "1.0.0"
+  description: |
+    RFQ, Quotation (with negotiation history), Customer Purchase Orders (CPO), and Feasibility.
+
+    **Quotation negotiation:** Each counter-offer round is stored in quotation_negotiation_history.
+    Material cost from BOM is shown when responding to counter-offer.
+
+    **Selling price lock:** Once a CPO is confirmed, the selling price from the quotation is locked.
+    Job costing shows variance against this price. It must never be modified.
+
+servers:
+  - url: https://api.boss.app/api/v1
+
+security:
+  - firebaseBearer: []
+
+components:
+  securitySchemes:
+    firebaseBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    RFQ:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        rfqNumber: { type: string }
+        customerId: { type: string, format: uuid }
+        customerName: { type: string }
+        rfqTypeId: { type: string, format: uuid, nullable: true }
+        rfqTypeLabel: { type: string, nullable: true }
+        status: { type: string, enum: [draft, sent, quoted, closed, cancelled] }
+        requiredDate: { type: string, format: date, nullable: true }
+        lines:
+          type: array
+          items: { $ref: '#/components/schemas/RFQLine' }
+        createdAt: { type: string, format: date-time }
+
+    RFQLine:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        seq: { type: integer }
+        itemId: { type: string, format: uuid }
+        itemCode: { type: string }
+        itemName: { type: string }
+        qty: { type: number }
+        uomSymbol: { type: string }
+        customerSpecRef: { type: string, nullable: true }
+
+    Quotation:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        quotationNumber: { type: string }
+        rfqId: { type: string, format: uuid, nullable: true }
+        customerId: { type: string, format: uuid }
+        customerName: { type: string }
+        revision: { type: integer }
+        status:
+          type: string
+          enum: [draft, sent, negotiating, accepted, rejected, superseded, expired]
+        validUntil: { type: string, format: date, nullable: true }
+        estimatedMaterialCost: { type: number, nullable: true }
+        lines:
+          type: array
+          items: { $ref: '#/components/schemas/QuotationLine' }
+        negotiationHistory:
+          type: array
+          items: { $ref: '#/components/schemas/NegotiationEntry' }
+        createdAt: { type: string, format: date-time }
+
+    QuotationLine:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        itemId: { type: string, format: uuid }
+        itemCode: { type: string }
+        itemName: { type: string }
+        qty: { type: number }
+        uomSymbol: { type: string }
+        unitPrice: { type: number }
+        lineTotal: { type: number }
+        estimatedMaterialCostPerUnit: { type: number, nullable: true }
+        marginPct: { type: number, nullable: true }
+        deliveryWeeks: { type: integer, nullable: true }
+
+    NegotiationEntry:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        round: { type: integer }
+        partyType: { type: string, enum: [TENANT, CUSTOMER] }
+        offeredUnitPrice: { type: number }
+        note: { type: string, nullable: true }
+        materialCostAtTime: { type: number, nullable: true }
+        createdAt: { type: string, format: date-time }
+        createdByName: { type: string }
+
+    CPO:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        cpoNumber: { type: string }
+        customerId: { type: string, format: uuid }
+        customerName: { type: string }
+        quotationId: { type: string, format: uuid, nullable: true }
+        customerPoRef: { type: string, nullable: true }
+        status:
+          type: string
+          enum: [pending_feasibility, feasibility_approved, in_production, completed, cancelled]
+        lines:
+          type: array
+          items: { $ref: '#/components/schemas/CPOLine' }
+        createdAt: { type: string, format: date-time }
+
+    CPOLine:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        itemId: { type: string, format: uuid }
+        itemCode: { type: string }
+        itemName: { type: string }
+        qty: { type: number }
+        uomSymbol: { type: string }
+        unitPrice: { type: number }
+        lineTotal: { type: number }
+        deliveryDate: { type: string, format: date, nullable: true }
+
+    FeasibilityResult:
+      type: object
+      properties:
+        cpoId: { type: string, format: uuid }
+        status: { type: string, enum: [FEASIBLE, INFEASIBLE] }
+        lines:
+          type: array
+          items:
+            type: object
+            properties:
+              itemId: { type: string, format: uuid }
+              required: { type: number }
+              available: { type: number }
+              shortfall: { type: number }
+
+    ProblemDetail:
+      type: object
+      properties:
+        type: { type: string }
+        title: { type: string }
+        status: { type: integer }
+        detail: { type: string }
+
+    FrameAgreement:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        agreementNumber: { type: string }
+        customerId: { type: string, format: uuid }
+        customerName: { type: string }
+        status: { type: string, enum: [draft, active, expired, cancelled] }
+        validFrom: { type: string, format: date }
+        validTo: { type: string, format: date }
+        lines:
+          type: array
+          items: { $ref: '#/components/schemas/FrameAgreementLine' }
+        createdAt: { type: string, format: date-time }
+
+    FrameAgreementLine:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        lineNo: { type: integer }
+        itemId: { type: string, format: uuid, nullable: true }
+        itemCode: { type: string, nullable: true }
+        description: { type: string }
+        agreedPrice: { type: number, nullable: true }
+        minQty: { type: number, nullable: true }
+        maxQty: { type: number, nullable: true }
+        uomSymbol: { type: string, nullable: true }
+
+    FrameAgreementCreateRequest:
+      type: object
+      required: [customerId, validFrom, validTo]
+      properties:
+        customerId: { type: string, format: uuid }
+        validFrom: { type: string, format: date }
+        validTo: { type: string, format: date }
+        lines:
+          type: array
+          items:
+            type: object
+            required: [description]
+            properties:
+              itemId: { type: string, format: uuid, nullable: true }
+              description: { type: string }
+              agreedPrice: { type: number, nullable: true }
+              minQty: { type: number, nullable: true }
+              maxQty: { type: number, nullable: true }
+              uomId: { type: string, format: uuid, nullable: true }
+
+paths:
+  /rfqs:
+    get:
+      operationId: listRFQs
+      summary: List RFQs
+      tags: [RFQ]
+      parameters:
+        - name: customerId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: status
+          in: query
+          schema: { type: string }
+        - name: page
+          in: query
+          schema: { type: integer, default: 0 }
+        - name: size
+          in: query
+          schema: { type: integer, default: 50 }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  content: { type: array, items: { $ref: '#/components/schemas/RFQ' } }
+                  page: { type: integer }
+                  totalElements: { type: integer }
+
+    post:
+      operationId: createRFQ
+      summary: Create a new RFQ
+      tags: [RFQ]
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [customerId, lines]
+              properties:
+                customerId: { type: string, format: uuid }
+                rfqTypeId: { type: string, format: uuid, nullable: true }
+                rfqTypeLabel: { type: string, nullable: true }
+                requiredDate: { type: string, format: date, nullable: true }
+                lines:
+                  type: array
+                  minItems: 1
+                  items:
+                    type: object
+                    required: [itemId, qty, uomId]
+                    properties:
+                      itemId: { type: string, format: uuid }
+                      qty: { type: number, minimum: 0.001 }
+                      uomId: { type: string, format: uuid }
+                      customerSpecRef: { type: string }
+      responses:
+        '201':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RFQ' }
+
+  /rfqs/{rfqId}:
+    get:
+      operationId: getRFQ
+      tags: [RFQ]
+      parameters:
+        - name: rfqId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RFQ' }
+        '404': { description: RFQ not found }
+
+  /rfqs/{rfqId}/status:
+    patch:
+      operationId: updateRFQStatus
+      summary: Advance RFQ status (draft→sent, etc.)
+      tags: [RFQ]
+      parameters:
+        - name: rfqId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string, enum: [sent, closed, cancelled] }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RFQ' }
+        '409': { description: Invalid status transition }
+
+  /quotations:
+    post:
+      operationId: createQuotation
+      summary: Create a quotation (linked to RFQ or standalone)
+      tags: [Quotations]
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [customerId, lines]
+              properties:
+                customerId: { type: string, format: uuid }
+                rfqId: { type: string, format: uuid, nullable: true }
+                validUntil: { type: string, format: date }
+                lines:
+                  type: array
+                  minItems: 1
+                  items:
+                    type: object
+                    required: [itemId, qty, uomId, unitPrice]
+                    properties:
+                      itemId: { type: string, format: uuid }
+                      qty: { type: number, minimum: 0.001 }
+                      uomId: { type: string, format: uuid }
+                      unitPrice: { type: number, minimum: 0 }
+                      deliveryWeeks: { type: integer, nullable: true }
+      responses:
+        '201':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Quotation' }
+
+  /quotations/{quotationId}:
+    get:
+      operationId: getQuotation
+      tags: [Quotations]
+      parameters:
+        - name: quotationId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Quotation' }
+
+  /quotations/{quotationId}/counter-offer:
+    post:
+      operationId: recordCounterOffer
+      summary: Record a customer counter-offer (round in negotiation history)
+      tags: [Quotations]
+      parameters:
+        - name: quotationId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [offeredUnitPrices]
+              properties:
+                offeredUnitPrices:
+                  type: array
+                  items:
+                    type: object
+                    required: [lineId, unitPrice]
+                    properties:
+                      lineId: { type: string, format: uuid }
+                      unitPrice: { type: number }
+                note: { type: string, nullable: true }
+      responses:
+        '201':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NegotiationEntry' }
+
+  /quotations/{quotationId}/respond:
+    post:
+      operationId: respondToCounterOffer
+      summary: Tenant responds to customer counter-offer
+      description: Creates a new negotiation entry showing material cost inline.
+      tags: [Quotations]
+      parameters:
+        - name: quotationId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [offeredUnitPrices]
+              properties:
+                offeredUnitPrices:
+                  type: array
+                  items:
+                    type: object
+                    required: [lineId, unitPrice]
+                    properties:
+                      lineId: { type: string, format: uuid }
+                      unitPrice: { type: number }
+                note: { type: string, nullable: true }
+      responses:
+        '201':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NegotiationEntry' }
+
+  /quotations/{quotationId}/accept:
+    post:
+      operationId: acceptQuotation
+      summary: Accept quotation — creates CPO from accepted quotation
+      tags: [Quotations]
+      parameters:
+        - name: quotationId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                customerPoRef: { type: string, nullable: true }
+      responses:
+        '201':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CPO' }
+        '409': { description: Quotation is not in a state that can be accepted }
+
+  /cpos:
+    get:
+      operationId: listCPOs
+      summary: List Customer Purchase Orders
+      tags: [CPO]
+      parameters:
+        - name: customerId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: status
+          in: query
+          schema: { type: string }
+        - name: page
+          in: query
+          schema: { type: integer, default: 0 }
+        - name: size
+          in: query
+          schema: { type: integer, default: 50 }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  content: { type: array, items: { $ref: '#/components/schemas/CPO' } }
+                  page: { type: integer }
+                  totalElements: { type: integer }
+
+  /cpos/{cpoId}:
+    get:
+      operationId: getCPO
+      tags: [CPO]
+      parameters:
+        - name: cpoId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CPO' }
+        '404': { description: CPO not found }
+
+  /cpos/{cpoId}/feasibility:
+    post:
+      operationId: checkFeasibility
+      summary: Run feasibility check and reserve inventory for CPO
+      tags: [CPO]
+      parameters:
+        - name: cpoId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FeasibilityResult' }
+        '409': { description: CPO already has feasibility status }
+
+  /frame-agreements:
+    get:
+      operationId: listFrameAgreements
+      summary: List frame agreements
+      description: |
+        Frame agreements (long-term pricing/quantity agreements with customers).
+        Stored in `frame_agreements` + `frame_agreement_lines` tables.
+      tags: [Frame Agreements]
+      parameters:
+        - name: customerId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: status
+          in: query
+          schema: { type: string, enum: [draft, active, expired, cancelled] }
+        - name: page
+          in: query
+          schema: { type: integer, default: 0 }
+        - name: size
+          in: query
+          schema: { type: integer, default: 20 }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  content:
+                    type: array
+                    items: { $ref: '#/components/schemas/FrameAgreement' }
+                  totalElements: { type: integer }
+                  page: { type: integer }
+                  size: { type: integer }
+    post:
+      operationId: createFrameAgreement
+      summary: Create frame agreement
+      tags: [Frame Agreements]
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/FrameAgreementCreateRequest' }
+      responses:
+        '201':
+          description: Agreement created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FrameAgreement' }
+
+  /frame-agreements/{id}:
+    get:
+      operationId: getFrameAgreement
+      summary: Get frame agreement by ID
+      tags: [Frame Agreements]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FrameAgreement' }
+        '404': { description: Not found }
+
+  /frame-agreements/{id}/activate:
+    post:
+      operationId: activateFrameAgreement
+      summary: Activate (finalise) frame agreement
+      tags: [Frame Agreements]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Activated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FrameAgreement' }
+        '409': { description: Already active or expired }

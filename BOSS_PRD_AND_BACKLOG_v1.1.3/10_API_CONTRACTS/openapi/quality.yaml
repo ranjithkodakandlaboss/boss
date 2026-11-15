@@ -1,0 +1,465 @@
+openapi: "3.1.0"
+info:
+  title: BOSS Quality, GRN, and Dispatch API
+  version: "1.0.0"
+  description: |
+    GRN with incoming inspection, quality inspections (stage-gate + final + customer),
+    NCR and concession management, customer clearance certificate, and dispatch with POD.
+
+    **Inspection types** come from GET /api/v1/config/options/INSPECTION_TYPE.
+    **Defect categories** come from GET /api/v1/config/options/DEFECT_CATEGORY.
+    **Dispatch methods** come from GET /api/v1/config/options/DISPATCH_METHOD.
+
+servers:
+  - url: https://api.boss.app/api/v1
+
+security:
+  - firebaseBearer: []
+
+components:
+  securitySchemes:
+    firebaseBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    GRN:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        grnNumber: { type: string }
+        spoId: { type: string, format: uuid }
+        supplierId: { type: string, format: uuid }
+        supplierName: { type: string }
+        status: { type: string, enum: [draft, inspection_pending, inspection_complete, closed] }
+        lines:
+          type: array
+          items: { $ref: '#/components/schemas/GRNLine' }
+        incomingInspectionId: { type: string, format: uuid, nullable: true }
+        createdAt: { type: string, format: date-time }
+
+    GRNLine:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        spoLineId: { type: string, format: uuid }
+        itemId: { type: string, format: uuid }
+        itemCode: { type: string }
+        itemName: { type: string }
+        orderedQty: { type: number }
+        receivedQty: { type: number }
+        acceptedQty: { type: number, nullable: true }
+        rejectedQty: { type: number, nullable: true }
+        unitCost: { type: number }
+        lotId: { type: string, format: uuid, nullable: true }
+
+    IncomingInspection:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        grnId: { type: string, format: uuid }
+        inspectionTypeId: { type: string, format: uuid, nullable: true }
+        inspectionTypeLabel: { type: string, nullable: true }
+        result: { type: string, enum: [pending, pass, fail, partial] }
+        parameters:
+          type: array
+          items: { $ref: '#/components/schemas/InspectionParameter' }
+        completedAt: { type: string, format: date-time, nullable: true }
+        completedBy: { type: string, format: uuid, nullable: true }
+
+    InspectionParameter:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        parameterName: { type: string }
+        parameterType: { type: string, enum: [PASS_FAIL, NUMERIC, TEXT] }
+        expectedValue: { type: string, nullable: true }
+        actualValue: { type: string, nullable: true }
+        result: { type: string, enum: [pending, pass, fail], nullable: true }
+        isMandatory: { type: boolean }
+
+    QualityInspection:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        inspectionNumber: { type: string }
+        jobId: { type: string, format: uuid }
+        jobStageId: { type: string, format: uuid, nullable: true }
+        inspectionType: { type: string, enum: [STAGE_GATE, FINAL, CUSTOMER, INCOMING] }
+        inspectionTypeConfigId: { type: string, format: uuid, nullable: true }
+        inspectionTypeLabel: { type: string, nullable: true }
+        status: { type: string, enum: [pending, in_progress, passed, failed, concession_pending, concession_granted] }
+        parameters:
+          type: array
+          items: { $ref: '#/components/schemas/InspectionParameter' }
+        ncrId: { type: string, format: uuid, nullable: true }
+        completedAt: { type: string, format: date-time, nullable: true }
+
+    NCR:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        ncrNumber: { type: string }
+        inspectionId: { type: string, format: uuid }
+        defectCategoryId: { type: string, format: uuid, nullable: true }
+        defectCategoryLabel: { type: string, nullable: true }
+        defectDescription: { type: string }
+        rootCause: { type: string, nullable: true }
+        correctiveAction: { type: string, nullable: true }
+        status: { type: string, enum: [open, concession_requested, concession_granted, rework, scrapped, closed] }
+        raisedBy: { type: string, format: uuid }
+        closedAt: { type: string, format: date-time, nullable: true }
+
+    ClearanceCertificate:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        certNumber: { type: string }
+        jobId: { type: string, format: uuid }
+        customerId: { type: string, format: uuid }
+        customerName: { type: string }
+        status: { type: string, enum: [pending, issued] }
+        issuedAt: { type: string, format: date-time, nullable: true }
+        issuedByCustomerContact: { type: string, nullable: true }
+        customerRef: { type: string, nullable: true }
+        pdfGcsPath: { type: string, nullable: true }
+
+    Dispatch:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        dispatchNumber: { type: string }
+        cpoId: { type: string, format: uuid }
+        customerId: { type: string, format: uuid }
+        customerName: { type: string }
+        status: { type: string, enum: [draft, challan_generated, dispatched, delivered] }
+        dispatchMethodId: { type: string, format: uuid, nullable: true }
+        dispatchMethodLabel: { type: string, nullable: true }
+        lines:
+          type: array
+          items: { $ref: '#/components/schemas/DispatchLine' }
+        challanNumber: { type: string, nullable: true }
+        challanGcsPath: { type: string, nullable: true }
+        dispatchedAt: { type: string, format: date-time, nullable: true }
+        podGcsPath: { type: string, nullable: true }
+
+    DispatchLine:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        jobId: { type: string, format: uuid }
+        itemId: { type: string, format: uuid }
+        itemCode: { type: string }
+        qty: { type: number }
+        clearanceCertId: { type: string, format: uuid, nullable: true }
+
+paths:
+  /grns:
+    get:
+      operationId: listGRNs
+      tags: [GRN]
+      parameters:
+        - name: spoId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: status
+          in: query
+          schema: { type: string }
+        - name: page
+          in: query
+          schema: { type: integer, default: 0 }
+        - name: size
+          in: query
+          schema: { type: integer, default: 50 }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  content: { type: array, items: { $ref: '#/components/schemas/GRN' } }
+                  page: { type: integer }
+                  totalElements: { type: integer }
+
+    post:
+      operationId: createGRN
+      summary: Create a GRN against an SPO
+      tags: [GRN]
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [spoId, lines]
+              properties:
+                spoId: { type: string, format: uuid }
+                lines:
+                  type: array
+                  items:
+                    type: object
+                    required: [spoLineId, receivedQty, unitCost, storeId]
+                    properties:
+                      spoLineId: { type: string, format: uuid }
+                      receivedQty: { type: number }
+                      unitCost: { type: number }
+                      storeId: { type: string, format: uuid }
+      responses:
+        '201':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GRN' }
+
+  /grns/{grnId}/inspection:
+    post:
+      operationId: recordIncomingInspection
+      summary: Record incoming inspection result for a GRN
+      description: On pass, creates material lots in stock and writes stock movements.
+      tags: [GRN]
+      parameters:
+        - name: grnId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [result, lineResults]
+              properties:
+                inspectionTypeId: { type: string, format: uuid, nullable: true }
+                inspectionTypeLabel: { type: string, nullable: true }
+                result: { type: string, enum: [pass, fail, partial] }
+                lineResults:
+                  type: array
+                  items:
+                    type: object
+                    required: [grnLineId, acceptedQty, rejectedQty]
+                    properties:
+                      grnLineId: { type: string, format: uuid }
+                      acceptedQty: { type: number }
+                      rejectedQty: { type: number }
+                parameters:
+                  type: array
+                  items: { $ref: '#/components/schemas/InspectionParameter' }
+      responses:
+        '201':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IncomingInspection' }
+
+  /inspections/{inspectionId}:
+    get:
+      operationId: getInspection
+      tags: [Quality Inspections]
+      parameters:
+        - name: inspectionId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/QualityInspection' }
+
+    post:
+      operationId: recordInspectionResult
+      summary: Record quality inspection result (stage-gate or final)
+      tags: [Quality Inspections]
+      parameters:
+        - name: inspectionId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [result, parameters]
+              properties:
+                result: { type: string, enum: [passed, failed] }
+                parameters:
+                  type: array
+                  items:
+                    type: object
+                    required: [parameterId, actualValue, result]
+                    properties:
+                      parameterId: { type: string, format: uuid }
+                      actualValue: { type: string }
+                      result: { type: string, enum: [pass, fail] }
+                note: { type: string, nullable: true }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/QualityInspection' }
+
+  /ncrs:
+    post:
+      operationId: raiseNCR
+      summary: Raise a Non-Conformance Report for a failed inspection
+      tags: [NCR]
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [inspectionId, defectDescription]
+              properties:
+                inspectionId: { type: string, format: uuid }
+                defectCategoryId: { type: string, format: uuid, nullable: true }
+                defectCategoryLabel: { type: string, nullable: true }
+                defectDescription: { type: string }
+      responses:
+        '201':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NCR' }
+
+  /ncrs/{ncrId}/concession:
+    post:
+      operationId: grantConcession
+      summary: Grant concession to dispatch despite NCR (OWNER or OPS_MANAGER only)
+      tags: [NCR]
+      parameters:
+        - name: ncrId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [justification]
+              properties:
+                justification: { type: string }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NCR' }
+        '403': { description: OWNER or OPS_MANAGER role required }
+
+  /clearance-certificates:
+    post:
+      operationId: createClearanceCertificate
+      summary: Issue a customer clearance certificate for a completed job
+      tags: [Clearance Certificates]
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [jobId]
+              properties:
+                jobId: { type: string, format: uuid }
+                issuedByCustomerContact: { type: string, nullable: true }
+                customerRef: { type: string, nullable: true }
+      responses:
+        '201':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ClearanceCertificate' }
+        '409': { description: Job is not in a state eligible for clearance certificate }
+
+  /dispatches:
+    post:
+      operationId: createDispatch
+      summary: Create a dispatch for completed and cleared CPO lines
+      description: |
+        Only jobs with quality status=passed or concession_granted and
+        clearance certificate (if required) are eligible.
+        Challan PDF is generated automatically.
+      tags: [Dispatch]
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [cpoId, lines]
+              properties:
+                cpoId: { type: string, format: uuid }
+                dispatchMethodId: { type: string, format: uuid, nullable: true }
+                dispatchMethodLabel: { type: string, nullable: true }
+                lines:
+                  type: array
+                  items:
+                    type: object
+                    required: [jobId, qty]
+                    properties:
+                      jobId: { type: string, format: uuid }
+                      qty: { type: number }
+                      clearanceCertId: { type: string, format: uuid, nullable: true }
+      responses:
+        '201':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Dispatch' }
+        '409': { description: Job not eligible for dispatch — inspection not passed or clearance cert missing }
+
+  /dispatches/{dispatchId}/pod:
+    post:
+      operationId: recordPOD
+      summary: Record Proof of Delivery — triggers invoice creation
+      tags: [Dispatch]
+      parameters:
+        - name: dispatchId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [deliveredAt, receivedBy]
+              properties:
+                deliveredAt: { type: string, format: date-time }
+                receivedBy: { type: string }
+                podGcsPath: { type: string, nullable: true }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Dispatch' }

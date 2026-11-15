@@ -1,0 +1,170 @@
+openapi: "3.1.0"
+info:
+  title: BOSS Company Capability Profile API
+  version: "1.0.0"
+  description: |
+    Company capability profile — describes the tenant's manufacturing capabilities for
+    customer-facing display and RFQ matching (EPIC-16 — P2-DESIRABLE).
+    **Status: DEFERRED from MVP.** Implementation begins only after Ranjith approves EPIC-16 start.
+
+servers:
+  - url: https://api.boss.app/api/v1
+
+security:
+  - firebaseBearer: []
+
+components:
+  securitySchemes:
+    firebaseBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    CompanyProfile:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        tenantId: { type: string, format: uuid }
+        companyName: { type: string }
+        gstin: { type: string }
+        pan: { type: string }
+        address: { $ref: '#/components/schemas/Address' }
+        contactEmail: { type: string, format: email }
+        contactPhone: { type: string }
+        websiteUrl: { type: string, nullable: true }
+        industryTypeId: { type: string, format: uuid }
+        industryTypeLabel: { type: string }
+        capabilities:
+          type: array
+          items: { $ref: '#/components/schemas/Capability' }
+        certifications:
+          type: array
+          items: { $ref: '#/components/schemas/Certification' }
+        publishedAt: { type: string, format: date-time, nullable: true }
+        isPublished: { type: boolean }
+        updatedAt: { type: string, format: date-time }
+
+    Address:
+      type: object
+      properties:
+        line1: { type: string }
+        line2: { type: string, nullable: true }
+        city: { type: string }
+        state: { type: string }
+        pincode: { type: string }
+
+    Capability:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        capabilityTypeId: { type: string, format: uuid }
+        capabilityTypeLabel: { type: string }
+        description: { type: string, nullable: true }
+        capacityNote: { type: string, nullable: true }
+
+    Certification:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        issuingBody: { type: string, nullable: true }
+        validUntil: { type: string, format: date, nullable: true }
+
+    CompanyProfileUpdateRequest:
+      type: object
+      properties:
+        companyName: { type: string }
+        contactEmail: { type: string, format: email }
+        contactPhone: { type: string }
+        websiteUrl: { type: string, nullable: true }
+        address: { $ref: '#/components/schemas/Address' }
+        capabilities:
+          type: array
+          items:
+            type: object
+            required: [capabilityTypeId]
+            properties:
+              capabilityTypeId: { type: string, format: uuid }
+              description: { type: string, nullable: true }
+              capacityNote: { type: string, nullable: true }
+        certifications:
+          type: array
+          items:
+            type: object
+            required: [name]
+            properties:
+              name: { type: string }
+              issuingBody: { type: string, nullable: true }
+              validUntil: { type: string, format: date, nullable: true }
+
+paths:
+  /company-profile:
+    get:
+      operationId: getCompanyProfile
+      summary: Get this tenant's company capability profile
+      tags: [Company Profile]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CompanyProfile' }
+        "404":
+          description: Profile not yet created
+    put:
+      operationId: upsertCompanyProfile
+      summary: Create or fully replace company profile
+      tags: [Company Profile]
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CompanyProfileUpdateRequest' }
+      responses:
+        "200":
+          description: Profile saved
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CompanyProfile' }
+
+  /company-profile/publish:
+    post:
+      operationId: publishCompanyProfile
+      summary: Publish profile (makes it visible to external parties)
+      tags: [Company Profile]
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Profile published
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CompanyProfile' }
+        "422":
+          description: Profile incomplete — required fields missing
+
+  /company-profile/unpublish:
+    post:
+      operationId: unpublishCompanyProfile
+      summary: Withdraw profile from public visibility
+      tags: [Company Profile]
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Profile unpublished
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CompanyProfile' }

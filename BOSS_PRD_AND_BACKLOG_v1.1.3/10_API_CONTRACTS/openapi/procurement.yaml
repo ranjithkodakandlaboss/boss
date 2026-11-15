@@ -1,0 +1,357 @@
+openapi: "3.1.0"
+info:
+  title: BOSS Procurement API
+  version: "1.0.0"
+  description: |
+    Purchase Requisitions (PR), Supplier Quotations, Supplier Purchase Orders (SPO),
+    and Supplier Performance tracking.
+
+servers:
+  - url: https://api.boss.app/api/v1
+
+security:
+  - firebaseBearer: []
+
+components:
+  securitySchemes:
+    firebaseBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    PurchaseRequisition:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        prNumber: { type: string }
+        originType: { type: string, enum: [MANUAL, PRODUCTION_JOB, STOCK_DRIVEN] }
+        jobId: { type: string, format: uuid, nullable: true }
+        status: { type: string, enum: [draft, pending_approval, approved, partially_ordered, ordered, cancelled] }
+        prTypeId: { type: string, format: uuid, nullable: true }
+        prTypeLabel: { type: string, nullable: true }
+        requiredDate: { type: string, format: date, nullable: true }
+        lines:
+          type: array
+          items: { $ref: '#/components/schemas/PRLine' }
+        createdAt: { type: string, format: date-time }
+        approvedBy: { type: string, format: uuid, nullable: true }
+        approvedAt: { type: string, format: date-time, nullable: true }
+
+    PRLine:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        seq: { type: integer }
+        itemId: { type: string, format: uuid }
+        itemCode: { type: string }
+        itemName: { type: string }
+        qty: { type: number }
+        uomSymbol: { type: string }
+        requiredDate: { type: string, format: date, nullable: true }
+        note: { type: string, nullable: true }
+
+    SupplierQuotation:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        prId: { type: string, format: uuid }
+        supplierId: { type: string, format: uuid }
+        supplierName: { type: string }
+        status: { type: string, enum: [received, compared, selected, rejected] }
+        validUntil: { type: string, format: date, nullable: true }
+        lines:
+          type: array
+          items: { $ref: '#/components/schemas/SupplierQuotationLine' }
+
+    SupplierQuotationLine:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        prLineId: { type: string, format: uuid }
+        itemId: { type: string, format: uuid }
+        unitPrice: { type: number }
+        leadTimeDays: { type: integer, nullable: true }
+        isSelected: { type: boolean }
+
+    SPO:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        spoNumber: { type: string }
+        supplierId: { type: string, format: uuid }
+        supplierName: { type: string }
+        status: { type: string, enum: [draft, sent, acknowledged, partially_received, received, cancelled] }
+        lines:
+          type: array
+          items: { $ref: '#/components/schemas/SPOLine' }
+        totalAmount: { type: number }
+        createdAt: { type: string, format: date-time }
+
+    SPOLine:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        itemId: { type: string, format: uuid }
+        itemCode: { type: string }
+        itemName: { type: string }
+        orderedQty: { type: number }
+        receivedQty: { type: number }
+        unitPrice: { type: number }
+        lineTotal: { type: number }
+        expectedDeliveryDate: { type: string, format: date, nullable: true }
+
+paths:
+  /prs:
+    get:
+      operationId: listPRs
+      summary: List Purchase Requisitions
+      tags: [Purchase Requisitions]
+      parameters:
+        - name: status
+          in: query
+          schema: { type: string }
+        - name: originType
+          in: query
+          schema: { type: string }
+        - name: page
+          in: query
+          schema: { type: integer, default: 0 }
+        - name: size
+          in: query
+          schema: { type: integer, default: 50 }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  content: { type: array, items: { $ref: '#/components/schemas/PurchaseRequisition' } }
+                  page: { type: integer }
+                  totalElements: { type: integer }
+
+    post:
+      operationId: createPR
+      summary: Create a Purchase Requisition
+      tags: [Purchase Requisitions]
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [lines]
+              properties:
+                originType: { type: string, enum: [MANUAL, PRODUCTION_JOB, STOCK_DRIVEN], default: MANUAL }
+                jobId: { type: string, format: uuid, nullable: true }
+                prTypeId: { type: string, format: uuid, nullable: true }
+                prTypeLabel: { type: string, nullable: true }
+                requiredDate: { type: string, format: date, nullable: true }
+                lines:
+                  type: array
+                  minItems: 1
+                  items:
+                    type: object
+                    required: [itemId, qty, uomId]
+                    properties:
+                      itemId: { type: string, format: uuid }
+                      qty: { type: number, minimum: 0.001 }
+                      uomId: { type: string, format: uuid }
+                      requiredDate: { type: string, format: date, nullable: true }
+                      note: { type: string }
+      responses:
+        '201':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PurchaseRequisition' }
+
+  /prs/{prId}/approve:
+    post:
+      operationId: approvePR
+      summary: Approve a PR (PURCHASE_MANAGER or OWNER role)
+      tags: [Purchase Requisitions]
+      parameters:
+        - name: prId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PurchaseRequisition' }
+        '403': { description: PURCHASE_MANAGER or OWNER role required }
+        '409': { description: PR is not in pending_approval state }
+
+  /spos:
+    get:
+      operationId: listSPOs
+      summary: List Supplier Purchase Orders
+      tags: [SPO]
+      parameters:
+        - name: supplierId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: status
+          in: query
+          schema: { type: string }
+        - name: page
+          in: query
+          schema: { type: integer, default: 0 }
+        - name: size
+          in: query
+          schema: { type: integer, default: 50 }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  content: { type: array, items: { $ref: '#/components/schemas/SPO' } }
+                  page: { type: integer }
+                  totalElements: { type: integer }
+
+    post:
+      operationId: createSPO
+      summary: Create a Supplier Purchase Order from selected supplier quotation
+      tags: [SPO]
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [supplierId, prId, lines]
+              properties:
+                supplierId: { type: string, format: uuid }
+                prId: { type: string, format: uuid }
+                supplierQuotationId: { type: string, format: uuid, nullable: true }
+                lines:
+                  type: array
+                  items:
+                    type: object
+                    required: [prLineId, itemId, orderedQty, unitPrice, uomId]
+                    properties:
+                      prLineId: { type: string, format: uuid }
+                      itemId: { type: string, format: uuid }
+                      orderedQty: { type: number }
+                      unitPrice: { type: number }
+                      uomId: { type: string, format: uuid }
+                      expectedDeliveryDate: { type: string, format: date, nullable: true }
+      responses:
+        '201':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SPO' }
+
+  /spos/{spoId}:
+    get:
+      operationId: getSPO
+      tags: [SPO]
+      parameters:
+        - name: spoId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SPO' }
+        '404': { description: SPO not found }
+
+  /suppliers/{supplierId}/invite:
+    post:
+      operationId: inviteSupplier
+      summary: Send portal invitation to supplier contact
+      tags: [Supplier Management]
+      parameters:
+        - name: supplierId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: { type: string, format: email }
+                contactName: { type: string }
+      responses:
+        '200':
+          description: Invitation sent
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  supplierId: { type: string, format: uuid }
+                  invitedEmail: { type: string }
+                  invitedAt: { type: string, format: date-time }
+        '409':
+          description: Supplier already has active portal account
+
+  /supplier-performance:
+    get:
+      operationId: listSupplierPerformance
+      summary: List supplier performance summaries
+      description: Aggregated on-time delivery, quality rejection, and lead-time metrics per supplier.
+      tags: [Supplier Management]
+      parameters:
+        - name: supplierId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: fromDate
+          in: query
+          schema: { type: string, format: date }
+        - name: toDate
+          in: query
+          schema: { type: string, format: date }
+        - name: page
+          in: query
+          schema: { type: integer, default: 0 }
+        - name: size
+          in: query
+          schema: { type: integer, default: 20 }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  content:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        supplierId: { type: string, format: uuid }
+                        supplierName: { type: string }
+                        totalOrders: { type: integer }
+                        onTimeDeliveryPct: { type: number }
+                        qualityRejectionPct: { type: number }
+                        avgLeadTimeDays: { type: number }
+                        periodFrom: { type: string, format: date }
+                        periodTo: { type: string, format: date }
+                  totalElements: { type: integer }
+                  page: { type: integer }
+                  size: { type: integer }

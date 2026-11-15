@@ -1,0 +1,608 @@
+openapi: "3.1.0"
+info:
+  title: BOSS Inventory API
+  version: "1.0.0"
+  description: |
+    Foundational inventory: material lots, stock movements (append-only), reservations,
+    item issue/return for production jobs.
+
+    **Concurrency:** All reservation endpoints use `SELECT FOR UPDATE` pessimistic locking.
+    The `InventoryConcurrencyIntegrationTest` (10 threads, 6 available) must pass.
+
+    **Append-only:** `stock_movements` can only be created, never updated or deleted.
+    DB trigger enforces this.
+
+servers:
+  - url: https://api.boss.app/api/v1
+
+security:
+  - firebaseBearer: []
+
+components:
+  securitySchemes:
+    firebaseBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    MaterialLot:
+      type: object
+      required: [id, itemId, storeId, qty, reservedQty, unitCost, status]
+      properties:
+        id: { type: string, format: uuid }
+        itemId: { type: string, format: uuid }
+        itemCode: { type: string }
+        itemName: { type: string }
+        storeId: { type: string, format: uuid }
+        storeName: { type: string }
+        siteId: { type: string, format: uuid }
+        batchRef: { type: string, nullable: true }
+        grnLineId: { type: string, format: uuid, nullable: true }
+        qty: { type: number, description: "Current physical quantity" }
+        reservedQty: { type: number, description: "Reserved but not yet issued" }
+        availableQty: { type: number, description: "qty - reservedQty (computed)" }
+        unitCost: { type: number }
+        uomId: { type: string, format: uuid }
+        uomSymbol: { type: string }
+        status:
+          type: string
+          enum: [available, quarantine, reserved, depleted]
+        expiryDate: { type: string, format: date, nullable: true }
+        createdAt: { type: string, format: date-time }
+
+    StockMovement:
+      type: object
+      required: [id, lotId, movementType, qty, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        lotId: { type: string, format: uuid }
+        movementType:
+          type: string
+          enum: [RECEIPT, ISSUE, RETURN, TRANSFER_OUT, TRANSFER_IN, ADJUSTMENT, OPENING_BALANCE]
+        qty: { type: number, description: "Positive = in; negative = out" }
+        referenceType: { type: string, nullable: true, description: "GRN | JOB | TRANSFER | ADJUSTMENT" }
+        referenceId: { type: string, format: uuid, nullable: true }
+        performedBy: { type: string, format: uuid }
+        note: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time }
+
+    InventoryPosition:
+      type: object
+      properties:
+        itemId: { type: string, format: uuid }
+        itemCode: { type: string }
+        itemName: { type: string }
+        storeId: { type: string, format: uuid }
+        storeName: { type: string }
+        totalQty: { type: number }
+        reservedQty: { type: number }
+        availableQty: { type: number }
+        valuationAmt: { type: number, description: "Sum of qty * unit_cost" }
+        uomSymbol: { type: string }
+        lastMovedAt: { type: string, format: date-time, nullable: true }
+
+    ReservationRequest:
+      type: object
+      required: [jobId, requirements]
+      properties:
+        jobId: { type: string, format: uuid }
+        requirements:
+          type: array
+          items:
+            type: object
+            required: [itemId, storeId, qty]
+            properties:
+              itemId: { type: string, format: uuid }
+              storeId: { type: string, format: uuid }
+              qty: { type: number, minimum: 0.001 }
+
+    ReservationResult:
+      type: object
+      properties:
+        jobId: { type: string, format: uuid }
+        status:
+          type: string
+          enum: [FULLY_RESERVED, PARTIALLY_RESERVED, FAILED]
+        lines:
+          type: array
+          items:
+            type: object
+            properties:
+              itemId: { type: string, format: uuid }
+              storeId: { type: string, format: uuid }
+              requested: { type: number }
+              reserved: { type: number }
+              shortfall: { type: number }
+              lotId: { type: string, format: uuid, nullable: true }
+
+    IssueRequest:
+      type: object
+      required: [jobId, lotId, qty]
+      properties:
+        jobId: { type: string, format: uuid }
+        lotId: { type: string, format: uuid }
+        qty: { type: number, minimum: 0.001 }
+        note: { type: string, nullable: true }
+
+    ReturnRequest:
+      type: object
+      required: [jobId, lotId, qty]
+      properties:
+        jobId: { type: string, format: uuid }
+        lotId: { type: string, format: uuid }
+        qty: { type: number, minimum: 0.001 }
+        returnReason: { type: string, nullable: true }
+
+    ProblemDetail:
+      type: object
+      properties:
+        type: { type: string }
+        title: { type: string }
+        status: { type: integer }
+        detail: { type: string }
+        traceId: { type: string }
+
+    InterSiteTransfer:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        transferNumber: { type: string }
+        fromStoreId: { type: string, format: uuid }
+        fromStoreName: { type: string }
+        toStoreId: { type: string, format: uuid }
+        toStoreName: { type: string }
+        status: { type: string, enum: [pending, in_transit, received, cancelled] }
+        transferDate: { type: string, format: date }
+        lines:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string, format: uuid }
+              lotId: { type: string, format: uuid }
+              itemCode: { type: string }
+              itemName: { type: string }
+              qty: { type: number }
+              uomSymbol: { type: string }
+        createdAt: { type: string, format: date-time }
+        receivedAt: { type: string, format: date-time, nullable: true }
+
+paths:
+  /inventory/positions:
+    get:
+      operationId: getInventoryPositions
+      summary: Get current inventory positions (lot balances by item and store)
+      tags: [Inventory Position]
+      parameters:
+        - name: storeId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: itemId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: siteId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: belowReorderPoint
+          in: query
+          schema: { type: boolean }
+        - name: page
+          in: query
+          schema: { type: integer, default: 0 }
+        - name: size
+          in: query
+          schema: { type: integer, default: 50, maximum: 200 }
+      responses:
+        '200':
+          description: Paged inventory positions
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  content:
+                    type: array
+                    items: { $ref: '#/components/schemas/InventoryPosition' }
+                  page: { type: integer }
+                  totalElements: { type: integer }
+
+  /inventory/lots:
+    get:
+      operationId: listLots
+      summary: List material lots with filters
+      tags: [Lots]
+      parameters:
+        - name: itemId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: storeId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: status
+          in: query
+          schema: { type: string, enum: [available, quarantine, reserved, depleted] }
+        - name: page
+          in: query
+          schema: { type: integer, default: 0 }
+        - name: size
+          in: query
+          schema: { type: integer, default: 50 }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  content:
+                    type: array
+                    items: { $ref: '#/components/schemas/MaterialLot' }
+                  page: { type: integer }
+                  totalElements: { type: integer }
+
+  /inventory/lots/{lotId}:
+    get:
+      operationId: getLot
+      summary: Get a specific lot with movement history
+      tags: [Lots]
+      parameters:
+        - name: lotId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MaterialLot' }
+        '404': { description: Lot not found in this tenant }
+
+  /inventory/lots/{lotId}/movements:
+    get:
+      operationId: getLotMovements
+      summary: Get append-only movement history for a lot
+      tags: [Movements]
+      parameters:
+        - name: lotId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: from
+          in: query
+          schema: { type: string, format: date }
+        - name: to
+          in: query
+          schema: { type: string, format: date }
+        - name: page
+          in: query
+          schema: { type: integer, default: 0 }
+        - name: size
+          in: query
+          schema: { type: integer, default: 100 }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  content:
+                    type: array
+                    items: { $ref: '#/components/schemas/StockMovement' }
+                  page: { type: integer }
+                  totalElements: { type: integer }
+
+  /inventory/reservations:
+    post:
+      operationId: checkAndReserve
+      summary: Check availability and reserve materials for a production job
+      description: |
+        Atomic pessimistic reservation. Uses SELECT FOR UPDATE per lot.
+        If ANY line cannot be fully satisfied, the entire reservation fails (no partial commits).
+        Returns PARTIALLY_RESERVED only when partial=true is passed.
+      tags: [Reservations]
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string }
+        - name: partial
+          in: query
+          schema: { type: boolean, default: false }
+          description: If true, reserve what is available even if not all lines can be met
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ReservationRequest' }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReservationResult' }
+        '409':
+          description: Insufficient stock for full reservation (and partial=false)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReservationResult' }
+
+  /inventory/reservations/{jobId}:
+    delete:
+      operationId: releaseReservations
+      summary: Release all reservations for a production job (on CPO cancellation)
+      tags: [Reservations]
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '204': { description: Reservations released }
+        '404': { description: No reservations found for this job }
+
+  /inventory/issues:
+    post:
+      operationId: issueMaterial
+      summary: Issue material from a lot to a production job
+      description: Reduces lot qty and reserved_qty; writes stock movement.
+      tags: [Issues and Returns]
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/IssueRequest' }
+      responses:
+        '201':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StockMovement' }
+        '400': { description: Requested qty exceeds lot available qty }
+        '404': { description: Lot not found }
+        '409': { description: Idempotency key already processed }
+
+  /inventory/returns:
+    post:
+      operationId: returnMaterial
+      summary: Return unused material from a production job back to store
+      tags: [Issues and Returns]
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ReturnRequest' }
+      responses:
+        '201':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StockMovement' }
+        '400': { description: Returned qty exceeds issued qty for this job and lot }
+
+  /inventory/adjustments:
+    post:
+      operationId: adjustStock
+      summary: Manual stock adjustment (STORE_KEEPER or OWNER role)
+      description: |
+        Creates a stock movement with type ADJUSTMENT. Requires a reason from
+        GET /api/v1/config/options/STOCK_ADJUSTMENT_REASON.
+      tags: [Adjustments]
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [lotId, qty, adjustmentReasonId, adjustmentReasonLabel]
+              properties:
+                lotId: { type: string, format: uuid }
+                qty: { type: number, description: "Signed quantity — positive increases, negative decreases" }
+                adjustmentReasonId: { type: string, format: uuid }
+                adjustmentReasonLabel: { type: string, description: "Snapshot label at time of adjustment" }
+                note: { type: string }
+      responses:
+        '201':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StockMovement' }
+        '403': { description: STORE_KEEPER or OWNER role required }
+
+  /replenishment-requests:
+    get:
+      operationId: listReplenishmentRequests
+      summary: List replenishment requests (auto-generated by reorder policy)
+      description: |
+        Read from `replenishment_requests` table. Created automatically when stock
+        falls below reorder point per `reorder_policies`. Linked to a PR once actioned.
+      tags: [Replenishment]
+      parameters:
+        - name: status
+          in: query
+          schema: { type: string, enum: [open, pr_created, cancelled] }
+        - name: storeId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: itemId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: page
+          in: query
+          schema: { type: integer, default: 0 }
+        - name: size
+          in: query
+          schema: { type: integer, default: 20 }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  content:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string, format: uuid }
+                        rrNumber: { type: string }
+                        itemId: { type: string, format: uuid }
+                        itemCode: { type: string }
+                        itemName: { type: string }
+                        storeId: { type: string, format: uuid }
+                        storeName: { type: string }
+                        policyId: { type: string, format: uuid, nullable: true }
+                        requiredQty: { type: number }
+                        status: { type: string }
+                        prId: { type: string, format: uuid, nullable: true }
+                        triggeredAt: { type: string, format: date-time }
+                  totalElements: { type: integer }
+                  page: { type: integer }
+                  size: { type: integer }
+
+  /replenishment-requests/{id}/cancel:
+    post:
+      operationId: cancelReplenishmentRequest
+      summary: Cancel a replenishment request
+      tags: [Replenishment]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Cancelled
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string, format: uuid }
+                  status: { type: string, enum: [cancelled] }
+        '409': { description: Already pr_created or cancelled }
+
+  /inter-site-transfers:
+    get:
+      operationId: listInterSiteTransfers
+      summary: List inter-site stock transfers
+      description: |
+        Stock movements between stores/sites. Each transfer records a negative movement
+        at the source store and a positive movement at the destination store.
+        Both movements are appended to `stock_movements` (never updated/deleted).
+      tags: [Inter-Site Transfers]
+      parameters:
+        - name: fromStoreId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: toStoreId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: status
+          in: query
+          schema: { type: string, enum: [pending, in_transit, received, cancelled] }
+        - name: page
+          in: query
+          schema: { type: integer, default: 0 }
+        - name: size
+          in: query
+          schema: { type: integer, default: 20 }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  content:
+                    type: array
+                    items: { $ref: '#/components/schemas/InterSiteTransfer' }
+                  totalElements: { type: integer }
+                  page: { type: integer }
+                  size: { type: integer }
+    post:
+      operationId: createInterSiteTransfer
+      summary: Create inter-site transfer
+      tags: [Inter-Site Transfers]
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [fromStoreId, toStoreId, lines]
+              properties:
+                fromStoreId: { type: string, format: uuid }
+                toStoreId: { type: string, format: uuid }
+                transferDate: { type: string, format: date }
+                note: { type: string, nullable: true }
+                lines:
+                  type: array
+                  items:
+                    type: object
+                    required: [lotId, qty]
+                    properties:
+                      lotId: { type: string, format: uuid }
+                      qty: { type: number }
+      responses:
+        '201':
+          description: Transfer created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InterSiteTransfer' }
+        '422':
+          description: Insufficient stock or lot not found in source store
+
+  /inter-site-transfers/{id}/receive:
+    post:
+      operationId: receiveInterSiteTransfer
+      summary: Confirm receipt at destination store
+      tags: [Inter-Site Transfers]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                receivedNote: { type: string, nullable: true }
+      responses:
+        '200':
+          description: Transfer received — destination stock movements appended
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InterSiteTransfer' }
+        '409': { description: Already received or cancelled }

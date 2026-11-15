@@ -1,0 +1,302 @@
+openapi: "3.1.0"
+info:
+  title: BOSS Production API
+  version: "1.0.0"
+  description: |
+    Production jobs, configurable routing stages, material issue/return,
+    and job costing (estimated + actual).
+
+    **Routing:** Stages are defined in the routing template (see config.yaml).
+    When a job is created, the routing template stages are COPIED into job_stages.
+    The job retains its stage snapshot; changes to the template do NOT affect active jobs.
+
+    **Stage config options:** Each stage stores stage_config_option_id (FK) + stage_name (snapshot).
+
+servers:
+  - url: https://api.boss.app/api/v1
+
+security:
+  - firebaseBearer: []
+
+components:
+  securitySchemes:
+    firebaseBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    ProductionJob:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        jobNumber: { type: string }
+        cpoId: { type: string, format: uuid }
+        cpoLineId: { type: string, format: uuid }
+        itemId: { type: string, format: uuid }
+        itemCode: { type: string }
+        itemName: { type: string }
+        qty: { type: number }
+        routingTemplateId: { type: string, format: uuid }
+        routingTemplateName: { type: string }
+        routingTemplateVersion: { type: integer }
+        status:
+          type: string
+          enum: [draft, scheduled, in_progress, on_hold, qc_pending, completed, cancelled]
+        holdReasonId: { type: string, format: uuid, nullable: true }
+        holdReasonLabel: { type: string, nullable: true }
+        scheduledStart: { type: string, format: date, nullable: true }
+        scheduledEnd: { type: string, format: date, nullable: true }
+        stages:
+          type: array
+          items: { $ref: '#/components/schemas/JobStage' }
+        estimatedCost: { $ref: '#/components/schemas/JobCostSummary' }
+        actualCost: { $ref: '#/components/schemas/JobCostSummary' }
+        createdAt: { type: string, format: date-time }
+
+    JobStage:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        seqNo: { type: integer }
+        stageName: { type: string, description: "Snapshot of stage name at job creation" }
+        stageCode: { type: string }
+        stageConfigOptionId: { type: string, format: uuid, nullable: true }
+        status:
+          type: string
+          enum: [pending, in_progress, completed, skipped]
+        requiresInspection: { type: boolean }
+        inspectionStatus: { type: string, enum: [not_required, pending, passed, failed], nullable: true }
+        isMandatory: { type: boolean }
+        canSkip: { type: boolean }
+        actualStartAt: { type: string, format: date-time, nullable: true }
+        actualEndAt: { type: string, format: date-time, nullable: true }
+        completedBy: { type: string, format: uuid, nullable: true }
+        evidence: { type: string, nullable: true, description: "GCS path to evidence attachment" }
+
+    JobCostSummary:
+      type: object
+      properties:
+        materialCost: { type: number }
+        labourCost: { type: number }
+        overheadCost: { type: number }
+        totalCost: { type: number }
+        sellingPrice: { type: number, description: "Locked from CPO/quotation — NEVER updated after job start" }
+        marginPct: { type: number }
+
+    JobCostingEntry:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        jobId: { type: string, format: uuid }
+        entryType: { type: string, enum: [MATERIAL, LABOUR, OVERHEAD, OTHER] }
+        description: { type: string }
+        qty: { type: number, nullable: true }
+        unitCost: { type: number, nullable: true }
+        amount: { type: number }
+        createdAt: { type: string, format: date-time }
+
+paths:
+  /jobs:
+    get:
+      operationId: listJobs
+      summary: List production jobs
+      tags: [Production Jobs]
+      parameters:
+        - name: cpoId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: status
+          in: query
+          schema: { type: string }
+        - name: page
+          in: query
+          schema: { type: integer, default: 0 }
+        - name: size
+          in: query
+          schema: { type: integer, default: 50 }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  content: { type: array, items: { $ref: '#/components/schemas/ProductionJob' } }
+                  page: { type: integer }
+                  totalElements: { type: integer }
+
+    post:
+      operationId: createJob
+      summary: Create a production job from a CPO line
+      description: |
+        Applies the specified routing template — stages are copied as snapshots.
+        Material requirements are calculated from BOM.
+      tags: [Production Jobs]
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [cpoId, cpoLineId, routingTemplateId]
+              properties:
+                cpoId: { type: string, format: uuid }
+                cpoLineId: { type: string, format: uuid }
+                routingTemplateId: { type: string, format: uuid }
+                scheduledStart: { type: string, format: date, nullable: true }
+                scheduledEnd: { type: string, format: date, nullable: true }
+      responses:
+        '201':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProductionJob' }
+        '400': { description: CPO line or routing template not found }
+        '409': { description: Job already exists for this CPO line }
+
+  /jobs/{jobId}:
+    get:
+      operationId: getJob
+      tags: [Production Jobs]
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProductionJob' }
+        '404': { description: Job not found }
+
+  /jobs/{jobId}/stages/{stageId}/complete:
+    post:
+      operationId: completeStage
+      summary: Mark a job stage as completed
+      description: |
+        If stage requires_inspection=true, creates a quality inspection automatically.
+        Stage cannot advance if inspection is pending.
+        Stage cannot advance if blocks_next_stage=true and previous stage is not complete.
+      tags: [Job Stages]
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: stageId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                note: { type: string, nullable: true }
+                evidenceGcsPath: { type: string, nullable: true }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/JobStage' }
+        '409': { description: Stage has pending inspection or previous stage not complete }
+
+  /jobs/{jobId}/stages/{stageId}/skip:
+    post:
+      operationId: skipStage
+      summary: Skip an optional stage (can_skip=true only)
+      tags: [Job Stages]
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: stageId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason: { type: string }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/JobStage' }
+        '400': { description: Stage is mandatory and cannot be skipped }
+        '403': { description: OPS_MANAGER or OWNER role required to skip }
+
+  /jobs/{jobId}/costing:
+    get:
+      operationId: getJobCosting
+      summary: Get job costing summary (estimated vs actual)
+      tags: [Job Costing]
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  jobId: { type: string, format: uuid }
+                  jobNumber: { type: string }
+                  estimatedCost: { $ref: '#/components/schemas/JobCostSummary' }
+                  actualCost: { $ref: '#/components/schemas/JobCostSummary' }
+                  variance: { $ref: '#/components/schemas/JobCostSummary' }
+                  entries:
+                    type: array
+                    items: { $ref: '#/components/schemas/JobCostingEntry' }
+
+    post:
+      operationId: addCostingEntry
+      summary: Add a labour or overhead costing entry to a job
+      tags: [Job Costing]
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [entryType, description, amount]
+              properties:
+                entryType: { type: string, enum: [LABOUR, OVERHEAD, OTHER] }
+                description: { type: string }
+                qty: { type: number, nullable: true }
+                unitCost: { type: number, nullable: true }
+                amount: { type: number, minimum: 0 }
+      responses:
+        '201':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/JobCostingEntry' }
