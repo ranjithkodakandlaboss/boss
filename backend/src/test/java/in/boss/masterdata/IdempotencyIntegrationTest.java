@@ -117,7 +117,7 @@ class IdempotencyIntegrationTest extends BaseMasterDataIntegrationTest {
     }
 
     @Test
-    void replayWithDifferentPayload_returns422PayloadMismatch() throws Exception {
+    void replayWithDifferentPayload_returns409() throws Exception {
         String key = UUID.randomUUID().toString();
         Map<String, Object> body1 = Map.of(
                 "code", "ITEM-" + UUID.randomUUID().toString().substring(0, 5),
@@ -134,7 +134,7 @@ class IdempotencyIntegrationTest extends BaseMasterDataIntegrationTest {
                         .content(objectMapper.writeValueAsString(body1)))
                 .andExpect(status().isCreated());
 
-        // Same key, different body -> 422 Unprocessable Entity
+        // Same key, different body -> 409 Conflict
         setTenantContext(tenantId, "OWNER");
         Map<String, Object> body2 = Map.of(
                 "code", "ITEM-" + UUID.randomUUID().toString().substring(0, 5),
@@ -148,7 +148,7 @@ class IdempotencyIntegrationTest extends BaseMasterDataIntegrationTest {
                         .header("Idempotency-Key", key)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(body2)))
-                .andExpect(status().isUnprocessableEntity())
-                .andExpect(jsonPath("$.error").value("IDEMPOTENCY_PAYLOAD_MISMATCH"));
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error").value("IDEMPOTENCY_KEY_REUSE"));
     }
 }
