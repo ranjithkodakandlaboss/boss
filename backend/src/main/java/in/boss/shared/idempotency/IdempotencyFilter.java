@@ -15,6 +15,8 @@ import org.springframework.lang.NonNull;
 import org.springframework.web.filter.OncePerRequestFilter;
 import org.springframework.web.util.ContentCachingResponseWrapper;
 
+import org.springframework.util.AntPathMatcher;
+
 import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -52,6 +54,14 @@ public class IdempotencyFilter extends OncePerRequestFilter {
     private static final int MAX_KEY_LENGTH = 128;
     private static final int TTL_HOURS = 24;
 
+    // WhatsApp webhook uses X-WhatsApp-Message-ID for deduplication (per whatsapp.yaml).
+    // Config reads are GET-only and already exempt by method check.
+    private static final AntPathMatcher PATH_MATCHER = new AntPathMatcher();
+    private static final List<String> EXEMPT_PATHS = List.of(
+        "/api/*/messaging/webhook/whatsapp",
+        "/api/*/messaging/webhook/whatsapp/**"
+    );
+
     private final JdbcTemplate jdbc;
 
     public IdempotencyFilter(JdbcTemplate jdbc) {
@@ -60,7 +70,9 @@ public class IdempotencyFilter extends OncePerRequestFilter {
 
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
-        return !MUTATING_METHODS.contains(request.getMethod());
+        if (!MUTATING_METHODS.contains(request.getMethod())) return true;
+        String path = request.getRequestURI();
+        return EXEMPT_PATHS.stream().anyMatch(p -> PATH_MATCHER.match(p, path));
     }
 
     @Override
