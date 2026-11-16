@@ -47,3 +47,9 @@ variable "admin_firebase_project_id" {
     error_message = "admin_firebase_project_id must identify the dedicated Platform Admin Firebase project."
   }
 }
+
+variable "monitoring_notification_channel_ids" {
+  description = "Existing Cloud Monitoring notification channel IDs for the Cloud Run 5xx alert. Empty until a channel is approved."
+  type        = list(string)
+  default     = []
+}
