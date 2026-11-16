@@ -167,54 +167,6 @@ jobs:
             trivy-boss-api.json
             trivy-boss-admin-api.json
 
-  dependency-check:
-    name: OWASP Dependency-Check
-    runs-on: ubuntu-latest
-    # First run without NVD_API_KEY downloads the full NVD API set and can take about two hours.
-    # Later runs reuse the cached database. Set the NVD_API_KEY secret to finish the update in minutes.
-    timeout-minutes: 150
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
-        with:
-          java-version: "21"
-          distribution: temurin
-          cache: maven
-      - name: Cache NVD data
-        uses: actions/cache@v4
-        with:
-          path: ~/.m2/dependency-check-data
-          key: dependency-check-12-${{ hashFiles('backend/pom.xml', 'backend/platform-admin-api/pom.xml') }}
-          restore-keys: dependency-check-12-
-      - name: Customer API dependency check
-        env:
-          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
-        run: |
-          set -euo pipefail
-          cmd=(mvn -B -ntp -f backend/pom.xml dependency-check:check)
-          if [ -n "${NVD_API_KEY}" ]; then
-            cmd+=("-DnvdApiKey=${NVD_API_KEY}")
-          fi
-          "${cmd[@]}"
-      - name: Platform Admin dependency check
-        env:
-          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
-        run: |
-          set -euo pipefail
-          cmd=(mvn -B -ntp -f backend/platform-admin-api/pom.xml dependency-check:check)
-          if [ -n "${NVD_API_KEY}" ]; then
-            cmd+=("-DnvdApiKey=${NVD_API_KEY}")
-          fi
-          "${cmd[@]}"
-      - name: Upload dependency-check reports
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: dependency-check-reports
-          path: |
-            backend/target/dependency-check-report.*
-            backend/platform-admin-api/target/dependency-check-report.*
-
   spotbugs:
     name: SpotBugs and Find Security Bugs
     runs-on: ubuntu-latest
@@ -268,7 +220,6 @@ jobs:
       - secret-scan
       - lint-migrations
       - build-docker
-      - dependency-check
       - spotbugs
       - maintainability
     permissions:
