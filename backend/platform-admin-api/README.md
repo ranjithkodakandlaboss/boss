@@ -29,22 +29,59 @@ mvn -f backend/platform-admin-api/pom.xml package
 docker build -f backend/platform-admin-api/Dockerfile backend/platform-admin-api
 ```
 
-`infra/main.tf` defines the separate `boss-admin-api` Cloud Run service and service account, mounts its own Secret Manager database password, and binds `ADMIN_FIREBASE_PROJECT_ID` to the platform-admin Firebase project. OpenTofu validates that this project ID differs from `customer_firebase_project_id`. The Admin-only configuration intentionally reuses the live Cloud SQL instance `boss-dev-postgres` and database `boss`; it does not create a second SQL instance, VPC, or customer-facing networking stack.
+`infra/main.tf` defines a two-stage Admin-only provisioning path. Stage 1 creates the Admin Artifact Registry repository, service account, secret container, and runtime IAM without querying Cloud SQL or creating Cloud Run. Stage 2 creates the separate `boss-admin-api` service after the initial image and operator prerequisites are ready. The service mounts its own Secret Manager database password and binds `ADMIN_FIREBASE_PROJECT_ID` to a Firebase project distinct from `customer_firebase_project_id`. Both stages reuse the live Cloud SQL instance `boss-dev-postgres` and database `boss`; neither creates a second SQL instance, VPC, or customer-facing networking stack.
 
-Before applying the infrastructure, provide a secret version for `boss-admin-db-password-<env>`, create the restricted `boss_admin` PostgreSQL login and grants described in `PLATFORM_ADMIN_INTEGRATION_REQUEST.md`, and set both Firebase project IDs. No cloud resources were provisioned or applied as part of this change.
+No cloud resources were provisioned or applied as part of this change.
 
 See `PLATFORM_ADMIN_INTEGRATION_REQUEST.md` for schema/contract integration items that block full provisioning and deployment readiness.
 
-## Dev deployment
+## Dev provisioning and deployment
 
-`.github/workflows/ci.yml` provides a separate `deploy-admin-dev` job. It runs only for a manual workflow dispatch on `main`, after every existing quality gate succeeds. The job builds the Platform Admin image from this module's Dockerfile, pushes it to `asia-south1-docker.pkg.dev/boss-dev-514813/boss/boss-admin-api:<commit-sha>`, and updates the existing `boss-admin-api` Cloud Run service. It changes only the image; the service account, Admin Firebase project setting, and database secret mount remain owned by OpenTofu. A preflight script checks those settings and an enabled database-secret version before the image is built or pushed.
+The Admin infrastructure uses two explicit OpenTofu stages. The remote state must be approved and available before either stage; the current real remote plan is blocked by the missing backend noted below. Do not initialize against or migrate customer state.
 
-Before dispatching:
+### Stage 1 — bootstrap prerequisites
 
-- Configure the GitHub Actions repository variables `GCP_WORKLOAD_IDENTITY_PROVIDER` and `GCP_SERVICE_ACCOUNT`. Bind the GitHub WIF principal to the deployment service account with `roles/iam.workloadIdentityUser`; grant that service account `roles/artifactregistry.writer` on repository `boss`, `roles/run.admin` in the Dev project, and `roles/iam.serviceAccountUser` on `boss-admin-api-dev@boss-dev-514813.iam.gserviceaccount.com`. Grant `roles/secretmanager.viewer` only on the `boss-admin-db-password-dev` secret so the preflight can call `secretmanager.versions.list` and inspect enabled-version metadata. This is metadata-only access: do not grant Secret Manager Admin or `secretmanager.versions.access` / payload access to the deployment identity.
-- Apply the Dev OpenTofu configuration in project `boss-dev-514813` and region `asia-south1` so the `boss` Artifact Registry repository, `boss-admin-api` Cloud Run service, dedicated `boss-admin-api-dev` service account, and `boss-admin-db-password-dev` secret exist with their runtime IAM bindings. The runtime reuses the existing `boss-dev-postgres` instance and public DB endpoint; it does not create a VPC connector or private-network stack.
-- Set the real `admin_firebase_project_id` in the OpenTofu Dev configuration to an existing Firebase project, distinct from the customer Firebase project, with Firebase Authentication configured. Never put project IDs or credentials in the workflow source.
-- Add an enabled version of the approved admin database credential to `boss-admin-db-password-dev`; create the restricted `boss_admin` database role and apply `src/main/resources/db/boss-admin-grants.sql` after the BOSS schema migrations. The workflow does not create database credentials, inspect secret contents, or apply SQL.
+With the approved Dev variable file and backend, run the Admin-only root with `admin_service_enabled=false` (the default). This stage creates the `boss` Artifact Registry repository, dedicated `boss-admin-api-dev` service account, `boss-admin-db-password-dev` secret container, and its runtime Secret Manager / Cloud SQL IAM bindings. It does not read Cloud SQL, create the Cloud Run service, or require Admin Firebase configuration. The secret container has no credential version until the operator supplies one.
+
+After Stage 1, the operator must:
+
+1. Add the approved Admin DB credential as an enabled version of `boss-admin-db-password-dev`.
+2. Set up a real Admin Firebase project with Authentication enabled, distinct from the customer Firebase project, and record its project ID for Stage 2.
+3. Have the DBA create the restricted `boss_admin` login and apply `src/main/resources/db/boss-admin-grants.sql` after the BOSS schema migrations.
+4. Ensure the Cloud Build service account can write to Artifact Registry repository `boss`.
+
+These are operator/DBA actions, not workflow actions; this repository does not create credentials, modify Firebase, or execute SQL.
+
+### Build and push the initial image
+
+Before Stage 2, build and push the Admin image to the repository created in Stage 1:
+
+```sh
+gcloud builds submit --project boss-dev-514813 --config cloudbuild-admin.yaml .
+```
+
+This Admin-only Cloud Build config builds and pushes `asia-south1-docker.pkg.dev/boss-dev-514813/boss/boss-admin-api:bootstrap-v1`. The same explicit `bootstrap-v1` tag is the OpenTofu `admin_image_tag` default and the `_ADMIN_IMAGE` tag in `cloudbuild.yaml`; it is not an implicit `latest` tag. The initial service cannot be created until this image exists.
+
+### Stage 2 — create the Terraform-owned Cloud Run service
+
+After the enabled secret version, Firebase project, DBA role/grants, and bootstrap image are ready, the operator enables the service in the same Admin-only state and applies with:
+
+```sh
+tofu -chdir=infra apply \
+  -var-file=terraform.tfvars \
+  -var='admin_service_enabled=true' \
+  -var='admin_image_tag=bootstrap-v1'
+```
+
+Stage 2 creates `boss-admin-api` with the dedicated service account, Admin Firebase project, existing Cloud SQL URL (`boss` database on `boss-dev-postgres` via the Cloud SQL Socket Factory), and mounted `boss-admin-db-password-dev` secret. The service uses the pushed bootstrap image. Keep `admin_service_enabled=true` in subsequent OpenTofu runs.
+
+### Subsequent GitHub Actions image updates
+
+`.github/workflows/ci.yml` provides a separate `deploy-admin-dev` job. It runs only on a manual dispatch from `main` after every quality gate succeeds. The job checks the Stage 2 service configuration and an enabled secret version, builds and pushes an immutable commit-SHA image, then invokes `gcloud run services update --image ...` for `boss-admin-api`. That command changes only the image; it does not create the service or pass environment, identity, scaling, or secret configuration. OpenTofu also ignores changes to the service image after initial creation, so a later Terraform apply preserves GitHub's image rollout while retaining Terraform ownership of service configuration.
+
+The workflow intentionally requires the service to exist. The safe first-deployment alternative is the explicit Stage 1 → operator prerequisites → initial image push → Stage 2 sequence above, which creates the configured service with OpenTofu before GitHub Actions is dispatched. Do not dispatch the workflow as a substitute for Terraform service creation.
+
+Before a future, explicitly authorized workflow dispatch, configure the GitHub Actions repository variables `GCP_WORKLOAD_IDENTITY_PROVIDER` and `GCP_SERVICE_ACCOUNT`. Bind the GitHub WIF principal to the deployment identity with `roles/iam.workloadIdentityUser`; grant it `roles/artifactregistry.writer` on repository `boss`, `roles/run.admin` in the Dev project, and `roles/iam.serviceAccountUser` on `boss-admin-api-dev@boss-dev-514813.iam.gserviceaccount.com`. Grant `roles/secretmanager.viewer` only on `boss-admin-db-password-dev` so preflight can inspect enabled-version metadata. Do not grant Secret Manager Admin or `secretmanager.versions.access` / payload access to the deployment identity.
 
 ### State ownership and remote plan gate
 
@@ -60,12 +97,10 @@ The explicit requirements are:
 
 If the bucket or state path does not exist yet, the operator must create or restore it before any non-dry-run plan. Until that is done, the correct status is "real remote plan blocked by missing approved backend" rather than "empty state".
 
-The preflight stops with an explicit error if the Artifact Registry repository, Cloud Run service, required service configuration, or enabled secret version is missing. It lists Secret Manager version metadata only; it never reads or accesses the database secret payload. It cannot verify the database role/grants or Firebase project's readiness; those must be confirmed by the operator. Do not close Issue #24 until the actual Cloud Run deployment, service health check, and database connectivity check have succeeded.
-
-The Admin deployment sequence is: (1) the platform operator applies the Admin-only OpenTofu root so the `boss` Artifact Registry repo and `boss-admin-api` Cloud Run service exist, (2) the workflow preflight validates their presence and secret state, (3) the job packages and pushes the Admin image, and (4) `deploy-cloudrun` updates only the Admin service. The initial image reference does not prevent service creation because the Cloud Run deploy step creates a missing service when a valid image URI is supplied; it simply updates an existing service otherwise. This is intentionally scoped to the separate Admin service and does not change the legacy customer deployment path.
+The preflight stops with an explicit error if the Artifact Registry repository, Stage 2 Cloud Run service, required service configuration, or enabled secret version is missing. It lists Secret Manager version metadata only; it never reads or accesses the database secret payload. It cannot verify the database role/grants or Firebase project's readiness; those must be confirmed by the operator. Do not close Issue #24 until the actual Cloud Run deployment, service health check, and database connectivity check have succeeded.
 
 ### Image and service naming
 
-The Platform Admin paths are aligned: Cloud Build's `_ADMIN_IMAGE`, the new GitHub Actions job, and OpenTofu all use repository `boss` and image name `boss-admin-api`; the workflow and OpenTofu both target service `boss-admin-api`. Cloud Build currently tags the image `cloudbuild-latest`, OpenTofu defaults `admin_image_tag` to `latest`, and GitHub Actions uses the immutable commit SHA tag.
+The Platform Admin paths are aligned: Cloud Build, the GitHub Actions job, and OpenTofu all use repository `boss` and image name `boss-admin-api`; the workflow and OpenTofu both target service `boss-admin-api`. The initial image uses `bootstrap-v1`; GitHub Actions uses immutable commit-SHA tags for subsequent releases.
 
 The pre-existing customer path differs: GitHub Actions and Cloud Build use Artifact Registry repository `boss-docker`, while OpenTofu defines repository `boss` and constructs the `boss-api` image path there. The customer deployment job is intentionally unchanged by this issue; changing that legacy path requires a separate, explicitly scoped migration. The workflow's `boss-api-dev` service name also differs from the OpenTofu `boss-api` service name. Neither customer discrepancy is reused for or silently changed by the Platform Admin deployment.

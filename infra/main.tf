@@ -21,19 +21,6 @@ provider "google" {
   region  = var.region
 }
 
-resource "terraform_data" "distinct_firebase_projects" {
-  input = {
-    customer = var.customer_firebase_project_id
-    admin    = var.admin_firebase_project_id
-  }
-  lifecycle {
-    precondition {
-      condition     = trimspace(var.customer_firebase_project_id) != trimspace(var.admin_firebase_project_id)
-      error_message = "boss-api and boss-admin-api must use different Firebase projects."
-    }
-  }
-}
-
 # ── Artifact Registry ──────────────────────────────────────────────────────────
 resource "google_artifact_registry_repository" "boss" {
   project       = var.project_id
@@ -48,21 +35,42 @@ resource "google_artifact_registry_repository" "boss" {
 # provisioned here; no additional SQL instance, private networking, or customer
 # resources are created.
 data "google_sql_database_instance" "boss_dev_postgres" {
+  count   = var.admin_service_enabled ? 1 : 0
   project = var.project_id
   name    = "boss-dev-postgres"
 }
 
 locals {
-  boss_admin_db_url = "jdbc:postgresql:///boss?cloudSqlInstance=${var.project_id}:${var.region}:${data.google_sql_database_instance.boss_dev_postgres.name}&socketFactory=com.google.cloud.sql.postgres.SocketFactory&ipTypes=PUBLIC"
+  boss_admin_db_url = var.admin_service_enabled ? "jdbc:postgresql:///boss?cloudSqlInstance=${var.project_id}:${var.region}:${data.google_sql_database_instance.boss_dev_postgres[0].name}&socketFactory=com.google.cloud.sql.postgres.SocketFactory&ipTypes=PUBLIC" : ""
 }
 
 # Platform Admin runs as a separate Cloud Run service with its own identity,
 # Firebase project, and database credential. It reuses the existing Cloud SQL
 # instance and boss database; it does not create another SQL instance or a VPC.
+# Stage 1 leaves this disabled while bootstrapping its repository, identity,
+# secret, and IAM. Stage 2 enables it after the bootstrap image and prerequisites
+# are ready.
 resource "google_cloud_run_v2_service" "boss_admin_api" {
+  count    = var.admin_service_enabled ? 1 : 0
   name     = "boss-admin-api"
   location = var.region
   project  = var.project_id
+
+  lifecycle {
+    prevent_destroy = true
+
+    precondition {
+      condition = (
+        length(trimspace(var.admin_firebase_project_id)) > 0 &&
+        trimspace(var.customer_firebase_project_id) != trimspace(var.admin_firebase_project_id)
+      )
+      error_message = "Set a non-empty Admin Firebase project ID distinct from the customer Firebase project before enabling the Admin service."
+    }
+
+    # GitHub Actions owns image rollouts after initial service creation;
+    # OpenTofu continues to own the service configuration.
+    ignore_changes = [template[0].containers[0].image]
+  }
 
   template {
     service_account = google_service_account.boss_admin_api.email
@@ -117,15 +125,15 @@ resource "google_cloud_run_v2_service" "boss_admin_api" {
   }
   depends_on = [
     google_secret_manager_secret_iam_member.boss_admin_api_secret_accessor,
-    google_project_iam_member.boss_admin_api_sql_client,
-    terraform_data.distinct_firebase_projects
+    google_project_iam_member.boss_admin_api_sql_client
   ]
 }
 
 resource "google_cloud_run_v2_service_iam_member" "boss_admin_api_public_invoker" {
+  count    = var.admin_service_enabled ? 1 : 0
   project  = var.project_id
-  location = google_cloud_run_v2_service.boss_admin_api.location
-  name     = google_cloud_run_v2_service.boss_admin_api.name
+  location = google_cloud_run_v2_service.boss_admin_api[0].location
+  name     = google_cloud_run_v2_service.boss_admin_api[0].name
   role     = "roles/run.invoker"
   member   = "allUsers"
 }
@@ -158,5 +166,5 @@ resource "google_secret_manager_secret" "admin_db_password" {
 
 output "boss_admin_api_url" {
   description = "URL of the separate Platform Admin Cloud Run service"
-  value       = google_cloud_run_v2_service.boss_admin_api.uri
+  value       = try(google_cloud_run_v2_service.boss_admin_api[0].uri, null)
 }

@@ -21,7 +21,7 @@ if ! gcloud run services describe "${CLOUD_RUN_SERVICE}" \
   --region "${GCP_REGION}" \
   --project "${GCP_PROJECT_ID}" \
   --format=json >"${service_json}"; then
-  echo "::error::Cloud Run service '${CLOUD_RUN_SERVICE}' is missing. Apply the OpenTofu infrastructure first."
+  echo "::error::Cloud Run service '${CLOUD_RUN_SERVICE}' is missing. Complete Admin Terraform Stage 2 first; GitHub Actions only updates the image and does not create or own the service configuration."
   exit 1
 fi
 

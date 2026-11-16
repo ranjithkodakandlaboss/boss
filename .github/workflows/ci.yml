@@ -311,7 +311,7 @@ jobs:
       - name: Set up gcloud
         uses: google-github-actions/setup-gcloud@v2
 
-      - name: Check Platform Admin Dev prerequisites
+      - name: Verify Terraform Stage 2 service before image rollout
         run: ./scripts/check-admin-dev-prerequisites.sh
 
       - name: Configure Docker for Artifact Registry
@@ -334,10 +334,11 @@ jobs:
           docker build --tag "${IMAGE_URI}" -f backend/platform-admin-api/Dockerfile backend/platform-admin-api
           docker push "${IMAGE_URI}"
 
-      - name: Deploy Platform Admin to Cloud Run
-        uses: google-github-actions/deploy-cloudrun@v2
-        with:
-          service: ${{ env.CLOUD_RUN_SERVICE }}
-          region: ${{ env.GCP_REGION }}
-          project_id: ${{ env.GCP_PROJECT_ID }}
-          image: ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.ARTIFACT_REGISTRY_REPOSITORY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+      - name: Update Platform Admin image only
+        env:
+          IMAGE_URI: ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.ARTIFACT_REGISTRY_REPOSITORY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+        run: |
+          gcloud run services update "${CLOUD_RUN_SERVICE}" \
+            --region "${GCP_REGION}" \
+            --project "${GCP_PROJECT_ID}" \
+            --image "${IMAGE_URI}"
