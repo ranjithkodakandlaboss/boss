@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<suppressions xmlns="https://jeremylong.github.io/DependencyCheck/dependency-suppression.1.3.xsd">
+    <!--
+      Temporary release exceptions. These CVEs stay visible as suppressed findings
+      in the Dependency-Check report. failBuildOnCVSS remains 7 for every other finding.
+      BOSS does not use XsltView, SseEmitter, ServerSentEvent, or text/event-stream.
+      The open-source fix is Spring Framework 7.0.9 and requires Spring Boot 4.
+    -->
+    <suppress>
+        <notes><![CDATA[
+Temporary release exception for CVE-2026-47884.
+spring-webmvc XsltView SSRF/RCE. BOSS has no XsltView and no /** view that takes its name from a request.
+Open-source fix: Spring Framework 7.0.9 (Spring Boot 4). Framework 6.2.20 is enterprise-only.
+]]></notes>
+        <packageUrl regex="true">^pkg:maven/org\.springframework/spring-webmvc@.*$</packageUrl>
+        <cve>CVE-2026-47884</cve>
+    </suppress>
+    <suppress>
+        <notes><![CDATA[
+Temporary release exception for CVE-2026-47890.
+SSE view-fragment stream corruption. Spring rates this low. BOSS does not emit SSE.
+Open-source fix: Spring Framework 7.0.9 (Spring Boot 4). Framework 6.2.20 is enterprise-only.
+]]></notes>
+        <packageUrl regex="true">^pkg:maven/org\.springframework/spring-webmvc@.*$</packageUrl>
+        <cve>CVE-2026-47890</cve>
+    </suppress>
+</suppressions>

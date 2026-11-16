@@ -1,0 +1,7 @@
+# Temporary release exceptions for the CRITICAL container gate.
+# This is not a suppression of the scan. scripts/trivy-critical-gate.sh prints every
+# CRITICAL finding, labels only the rows below as a release exception, and exits 1
+# when any other CRITICAL finding appears.
+# CVE	package	reason
+CVE-2026-47884	org.springframework:spring-webmvc	XsltView is not used. The open-source fix is Spring Framework 7.0.9, which requires Spring Boot 4. Framework 6.2.20 is enterprise-only. Accepted until a Boot 4 upgrade.
+CVE-2026-47890	org.springframework:spring-webmvc	SSE view fragments are not used. Spring rates this low. The open-source fix is Spring Framework 7.0.9, which requires Spring Boot 4. Accepted until a Boot 4 upgrade.

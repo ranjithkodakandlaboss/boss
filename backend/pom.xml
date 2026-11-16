@@ -262,6 +262,7 @@
           <!-- OSS Index rejects unauthenticated calls. NVD remains the CVE source. -->
           <ossindexAnalyzerEnabled>false</ossindexAnalyzerEnabled>
           <dataDirectory>${user.home}/.m2/dependency-check-data</dataDirectory>
+          <suppressionFile>${project.basedir}/../config/security/dependency-check-exceptions.xml</suppressionFile>
           <formats>
             <format>HTML</format>
             <format>JSON</format>
