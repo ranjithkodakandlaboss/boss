@@ -19,17 +19,19 @@ provider "google" {
 }
 
 # ── Artifact Registry ──────────────────────────────────────────────────────────
+# Actual deployed name is "boss-docker" (not "boss" as originally written)
 resource "google_artifact_registry_repository" "boss" {
   project       = var.project_id
   location      = var.region
-  repository_id = "boss"
+  repository_id = "boss-docker"
   description   = "BOSS Docker images"
   format        = "DOCKER"
 }
 
 # ── Cloud SQL (PostgreSQL 15) ───────────────────────────────────────────────────
+# Actual deployed name is "boss-<env>-postgres" (not "boss-<env>")
 resource "google_sql_database_instance" "boss" {
-  name             = "boss-${var.env}"
+  name             = "boss-${var.env}-postgres"
   database_version = "POSTGRES_15"
   region           = var.region
   deletion_protection = var.env == "prod"
@@ -72,8 +74,9 @@ resource "google_sql_user" "boss_app" {
 }
 
 # ── Cloud Run ─────────────────────────────────────────────────────────────────
+# Actual deployed name is "boss-api-<env>" (not the hardcoded "boss-api")
 resource "google_cloud_run_v2_service" "boss_api" {
-  name     = "boss-api"
+  name     = "boss-api-${var.env}"
   location = var.region
   project  = var.project_id
 
@@ -84,7 +87,8 @@ resource "google_cloud_run_v2_service" "boss_api" {
       max_instance_count = var.env == "prod" ? 10 : 3
     }
     containers {
-      image = "${var.region}-docker.pkg.dev/${var.project_id}/boss/boss-api:${var.image_tag}"
+      # Image registry is "boss-docker" — matches Artifact Registry repository_id above
+      image = "${var.region}-docker.pkg.dev/${var.project_id}/boss-docker/boss-api:${var.image_tag}"
       ports { container_port = 8080 }
       env {
         name  = "SPRING_PROFILES_ACTIVE"
