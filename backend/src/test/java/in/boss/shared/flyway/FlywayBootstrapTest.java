@@ -22,21 +22,28 @@ import static org.assertj.core.api.Assertions.assertThat;
 class FlywayBootstrapTest {
 
     @Test
-    @DisplayName("Run Flyway V001-V010 from scratch on a fresh database and verify 10 schema_history entries")
+    @DisplayName("Run Flyway V001-V010 from scratch on a fresh database/schema and verify 10 schema_history entries")
     void v001_to_v010_migrations_succeedOnFreshDatabase() throws Exception {
-        String url = System.getProperty("test.datasource.url", "jdbc:postgresql://localhost:5432/test_flyway_v001_v010");
-        String user = System.getProperty("test.datasource.username", "boss");
-        String pass = System.getProperty("test.datasource.password", "boss");
+        String defaultUrl = System.getenv("SPRING_DATASOURCE_URL");
+        if (defaultUrl == null || defaultUrl.isBlank()) {
+            defaultUrl = "jdbc:postgresql://localhost:5432/boss";
+        }
+        String url = System.getProperty("test.datasource.url", defaultUrl);
+        String user = System.getProperty("test.datasource.username", System.getenv().getOrDefault("SPRING_DATASOURCE_USERNAME", "boss"));
+        String pass = System.getProperty("test.datasource.password", System.getenv().getOrDefault("SPRING_DATASOURCE_PASSWORD", "boss"));
+        String testSchema = "flyway_bootstrap_test";
 
-        // Reset public schema to guarantee a completely fresh database state
+        // Reset dedicated test schema to guarantee an isolated, fresh state
         try (Connection conn = DriverManager.getConnection(url, user, pass);
              Statement stmt = conn.createStatement()) {
-            stmt.execute("DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;");
+            stmt.execute("DROP SCHEMA IF EXISTS " + testSchema + " CASCADE; CREATE SCHEMA " + testSchema + ";");
         }
 
-        // Configure Flyway to target version 010 (V001 through V010)
+        // Configure Flyway to target version 010 in the fresh schema
         Flyway flyway = Flyway.configure()
                 .dataSource(url, user, pass)
+                .schemas(testSchema)
+                .defaultSchema(testSchema)
                 .locations("classpath:db/migration")
                 .target("010")
                 .load();
@@ -57,7 +64,7 @@ class FlywayBootstrapTest {
         try (Connection conn = DriverManager.getConnection(url, user, pass);
              Statement stmt = conn.createStatement();
              ResultSet rs = stmt.executeQuery(
-                     "SELECT version, success FROM flyway_schema_history ORDER BY installed_rank")) {
+                     "SELECT version, success FROM " + testSchema + ".flyway_schema_history ORDER BY installed_rank")) {
             while (rs.next()) {
                 versions.add(rs.getString("version"));
                 successFlags.add(rs.getBoolean("success"));
@@ -76,12 +83,12 @@ class FlywayBootstrapTest {
                 .hasSize(10)
                 .allMatch(Boolean::booleanValue);
 
-        // Verify core bootstrap tables created by V001-V010 exist
+        // Verify core bootstrap tables created by V001-V010 exist in test schema
         List<String> tables = new ArrayList<>();
         try (Connection conn = DriverManager.getConnection(url, user, pass);
              Statement stmt = conn.createStatement();
              ResultSet rs = stmt.executeQuery(
-                     "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name")) {
+                     "SELECT table_name FROM information_schema.tables WHERE table_schema = '" + testSchema + "' ORDER BY table_name")) {
             while (rs.next()) {
                 tables.add(rs.getString("table_name"));
             }
@@ -102,5 +109,11 @@ class FlywayBootstrapTest {
                 "units_of_measure",
                 "hsn_codes"
         );
+
+        // Clean up test schema after successful verification
+        try (Connection conn = DriverManager.getConnection(url, user, pass);
+             Statement stmt = conn.createStatement()) {
+            stmt.execute("DROP SCHEMA IF EXISTS " + testSchema + " CASCADE;");
+        }
     }
 }
