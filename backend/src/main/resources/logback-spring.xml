@@ -1,0 +1,23 @@
+<configuration>
+  <!-- Application logs stay plain text. Cloud Logging stores them as textPayload. -->
+  <appender name="APP_TEXT" class="ch.qos.logback.core.ConsoleAppender">
+    <encoder>
+      <pattern>%d{yyyy-MM-dd'T'HH:mm:ss.SSSXXX} %-5level [%thread] %logger - %msg%n%ex</pattern>
+    </encoder>
+  </appender>
+
+  <!-- Request logs are one JSON object per line. Cloud Logging stores them as jsonPayload. -->
+  <appender name="REQUEST_JSON" class="ch.qos.logback.core.ConsoleAppender">
+    <encoder>
+      <pattern>%msg%n</pattern>
+    </encoder>
+  </appender>
+
+  <logger name="http.request" level="INFO" additivity="false">
+    <appender-ref ref="REQUEST_JSON"/>
+  </logger>
+
+  <root level="INFO">
+    <appender-ref ref="APP_TEXT"/>
+  </root>
+</configuration>

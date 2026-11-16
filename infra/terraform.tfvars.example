@@ -1,0 +1,8 @@
+# Copy to terraform.tfvars (never commit terraform.tfvars)
+project_id = "boss-dev-XXXXXX"
+region     = "asia-south1"
+env        = "dev"
+image_tag  = "latest"
+admin_image_tag = "latest"
+customer_firebase_project_id = "boss-customer-dev-XXXXXX"
+admin_firebase_project_id = "boss-platform-admin-dev-XXXXXX"

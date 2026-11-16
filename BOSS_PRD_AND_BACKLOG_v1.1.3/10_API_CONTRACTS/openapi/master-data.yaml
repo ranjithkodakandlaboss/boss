@@ -469,6 +469,71 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Supplier' }
 
+  /suppliers/{supplierId}:
+    get:
+      operationId: getSupplier
+      tags: [Suppliers]
+      parameters:
+        - name: supplierId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Supplier' }
+        '404':
+          description: Supplier not found
+
+    patch:
+      operationId: updateSupplier
+      tags: [Suppliers]
+      parameters:
+        - name: supplierId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                gstin: { type: string, nullable: true }
+                pan: { type: string, nullable: true }
+                supplierCategoryId: { type: string, format: uuid, nullable: true }
+                supplierCategoryLabel: { type: string, nullable: true }
+                paymentTermsDays: { type: integer, nullable: true }
+                billingAddress: { type: string, nullable: true }
+                shippingAddress: { type: string, nullable: true }
+                status: { type: string, enum: [active, inactive] }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Supplier' }
+        '400':
+          description: Invalid request
+        '404':
+          description: Supplier not found
+
+    delete:
+      operationId: deleteSupplier
+      tags: [Suppliers]
+      parameters:
+        - name: supplierId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '204':
+          description: Supplier soft-deleted successfully
+        '404':
+          description: Supplier not found
+
   /uoms:
     get:
       operationId: listUOMs

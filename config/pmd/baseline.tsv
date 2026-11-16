@@ -1,0 +1,10 @@
+# Existing PMD maintainability findings. This list is a baseline, not a suppression.
+# The gate prints every current finding and fails when a count rises or a new key appears.
+# Format: module<TAB>path<TAB>rule<TAB>count
+customer-api	src/main/java/in/boss/masterdata/domain/impl/BomServiceImpl.java	CognitiveComplexity	1
+customer-api	src/main/java/in/boss/masterdata/domain/impl/BomServiceImpl.java	CyclomaticComplexity	1
+customer-api	src/main/java/in/boss/masterdata/domain/impl/CustomerServiceImpl.java	CyclomaticComplexity	1
+customer-api	src/main/java/in/boss/masterdata/domain/impl/CustomerServiceImpl.java	GodClass	1
+customer-api	src/main/java/in/boss/masterdata/domain/impl/ItemServiceImpl.java	GodClass	1
+customer-api	src/main/java/in/boss/masterdata/domain/impl/SupplierServiceImpl.java	CyclomaticComplexity	1
+customer-api	src/main/java/in/boss/masterdata/domain/impl/SupplierServiceImpl.java	GodClass	1
