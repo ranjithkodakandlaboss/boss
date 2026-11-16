@@ -37,7 +37,7 @@ steps:
       - '${_ADMIN_IMAGE}'
       - '-f'
       - 'backend/platform-admin-api/Dockerfile'
-      - '.'
+      - 'backend/platform-admin-api'
     waitFor: ['build-admin-jar']
     id: 'build-admin-image'
 

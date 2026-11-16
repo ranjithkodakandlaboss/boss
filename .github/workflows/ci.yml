@@ -88,8 +88,18 @@ jobs:
     needs: build-and-test
     steps:
       - uses: actions/checkout@v4
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: "21"
+          distribution: temurin
+          cache: maven
+      - name: Package customer API
+        run: mvn -B -ntp -f backend/pom.xml package -DskipTests
+      - name: Package Platform Admin API
+        run: mvn -B -ntp -f backend/platform-admin-api/pom.xml package -DskipTests
       - name: Build Docker image (no push)
         run: docker build -t boss-api:ci .
 
       - name: Build Platform Admin Docker image (no push)
-        run: docker build -t boss-admin-api:ci -f backend/platform-admin-api/Dockerfile .
+        run: docker build -t boss-admin-api:ci -f backend/platform-admin-api/Dockerfile backend/platform-admin-api
