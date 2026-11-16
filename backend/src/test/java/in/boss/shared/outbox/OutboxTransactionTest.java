@@ -21,11 +21,15 @@ import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.when;
 
 /**
  * Verifies transactional guarantees of OutboxPublisher (issue #15).
@@ -58,6 +62,8 @@ class OutboxTransactionTest {
     @Autowired JdbcTemplate jdbc;
     @Autowired OutboxPublisher outboxPublisher;
     @Autowired PlatformTransactionManager txManager;
+    @Autowired(required = false) OutboxRelayService outboxRelayService;
+    @Autowired(required = false) OutboxRelayScheduler outboxRelayScheduler;
 
     static UUID tenantId;
 
@@ -145,5 +151,37 @@ class OutboxTransactionTest {
                 "SELECT attempts FROM outbox_events WHERE aggregate_id = ?",
                 Integer.class, entityId);
         assertThat(attempts).isZero();
+    }
+
+    @Test
+    void outboxRelay_automaticSchedulingDisabled_andBeanAvailableForExplicitInvocation() {
+        assertThat(outboxRelayService).as("OutboxRelayService bean must be available in context").isNotNull();
+        assertThat(outboxRelayScheduler).as("Automatic OutboxRelayScheduler must be disabled in tests").isNull();
+
+        setContext();
+        UUID entityId = UUID.randomUUID();
+        outboxPublisher.publish("ORDER", entityId, "CREATED", "{\"test\":true}");
+
+        // Record is immediately pending and attempts=0 (not automatically polled by background scheduler)
+        String status = jdbc.queryForObject(
+                "SELECT status FROM outbox_events WHERE aggregate_id = ?",
+                String.class, entityId);
+        int attempts = jdbc.queryForObject(
+                "SELECT attempts FROM outbox_events WHERE aggregate_id = ?",
+                Integer.class, entityId);
+        assertThat(status).isEqualTo("pending");
+        assertThat(attempts).isZero();
+
+        // Stub MockBean PubSubTemplate so explicit relay invocation succeeds
+        when(pubSubTemplate.publish(anyString(), anyString()))
+                .thenReturn(CompletableFuture.completedFuture("msg-explicit-relay"));
+
+        // Explicit invocation works
+        outboxRelayService.relay();
+
+        String statusAfterRelay = jdbc.queryForObject(
+                "SELECT status FROM outbox_events WHERE aggregate_id = ?",
+                String.class, entityId);
+        assertThat(statusAfterRelay).isEqualTo("published");
     }
 }

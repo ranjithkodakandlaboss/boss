@@ -4,7 +4,6 @@ import com.google.cloud.spring.pubsub.core.PubSubTemplate;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -35,7 +34,6 @@ public class OutboxRelayService {
         this.pubSubTemplate = pubSubTemplate;
     }
 
-    @Scheduled(fixedDelayString = "${boss.outbox.relay.interval-ms:5000}")
     @Transactional
     public void relay() {
         List<Map<String, Object>> rows = claimBatch();
