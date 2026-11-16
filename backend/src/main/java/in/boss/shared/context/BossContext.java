@@ -25,4 +25,23 @@ public record BossContext(
         }
         return false;
     }
+
+    /**
+     * Whether this context is constrained to a specific physical site.
+     */
+    public boolean isSiteScoped() {
+        return siteId != null;
+    }
+
+    /**
+     * Checks if the caller can access resources at the specified physical site.
+     * Unscoped (tenant-wide) roles return true for any site.
+     * Site-scoped roles can only access their assigned site.
+     */
+    public boolean canAccessSite(UUID targetSiteId) {
+        if (siteId == null) {
+            return true;
+        }
+        return targetSiteId == null || siteId.equals(targetSiteId);
+    }
 }

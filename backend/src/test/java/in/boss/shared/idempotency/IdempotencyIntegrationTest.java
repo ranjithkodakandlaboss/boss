@@ -326,6 +326,66 @@ class IdempotencyIntegrationTest {
         assertThat(tenantChainCalls.get()).isEqualTo(1);
     }
 
+    @Test
+    void sameKeyForTenantAAndTenantB_executesIndependentlyWithoutDataLeak() throws Exception {
+        UUID tenantB = UUID.fromString(jdbc.queryForObject(
+                "INSERT INTO tenant_registry (customer_group_id, name, slug, status) "
+                + "SELECT customer_group_id, 'Idem Tenant B', 'idem-b', 'active' FROM tenant_registry WHERE id = ? "
+                + "ON CONFLICT (slug) DO UPDATE SET status = 'active' RETURNING id::text",
+                String.class, tenantId));
+
+        String sharedKey = "cross-tenant-shared-key-" + UUID.randomUUID();
+        String payload = "{\"item\":\"widget\"}";
+
+        // 1. Tenant A executes with sharedKey
+        BossContextHolder.set(new BossContext(tenantId, UUID.randomUUID(), Set.of("OWNER"), null, "uid-a"));
+        var respA = new MockHttpServletResponse();
+        filter.doFilter(postRequest("/api/v1/items", payload, sharedKey), respA, (rq, rs) -> {
+            var r = (jakarta.servlet.http.HttpServletResponse) rs;
+            r.setStatus(200);
+            r.setContentType("application/json");
+            r.getWriter().write("{\"tenant\":\"A\",\"secret\":\"a-private-data\"}");
+        });
+        assertThat(respA.getStatus()).isEqualTo(200);
+        assertThat(respA.getContentAsString()).contains("a-private-data");
+        assertThat(respA.getHeader("X-Idempotent-Replayed")).isNull();
+
+        // 2. Tenant B executes with the SAME sharedKey
+        // Must execute its own business logic, NOT replay Tenant A's cached response (no data leak)
+        BossContextHolder.set(new BossContext(tenantB, UUID.randomUUID(), Set.of("OWNER"), null, "uid-b"));
+        var respB = new MockHttpServletResponse();
+        filter.doFilter(postRequest("/api/v1/items", payload, sharedKey), respB, (rq, rs) -> {
+            var r = (jakarta.servlet.http.HttpServletResponse) rs;
+            r.setStatus(200);
+            r.setContentType("application/json");
+            r.getWriter().write("{\"tenant\":\"B\",\"secret\":\"b-private-data\"}");
+        });
+        assertThat(respB.getStatus()).isEqualTo(200);
+        assertThat(respB.getContentAsString()).contains("b-private-data");
+        assertThat(respB.getContentAsString()).doesNotContain("a-private-data");
+        assertThat(respB.getHeader("X-Idempotent-Replayed")).isNull();
+
+        // 3. Repeat call for Tenant A replays Tenant A's cached response
+        BossContextHolder.set(new BossContext(tenantId, UUID.randomUUID(), Set.of("OWNER"), null, "uid-a"));
+        var replayA = new MockHttpServletResponse();
+        filter.doFilter(postRequest("/api/v1/items", payload, sharedKey), replayA, (rq, rs) -> {
+            throw new AssertionError("Should not execute business logic for replay");
+        });
+        assertThat(replayA.getStatus()).isEqualTo(200);
+        assertThat(replayA.getContentAsString()).contains("a-private-data");
+        assertThat(replayA.getHeader("X-Idempotent-Replayed")).isEqualTo("true");
+
+        // 4. Repeat call for Tenant B replays Tenant B's cached response
+        BossContextHolder.set(new BossContext(tenantB, UUID.randomUUID(), Set.of("OWNER"), null, "uid-b"));
+        var replayB = new MockHttpServletResponse();
+        filter.doFilter(postRequest("/api/v1/items", payload, sharedKey), replayB, (rq, rs) -> {
+            throw new AssertionError("Should not execute business logic for replay");
+        });
+        assertThat(replayB.getStatus()).isEqualTo(200);
+        assertThat(replayB.getContentAsString()).contains("b-private-data");
+        assertThat(replayB.getHeader("X-Idempotent-Replayed")).isEqualTo("true");
+    }
+
     // ---- 7. Expired key re-executes ----
 
     @Test

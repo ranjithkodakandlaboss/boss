@@ -8,6 +8,7 @@ import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletResponse;
 import org.junit.jupiter.api.AfterEach;
@@ -22,6 +23,7 @@ class RequestLoggingFilterTest {
     private final ObjectMapper objectMapper = new ObjectMapper();
     private Logger logger;
     private ListAppender<ILoggingEvent> appender;
+    private SimpleMeterRegistry meterRegistry;
     private RequestLoggingFilter filter;
 
     @BeforeEach
@@ -30,12 +32,14 @@ class RequestLoggingFilterTest {
         appender = new ListAppender<>();
         appender.start();
         logger.addAppender(appender);
-        filter = new RequestLoggingFilter();
+        meterRegistry = new SimpleMeterRegistry();
+        filter = new RequestLoggingFilter(objectMapper, meterRegistry);
     }
 
     @AfterEach
     void detachAppender() {
         logger.detachAppender(appender);
+        meterRegistry.close();
     }
 
     @Test
@@ -55,7 +59,23 @@ class RequestLoggingFilterTest {
         assertThat(line.get("httpRequest").get("requestUrl").asText()).isEqualTo("http://localhost/api/v1/items");
         assertThat(line.get("httpRequest").get("status").asInt()).isEqualTo(204);
         assertThat(line.get("httpRequest").get("latency").asText()).endsWith("s");
+        assertThat(line.has("correlationId")).isTrue();
         assertThat(line.toString()).doesNotContain("secret-value", "secret-token", "Authorization");
+    }
+
+    @Test
+    void preservesCorrelationIdAndTraceIdInStructuredLog() throws Exception {
+        MockHttpServletRequest request = request("GET", "/api/v1/items");
+        request.addHeader("X-Correlation-ID", "corr-test-12345");
+        request.addHeader("X-Cloud-Trace-Context", "trace-abc-123/span-456;o=1");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        filter.doFilter(request, response, (rq, rs) -> ((HttpServletResponse) rs).setStatus(200));
+
+        JsonNode line = onlyRequestLine();
+        assertThat(line.get("correlationId").asText()).isEqualTo("corr-test-12345");
+        assertThat(line.get("traceId").asText()).isEqualTo("trace-abc-123");
+        assertThat(response.getHeader("X-Correlation-ID")).isEqualTo("corr-test-12345");
     }
 
     @Test
@@ -68,6 +88,23 @@ class RequestLoggingFilterTest {
         assertThat(line.get("severity").asText()).isEqualTo("WARNING");
         assertThat(line.get("httpRequest").get("status").asInt()).isEqualTo(422);
         assertThat(appender.list.get(0).getLevel().toString()).isEqualTo("WARN");
+
+        // Verify metrics
+        assertThat(meterRegistry.get("boss.http.requests").counter().count()).isEqualTo(1.0);
+        assertThat(meterRegistry.get("boss.http.errors").counter().count()).isEqualTo(1.0);
+    }
+
+    @Test
+    void recordsAuthFailureAndDenialCounters() throws Exception {
+        // 401 Unauthorized
+        MockHttpServletResponse resp401 = new MockHttpServletResponse();
+        filter.doFilter(request("GET", "/api/v1/items"), resp401, (rq, rs) -> ((HttpServletResponse) rs).setStatus(401));
+        assertThat(meterRegistry.get("boss.auth.failures").counter().count()).isEqualTo(1.0);
+
+        // 403 Forbidden
+        MockHttpServletResponse resp403 = new MockHttpServletResponse();
+        filter.doFilter(request("POST", "/api/v1/items"), resp403, (rq, rs) -> ((HttpServletResponse) rs).setStatus(403));
+        assertThat(meterRegistry.get("boss.auth.denials").counter().count()).isEqualTo(1.0);
     }
 
     @Test

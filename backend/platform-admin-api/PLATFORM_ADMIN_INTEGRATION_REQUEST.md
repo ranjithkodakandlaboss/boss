@@ -42,3 +42,41 @@ Please confirm the six industry code mapping and callable seed boundary; platfor
 ## Deployment prerequisites for issue #24
 
 Set `project_id`, `customer_firebase_project_id`, and `admin_firebase_project_id` in the deployment variables. OpenTofu rejects identical customer and admin Firebase IDs. Add a version to `boss-admin-db-password-<env>` and provision the restricted `boss_admin` database role before deploying the service. Review a non-applying OpenTofu plan, then obtain deployment authorization before applying or provisioning billable cloud resources.
+
+---
+
+## Platform Core Response & Provided Contracts (Antigravity)
+
+**Date:** 16 November 2026  
+**Status:** Implemented in `V068__platform_core_corrections.sql` and `in.boss.shared`
+
+### 1. Canonical Industry Codes & Callable Seed Boundary (#91)
+- **Approved Canonical Codes:** The six uppercase canonical codes from `config.yaml` / `platform-admin.yaml` are authoritative:
+  - `FABRICATION_STEEL`
+  - `PRECISION_MACHINING`
+  - `ELECTRONICS_ASSEMBLY`
+  - `FORGING`
+  - `CASTING`
+  - `GENERAL_MANUFACTURING`
+- **PostgreSQL Callable Boundary:** Delivered in `V068`:
+  ```sql
+  SELECT seed_tenant_defaults(p_tenant_id UUID, p_industry_type TEXT); -- returns INTEGER count of inserted rows
+  ```
+  This function can be executed directly within the Platform Admin provisioning transaction.
+- **Java Callable Boundary:** Exposed in shared module via:
+  ```java
+  in.boss.shared.config.IndustryTemplateService.seedTenantDefaults(UUID tenantId, String industryType);
+  ```
+- **Authoritative Category Storage (#98):** `item_categories` is the single source of truth for `ITEM_CATEGORY` options (with `is_system` boolean column added in `V068`). `ConfigService` routes all `ITEM_CATEGORY` options directly to/from `item_categories`.
+
+### 2. Tenant Status Transitions & Activation
+- Formally documented in `BOSS_PRD_AND_BACKLOG_v1.1.3/06_DATA_MODEL/state-machines.md`.
+- Allowed transitions for `tenant_registry.status`:
+  - `provisioning` -> `active` (upon onboarding and default seeding completion)
+  - `active` -> `suspended` (via admin suspension)
+  - `suspended` -> `active` (via admin reactivation)
+  - `active` / `suspended` -> `archived` (terminal decommissioning)
+
+### 3. Row Level Security (`FORCE ROW LEVEL SECURITY`)
+- `V068` applies `FORCE ROW LEVEL SECURITY` across all tenant-scoped tables, including `tenant_onboarding_config`.
+- Even table owners and service accounts cannot inadvertently bypass tenant isolation unless granted explicit superuser/bypass privileges.

@@ -18,6 +18,7 @@
 | FRONTEND | React components, pages, integrations |
 | INTEGRATION | Cross-domain service calls, event consumers, outbox |
 | QA | Test setup, test data, E2E framework |
+| DEVEX | Developer environment, local seed scripts, mock data, workflows |
 | RELEASE | Deployment, smoke tests, rollback, monitoring |
 
 ---
@@ -94,8 +95,9 @@ A story is DONE when:
 ### Platform Admin (where applicable)
 - [ ] `AdminApiCustomerTokenRejectionTest` passes (customer JWT rejected on all /admin/* paths)
 
-### Outbox
+### Outbox and Audit
 - [ ] All async events written to outbox_events IN the same transaction as the state change
+- [ ] All significant state transitions record an audit event via `AuditService.record()` in the same transaction
 - [ ] No direct Pub/Sub publish; only outbox relay
 - [ ] Idempotency key verified for all external integration calls
 
@@ -104,7 +106,7 @@ A story is DONE when:
 - [ ] 100% path coverage on security filters and auth code
 - [ ] 100% test coverage (at least one integration test) on each new REST endpoint
 - [ ] No compiler warnings; SpotBugs passes
-- [ ] OWASP dependency check: no HIGH/CRITICAL CVEs unresolved
+- [ ] OWASP dependency check: run locally with NVD_API_KEY (per PR #107); zero HIGH/CRITICAL CVEs unresolved in runtime deps
 - [ ] No secrets or credentials committed (secret scan passes in CI)
 
 ### Observability
@@ -136,7 +138,7 @@ A story is DONE when:
 - [ ] Form validation shows field-level errors
 - [ ] All roles that should see this feature can see it
 - [ ] Roles that should NOT see this feature see an appropriate empty state or are redirected
-- [ ] Prototype parity maintained (no unilateral redesign per FD-03)
+- [ ] Prototype parity maintained against prototype baseline / FD-04 (no unilateral redesign; note FD-03 designates Java 21 / Spring Boot)
 - [ ] React Query / state management correct (no stale data on navigation)
 - [ ] No console errors or warnings
 - [ ] Responsive on mobile browser width (375px minimum)
@@ -151,7 +153,7 @@ A story is DONE when:
 
 ## Profile: INTEGRATION
 
-A story is DONE when:
+A cross-domain integration story is DONE when:
 
 - [ ] Cross-domain service calls use published API contracts only (no internal package imports across domain boundaries)
 - [ ] Outbox event produced in the correct transaction
@@ -173,6 +175,19 @@ A story is DONE when:
 - [ ] E2E test framework set up and executes against staging
 - [ ] Test run against staging DB migration dry-run passes
 - [ ] All E2E journeys documented in test traceability matrix
+
+---
+
+## Profile: DEVEX
+
+A story is DONE when:
+
+- [ ] Synthetic data only — strictly zero customer PII or confidential data in any fixture or script
+- [ ] One-command execution for local seed scripts (e.g. `./gradlew` or `./mvnw` or npm/bash script runs end-to-end without manual SQL tweaks)
+- [ ] Baseline customer groups, tenant, users with distinct roles (all 9 tenant roles), and sample master data created cleanly
+- [ ] Seed script is idempotent (can run repeatedly on clean or existing local database without unique constraint violations)
+- [ ] Clear README or inline usage documentation detailing prerequisites, command syntax, and default test credentials
+- [ ] Reviewed by Ranjith before merge
 
 ---
 
@@ -215,10 +230,13 @@ All 11 must pass before any PR can be merged.
 
 | Gate | Tool | What it checks |
 |---|---|---|
-| Dependency CVE scan | OWASP Dependency-Check | No HIGH or CRITICAL CVE in runtime deps |
-| Secret scan | Trufflehog or GitLeaks | No secrets/credentials committed |
-| SAST | SpotBugs + Find Security Bugs | No HIGH-severity code vulnerabilities |
-| Container scan | Trivy | No CRITICAL CVE in Docker image layers |
+| Dependency CVE scan | OWASP Dependency-Check (run locally with `NVD_API_KEY` per PR #107) | Zero HIGH or CRITICAL CVE in runtime deps |
+| Secret scan | Trufflehog or GitLeaks (CI-enforced) | No secrets/credentials committed |
+| SAST | SpotBugs + Find Security Bugs (CI-enforced) | No HIGH-severity code vulnerabilities |
+| Container scan | Trivy (CI-enforced) | No CRITICAL CVE in Docker image layers |
+
+> [!NOTE]
+> Per PR #107, OWASP Dependency-Check is run locally with an authentic `NVD_API_KEY` by developers prior to PR submission to avoid unauthenticated CI rate-limiting. CI automated gates strictly enforce TruffleHog, SpotBugs, PMD, Trivy, and JaCoCo.
 
 ---
 

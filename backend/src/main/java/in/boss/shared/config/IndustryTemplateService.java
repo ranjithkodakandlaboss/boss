@@ -41,46 +41,48 @@ public class IndustryTemplateService {
     }
 
     /**
-     * Seeds config options for {@code industryType} into the target tenant.
-     * Idempotent — skips rows that already exist (ON CONFLICT DO NOTHING).
-     * Preserves any tenant-customized values (they have distinct codes).
+     * Authoritative shared seeding function (issue #88, #91).
+     *
+     * Calls the version-controlled PostgreSQL function seed_tenant_defaults(tenant_id, industry_type)
+     * which in a single transaction seeds:
+     *   1. item_categories (with is_system=TRUE, no duplicate rows in tenant_config_options)
+     *   2. tenant_config_options (for PRODUCTION_STAGES, INSPECTION_TYPES, REJECTION_REASONS, etc. with is_system=TRUE)
+     *   3. units_of_measure (standard UOM set)
+     *   4. tenant_onboarding_config (records onboarding completion timestamp)
      *
      * @param tenantId     target tenant (must already exist in tenant_registry)
      * @param industryType one of SUPPORTED_INDUSTRY_TYPES
+     * @return total count of seeded records
      */
     @Transactional
-    public void applyTemplate(UUID tenantId, String industryType) {
+    public int seedTenantDefaults(UUID tenantId, String industryType) {
         if (!SUPPORTED_INDUSTRY_TYPES.contains(industryType)) {
             throw new IllegalArgumentException(
                     "Unknown industry type: " + industryType
                     + ". Supported: " + SUPPORTED_INDUSTRY_TYPES);
         }
 
-        List<Map<String, Object>> templateRows = jdbc.queryForList(
-                "SELECT t.category_code, t.code, t.label, t.sort_order, "
-                + "       c.id AS category_id "
-                + "FROM industry_template_options t "
-                + "JOIN config_categories c ON c.code = t.category_code "
-                + "WHERE t.industry_type = ?",
+        Integer count = jdbc.queryForObject(
+                "SELECT seed_tenant_defaults(?, ?)",
+                Integer.class,
+                tenantId,
                 industryType);
+        int total = count != null ? count : 0;
+        log.info("Seeded tenant defaults for tenant {} with industry {}: {} records",
+                tenantId, industryType, total);
+        return total;
+    }
 
-        int inserted = 0;
-        for (var row : templateRows) {
-            int rows = jdbc.update(
-                    "INSERT INTO tenant_config_options "
-                    + "(tenant_id, category_id, code, label, sort_order, is_system) "
-                    + "VALUES (?, ?, ?, ?, ?, true) "
-                    + "ON CONFLICT (tenant_id, category_id, code) DO NOTHING",
-                    tenantId,
-                    row.get("category_id"),
-                    row.get("code"),
-                    row.get("label"),
-                    row.get("sort_order"));
-            inserted += rows;
-        }
-
-        log.info("Applied industry template {} to tenant {}: {} options inserted",
-                industryType, tenantId, inserted);
+    /**
+     * Seeds config options and item categories for {@code industryType} into the target tenant.
+     * Idempotent — delegates to seedTenantDefaults.
+     *
+     * @param tenantId     target tenant (must already exist in tenant_registry)
+     * @param industryType one of SUPPORTED_INDUSTRY_TYPES
+     */
+    @Transactional
+    public void applyTemplate(UUID tenantId, String industryType) {
+        seedTenantDefaults(tenantId, industryType);
     }
 
     /**
