@@ -2,10 +2,8 @@ package in.boss.admin.domain;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import in.boss.admin.api.PagedTenants;
 import in.boss.admin.api.ProvisionResult;
 import in.boss.admin.api.TenantProvisionRequest;
-import in.boss.admin.api.TenantSummary;
 import in.boss.admin.security.AdminPrincipal;
 import java.sql.PreparedStatement;
 import java.util.List;
@@ -35,12 +33,12 @@ public class TenantManagementService {
             UUID groupId = jdbc.queryForObject(
                     "INSERT INTO customer_groups(name, slug) VALUES (?, ?) RETURNING id",
                     UUID.class, request.customerGroupName(), groupSlug(request));
-            UUID tenantId = jdbc.queryForObject(
-                    "INSERT INTO tenant_registry(customer_group_id, name, slug, status, plan_tier) " +
-                            "VALUES (?, ?, ?, 'provisioning', ?) RETURNING id",
-                    UUID.class, groupId, request.tenantName(), request.tenantSlug(), request.planTier());
-
+            UUID tenantId = UUID.randomUUID();
+            // The server owns the ID and establishes the RLS scope before the row exists.
             setTenantContext(tenantId);
+            jdbc.update("INSERT INTO tenant_registry(id, customer_group_id, name, slug, status, plan_tier) " +
+                            "VALUES (?, ?, ?, ?, 'provisioning', ?)",
+                    tenantId, groupId, request.tenantName(), request.tenantSlug(), request.planTier());
             UUID legalEntityId = jdbc.queryForObject(
                     "INSERT INTO legal_entities(tenant_id, name, legal_name, pan, entity_type) " +
                             "VALUES (?, ?, ?, ?, ?) RETURNING id",
@@ -65,41 +63,12 @@ public class TenantManagementService {
         }
     }
 
-    @Transactional(readOnly = true)
-    public PagedTenants list(String status, int page, int size) {
-        if (page < 0 || size < 1 || size > 100) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "page must be >= 0 and size must be 1..100");
-        }
-        if (status != null && !List.of("provisioning", "active", "suspended", "archived").contains(status)) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Unsupported tenant status");
-        }
-        String where = status == null ? "" : " WHERE t.status = ?";
-        Object[] countArgs = status == null ? new Object[]{} : new Object[]{status};
-        long total = jdbc.queryForObject("SELECT count(*) FROM tenant_registry t" + where,
-                Long.class, countArgs);
-        String sql = "SELECT t.id, t.name, t.slug, t.status, t.plan_tier " +
-                "FROM tenant_registry t" + where +
-                " ORDER BY t.created_at DESC LIMIT ? OFFSET ?";
-        Object[] args = status == null ? new Object[]{size, (long) page * size}
-                : new Object[]{status, size, (long) page * size};
-        List<TenantSummary> tenants = jdbc.query(sql, (rs, row) -> new TenantSummary(
-                rs.getObject("id", UUID.class), rs.getString("name"), rs.getString("slug"),
-                rs.getString("status"), rs.getString("plan_tier"), null), args);
-        List<TenantSummary> content = tenants.stream().map(tenant -> {
-            setTenantContext(tenant.id());
-            List<String> industries = jdbc.query("SELECT industry_type FROM tenant_onboarding_config WHERE tenant_id = ?",
-                    (rs, row) -> rs.getString(1), tenant.id());
-            return new TenantSummary(tenant.id(), tenant.name(), tenant.slug(), tenant.status(), tenant.planTier(),
-                    industries.isEmpty() ? null : industries.getFirst());
-        }).toList();
-        return new PagedTenants(content, page, total);
-    }
-
     @Transactional
     public void suspend(UUID tenantId, String reason, AdminPrincipal actor, String ipAddress) {
         if (reason == null || reason.isBlank()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "reason is required");
         }
+        setTenantContext(tenantId);
         String oldStatus = lockTenantStatus(tenantId);
         if ("suspended".equals(oldStatus)) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Tenant is already suspended");
@@ -111,6 +80,7 @@ public class TenantManagementService {
 
     @Transactional
     public void reactivate(UUID tenantId, AdminPrincipal actor, String ipAddress) {
+        setTenantContext(tenantId);
         String oldStatus = lockTenantStatus(tenantId);
         if (!"suspended".equals(oldStatus)) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Only a suspended tenant can be reactivated");

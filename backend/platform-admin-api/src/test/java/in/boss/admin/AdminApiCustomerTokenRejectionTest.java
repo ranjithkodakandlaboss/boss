@@ -4,9 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -16,7 +14,6 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.Statement;
 import java.util.UUID;
-import java.util.stream.StreamSupport;
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -30,8 +27,6 @@ import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
-import org.springframework.transaction.PlatformTransactionManager;
-import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -93,8 +88,6 @@ class AdminApiCustomerTokenRejectionTest {
     @Autowired MockMvc mvc;
     @Autowired JdbcTemplate adminJdbc;
     @Autowired ObjectMapper objectMapper;
-    @Autowired javax.sql.DataSource adminDataSource;
-    @Autowired PlatformTransactionManager transactionManager;
     @MockitoBean AdminTokenVerifier verifier;
 
     private JdbcTemplate privilegedJdbc() {
@@ -130,8 +123,6 @@ class AdminApiCustomerTokenRejectionTest {
         when(verifier.verify("unknown-admin-token"))
                 .thenReturn(new AdminTokenVerifier.VerifiedAdminToken("unknown-uid", "unknown@example.test"));
 
-        mvc.perform(get("/admin/api/v1/tenants").header("Authorization", "Bearer customer-token"))
-                .andExpect(status().isForbidden());
         mvc.perform(post("/admin/api/v1/tenants").header("Authorization", "Bearer customer-token"))
                 .andExpect(status().isForbidden());
         mvc.perform(post("/admin/api/v1/tenants/00000000-0000-0000-0000-000000000099/suspend")
@@ -141,13 +132,16 @@ class AdminApiCustomerTokenRejectionTest {
                         .header("Authorization", "Bearer customer-token"))
                 .andExpect(status().isForbidden());
 
-        mvc.perform(get("/admin/api/v1/tenants")).andExpect(status().isUnauthorized());
-        mvc.perform(get("/admin/api/v1/tenants").header("Authorization", "Bearer unknown-admin-token"))
+        mvc.perform(post("/admin/api/v1/tenants/00000000-0000-0000-0000-000000000099/reactivate"))
+                .andExpect(status().isUnauthorized());
+        mvc.perform(post("/admin/api/v1/tenants/00000000-0000-0000-0000-000000000099/reactivate")
+                        .header("Authorization", "Bearer unknown-admin-token"))
                 .andExpect(status().isUnauthorized());
 
         authenticateAdmin();
-        mvc.perform(get("/admin/api/v1/tenants").header("Authorization", "Bearer admin-token"))
-                .andExpect(status().isOk());
+        mvc.perform(post("/admin/api/v1/tenants/00000000-0000-0000-0000-000000000099/reactivate")
+                        .header("Authorization", "Bearer admin-token"))
+                .andExpect(status().isNotFound());
     }
 
     @Test
@@ -212,12 +206,12 @@ class AdminApiCustomerTokenRejectionTest {
         privileged.execute("CREATE TRIGGER test_fail_tenant_provision_audit BEFORE INSERT ON platform_audit_events " +
                 "FOR EACH ROW EXECUTE FUNCTION test_fail_tenant_provision_audit()");
         try {
-            mvc.perform(post("/admin/api/v1/tenants").header("Authorization", "Bearer admin-token")
+            assertThatThrownBy(() -> mvc.perform(post("/admin/api/v1/tenants").header("Authorization", "Bearer admin-token")
                             .header("Idempotency-Key", "rollback-" + suffix)
                             .contentType(MediaType.APPLICATION_JSON)
                             .content(requestBody("group-rollback-" + suffix, "tenant-rollback-" + suffix,
-                                    "ELECTRONICS_ASSEMBLY")))
-                    .andExpect(status().is5xxServerError());
+                                    "ELECTRONICS_ASSEMBLY"))))
+                    .isInstanceOf(jakarta.servlet.ServletException.class);
         } finally {
             privileged.execute("DROP TRIGGER test_fail_tenant_provision_audit ON platform_audit_events");
             privileged.execute("DROP FUNCTION test_fail_tenant_provision_audit()");
@@ -267,72 +261,4 @@ class AdminApiCustomerTokenRejectionTest {
                         "AND action IN ('tenant.suspended','tenant.reactivated')", Integer.class, tenantId)).isEqualTo(2);
     }
 
-    @Test
-    void listingPaginatesAndRlsContextDoesNotLeakAcrossRowsOrPooledRequests() throws Exception {
-        authenticateAdmin();
-        String suffix = UUID.randomUUID().toString();
-        JsonNode first = provision("group-list-a-" + suffix, "tenant-list-a-" + suffix,
-                "FORGING", "list-a-" + suffix);
-        JsonNode second = provision("group-list-b-" + suffix, "tenant-list-b-" + suffix,
-                "CASTING", "list-b-" + suffix);
-        UUID firstId = UUID.fromString(first.get("tenantId").asText());
-        UUID secondId = UUID.fromString(second.get("tenantId").asText());
-
-        withTenantContext(firstId, "FORGING");
-        withTenantContext(secondId, "CASTING");
-        assertThat(adminJdbc.queryForList("SELECT tenant_id FROM tenant_onboarding_config", UUID.class)).isEmpty();
-
-        int connectionIdBefore = backendPid();
-        mvc.perform(get("/admin/api/v1/tenants?page=0&size=1").header("Authorization", "Bearer admin-token"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.page").value(0))
-                .andExpect(jsonPath("$.content.length()").value(1));
-        mvc.perform(get("/admin/api/v1/tenants?page=1&size=1").header("Authorization", "Bearer admin-token"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.page").value(1))
-                .andExpect(jsonPath("$.content.length()").value(1));
-
-        String allTenants = mvc.perform(get("/admin/api/v1/tenants?size=100")
-                        .header("Authorization", "Bearer admin-token"))
-                .andExpect(status().isOk())
-                .andReturn().getResponse().getContentAsString();
-        JsonNode content = objectMapper.readTree(allTenants).get("content");
-        assertThat(StreamSupport.stream(content.spliterator(), false)
-                .anyMatch(row -> row.get("id").asText().equals(firstId.toString())
-                        && row.get("industryType").asText().equals("FORGING"))).isTrue();
-        assertThat(StreamSupport.stream(content.spliterator(), false)
-                .anyMatch(row -> row.get("id").asText().equals(secondId.toString())
-                        && row.get("industryType").asText().equals("CASTING"))).isTrue();
-        assertThat(backendPid()).isEqualTo(connectionIdBefore);
-        assertThat(currentTenantSetting()).isNull();
-        assertThat(adminJdbc.queryForList("SELECT tenant_id FROM tenant_onboarding_config", UUID.class)).isEmpty();
-    }
-
-    private void withTenantContext(UUID tenantId, String expectedIndustry) {
-        TransactionTemplate transaction = new TransactionTemplate(transactionManager);
-        transaction.executeWithoutResult(status -> {
-            adminJdbc.queryForObject("SELECT set_config('app.current_tenant_id', ?, true)",
-                    String.class, tenantId.toString());
-            assertThat(adminJdbc.queryForObject("SELECT industry_type FROM tenant_onboarding_config WHERE tenant_id = ?",
-                    String.class, tenantId)).isEqualTo(expectedIndustry);
-        });
-    }
-
-    private int backendPid() throws Exception {
-        try (Connection connection = adminDataSource.getConnection();
-             Statement statement = connection.createStatement();
-             var result = statement.executeQuery("SELECT pg_backend_pid()")) {
-            result.next();
-            return result.getInt(1);
-        }
-    }
-
-    private String currentTenantSetting() throws Exception {
-        try (Connection connection = adminDataSource.getConnection();
-             Statement statement = connection.createStatement();
-             var result = statement.executeQuery("SELECT current_setting('app.current_tenant_id', true)")) {
-            result.next();
-            return result.getString(1);
-        }
-    }
 }

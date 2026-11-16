@@ -1,6 +1,6 @@
 # Platform Admin integration requests
 
-This implementation follows the checked-in `platform-admin.yaml` and committed migrations from `claude/affectionate-cori-xt092x` at `4903f7a`. The implementation does not change the OpenAPI contract or schema migrations. It adds a separate `boss-admin-api` Cloud Run service definition, service account, secret mount, Firebase project input, image build, and CI build/test path. No cloud resources were applied.
+This implementation follows the checked-in `platform-admin.yaml` and committed migrations from `claude/affectionate-cori-xt092x` at `4903f7a`. It adds V067 for the `tenant_onboarding_config` table already specified by the approved v1.1.3 physical schema; no API contract is changed. It also adds a separate `boss-admin-api` Cloud Run service definition, service account, secret mount, Firebase project input, image build, and CI build/test path. No cloud resources were applied.
 
 **Coordination status:** the shared implementation commits for #91 and #96 are present in that integration baseline, but both issues remain open and their checked-in interfaces do not support the Platform Admin contract. I attempted to raise a coordination issue through the GitHub connector; it returned 403 (`Resource not accessible by integration`). This document is the current integration request for Claude. No shared change is being made from this branch.
 

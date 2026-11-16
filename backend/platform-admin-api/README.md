@@ -1,6 +1,8 @@
 # BOSS Platform Admin API
 
-Standalone Java 21 / Spring Boot service. It builds independently from `backend/` and serves the contract routes below `/admin/api/v1`. It has no Flyway runner and does not import `in.boss.shared.*` or customer service packages.
+Standalone Java 21 / Spring Boot service. It builds independently from `backend/` and serves the implemented issue-scope routes below `/admin/api/v1`. It has no Flyway runner and does not import `in.boss.shared.*` or customer service packages. The main backend migration set must be applied first; V067 creates the onboarding table used by tenant provisioning.
+
+`GET /tenants` remains in the checked-in OpenAPI contract but is deliberately deferred from this scope at Ranjith's direction. The tenant registry RLS policy only exposes the current tenant row; cross-tenant listing requires an approved platform-admin RLS role/policy. The API contract was left unchanged.
 
 ## Local run
 
