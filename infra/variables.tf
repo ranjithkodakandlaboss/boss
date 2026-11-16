@@ -25,9 +25,15 @@ variable "image_tag" {
 }
 
 variable "admin_image_tag" {
-  description = "Container image tag for the separate Platform Admin service"
+  description = "Initial container image tag used when OpenTofu creates the Platform Admin service"
   type        = string
-  default     = "latest"
+  default     = "bootstrap-v1"
+}
+
+variable "admin_service_enabled" {
+  description = "Enable Stage 2 creation of the Platform Admin Cloud Run service after bootstrap prerequisites are ready"
+  type        = bool
+  default     = false
 }
 
 variable "customer_firebase_project_id" {
@@ -42,10 +48,7 @@ variable "customer_firebase_project_id" {
 variable "admin_firebase_project_id" {
   description = "Separate Firebase project used by boss-admin-api"
   type        = string
-  validation {
-    condition     = length(trimspace(var.admin_firebase_project_id)) > 0
-    error_message = "admin_firebase_project_id must identify the dedicated Platform Admin Firebase project."
-  }
+  default     = ""
 }
 
 variable "monitoring_notification_channel_ids" {
