@@ -117,8 +117,9 @@ jobs:
       - name: Build Platform Admin Docker image (no push)
         run: docker build -t boss-admin-api:ci -f backend/platform-admin-api/Dockerfile backend/platform-admin-api
 
-      # Local Trivy 0.70.0 on 2026-11-16 reported 13 pre-existing CRITICAL library CVEs
-      # in each image (Alpine itself was clean). These findings are not suppressed.
+      # Trivy 0.70.0 still reports CVE-2026-47884 and CVE-2026-47890 in spring-webmvc 6.2.19.
+      # The open-source fix is Spring Framework 7.0.9, which requires Spring Boot 4.
+      # Those two findings are not suppressed.
       - name: Scan customer API image
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
