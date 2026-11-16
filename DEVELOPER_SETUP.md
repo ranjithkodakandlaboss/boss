@@ -15,6 +15,12 @@
 | IntelliJ IDEA | 2024.3+ | Community edition is sufficient |
 | Git | 2.40+ | `brew install git` / `apt install git` |
 
+> [!TIP]
+> Ensure your active shell environment has `JAVA_HOME` pointing to Java 21:
+> - **macOS:** `export JAVA_HOME=$(/usr/libexec/java_home -v 21)`
+> - **SDKMAN:** `sdk use java 21-tem`
+> - Verify with `java -version` (must report version 21).
+
 ---
 
 ## 1. Clone the repository
@@ -48,13 +54,13 @@ docker compose ps
 
 ## 3. Run Flyway migrations
 
-Migrations run automatically on Spring Boot startup. To run them standalone:
+Flyway migrations execute automatically on Spring Boot application startup (Step 4). For standard local development, no manual migration step is required once the local database container is running.
+
+*(Optional)* To run migrations standalone without keeping the HTTP server running:
 
 ```bash
 cd backend
-mvn flyway:migrate -Dspring.datasource.url=jdbc:postgresql://localhost:5432/boss \
-                   -Dspring.datasource.username=boss \
-                   -Dspring.datasource.password=boss
+mvn compile spring-boot:run -Dspring-boot.run.profiles=local -Dspring-boot.run.arguments="--spring.main.web-application-type=none"
 ```
 
 ---
@@ -139,3 +145,30 @@ Every PR must reference its GitHub issue: `Closes #N` in the PR description.
 | `Testcontainers: cannot connect to Docker` | Ensure Docker Desktop is running |
 | `FirebaseApp not initialised` | Set `BOSS_FIREBASE_CREDENTIAL_PATH` or run with mock profile |
 | Port 5432 already in use | Stop local PostgreSQL: `brew services stop postgresql` |
+
+---
+
+## 11. Connecting to Dev Cloud SQL (Optional)
+
+To connect directly to the dev Cloud SQL PostgreSQL instance (`boss-dev-postgres`) from your workstation:
+
+1. Ensure your Google Cloud SDK is authenticated:
+   ```bash
+   gcloud auth login
+   gcloud config set project boss-dev-514813
+   ```
+2. Run Cloud SQL Auth Proxy via Docker:
+   ```bash
+   docker run -d --name cloudsql-proxy -p 5433:5432 \
+     gcr.io/cloud-sql-connectors/cloud-sql-proxy:latest \
+     --address 0.0.0.0 --port 5432 \
+     --token "$(gcloud auth print-access-token)" \
+     boss-dev-514813:asia-south1:boss-dev-postgres
+   ```
+3. Connect with your SQL client or `psql`:
+   - Host: `localhost`
+   - Port: `5433`
+   - Database: `boss_dev` (or `boss`)
+   - User: `boss_app`
+   - Password: (stored in Secret Manager secret `boss-db-password`)
+
