@@ -6,7 +6,7 @@ info:
     RFQ, Quotation (with negotiation history), Customer Purchase Orders (CPO), and Feasibility.
 
     **Quotation negotiation:** Each counter-offer round is stored in quotation_negotiation_history.
-    Material cost from BOM is shown when responding to counter-offer.
+    Material cost and margin data are retained internally and are not serialized in customer-facing responses.
 
     **Selling price lock:** Once a CPO is confirmed, the selling price from the quotation is locked.
     Job costing shows variance against this price. It must never be modified.
@@ -34,7 +34,7 @@ components:
         customerName: { type: string }
         rfqTypeId: { type: string, format: uuid, nullable: true }
         rfqTypeLabel: { type: string, nullable: true }
-        status: { type: string, enum: [draft, sent, quoted, closed, cancelled] }
+        status: { type: string, enum: [draft, sent, closed, cancelled] }
         requiredDate: { type: string, format: date, nullable: true }
         lines:
           type: array
@@ -50,6 +50,7 @@ components:
         itemCode: { type: string }
         itemName: { type: string }
         qty: { type: number }
+        uomId: { type: string, format: uuid }
         uomSymbol: { type: string }
         customerSpecRef: { type: string, nullable: true }
 
@@ -66,7 +67,6 @@ components:
           type: string
           enum: [draft, sent, negotiating, accepted, rejected, superseded, expired]
         validUntil: { type: string, format: date, nullable: true }
-        estimatedMaterialCost: { type: number, nullable: true }
         lines:
           type: array
           items: { $ref: '#/components/schemas/QuotationLine' }
@@ -83,11 +83,10 @@ components:
         itemCode: { type: string }
         itemName: { type: string }
         qty: { type: number }
+        uomId: { type: string, format: uuid }
         uomSymbol: { type: string }
         unitPrice: { type: number }
         lineTotal: { type: number }
-        estimatedMaterialCostPerUnit: { type: number, nullable: true }
-        marginPct: { type: number, nullable: true }
         deliveryWeeks: { type: integer, nullable: true }
 
     NegotiationEntry:
@@ -96,11 +95,16 @@ components:
         id: { type: string, format: uuid }
         round: { type: integer }
         partyType: { type: string, enum: [TENANT, CUSTOMER] }
-        offeredUnitPrice: { type: number }
+        offeredUnitPrices:
+          type: array
+          items:
+            type: object
+            required: [lineId, unitPrice]
+            properties:
+              lineId: { type: string, format: uuid }
+              unitPrice: { type: number, minimum: 0 }
         note: { type: string, nullable: true }
-        materialCostAtTime: { type: number, nullable: true }
         createdAt: { type: string, format: date-time }
-        createdByName: { type: string }
 
     CPO:
       type: object
@@ -240,6 +244,7 @@ paths:
       parameters:
         - name: Idempotency-Key
           in: header
+          required: true
           schema: { type: string }
       requestBody:
         required: true
@@ -285,6 +290,47 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/RFQ' }
         '404': { description: RFQ not found }
+    put:
+      operationId: updateDraftRFQ
+      summary: Replace RFQ lines while the RFQ is draft
+      tags: [RFQ]
+      parameters:
+        - name: rfqId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [lines]
+              properties:
+                rfqTypeId: { type: string, format: uuid, nullable: true }
+                rfqTypeLabel: { type: string, nullable: true }
+                requiredDate: { type: string, format: date, nullable: true }
+                lines:
+                  type: array
+                  minItems: 1
+                  items:
+                    type: object
+                    required: [itemId, qty, uomId]
+                    properties:
+                      itemId: { type: string, format: uuid }
+                      qty: { type: number, minimum: 0.001 }
+                      uomId: { type: string, format: uuid }
+                      customerSpecRef: { type: string }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RFQ' }
+        '409': { description: RFQ is not in draft status }
 
   /rfqs/{rfqId}/status:
     patch:
@@ -296,6 +342,10 @@ paths:
           in: path
           required: true
           schema: { type: string, format: uuid }
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string }
       requestBody:
         required: true
         content:
@@ -320,6 +370,7 @@ paths:
       parameters:
         - name: Idempotency-Key
           in: header
+          required: true
           schema: { type: string }
       requestBody:
         required: true
@@ -331,7 +382,7 @@ paths:
               properties:
                 customerId: { type: string, format: uuid }
                 rfqId: { type: string, format: uuid, nullable: true }
-                validUntil: { type: string, format: date }
+                validUntil: { type: string, format: date, nullable: true }
                 lines:
                   type: array
                   minItems: 1
@@ -349,6 +400,79 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Quotation' }
+
+  /quotations/{quotationId}/revise:
+    post:
+      operationId: reviseQuotation
+      summary: Create a higher quotation revision and supersede the current revision
+      tags: [Quotations]
+      parameters:
+        - name: quotationId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [lines]
+              properties:
+                changeReason: { type: string, maxLength: 500 }
+                validUntil: { type: string, format: date, nullable: true }
+                lines:
+                  type: array
+                  minItems: 1
+                  items:
+                    type: object
+                    required: [itemId, qty, uomId, unitPrice]
+                    properties:
+                      itemId: { type: string, format: uuid }
+                      qty: { type: number, minimum: 0.001 }
+                      uomId: { type: string, format: uuid }
+                      unitPrice: { type: number, minimum: 0 }
+                      deliveryWeeks: { type: integer, nullable: true }
+      responses:
+        '201':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Quotation' }
+        '409': { description: Quotation is not in a state that can be revised }
+
+  /quotations/{quotationId}/status:
+    patch:
+      operationId: updateQuotationStatus
+      summary: Send, reject, or expire a quotation
+      tags: [Quotations]
+      parameters:
+        - name: quotationId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string, enum: [sent, rejected, expired] }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Quotation' }
+        '409': { description: Invalid quotation status transition }
 
   /quotations/{quotationId}:
     get:
@@ -375,6 +499,10 @@ paths:
           in: path
           required: true
           schema: { type: string, format: uuid }
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string }
       requestBody:
         required: true
         content:
@@ -390,8 +518,8 @@ paths:
                     required: [lineId, unitPrice]
                     properties:
                       lineId: { type: string, format: uuid }
-                      unitPrice: { type: number }
-                note: { type: string, nullable: true }
+                      unitPrice: { type: number, minimum: 0 }
+                note: { type: string, nullable: true, maxLength: 500 }
       responses:
         '201':
           content:
@@ -402,13 +530,17 @@ paths:
     post:
       operationId: respondToCounterOffer
       summary: Tenant responds to customer counter-offer
-      description: Creates a new negotiation entry showing material cost inline.
+      description: Creates a new negotiation entry without returning cost or margin data.
       tags: [Quotations]
       parameters:
         - name: quotationId
           in: path
           required: true
           schema: { type: string, format: uuid }
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string }
       requestBody:
         required: true
         content:
@@ -424,8 +556,8 @@ paths:
                     required: [lineId, unitPrice]
                     properties:
                       lineId: { type: string, format: uuid }
-                      unitPrice: { type: number }
-                note: { type: string, nullable: true }
+                      unitPrice: { type: number, minimum: 0 }
+                note: { type: string, nullable: true, maxLength: 500 }
       responses:
         '201':
           content:
