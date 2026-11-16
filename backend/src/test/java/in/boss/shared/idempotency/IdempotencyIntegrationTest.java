@@ -360,6 +360,26 @@ class IdempotencyIntegrationTest {
         assertThat(resp.getHeader("X-Idempotent-Replayed")).isNull();
     }
 
+    // ---- #96: WhatsApp webhook exemption ----
+
+    @Test
+    void whatsappWebhook_postWithoutIdempotencyKey_isExempt() throws Exception {
+        // WhatsApp webhook is exempt — it uses X-WhatsApp-Message-ID for deduplication
+        AtomicInteger chainCalls = new AtomicInteger(0);
+        var req = new MockHttpServletRequest("POST", "/api/v1/messaging/webhook/whatsapp");
+        req.setContentType("application/json");
+        req.setContent("{\"entry\":[]}".getBytes());
+        // Deliberately omit Idempotency-Key header
+
+        var resp = new MockHttpServletResponse();
+        filter.doFilter(req, resp, (rq, rs) -> chainCalls.incrementAndGet());
+
+        assertThat(chainCalls.get())
+                .as("WhatsApp webhook must bypass idempotency key requirement")
+                .isEqualTo(1);
+        assertThat(resp.getStatus()).isNotEqualTo(400);
+    }
+
     // ---- helpers ----
 
     private static MockHttpServletRequest postRequest(String uri, String body) {

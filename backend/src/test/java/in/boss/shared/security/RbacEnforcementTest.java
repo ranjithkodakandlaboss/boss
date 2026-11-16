@@ -6,6 +6,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.test.mock.mockito.MockBean;
@@ -18,6 +19,7 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.web.servlet.MockMvc;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -26,6 +28,8 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
  * Integration tests verifying that @PreAuthorize RBAC annotations are enforced (issue #20).
@@ -35,11 +39,14 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  */
 @Testcontainers
 @SpringBootTest
+@AutoConfigureMockMvc
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 class RbacEnforcementTest {
 
     @MockBean FirebaseApp firebaseApp;
     @MockBean FirebaseAuth firebaseAuth;
+
+    @Autowired MockMvc mockMvc;
 
     @Container
     static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:15-alpine")
@@ -59,6 +66,16 @@ class RbacEnforcementTest {
     @AfterEach
     void clearContext() {
         SecurityContextHolder.clearContext();
+    }
+
+    // ---- #19: missing JWT returns 401 (Spring Security chain, not filter-only) ----
+
+    @Test
+    void missingJwt_onProtectedEndpoint_returns401() throws Exception {
+        // No Authorization header → FirebaseJwtFilter passes through → Spring Security returns 401
+        // (BossSecurityConfig configures authenticationEntryPoint returning SC_UNAUTHORIZED)
+        mockMvc.perform(get("/api/v1/items"))
+                .andExpect(status().isUnauthorized());
     }
 
     // ---- @PreAuthorize(BossPermissions.OWNER) ----
