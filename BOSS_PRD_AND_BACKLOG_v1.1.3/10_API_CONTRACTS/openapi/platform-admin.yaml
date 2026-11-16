@@ -57,8 +57,13 @@ components:
         customerGroupId: { type: string, format: uuid }
         legalEntityId: { type: string, format: uuid }
         siteId: { type: string, format: uuid }
-        adminInviteToken: { type: string }
+        adminInviteToken:
+          type: string
+          description: Returned only on the response that created the invitation. It is not stored or replayed.
         seedingApplied: { type: boolean }
+        invitationStatus:
+          type: string
+          enum: [NOT_REQUESTED, CREATED, RETRY_REQUIRED]
 
     OpeningBalanceImportRequest:
       type: object
@@ -107,11 +112,14 @@ paths:
             schema: { $ref: '#/components/schemas/TenantProvisionRequest' }
       responses:
         '201':
+          description: Tenant created. Status remains provisioning until activate. adminInviteToken is present only when the invitation was created by this response.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ProvisionResult' }
-        '400': { description: Validation error — invalid PAN, duplicate slug }
-        '409': { description: Tenant slug already exists }
+        '400': { description: Validation error — invalid PAN or slug }
+        '409': { description: Tenant slug already exists, or this Idempotency-Key was used with a different payload }
+        '424':
+          description: Tenant was created and seeded, but the initial administrator invitation was not created. Retry the admin-invite operation. No invite token is returned.
 
     get:
       operationId: listTenants
@@ -148,6 +156,20 @@ paths:
                   page: { type: integer }
                   totalElements: { type: integer }
 
+  /tenants/{tenantId}/activate:
+    post:
+      operationId: activateTenant
+      summary: Activate a provisioning tenant after seeding and any requested invitation have succeeded
+      tags: [Tenant Management]
+      parameters:
+        - name: tenantId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200': { description: Tenant activated }
+        '409': { description: Tenant is not provisioning, seeding is incomplete, or the initial invitation is still outstanding }
+
   /tenants/{tenantId}/suspend:
     post:
       operationId: suspendTenant
@@ -169,7 +191,8 @@ paths:
                 reason: { type: string }
       responses:
         '200': { description: Tenant suspended }
-        '409': { description: Tenant is already suspended }
+        '400': { description: Reason is missing }
+        '409': { description: Tenant is already suspended, archived, or not yet active }
 
   /tenants/{tenantId}/reactivate:
     post:
@@ -183,6 +206,50 @@ paths:
           schema: { type: string, format: uuid }
       responses:
         '200': { description: Tenant reactivated }
+        '409': { description: Tenant is not suspended }
+
+  /tenants/{tenantId}/admin-invite:
+    post:
+      operationId: retryInitialAdminInvite
+      summary: Create or retry the initial tenant administrator invitation
+      description: |
+        Calls the customer identity service for an OWNER invitation in the customer Firebase project.
+        The one-time token is returned only by the response that creates it. It is not written to the
+        idempotency store, audit payload, or logs. A repeated call after creation does not return the token.
+      tags: [Tenant Management]
+      parameters:
+        - name: tenantId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: { type: string, format: email }
+      responses:
+        '201':
+          description: Invitation created. adminInviteToken is omitted on an idempotent replay.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tenantId: { type: string, format: uuid }
+                  inviteId: { type: string, format: uuid }
+                  adminInviteToken: { type: string }
+                  invitationStatus: { type: string, enum: [CREATED] }
+                  expiresAt: { type: string, format: date-time }
+        '409': { description: An initial invitation was already created }
+        '503': { description: The customer identity invite contract is unavailable. No token is returned. }
 
   /opening-balance/import:
     post:

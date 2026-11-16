@@ -20,7 +20,14 @@ public class DatabasePrivilegeGuard {
               ('tenant_registry','SELECT'), ('tenant_registry','INSERT'),
               ('legal_entities','INSERT'), ('physical_sites','INSERT'),
               ('tenant_onboarding_config','SELECT'), ('tenant_onboarding_config','INSERT'),
-              ('platform_admin_users','SELECT'), ('platform_audit_events','INSERT')
+              ('platform_admin_users','SELECT'),
+              ('platform_audit_events','SELECT'), ('platform_audit_events','INSERT'),
+              ('idempotency_keys','SELECT'), ('idempotency_keys','INSERT'),
+              ('idempotency_keys','UPDATE'), ('idempotency_keys','DELETE'),
+              ('industry_template_options','SELECT'), ('config_categories','SELECT'),
+              ('tenant_config_options','SELECT'), ('tenant_config_options','INSERT'),
+              ('units_of_measure','SELECT'), ('units_of_measure','INSERT'),
+              ('item_categories','SELECT'), ('item_categories','INSERT')
             ) AS allowed(table_name, privilege)
               ON allowed.table_name = c.relname AND allowed.privilege = p.privilege
             WHERE n.nspname = 'public'
@@ -68,7 +75,14 @@ public class DatabasePrivilegeGuard {
                       ('tenant_registry','SELECT'), ('tenant_registry','INSERT'),
                       ('legal_entities','INSERT'), ('physical_sites','INSERT'),
                       ('tenant_onboarding_config','SELECT'), ('tenant_onboarding_config','INSERT'),
-                      ('platform_admin_users','SELECT'), ('platform_audit_events','INSERT')
+                      ('platform_admin_users','SELECT'),
+                      ('platform_audit_events','SELECT'), ('platform_audit_events','INSERT'),
+                      ('idempotency_keys','SELECT'), ('idempotency_keys','INSERT'),
+                      ('idempotency_keys','UPDATE'), ('idempotency_keys','DELETE'),
+                      ('industry_template_options','SELECT'), ('config_categories','SELECT'),
+                      ('tenant_config_options','SELECT'), ('tenant_config_options','INSERT'),
+                      ('units_of_measure','SELECT'), ('units_of_measure','INSERT'),
+                      ('item_categories','SELECT'), ('item_categories','INSERT')
                     ) AS required(table_name, privilege)
                     WHERE NOT has_table_privilege(current_user,
                           'public.' || required.table_name, required.privilege)
@@ -79,11 +93,42 @@ public class DatabasePrivilegeGuard {
                     "AND has_column_privilege(current_user, 'public.customer_groups', 'id', 'SELECT') " +
                     "AND has_column_privilege(current_user, 'public.tenant_registry', 'id', 'SELECT') " +
                     "AND has_column_privilege(current_user, 'public.legal_entities', 'id', 'SELECT') " +
-                    "AND has_column_privilege(current_user, 'public.physical_sites', 'id', 'SELECT')", Boolean.class)) {
-                missing.add("required ID SELECT and tenant status/updated_at column privileges");
+                    "AND has_column_privilege(current_user, 'public.physical_sites', 'id', 'SELECT') " +
+                    "AND has_column_privilege(current_user, 'public.tenant_onboarding_config', 'industry_type', 'UPDATE') " +
+                    "AND has_column_privilege(current_user, 'public.tenant_onboarding_config', 'onboarding_completed_at', 'UPDATE')",
+                    Boolean.class)) {
+                missing.add("required ID SELECT, tenant status, or onboarding column privileges");
             }
             if (!missing.isEmpty()) {
                 throw new IllegalStateException("Platform Admin database role is missing required control-plane privileges: " + missing);
+            }
+            Integer listPolicies = jdbc.queryForObject("""
+                    SELECT count(*)
+                    FROM pg_policy pol
+                    JOIN pg_class c ON c.oid = pol.polrelid
+                    JOIN pg_namespace n ON n.oid = c.relnamespace
+                    WHERE n.nspname = 'public'
+                      AND pol.polcmd = 'r'
+                      AND (
+                        (c.relname = 'tenant_registry' AND pol.polname = 'tenant_registry_platform_admin_read')
+                        OR (c.relname = 'tenant_onboarding_config'
+                            AND pol.polname = 'tenant_onboarding_config_platform_admin_read')
+                      )
+                      AND EXISTS (
+                        SELECT 1 FROM pg_roles role
+                        WHERE role.oid = ANY (pol.polroles)
+                          AND pg_has_role(current_user, role.oid, 'MEMBER')
+                      )
+                    """, Integer.class);
+            if (!Boolean.TRUE.equals(jdbc.queryForObject(
+                    "SELECT has_function_privilege(current_user, 'public.seed_tenant_defaults(uuid, text)', 'EXECUTE')",
+                    Boolean.class))) {
+                throw new IllegalStateException(
+                        "Platform Admin must be able to execute seed_tenant_defaults. Apply db/boss-admin-grants.sql.");
+            }
+            if (listPolicies == null || listPolicies != 2) {
+                throw new IllegalStateException(
+                        "Platform Admin list policies are missing. Apply db/boss-admin-grants.sql before starting.");
             }
         };
     }
