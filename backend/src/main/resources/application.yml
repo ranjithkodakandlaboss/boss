@@ -51,5 +51,3 @@ boss:
   firebase:
     project-id: ${FIREBASE_PROJECT_ID:boss-dev}
     credential-path: ${FIREBASE_CREDENTIAL_PATH:}
-  admin-firebase:
-    project-id: ${ADMIN_FIREBASE_PROJECT_ID:boss-admin-dev}
