@@ -23,3 +23,27 @@ variable "image_tag" {
   type        = string
   default     = "latest"
 }
+
+variable "admin_image_tag" {
+  description = "Container image tag for the separate Platform Admin service"
+  type        = string
+  default     = "latest"
+}
+
+variable "customer_firebase_project_id" {
+  description = "Firebase project used by the customer-facing boss-api service"
+  type        = string
+  validation {
+    condition     = length(trimspace(var.customer_firebase_project_id)) > 0
+    error_message = "customer_firebase_project_id must identify the customer Firebase project."
+  }
+}
+
+variable "admin_firebase_project_id" {
+  description = "Separate Firebase project used by boss-admin-api"
+  type        = string
+  validation {
+    condition     = length(trimspace(var.admin_firebase_project_id)) > 0
+    error_message = "admin_firebase_project_id must identify the dedicated Platform Admin Firebase project."
+  }
+}

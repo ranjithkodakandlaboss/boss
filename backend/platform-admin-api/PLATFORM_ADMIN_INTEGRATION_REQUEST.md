@@ -1,6 +1,6 @@
 # Platform Admin integration requests
 
-This implementation follows the checked-in `platform-admin.yaml` and committed migrations. This request was refreshed after fetching `claude/affectionate-cori-xt092x` at `27be1f1`, which is the parent of this branch's `c02f2ec`; no newer integration changes were present. No OpenAPI contract, migration, shared security component, infrastructure file, or CI workflow was changed here.
+This implementation follows the checked-in `platform-admin.yaml` and committed migrations from `claude/affectionate-cori-xt092x` at `4903f7a`. The implementation does not change the OpenAPI contract or schema migrations. It adds a separate `boss-admin-api` Cloud Run service definition, service account, secret mount, Firebase project input, image build, and CI build/test path. No cloud resources were applied.
 
 **Coordination status:** the shared implementation commits for #91 and #96 are present in that integration baseline, but both issues remain open and their checked-in interfaces do not support the Platform Admin contract. I attempted to raise a coordination issue through the GitHub connector; it returned 403 (`Resource not accessible by integration`). This document is the current integration request for Claude. No shared change is being made from this branch.
 
@@ -39,6 +39,6 @@ The V1.1.3 prose schema's `platform_admin_users`/`platform_audit_events` columns
 
 Please confirm the six industry code mapping and callable seed boundary; platform idempotency key scope/hash/replay behavior; `boss_admin` role name and exact grants; authoritative V044 column mapping; allowed tenant status transitions plus activation contract; first-owner invite lifecycle; and GST request fields/validation. After these land on `claude/affectionate-cori-xt092x`, rebase this branch and implement only against those approved interfaces.
 
-## Deployment plan when the development project is ready
+## Deployment prerequisites for issue #24
 
-Provide the BOSS development GCP project ID and the selected platform-admin Firebase project ID. Then review a non-applying OpenTofu plan for a dedicated service account, separate `boss-admin-api` Cloud Run service, Secret Manager bindings for its database credential, admin Firebase project configuration, and Cloud SQL connectivity. Do not apply or provision resources until separately authorized and billing is configured.
+Set `project_id`, `customer_firebase_project_id`, and `admin_firebase_project_id` in the deployment variables. OpenTofu rejects identical customer and admin Firebase IDs. Add a version to `boss-admin-db-password-<env>` and provision the restricted `boss_admin` database role before deploying the service. Review a non-applying OpenTofu plan, then obtain deployment authorization before applying or provisioning billable cloud resources.

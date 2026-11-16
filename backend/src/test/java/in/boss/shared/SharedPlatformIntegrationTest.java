@@ -212,16 +212,19 @@ class SharedPlatformIntegrationTest {
     void tenantStatusCache_suspendedTenantReturnsSuspended() {
         UUID suspended = provisionTenant(jdbc, "suspended-tenant");
         jdbc.update("UPDATE tenant_registry SET status = 'suspended' WHERE id = ?", suspended);
-        tenantStatusCache.evict(suspended);
 
         assertThat(tenantStatusCache.getStatus(suspended)).isEqualTo("suspended");
     }
 
     @Test
-    void tenantStatusCache_evictForcesFreshLoad() {
+    void tenantStatusCache_observesStatusChangeOnNextRequest() {
         tenantStatusCache.getStatus(tenantA);
-        tenantStatusCache.evict(tenantA);
-        assertThat(tenantStatusCache.getStatus(tenantA)).isEqualTo("active");
+        jdbc.update("UPDATE tenant_registry SET status = 'suspended' WHERE id = ?", tenantA);
+        try {
+            assertThat(tenantStatusCache.getStatus(tenantA)).isEqualTo("suspended");
+        } finally {
+            jdbc.update("UPDATE tenant_registry SET status = 'active' WHERE id = ?", tenantA);
+        }
     }
 
     @Test

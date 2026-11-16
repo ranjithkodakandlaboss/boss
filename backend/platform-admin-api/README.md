@@ -23,6 +23,8 @@ mvn -f backend/platform-admin-api/pom.xml package
 docker build -f backend/platform-admin-api/Dockerfile backend/platform-admin-api
 ```
 
-Deployment must create a separate `boss-admin-api` Cloud Run service and bind a distinct platform-admin Firebase project and restricted database principal. Do not deploy this image through the customer `boss-api` service. No cloud resources were provisioned as part of this change.
+`infra/main.tf` defines a separate `boss-admin-api` Cloud Run service and service account, mounts its own Secret Manager database password, and binds `ADMIN_FIREBASE_PROJECT_ID` to the platform-admin Firebase project. OpenTofu validates that this project ID differs from `customer_firebase_project_id`. Build both images with `cloudbuild.yaml`; the admin image is published separately. Do not deploy this image through the customer `boss-api` service.
+
+Before applying the infrastructure, provide a secret version for `boss-admin-db-password-<env>`, create the restricted `boss_admin` PostgreSQL login and grants described in `PLATFORM_ADMIN_INTEGRATION_REQUEST.md`, and set both Firebase project IDs. No cloud resources were provisioned or applied as part of this change.
 
 See `PLATFORM_ADMIN_INTEGRATION_REQUEST.md` for schema/contract integration items that block full provisioning and deployment readiness.
