@@ -63,6 +63,33 @@ cd backend
 mvn compile spring-boot:run -Dspring-boot.run.profiles=local -Dspring-boot.run.arguments="--spring.main.web-application-type=none"
 ```
 
+## 3a. Seed local development data
+
+After migrations have been applied once, run this from the repository root:
+
+```bash
+./scripts/seed-local.sh
+```
+
+The script starts only this repository's local PostgreSQL Compose service and writes synthetic data to its `boss` database. It creates or updates the `boss-local-demo` tenant, a site and store, sample customer, supplier, items and BOM, and nine synthetic users covering every approved tenant role. Rerunning the command updates those records without adding duplicate seed rows. It requires Docker Compose and a local database with the BOSS migrations applied. If migrations are missing, start the backend with the `local` profile once, then rerun the seed command.
+
+For isolated validation, `BOSS_SEED_COMPOSE_FILE` may point to a local Compose file defining a compatible `postgres` service, or `BOSS_SEED_COMPOSE_OVERRIDE` may add an override to the repository Compose file; the script still refuses non-local Docker endpoints.
+
+The local database credentials from Compose are `boss` / `boss` (database `boss`). The seeded account identities are `owner@boss.local.test`, `ops-manager@boss.local.test`, `sales-manager@boss.local.test`, `purchase-manager@boss.local.test`, `production-supervisor@boss.local.test`, `store-keeper@boss.local.test`, `accounts-staff@boss.local.test`, `quality-inspector@boss.local.test`, and `field-worker@boss.local.test`, mapped respectively to synthetic Firebase UIDs `local-seed-owner`, `local-seed-ops-manager`, `local-seed-sales-manager`, `local-seed-purchase-manager`, `local-seed-production-supervisor`, `local-seed-store-keeper`, `local-seed-accounts-staff`, `local-seed-quality-inspector`, and `local-seed-field-worker`. The database credentials are not application login credentials. The script creates no passwords or Firebase tokens and does not bypass Firebase authentication. Use valid local Firebase credentials/tokens for authenticated API calls.
+
+To verify idempotency, run `./scripts/seed-local.sh` twice; both runs should exit successfully and report 9 users, 9 roles, 2 items, 1 customer, and 1 supplier. The database query below independently verifies the same counts:
+
+```bash
+docker compose -f docker/docker-compose.yml exec -T postgres \
+  psql -U boss -d boss -c "
+    SELECT
+      (SELECT count(*) FROM app_users WHERE tenant_id = '00000000-0000-4000-8000-000000000009' AND firebase_uid LIKE 'local-seed-%') AS users,
+      (SELECT count(*) FROM user_roles r JOIN app_users u ON u.tenant_id = r.tenant_id AND u.id = r.user_id WHERE r.tenant_id = '00000000-0000-4000-8000-000000000009' AND u.firebase_uid LIKE 'local-seed-%') AS roles,
+      (SELECT count(*) FROM items WHERE tenant_id = '00000000-0000-4000-8000-000000000009' AND code LIKE 'DEMO-%') AS items,
+      (SELECT count(*) FROM customers WHERE tenant_id = '00000000-0000-4000-8000-000000000009' AND code = 'DEMO-CUSTOMER-001') AS customers,
+      (SELECT count(*) FROM suppliers WHERE tenant_id = '00000000-0000-4000-8000-000000000009' AND code = 'DEMO-SUPPLIER-001') AS suppliers;"
+```
+
 ---
 
 ## 4. Build and run the backend

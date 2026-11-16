@@ -21,21 +21,21 @@ if ! gcloud run services describe "${CLOUD_RUN_SERVICE}" \
   --region "${GCP_REGION}" \
   --project "${GCP_PROJECT_ID}" \
   --format=json >"${service_json}"; then
-  echo "::error::Cloud Run service '${CLOUD_RUN_SERVICE}' is missing. Apply the OpenTofu infrastructure first."
+  echo "::error::Cloud Run service '${CLOUD_RUN_SERVICE}' is missing. Complete Admin Terraform Stage 2 first; GitHub Actions only updates the image and does not create or own the service configuration."
   exit 1
 fi
 
 expected_service_account="boss-admin-api-dev@${GCP_PROJECT_ID}.iam.gserviceaccount.com"
-expected_connector="projects/${GCP_PROJECT_ID}/locations/${GCP_REGION}/connectors/boss-vpc-conn-dev"
 if ! jq -e \
   --arg service_account "${expected_service_account}" \
-  --arg connector "${expected_connector}" \
   --arg secret "${ADMIN_DB_SECRET_NAME}" '
     .template.serviceAccount == $service_account
-    and .template.vpcAccess.connector == $connector
     and ([.template.containers[]?.env[]?
       | select(.name == "ADMIN_FIREBASE_PROJECT_ID"
         and (.value | type == "string" and length > 0))] | length == 1)
+    and ([.template.containers[]?.env[]?
+      | select(.name == "ADMIN_DB_URL"
+        and (.value | test("^jdbc:postgresql:///boss\\?cloudSqlInstance=[^&]+:[^&]+:boss-dev-postgres&socketFactory=com.google.cloud.sql.postgres.SocketFactory&ipTypes=PUBLIC$"; "s")))] | length == 1)
     and ([.template.containers[]?.env[]?
       | select(.name == "ADMIN_DB_USER" and .value == "boss_admin")] | length == 1)
     and ([.template.containers[]?.env[]?
@@ -47,7 +47,7 @@ if ! jq -e \
     and ([.template.containers[]?.volumeMounts[]?
       | select(.name == "admin-db-password" and .mountPath == "/secrets")] | length == 1)
   ' "${service_json}" >/dev/null; then
-  echo "::error::Cloud Run service configuration does not match the dedicated Platform Admin service account, Firebase project, database secret mount, or VPC connector. Reconcile it with infra/main.tf before deploying."
+  echo "::error::Cloud Run service configuration does not match the dedicated Platform Admin service account, Firebase project, database URL, DB user, or mounted secret. Reconcile it with infra/main.tf before deploying."
   exit 1
 fi
 

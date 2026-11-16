@@ -5,3 +5,4 @@
 # Legacy classes are not listed here and are not held to a blanket line threshold.
 # Example:
 # customer-api in.boss.billing.InvoiceService
+customer-api in.boss.procurement.domain.PurchaseRequisitionService
