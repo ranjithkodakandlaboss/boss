@@ -1,0 +1,7 @@
+# New service classes that must keep at least 80% JaCoCo line coverage.
+# One class per line: <module> <fully-qualified-class-name>
+# Modules: customer-api, platform-admin-api
+#
+# Legacy classes are not listed here and are not held to a blanket line threshold.
+# Example:
+# customer-api in.boss.billing.InvoiceService
