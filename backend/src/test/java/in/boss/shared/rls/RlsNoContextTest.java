@@ -76,6 +76,7 @@ class RlsNoContextTest {
                 + "VALUES (?, 'No-Context Tenant', 'no-ctx-tenant', 'active') "
                 + "ON CONFLICT (slug) DO UPDATE SET status = 'active' RETURNING id::text",
                 String.class, groupId));
+        // Insert an item so the items table has data
         UUID uomId = UUID.fromString(jdbc.queryForObject(
                 "INSERT INTO units_of_measure (tenant_id, name, symbol, uom_type, is_base) "
                 + "VALUES (?, 'Piece', 'PCS', 'quantity', true) RETURNING id::text",
