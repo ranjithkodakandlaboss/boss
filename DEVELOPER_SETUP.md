@@ -48,13 +48,13 @@ docker compose ps
 
 ## 3. Run Flyway migrations
 
-Migrations run automatically on Spring Boot startup. To run them standalone:
+Flyway migrations execute automatically on Spring Boot application startup (Step 4). For standard local development, no manual migration step is required once the local database container is running.
+
+*(Optional)* To run migrations standalone without keeping the HTTP server running:
 
 ```bash
 cd backend
-mvn flyway:migrate -Dspring.datasource.url=jdbc:postgresql://localhost:5432/boss \
-                   -Dspring.datasource.username=boss \
-                   -Dspring.datasource.password=boss
+mvn compile spring-boot:run -Dspring-boot.run.profiles=local -Dspring-boot.run.arguments="--spring.main.web-application-type=none"
 ```
 
 ---
