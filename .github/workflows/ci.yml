@@ -52,6 +52,9 @@ jobs:
       - name: Build and test Platform Admin API
         run: mvn -B -ntp -f backend/platform-admin-api/pom.xml test
 
+      - name: Enforce 80% line coverage on new service classes
+        run: ./scripts/check-new-service-coverage.sh
+
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v4
@@ -69,9 +72,10 @@ jobs:
         with:
           fetch-depth: 0
       - name: Scan repository for secrets
-        uses: trufflesecurity/trufflehog@main
+        uses: trufflesecurity/trufflehog@3bd2b5887eb0efb8fa18bfd1d296032924e4ffdc # v3.99.9
         with:
           path: ./
+          version: "3.99.9"
           extra_args: --results=verified,unknown
 
   lint-migrations:
@@ -113,6 +117,139 @@ jobs:
       - name: Build Platform Admin Docker image (no push)
         run: docker build -t boss-admin-api:ci -f backend/platform-admin-api/Dockerfile backend/platform-admin-api
 
+      # The scan writes every CRITICAL finding. The next step prints each one and
+      # allows only the documented Spring Framework release exceptions.
+      # Any other CRITICAL finding still fails this job.
+      - name: Scan customer API image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: boss-api:ci
+          version: v0.70.0
+          format: json
+          output: trivy-boss-api.json
+          severity: CRITICAL
+          exit-code: "0"
+          ignore-unfixed: false
+          vuln-type: os,library
+
+      - name: Scan Platform Admin image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: boss-admin-api:ci
+          version: v0.70.0
+          format: json
+          output: trivy-boss-admin-api.json
+          severity: CRITICAL
+          exit-code: "0"
+          ignore-unfixed: false
+          vuln-type: os,library
+
+      - name: Enforce CRITICAL gate
+        run: |
+          ./scripts/trivy-critical-gate.sh trivy-boss-api.json
+          ./scripts/trivy-critical-gate.sh trivy-boss-admin-api.json
+
+      - name: Upload Trivy reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-reports
+          path: |
+            trivy-boss-api.json
+            trivy-boss-admin-api.json
+
+  dependency-check:
+    name: OWASP Dependency-Check
+    runs-on: ubuntu-latest
+    # First run without NVD_API_KEY downloads the full NVD API set and can take about two hours.
+    # Later runs reuse the cached database. Set the NVD_API_KEY secret to finish the update in minutes.
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          java-version: "21"
+          distribution: temurin
+          cache: maven
+      - name: Cache NVD data
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/dependency-check-data
+          key: dependency-check-12-${{ hashFiles('backend/pom.xml', 'backend/platform-admin-api/pom.xml') }}
+          restore-keys: dependency-check-12-
+      - name: Customer API dependency check
+        env:
+          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
+        run: |
+          set -euo pipefail
+          cmd=(mvn -B -ntp -f backend/pom.xml dependency-check:check)
+          if [ -n "${NVD_API_KEY}" ]; then
+            cmd+=("-DnvdApiKey=${NVD_API_KEY}")
+          fi
+          "${cmd[@]}"
+      - name: Platform Admin dependency check
+        env:
+          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
+        run: |
+          set -euo pipefail
+          cmd=(mvn -B -ntp -f backend/platform-admin-api/pom.xml dependency-check:check)
+          if [ -n "${NVD_API_KEY}" ]; then
+            cmd+=("-DnvdApiKey=${NVD_API_KEY}")
+          fi
+          "${cmd[@]}"
+      - name: Upload dependency-check reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-check-reports
+          path: |
+            backend/target/dependency-check-report.*
+            backend/platform-admin-api/target/dependency-check-report.*
+
+  spotbugs:
+    name: SpotBugs and Find Security Bugs
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          java-version: "21"
+          distribution: temurin
+          cache: maven
+      - name: SpotBugs high-severity gate
+        run: ./scripts/spotbugs-gate.sh
+      - name: Upload SpotBugs reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: spotbugs-reports
+          path: |
+            backend/target/spotbugsXml.xml
+            backend/platform-admin-api/target/spotbugsXml.xml
+
+  maintainability:
+    name: PMD maintainability gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          java-version: "21"
+          distribution: temurin
+          cache: maven
+      - name: Fail on new maintainability violations
+        run: ./scripts/pmd-maintainability-gate.sh
+      - name: Upload PMD reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pmd-reports
+          path: |
+            backend/target/pmd.xml
+            backend/platform-admin-api/target/pmd.xml
+
   deploy-dev:
     name: Build, push, and deploy dev
     if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
@@ -122,6 +259,9 @@ jobs:
       - secret-scan
       - lint-migrations
       - build-docker
+      - dependency-check
+      - spotbugs
+      - maintainability
     permissions:
       contents: read
       id-token: write
