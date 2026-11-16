@@ -49,23 +49,26 @@ public class FirebaseJwtFilter extends OncePerRequestFilter {
         try {
             String token = extractBearerToken(request);
             if (token != null) {
-                FirebaseToken decoded = firebaseAuth.verifyIdToken(token);
-                BossContext ctx = tenantContextResolver.resolve(decoded.getUid());
+                try {
+                    FirebaseToken decoded = firebaseAuth.verifyIdToken(token);
+                    BossContext ctx = tenantContextResolver.resolve(decoded.getUid());
 
-                if (ctx != null) {
-                    BossContextHolder.set(ctx);
-                    List<SimpleGrantedAuthority> authorities = ctx.roles().stream()
-                            .map(r -> new SimpleGrantedAuthority("ROLE_" + r))
-                            .toList();
-                    var auth = new UsernamePasswordAuthenticationToken(
-                            ctx.firebaseUid(), null, authorities);
-                    SecurityContextHolder.getContext().setAuthentication(auth);
+                    if (ctx != null) {
+                        BossContextHolder.set(ctx);
+                        List<SimpleGrantedAuthority> authorities = ctx.roles().stream()
+                                .map(r -> new SimpleGrantedAuthority("ROLE_" + r))
+                                .toList();
+                        var auth = new UsernamePasswordAuthenticationToken(
+                                ctx.firebaseUid(), null, authorities);
+                        SecurityContextHolder.getContext().setAuthentication(auth);
+                    }
+                } catch (Exception ex) {
+                    log.debug("JWT validation failed: {}", ex.getMessage());
+                    response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+                    return;
                 }
             }
             chain.doFilter(request, response);
-        } catch (Exception ex) {
-            log.debug("JWT validation failed: {}", ex.getMessage());
-            response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
         } finally {
             BossContextHolder.clear();
             SecurityContextHolder.clearContext();

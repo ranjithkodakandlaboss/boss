@@ -50,6 +50,16 @@ public class ConfigService {
         var ctx = BossContextHolder.get();
         if (ctx == null) throw new IllegalStateException("BossContext required");
 
+        if ("ITEM_CATEGORY".equalsIgnoreCase(categoryCode)) {
+            UUID id = UUID.fromString(Objects.requireNonNull(jdbc.queryForObject(
+                    "INSERT INTO item_categories (tenant_id, code, name, is_system, is_active) "
+                    + "VALUES (?, ?, ?, false, true) RETURNING id::text",
+                    String.class,
+                    ctx.tenantId(), code, label)));
+            evict(ctx.tenantId(), "ITEM_CATEGORY");
+            return new ConfigOptionDto(id, "ITEM_CATEGORY", code, label, sortOrder, false);
+        }
+
         UUID categoryId = resolveCategoryId(categoryCode);
 
         UUID id = UUID.fromString(jdbc.queryForObject(
@@ -69,15 +79,37 @@ public class ConfigService {
         var ctx = BossContextHolder.get();
         if (ctx == null) throw new IllegalStateException("BossContext required");
 
-        jdbc.update(
+        int updated = jdbc.update(
                 "UPDATE tenant_config_options SET is_active = false "
                 + "WHERE id = ? AND tenant_id = ?",
                 optionId, ctx.tenantId());
+        if (updated == 0) {
+            jdbc.update(
+                    "UPDATE item_categories SET is_active = false "
+                    + "WHERE id = ? AND tenant_id = ?",
+                    optionId, ctx.tenantId());
+        }
 
         cache.remove(ctx.tenantId());  // evict all categories for this tenant
     }
 
     private List<ConfigOptionDto> loadOptions(UUID tenantId, String categoryCode) {
+        if ("ITEM_CATEGORY".equalsIgnoreCase(categoryCode)) {
+            return jdbc.query(
+                    "SELECT id, code, name AS label, 0 AS sort_order, is_system "
+                    + "FROM item_categories "
+                    + "WHERE tenant_id = ? AND is_active = true "
+                    + "ORDER BY name",
+                    (rs, row) -> new ConfigOptionDto(
+                            UUID.fromString(rs.getString("id")),
+                            "ITEM_CATEGORY",
+                            rs.getString("code"),
+                            rs.getString("label"),
+                            rs.getInt("sort_order"),
+                            rs.getBoolean("is_system")),
+                    tenantId);
+        }
+
         return jdbc.query(
                 "SELECT o.id, cc.code AS cat_code, o.code, o.label, o.sort_order, o.is_system "
                 + "FROM tenant_config_options o "
