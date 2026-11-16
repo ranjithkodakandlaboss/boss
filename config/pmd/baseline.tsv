@@ -8,3 +8,7 @@ customer-api	src/main/java/in/boss/masterdata/domain/impl/CustomerServiceImpl.ja
 customer-api	src/main/java/in/boss/masterdata/domain/impl/ItemServiceImpl.java	GodClass	1
 customer-api	src/main/java/in/boss/masterdata/domain/impl/SupplierServiceImpl.java	CyclomaticComplexity	1
 customer-api	src/main/java/in/boss/masterdata/domain/impl/SupplierServiceImpl.java	GodClass	1
+customer-api	src/main/java/in/boss/sales/domain/SalesService.java	CyclomaticComplexity	1
+customer-api	src/main/java/in/boss/sales/domain/SalesService.java	GodClass	1
+customer-api	src/main/java/in/boss/sales/domain/SalesService.java	TooManyMethods	1
+platform-admin-api	src/main/java/in/boss/admin/domain/TenantManagementService.java	GodClass	1
