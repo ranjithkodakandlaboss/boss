@@ -132,7 +132,7 @@ jobs:
     env:
       GCP_PROJECT_ID: boss-dev-514813
       GCP_REGION: asia-south1
-      ARTIFACT_REGISTRY_REPOSITORY: boss
+      ARTIFACT_REGISTRY_REPOSITORY: boss-docker
       IMAGE_NAME: boss-api
       CLOUD_RUN_SERVICE: boss-api-dev
     steps:
