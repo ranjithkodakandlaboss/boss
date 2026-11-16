@@ -6,10 +6,13 @@ terraform {
       version = "~> 6.0"
     }
   }
-  # State stored in GCS — bucket created manually once, then all state flows through it
+  # This root is dedicated to the Platform Admin service only. Keep its state path
+  # separate from the customer Terraform ownership instead of reusing the legacy
+  # shared prefix. The operator must create or approve the bucket and the
+  # dedicated state key before a real plan runs.
   backend "gcs" {
     bucket = "boss-tofu-state"
-    prefix = "terraform/state"
+    prefix = "terraform/state/platform-admin/dev"
   }
 }
 

@@ -46,7 +46,23 @@ Before dispatching:
 - Set the real `admin_firebase_project_id` in the OpenTofu Dev configuration to an existing Firebase project, distinct from the customer Firebase project, with Firebase Authentication configured. Never put project IDs or credentials in the workflow source.
 - Add an enabled version of the approved admin database credential to `boss-admin-db-password-dev`; create the restricted `boss_admin` database role and apply `src/main/resources/db/boss-admin-grants.sql` after the BOSS schema migrations. The workflow does not create database credentials, inspect secret contents, or apply SQL.
 
+### State ownership and remote plan gate
+
+This repository keeps the Admin-only Terraform root isolated from any customer-owned state by using the GCS backend key `boss-tofu-state` + `terraform/state/platform-admin/dev`. The bucket is shared only if the operator approves it; the state key is not the legacy `terraform/state` prefix used by the customer stack. Do not create a replacement bucket, move customer state, or change the customer Terraform ownership. The state key is a separate Admin-only ownership boundary and must be created/approved by the platform operator before the first real `tofu init` and `tofu plan`.
+
+The explicit requirements are:
+
+- GCS bucket: `boss-tofu-state`
+- Admin state prefix: `terraform/state/platform-admin/dev`
+- Ownership: Admin-only Terraform root, separate from customer service state
+- Resource scope: only `boss-admin-api`, its dedicated service account, secret, IAM bindings, and monitoring resources
+- Existing data source: Cloud SQL instance `boss-dev-postgres` only; no SQL instance creation or database mutation
+
+If the bucket or state path does not exist yet, the operator must create or restore it before any non-dry-run plan. Until that is done, the correct status is "real remote plan blocked by missing approved backend" rather than "empty state".
+
 The preflight stops with an explicit error if the Artifact Registry repository, Cloud Run service, required service configuration, or enabled secret version is missing. It lists Secret Manager version metadata only; it never reads or accesses the database secret payload. It cannot verify the database role/grants or Firebase project's readiness; those must be confirmed by the operator. Do not close Issue #24 until the actual Cloud Run deployment, service health check, and database connectivity check have succeeded.
+
+The Admin deployment sequence is: (1) the platform operator applies the Admin-only OpenTofu root so the `boss` Artifact Registry repo and `boss-admin-api` Cloud Run service exist, (2) the workflow preflight validates their presence and secret state, (3) the job packages and pushes the Admin image, and (4) `deploy-cloudrun` updates only the Admin service. The initial image reference does not prevent service creation because the Cloud Run deploy step creates a missing service when a valid image URI is supplied; it simply updates an existing service otherwise. This is intentionally scoped to the separate Admin service and does not change the legacy customer deployment path.
 
 ### Image and service naming
 

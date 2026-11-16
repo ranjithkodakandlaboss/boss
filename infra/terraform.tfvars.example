@@ -1,4 +1,8 @@
 # Copy to terraform.tfvars (never commit terraform.tfvars)
+# The Admin-only state lives under the dedicated GCS key:
+#   bucket = "boss-tofu-state"
+#   prefix = "terraform/state/platform-admin/dev"
+# The operator must create or approve that bucket/key before any real plan.
 project_id = "boss-dev-XXXXXX"
 region     = "asia-south1"
 env        = "dev"
