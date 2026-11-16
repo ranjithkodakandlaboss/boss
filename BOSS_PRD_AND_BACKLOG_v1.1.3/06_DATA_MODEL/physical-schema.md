@@ -727,6 +727,27 @@ CREATE TABLE quotation_negotiation_history (
 );
 ```
 
+### Current implementation additions (V069)
+The backend's earlier V019 migration did not create negotiation history or the quotation material-estimate columns. V069 (after Platform Core's V068) adds `rfqs.rfq_type_id`/`rfq_type_label`, `quotations.estimated_material_cost`, `quotation_lines.estimated_material_cost_per_unit`, the `negotiating` quotation status, and the following append-only tenant-scoped offer history:
+
+```sql
+CREATE TABLE quotation_negotiation_history (
+  id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id           UUID NOT NULL REFERENCES tenant_registry(id),
+  quotation_id        UUID NOT NULL REFERENCES quotations(id),
+  round               INTEGER NOT NULL CHECK (round > 0),
+  party_type          TEXT NOT NULL CHECK (party_type IN ('TENANT','CUSTOMER')),
+  offered_unit_prices JSONB NOT NULL,
+  note                TEXT,
+  material_cost_at_time NUMERIC(15,2),
+  created_by          UUID NOT NULL,
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (tenant_id, quotation_id, round, party_type)
+);
+```
+
+The material-estimate and negotiation-cost columns are internal-only. Sales response DTOs do not serialize costs, standard costs, BOM component quantities, or margins.
+
 ---
 
 ## V020 — Customer Purchase Orders + CPO Lines

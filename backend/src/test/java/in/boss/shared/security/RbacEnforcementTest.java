@@ -165,6 +165,78 @@ class RbacEnforcementTest {
         assertThat(rbacTestService.anyUserOp()).isEqualTo("ok");
     }
 
+    // ---- @PreAuthorize(BossPermissions.CONCESSION_APPROVE) ----
+
+    @Test
+    void owner_canApproveConcession() {
+        setAuth("OWNER");
+        assertThat(rbacTestService.approveConcessionOp()).isEqualTo("ok");
+    }
+
+    @Test
+    void opsManager_canApproveConcession() {
+        setAuth("OPS_MANAGER");
+        assertThat(rbacTestService.approveConcessionOp()).isEqualTo("ok");
+    }
+
+    @Test
+    void qualityInspector_cannotApproveConcession_unresolvedDecisionEnforced() {
+        // Pending founder decision, QUALITY_INSPECTOR is denied concession approval
+        setAuth("QUALITY_INSPECTOR");
+        assertThatThrownBy(() -> rbacTestService.approveConcessionOp())
+                .isInstanceOf(AccessDeniedException.class);
+    }
+
+    @Test
+    void storeKeeper_cannotApproveConcession() {
+        setAuth("STORE_KEEPER");
+        assertThatThrownBy(() -> rbacTestService.approveConcessionOp())
+                .isInstanceOf(AccessDeniedException.class);
+    }
+
+    // ---- @PreAuthorize(BossPermissions.COMMERCIAL_DATA_READ) ----
+
+    @Test
+    void commercialRoles_canReadCommercialData() {
+        for (String role : List.of("OWNER", "OPS_MANAGER", "SALES_MANAGER", "PURCHASE_MANAGER", "ACCOUNTS_STAFF")) {
+            setAuth(role);
+            assertThat(rbacTestService.readCommercialDataOp()).isEqualTo("ok");
+        }
+    }
+
+    @Test
+    void floorRoles_cannotReadCommercialData() {
+        for (String role : List.of("PRODUCTION_SUPERVISOR", "STORE_KEEPER", "QUALITY_INSPECTOR", "FIELD_WORKER")) {
+            setAuth(role);
+            assertThatThrownBy(() -> rbacTestService.readCommercialDataOp())
+                    .isInstanceOf(AccessDeniedException.class);
+        }
+    }
+
+    // ---- BossContext site scoping ----
+
+    @Test
+    void siteScopedUser_canOnlyAccessAssignedSite() {
+        java.util.UUID assignedSite = java.util.UUID.randomUUID();
+        java.util.UUID otherSite = java.util.UUID.randomUUID();
+
+        in.boss.shared.context.BossContext siteScopedCtx = new in.boss.shared.context.BossContext(
+                java.util.UUID.randomUUID(), java.util.UUID.randomUUID(),
+                java.util.Set.of("PRODUCTION_SUPERVISOR"), assignedSite, "uid-supervisor");
+
+        assertThat(siteScopedCtx.isSiteScoped()).isTrue();
+        assertThat(siteScopedCtx.canAccessSite(assignedSite)).isTrue();
+        assertThat(siteScopedCtx.canAccessSite(otherSite)).isFalse();
+
+        in.boss.shared.context.BossContext tenantWideCtx = new in.boss.shared.context.BossContext(
+                java.util.UUID.randomUUID(), java.util.UUID.randomUUID(),
+                java.util.Set.of("OWNER"), null, "uid-owner");
+
+        assertThat(tenantWideCtx.isSiteScoped()).isFalse();
+        assertThat(tenantWideCtx.canAccessSite(assignedSite)).isTrue();
+        assertThat(tenantWideCtx.canAccessSite(otherSite)).isTrue();
+    }
+
     // ---- Helper ----
 
     private void setAuth(String role) {
@@ -201,5 +273,11 @@ class RbacEnforcementTest {
 
         @PreAuthorize(BossPermissions.ANY_TENANT_USER)
         public String anyUserOp() { return "ok"; }
+
+        @PreAuthorize(BossPermissions.CONCESSION_APPROVE)
+        public String approveConcessionOp() { return "ok"; }
+
+        @PreAuthorize(BossPermissions.COMMERCIAL_DATA_READ)
+        public String readCommercialDataOp() { return "ok"; }
     }
 }
