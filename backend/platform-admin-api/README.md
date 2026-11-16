@@ -2,7 +2,11 @@
 
 Standalone Java 21 / Spring Boot service. It builds independently from `backend/` and serves the implemented issue-scope routes below `/admin/api/v1`. It has no Flyway runner and does not import `in.boss.shared.*` or customer service packages. The main backend migration set must be applied first; V067 creates the onboarding table used by tenant provisioning.
 
-`GET /tenants` remains in the checked-in OpenAPI contract but is deliberately deferred from this scope at Ranjith's direction. The tenant registry RLS policy only exposes the current tenant row; cross-tenant listing requires an approved platform-admin RLS role/policy. The API contract was left unchanged.
+`GET /tenants` lists control-plane rows. The `boss_admin` login needs the SELECT policies in `src/main/resources/db/boss-admin-grants.sql`. Apply that script as a superuser before startup. It is not a Flyway migration.
+
+Provisioning calls `seed_tenant_defaults` in the same transaction, checks the rows it wrote, and leaves the tenant in `provisioning` until `POST /tenants/{id}/activate`. Activation requires that seed to be present. When `adminEmail` is supplied, activation also requires a real initial-owner invitation. The admin service does not mint that token. Until the customer identity contract can create an OWNER invitation in the customer Firebase project, provisioning with an email returns HTTP 424 and no token. Retry with `POST /tenants/{id}/admin-invite`.
+
+GSTIN, financial year, stores, and the company logo are customer onboarding data. They are not part of the provisioning request.
 
 ## Local run
 
