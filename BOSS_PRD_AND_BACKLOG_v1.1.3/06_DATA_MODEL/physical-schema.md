@@ -727,9 +727,8 @@ CREATE TABLE quotation_negotiation_history (
 );
 ```
 
-### Current implementation additions (V068)
-
-The backend's earlier V019 migration did not create negotiation history or the quotation material-estimate columns. V068 adds `rfqs.rfq_type_id`/`rfq_type_label`, `quotations.estimated_material_cost`, `quotation_lines.estimated_material_cost_per_unit`, the `negotiating` quotation status, and the following append-only tenant-scoped offer history:
+### Current implementation additions (V069)
+The backend's earlier V019 migration did not create negotiation history or the quotation material-estimate columns. V069 (after Platform Core's V068) adds `rfqs.rfq_type_id`/`rfq_type_label`, `quotations.estimated_material_cost`, `quotation_lines.estimated_material_cost_per_unit`, the `negotiating` quotation status, and the following append-only tenant-scoped offer history:
 
 ```sql
 CREATE TABLE quotation_negotiation_history (

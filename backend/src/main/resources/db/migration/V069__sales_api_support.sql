@@ -37,6 +37,7 @@ CREATE INDEX idx_quotation_negotiation_history
   ON quotation_negotiation_history(tenant_id, quotation_id, round, created_at);
 
 ALTER TABLE quotation_negotiation_history ENABLE ROW LEVEL SECURITY;
+ALTER TABLE quotation_negotiation_history FORCE ROW LEVEL SECURITY;
 CREATE POLICY quotation_negotiation_history_isolation
   ON quotation_negotiation_history USING (tenant_id = boss_current_tenant_id());
 
