@@ -48,6 +48,7 @@ class RequestLoggingFilterTest {
         filter.doFilter(request, response, (rq, rs) -> ((HttpServletResponse) rs).setStatus(204));
 
         JsonNode line = onlyRequestLine();
+        assertThat(line.get("event").asText()).isEqualTo("http_request");
         assertThat(line.get("severity").asText()).isEqualTo("INFO");
         assertThat(line.get("message").asText()).isEqualTo("GET /api/v1/items 204");
         assertThat(line.get("httpRequest").get("requestMethod").asText()).isEqualTo("GET");

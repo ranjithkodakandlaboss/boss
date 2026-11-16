@@ -53,6 +53,7 @@ public class RequestLoggingFilter extends OncePerRequestFilter {
         String line;
         try {
             line = objectMapper.writeValueAsString(new RequestLog(
+                    "http_request",
                     severity(status),
                     request.getMethod() + " " + request.getRequestURI() + " " + status,
                     new HttpRequestFields(
@@ -93,7 +94,7 @@ public class RequestLoggingFilter extends OncePerRequestFilter {
         return String.format(Locale.US, "%.6fs", elapsedNanos / 1_000_000_000d);
     }
 
-    private record RequestLog(String severity, String message, HttpRequestFields httpRequest) {
+    private record RequestLog(String event, String severity, String message, HttpRequestFields httpRequest) {
     }
 
     private record HttpRequestFields(String requestMethod, String requestUrl, int status, String latency) {
