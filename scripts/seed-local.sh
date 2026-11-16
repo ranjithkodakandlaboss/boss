@@ -2,7 +2,21 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-compose_file="$repo_root/docker/docker-compose.yml"
+compose_file="${BOSS_SEED_COMPOSE_FILE:-$repo_root/docker/docker-compose.yml}"
+compose_args=(-f "$compose_file")
+
+if [[ ! -f "$compose_file" ]]; then
+  echo "Compose file not found: $compose_file" >&2
+  exit 1
+fi
+
+if [[ -n "${BOSS_SEED_COMPOSE_OVERRIDE:-}" ]]; then
+  if [[ ! -f "$BOSS_SEED_COMPOSE_OVERRIDE" ]]; then
+    echo "Compose override not found: $BOSS_SEED_COMPOSE_OVERRIDE" >&2
+    exit 1
+  fi
+  compose_args+=(-f "$BOSS_SEED_COMPOSE_OVERRIDE")
+fi
 
 if ! command -v docker >/dev/null 2>&1; then
   echo "Docker is required. Install Docker Desktop and retry." >&2
@@ -18,9 +32,9 @@ case "$docker_host" in
     ;;
 esac
 
-docker compose -f "$compose_file" up -d --wait postgres
+docker compose "${compose_args[@]}" up -d --wait postgres
 
-if ! docker compose -f "$compose_file" exec -T postgres \
+if ! docker compose "${compose_args[@]}" exec -T postgres \
   psql -U boss -d boss -Atqc \
   "SELECT to_regprocedure('public.seed_tenant_defaults(uuid,text)') IS NOT NULL
      AND EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'boss_app_role')" | grep -qx t; then
@@ -28,7 +42,7 @@ if ! docker compose -f "$compose_file" exec -T postgres \
   exit 1
 fi
 
-docker compose -f "$compose_file" exec -T postgres \
+docker compose "${compose_args[@]}" exec -T postgres \
   psql -U boss -d boss -v ON_ERROR_STOP=1 <<'SQL'
 \set ON_ERROR_STOP on
 \set tenant_id '00000000-0000-4000-8000-000000000009'
