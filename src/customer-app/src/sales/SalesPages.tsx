@@ -6,6 +6,8 @@ import Tabs from "../components/shared/Tabs";
 import Button from "../components/shared/Button";
 import { SelectField, TextField } from "../components/shared/Fields";
 import EmptyState from "../components/shared/EmptyState";
+import RecordSheet from "../components/shared/RecordSheet";
+import DetailList from "../components/shared/DetailList";
 import ErrorState from "../components/shared/ErrorState";
 import LoadingState from "../components/shared/LoadingState";
 import {
@@ -65,10 +67,10 @@ export function CustomerFormPage() {
   }
 
   const contact = customer?.contacts?.[0];
+  const back = id ? `/sales/customers/${id}` : "/sales?tab=customers";
   return (
-    <form onSubmit={submit} className="p-6 max-w-3xl mx-auto space-y-5">
-      <Back to={id ? `/sales/customers/${id}` : "/sales?tab=customers"} label="Back" />
-      <h1 className="text-lg font-bold">{id ? "Edit Customer" : "Add New Customer"}</h1>
+    <RecordSheet title={id ? "Edit Customer" : "Add New Customer"} subtitle="Business identity, contact, and commercial terms" width="lg" onClose={() => navigate(back)} secondary={{ label: "Cancel", onClick: () => navigate(back) }} primary={{ label: "Save Customer", onClick: () => document.querySelector<HTMLFormElement>("#customer-form")?.requestSubmit() }}>
+    <form id="customer-form" onSubmit={submit} className="space-y-5">
       <Card title="Business identity and contact">
         <div className="grid md:grid-cols-2 gap-4">
           <TextField label="Legal / Business Name *" name="legalName" defaultValue={customer?.legalName || customer?.name || ""} required />
@@ -91,8 +93,8 @@ export function CustomerFormPage() {
         </div>
       </Card>
       {error && <p role="alert" className="text-sm text-[var(--error)]">{error}</p>}
-      <Button type="submit">Save Customer</Button>
     </form>
+    </RecordSheet>
   );
 }
 
@@ -122,7 +124,7 @@ export function CustomerDetailPage() {
       </div>
       {error && <p role="alert" className="text-sm text-[var(--error)]">{error}</p>}
       <Tabs tabs={[{ id: "overview", label: "Overview" }, { id: "orders", label: "Orders" }, { id: "rfqs", label: "RFQs" }, { id: "quotes", label: "Quotations" }, { id: "contacts", label: "Contacts" }, { id: "history", label: "History" }]} active={tab} onChange={setTab} />
-      {tab === "overview" && <Card title="Identity"><p>GSTIN {record.gstin || "—"} · PAN {record.pan || "—"}</p><p>{record.address?.line1} {record.address?.city} {record.address?.state}</p><p>Payment terms {record.creditDays ?? "—"} days · Credit limit {inr(record.creditLimit)}</p><p className="text-xs text-[var(--text-3)]">Invoices and receipts are not part of this Sales release.</p></Card>}
+      {tab === "overview" && <Card title="Identity"><DetailList items={[{ label: "GSTIN", value: record.gstin || "—" }, { label: "PAN", value: record.pan || "—" }, { label: "Address", value: [record.address?.line1, record.address?.city, record.address?.state].filter(Boolean).join(", ") || "—" }, { label: "Payment terms", value: record.creditDays != null ? `${record.creditDays} days` : "—" }, { label: "Credit limit", value: inr(record.creditLimit) }]} /><p className="text-xs text-[var(--text-3)] mt-3">Invoices and receipts are not part of this Sales release.</p></Card>}
       {tab === "orders" && <LinkedList rows={pos.data ?? []} href={(row) => `/sales/po/${row.id}`} label={(row) => `${row.cpoNumber} · ${row.status}`} />}
       {tab === "rfqs" && <LinkedList rows={rfqs.data ?? []} href={(row) => `/sales/rfq/${row.id}`} label={(row) => `${row.rfqNumber} · ${row.status}`} />}
       {tab === "quotes" && <LinkedList rows={quotes.data ?? []} href={(row) => `/sales/quotation/${row.id}`} label={(row) => `${row.quotationNumber} rev ${row.revision} · ${row.status}`} />}
@@ -224,10 +226,10 @@ export function RfqFormPage() {
     } catch (caught) { setError(message(caught)); }
   }
 
+  const back = "/sales?tab=rfqs";
   return (
-    <form onSubmit={submit} className="p-6 max-w-4xl mx-auto space-y-5">
-      <Back to="/sales?tab=rfqs" label="Customer RFQs" />
-      <h1 className="text-lg font-bold">{id ? "Edit RFQ" : "New RFQ"}</h1>
+    <RecordSheet title={id ? "Edit RFQ" : "Add RFQ"} subtitle="Header and line items saved on the RFQ" width="lg" onClose={() => navigate(back)} secondary={{ label: "Cancel", onClick: () => navigate(back) }} primary={{ label: id ? "Save RFQ" : "Create RFQ", onClick: () => document.querySelector<HTMLFormElement>("#rfq-form")?.requestSubmit() }}>
+    <form id="rfq-form" onSubmit={submit} className="space-y-5">
       <Card title="Header">
         <div className="grid md:grid-cols-2 gap-4">
           {!id && <SelectField label="Customer *" name="customerId" required defaultValue="">{(customers.data ?? []).filter((customer) => customer.status !== "inactive").map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}</SelectField>}
@@ -260,8 +262,8 @@ export function RfqFormPage() {
       </Card>
       <p className="text-xs text-[var(--text-3)]">Documents are not stored on the RFQ in this release. Specifications stay on the line.</p>
       {error && <p role="alert" className="text-sm text-[var(--error)]">{error}</p>}
-      <Button type="submit">{id ? "Save RFQ" : "Create RFQ"}</Button>
     </form>
+    </RecordSheet>
   );
 }
 
@@ -293,7 +295,7 @@ export function RfqDetailPage() {
       </div>
       {error && <p role="alert" className="text-sm text-[var(--error)]">{error}</p>}
       <Tabs tabs={[{ id: "overview", label: "Overview" }, { id: "lines", label: "Line Items" }, { id: "technical", label: "Technical & Quality" }, { id: "commercial", label: "Commercial & Delivery" }, { id: "history", label: "History" }]} active={tab} onChange={setTab} />
-      {tab === "overview" && <Card title="Source"><p>Received {when(rfq.receivedDate)} via {rfq.receivedVia || "—"} · Customer ref {rfq.customerRef || "—"}</p><p>Required by {when(rfq.requiredDate)}</p><div className="space-y-1">{linked.map((quote) => <Link key={quote.id} className="block text-[var(--brand)]" to={`/sales/quotation/${quote.id}`}>{quote.quotationNumber} rev {quote.revision} · {quote.status}</Link>)}{!linked.length && <p>No quotation yet.</p>}</div></Card>}
+      {tab === "overview" && <Card title="Source"><DetailList items={[{ label: "Received", value: when(rfq.receivedDate) }, { label: "Channel", value: rfq.receivedVia || "—" }, { label: "Customer reference", value: rfq.customerRef || "—" }, { label: "Required by", value: when(rfq.requiredDate) }]} /><div className="space-y-1 mt-3">{linked.map((quote) => <Link key={quote.id} className="block text-[var(--brand)]" to={`/sales/quotation/${quote.id}`}>{quote.quotationNumber} rev {quote.revision} · {quote.status}</Link>)}{!linked.length && <p>No quotation yet.</p>}</div></Card>}
       {tab === "lines" && <LineTable lines={rfq.lines} />}
       {tab === "technical" && <ul>{rfq.lines.map((line, index) => <li key={line.id || index}>{line.drawingNumber || "—"} rev {line.drawingRevision || "—"} · {line.material || "—"} · {line.description || line.itemName} · {line.notes || ""}</li>)}</ul>}
       {tab === "commercial" && <p>Payment terms {rfq.paymentTerms ?? "—"} days · {rfq.deliveryTerms || "No delivery terms"} · {rfq.notes || "No internal notes"}</p>}
@@ -338,11 +340,10 @@ export function QuotationFormPage() {
     } catch (caught) { setError(message(caught)); }
   }
 
+  const back = rfqId ? `/sales/rfq/${rfqId}` : "/sales?tab=quotations";
   return (
-    <form onSubmit={submit} className="p-6 max-w-4xl mx-auto space-y-5">
-      <Back to={rfqId ? `/sales/rfq/${rfqId}` : "/sales?tab=quotations"} label="Back" />
-      <h1 className="text-lg font-bold">New Quotation</h1>
-      {source.data && <p className="text-sm">Source RFQ {source.data.rfqNumber} · {source.data.customerName}</p>}
+    <RecordSheet title="New Quotation" subtitle={source.data ? `Source RFQ ${source.data.rfqNumber} · ${source.data.customerName}` : "Direct quotation"} width="lg" onClose={() => navigate(back)} secondary={{ label: "Cancel", onClick: () => navigate(back) }} primary={{ label: "Save draft quotation", onClick: () => document.querySelector<HTMLFormElement>("#quotation-form")?.requestSubmit() }}>
+    <form id="quotation-form" onSubmit={submit} className="space-y-5">
       <Card title="Commercial terms">
         <div className="grid md:grid-cols-2 gap-4">
           {!rfqId && <SelectField label="Customer *" name="customerId" required><option value="">Select customer</option>{(customers.data ?? []).filter((customer) => customer.status !== "inactive").map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}</SelectField>}
@@ -370,8 +371,8 @@ export function QuotationFormPage() {
         <Button variant="ghost" onClick={() => setLines([...lines, { itemId: "", uomId: items.data?.[0]?.uomId || "", qty: 1, unitPrice: 0, gstRate: 18, discountPct: 0 }])}>Add line</Button>
       </Card>
       {error && <p role="alert" className="text-sm text-[var(--error)]">{error}</p>}
-      <Button type="submit">Save draft quotation</Button>
     </form>
+    </RecordSheet>
   );
 }
 
@@ -463,9 +464,8 @@ export function PoCreatePage() {
     } catch (caught) { setError(message(caught)); }
   }
   return (
-    <form onSubmit={submit} className="p-6 max-w-3xl mx-auto space-y-4">
-      <Back to="/sales?tab=pos" label="Customer POs" />
-      <h1 className="text-lg font-bold">Add Customer PO</h1>
+    <RecordSheet title="Add Customer PO" subtitle="One internal Customer PO from the accepted quotation" width="lg" onClose={() => navigate("/sales?tab=pos")} secondary={{ label: "Cancel", onClick: () => navigate("/sales?tab=pos") }} primary={{ label: "Record acceptance", onClick: () => document.querySelector<HTMLFormElement>("#po-form")?.requestSubmit() }}>
+    <form id="po-form" onSubmit={submit} className="space-y-4">
       <Card title="Accepted quotation source">
         {quotes.loading && <LoadingState label="Loading quotations" />}
         <SelectField label="Quotation awaiting a decision" value={choice} onChange={(event) => setChoice(event.target.value)}>
@@ -477,8 +477,8 @@ export function PoCreatePage() {
         <p className="text-xs text-[var(--text-3)]">Recording acceptance creates one internal Customer PO for that exact revision. Direct orders without an accepted quotation are outside this release.</p>
       </Card>
       {error && <p role="alert" className="text-sm text-[var(--error)]">{error}</p>}
-      <Button type="submit">Record acceptance and create Customer PO</Button>
     </form>
+    </RecordSheet>
   );
 }
 
@@ -516,11 +516,7 @@ export function PoDetailPage() {
       <Tabs tabs={[{ id: "overview", label: "Overview" }, { id: "lines", label: "Line Items" }, { id: "amendments", label: "Amendments" }, { id: "jobs", label: "Linked Jobs (0)" }, { id: "documents", label: "Documents" }, { id: "history", label: "History" }]} active={tab} onChange={setTab} />
       {tab === "overview" && <div className="grid lg:grid-cols-2 gap-4">
         <Card title="PO Details">
-          <p>Accepted date {when(po.orderDate)}</p>
-          <p>Required by {when(po.requiredByDate)}</p>
-          <p>Payment terms {po.paymentTerms != null ? `Net ${po.paymentTerms}` : "—"}</p>
-          <p>Customer reference {po.customerPoRef || "—"}</p>
-          <p>Currency INR</p>
+          <DetailList items={[{ label: "Accepted date", value: when(po.orderDate) }, { label: "Required by", value: when(po.requiredByDate) }, { label: "Payment terms", value: po.paymentTerms != null ? `Net ${po.paymentTerms}` : "—" }, { label: "Customer reference", value: po.customerPoRef || "—" }, { label: "Currency", value: "INR" }]} />
         </Card>
         <Card title="Source">
           {po.quotationId && <Link className="block text-[var(--brand)]" to={`/sales/quotation/${po.quotationId}`}>Quotation {po.quotationNumber} rev {po.quotationRevision}</Link>}
@@ -571,10 +567,8 @@ export function PoAmendPage() {
   }
   if (locked) return <div className="p-8 max-w-xl mx-auto text-center"><h1 className="text-lg font-bold">Revision unavailable</h1><p className="text-sm text-[var(--text-2)] mt-2">Commercial revisions are available only while the Customer PO is open. This PO remains preserved as history.</p><Button onClick={() => navigate(`/sales/po/${id}`)}>Back to Customer PO</Button></div>;
   return (
-    <form onSubmit={submit} className="p-6 max-w-3xl mx-auto space-y-5">
-      <Back to={`/sales/po/${id}`} label={`Back to ${po.cpoNumber}`} />
-      <h1 className="text-xl font-bold">Create Revised Customer PO</h1>
-      <p className="text-sm text-[var(--text-2)]">{po.cpoNumber} · {po.customerName}</p>
+    <RecordSheet title="Create Revised Customer PO" subtitle={`${po.cpoNumber} · ${po.customerName}`} width="lg" onClose={() => navigate(`/sales/po/${id}`)} secondary={{ label: "Cancel", onClick: () => navigate(`/sales/po/${id}`) }} primary={{ label: "Save revision", onClick: () => document.querySelector<HTMLFormElement>("#amend-form")?.requestSubmit() }}>
+    <form id="amend-form" onSubmit={submit} className="space-y-5">
       <p className="text-xs rounded-xl p-3" style={{ background: "rgba(245,158,11,0.08)" }}>The current PO remains binding. Accepted line rates and quantities stay locked. A delivery date, payment terms, or note change is saved on this PO.</p>
       <SelectField label="Amendment Reason *" value={reason} onChange={(event) => setReason(event.target.value)}>
         <option value="qty_change">Quantity Change</option>
@@ -591,7 +585,7 @@ export function PoAmendPage() {
       </div>
       <TextField label="Change description *" value={note} onChange={(event) => setNote(event.target.value)} required />
       {error && <p role="alert" className="text-sm text-[var(--error)]">{error}</p>}
-      <Button type="submit">Submit Revision for Approval</Button>
     </form>
+    </RecordSheet>
   );
 }

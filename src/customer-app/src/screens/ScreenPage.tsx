@@ -5,6 +5,7 @@ import { loadList, SAVE_BLOCKED } from "../api/records";
 import type { ScreenDef } from "./catalog";
 import Tabs from "../components/shared/Tabs";
 import DataTable, { StateBody } from "../components/shared/DataTable";
+import FilterBar from "../components/shared/FilterBar";
 import { SelectField, TextField } from "../components/shared/Fields";
 import Button from "../components/shared/Button";
 import ConfirmDialog from "../components/shared/ConfirmDialog";
@@ -62,6 +63,7 @@ function Workspace({ screen }: { screen: ScreenDef }) {
   const navigate = useNavigate();
   const [blocked, setBlocked] = useState(false);
   const [formError, setFormError] = useState("");
+  const [search, setSearch] = useState("");
   const tab = screen.tabs?.some((item) => item.id === params.get("tab")) ? params.get("tab")! : screen.tabs?.[0]?.id ?? "";
   const state = loadList(params.get("state"));
   const salesTab = screen.path === "sales" ? SALES_TABS[tab] : undefined;
@@ -99,15 +101,14 @@ function Workspace({ screen }: { screen: ScreenDef }) {
       </div>
       {screen.tabs && <Tabs tabs={screen.tabs} active={tab} onChange={(id) => setParams({ tab: id }, { replace: true })} />}
       {screen.kind === "list" && (
-        <div className="flex flex-wrap items-center gap-2 px-6 py-3">
-          <input className="eoss-search-input" placeholder={searchPlaceholder ?? "Search"} aria-label={`Search ${title}`} />
+        <FilterBar search={search} onSearch={setSearch} placeholder={searchPlaceholder ?? `Search ${title}`}>
           {statuses && (
             <select className="eoss-input min-h-[36px]" aria-label={`${title} status`} defaultValue="all">
               <option value="all">All statuses</option>
               {statuses.map((status) => <option key={status} value={status}>{getStatusLabel(status)}</option>)}
             </select>
           )}
-        </div>
+        </FilterBar>
       )}
       {screen.sections && screen.kind !== "list" && (
         <div className="px-6 pb-4 grid gap-3 md:grid-cols-2">
