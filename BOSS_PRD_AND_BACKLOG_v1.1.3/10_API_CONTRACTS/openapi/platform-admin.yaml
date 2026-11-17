@@ -45,7 +45,10 @@ components:
           enum: [PRIVATE_LIMITED, LLP, SOLE_PROPRIETORSHIP, PARTNERSHIP, PUBLIC_LIMITED, HUF, OTHER]
         siteCode: { type: string }
         siteName: { type: string }
-        adminEmail: { type: string, format: email }
+        adminEmail:
+          type: string
+          format: email
+          description: Stored as the intended administrator contact. Invitation delivery occurs only on explicit tenant activation.
         industryType:
           type: string
           enum: [FABRICATION_STEEL, PRECISION_MACHINING, ELECTRONICS_ASSEMBLY, FORGING, CASTING, GENERAL_MANUFACTURING]
@@ -57,13 +60,117 @@ components:
         customerGroupId: { type: string, format: uuid }
         legalEntityId: { type: string, format: uuid }
         siteId: { type: string, format: uuid }
-        adminInviteToken:
-          type: string
-          description: Returned only on the response that created the invitation. It is not stored or replayed.
         seedingApplied: { type: boolean }
         invitationStatus:
           type: string
+          enum: [NOT_REQUESTED, PENDING_ACTIVATION, CREATED, RETRY_REQUIRED]
+
+    TenantActivationResult:
+      type: object
+      required: [tenantId, tenantStatus, invitationStatus]
+      properties:
+        tenantId: { type: string, format: uuid }
+        tenantStatus: { type: string, enum: [active] }
+        invitationStatus:
+          type: string
           enum: [NOT_REQUESTED, CREATED, RETRY_REQUIRED]
+
+    TenantDetails:
+      type: object
+      required:
+        [tenantId, customerGroupId, customerGroupName, customerGroupSlug, tenantName, tenantSlug,
+         tenantStatus, planTier, industryType, invitationStatus, adminEmail, workspaceUrl, legalEntities, sites]
+      properties:
+        tenantId: { type: string, format: uuid }
+        customerGroupId: { type: string, format: uuid }
+        customerGroupName: { type: string }
+        customerGroupSlug: { type: string }
+        tenantName: { type: string }
+        tenantSlug: { type: string }
+        tenantStatus: { type: string, enum: [provisioning, active, suspended, archived] }
+        planTier: { type: string }
+        industryType: { type: [string, "null"] }
+        invitationStatus: { type: string }
+        adminEmail: { type: [string, "null"], format: email }
+        workspaceUrl: { type: [string, "null"], format: uri }
+        legalEntities:
+          type: array
+          items:
+            type: object
+            required: [id, name, legalName, pan, entityType, registeredAddress, status, gstRegistrations]
+            properties:
+              id: { type: string, format: uuid }
+              name: { type: string }
+              legalName: { type: string }
+              pan: { type: [string, "null"] }
+              entityType: { type: string }
+              registeredAddress: { type: [string, "null"] }
+              status: { type: string }
+              gstRegistrations:
+                type: array
+                items:
+                  type: object
+                  required:
+                    [id, gstin, tradeName, registrationType, stateCode, status, effectiveFrom, effectiveTo]
+                  properties:
+                    id: { type: string, format: uuid }
+                    gstin: { type: string }
+                    tradeName: { type: [string, "null"] }
+                    registrationType: { type: string }
+                    stateCode: { type: string }
+                    status: { type: string }
+                    effectiveFrom: { type: string, format: date }
+                    effectiveTo: { type: [string, "null"], format: date }
+        sites:
+          type: array
+          items:
+            type: object
+            required: [id, legalEntityId, gstRegistrationId, name, code, siteType, address, status]
+            properties:
+              id: { type: string, format: uuid }
+              legalEntityId: { type: string, format: uuid }
+              gstRegistrationId: { type: [string, "null"], format: uuid }
+              name: { type: string }
+              code: { type: string }
+              siteType: { type: string }
+              address: { type: [string, "null"] }
+              status: { type: string }
+
+    TenantDetailsUpdateRequest:
+      type: object
+      minProperties: 1
+      properties:
+        tenantName: { type: string, maxLength: 120 }
+        legalEntities:
+          type: array
+          items:
+            type: object
+            required: [id]
+            minProperties: 2
+            properties:
+              id: { type: string, format: uuid }
+              name: { type: string, maxLength: 160 }
+              legalName: { type: string, maxLength: 200 }
+              registeredAddress: { type: string, maxLength: 1000 }
+        sites:
+          type: array
+          items:
+            type: object
+            required: [id]
+            minProperties: 2
+            properties:
+              id: { type: string, format: uuid }
+              name: { type: string, maxLength: 120 }
+              address: { type: string, maxLength: 1000 }
+
+    TenantDetailsUpdateResult:
+      type: object
+      required: [tenantId, updatedFields]
+      properties:
+        tenantId: { type: string, format: uuid }
+        updatedFields:
+          type: array
+          items: { type: string }
 
     OpeningBalanceImportRequest:
       type: object
@@ -112,14 +219,12 @@ paths:
             schema: { $ref: '#/components/schemas/TenantProvisionRequest' }
       responses:
         '201':
-          description: Tenant created. Status remains provisioning until activate. adminInviteToken is present only when the invitation was created by this response.
+          description: Tenant created in provisioning status. An administrator email is stored as the intended contact; invitation delivery occurs only after explicit activation.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ProvisionResult' }
         '400': { description: Validation error — invalid PAN or slug }
         '409': { description: Tenant slug already exists, or this Idempotency-Key was used with a different payload }
-        '424':
-          description: Tenant was created and seeded, but the initial administrator invitation was not created. Retry the admin-invite operation. No invite token is returned.
 
     get:
       operationId: listTenants
@@ -153,13 +258,16 @@ paths:
                         status: { type: string }
                         planTier: { type: string }
                         industryType: { type: string }
+                        invitationStatus: { type: string }
+                        adminEmail: { type: string, format: email }
+                        workspaceUrl: { type: string, format: uri }
                   page: { type: integer }
                   totalElements: { type: integer }
 
-  /tenants/{tenantId}/activate:
-    post:
-      operationId: activateTenant
-      summary: Activate a provisioning tenant after seeding and any requested invitation have succeeded
+  /tenants/{tenantId}:
+    get:
+      operationId: getTenantDetails
+      summary: View a tenant and its associated company and site details
       tags: [Tenant Management]
       parameters:
         - name: tenantId
@@ -167,8 +275,63 @@ paths:
           required: true
           schema: { type: string, format: uuid }
       responses:
-        '200': { description: Tenant activated }
-        '409': { description: Tenant is not provisioning, seeding is incomplete, or the initial invitation is still outstanding }
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TenantDetails' }
+        '404': { description: Tenant was not found }
+
+  /tenants/{tenantId}/details:
+    patch:
+      operationId: updateTenantDetails
+      summary: Update permitted tenant, legal-entity, and site display details
+      description: |
+        Updates tenant and company display names and addresses only. Tenant/entity/site
+        identifiers, legal identifiers, entity/site types, lifecycle, plan, and industry
+        are not editable through this endpoint. Entity and site writes are scoped by
+        tenant context and row-level security.
+      tags: [Tenant Management]
+      parameters:
+        - name: tenantId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TenantDetailsUpdateRequest' }
+      responses:
+        '200':
+          description: Customer details updated. The result contains no company/contact data.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TenantDetailsUpdateResult' }
+        '400': { description: No editable detail or invalid value was supplied }
+        '404': { description: Tenant or tenant-associated entity/site was not found }
+        '409': { description: Archived tenant details cannot be edited }
+
+  /tenants/{tenantId}/activate:
+    post:
+      operationId: activateTenant
+      summary: Activate a provisioning tenant after seeding; send an administrator invitation when an email was configured
+      tags: [Tenant Management]
+      parameters:
+        - name: tenantId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Tenant activated. Invitation delivery, when requested, is reported separately and does not roll back activation.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TenantActivationResult' }
+        '409': { description: Tenant is not provisioning or industry seeding is incomplete }
 
   /tenants/{tenantId}/suspend:
     post:

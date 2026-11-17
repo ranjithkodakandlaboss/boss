@@ -8,13 +8,19 @@
 GRANT USAGE ON SCHEMA public TO boss_admin;
 
 GRANT INSERT ON customer_groups TO boss_admin;
-GRANT SELECT (id) ON customer_groups TO boss_admin;
+GRANT SELECT (id, name, slug) ON customer_groups TO boss_admin;
 
 GRANT SELECT, INSERT ON tenant_registry TO boss_admin;
-GRANT UPDATE (status, updated_at) ON tenant_registry TO boss_admin;
+GRANT UPDATE (status, updated_at, initial_admin_email, name) ON tenant_registry TO boss_admin;
 
 GRANT INSERT ON legal_entities, physical_sites TO boss_admin;
-GRANT SELECT (id) ON legal_entities, physical_sites TO boss_admin;
+GRANT SELECT (id, tenant_id, name, legal_name, pan, entity_type, registered_address, status) ON legal_entities TO boss_admin;
+GRANT UPDATE (name, legal_name, registered_address, updated_at) ON legal_entities TO boss_admin;
+GRANT SELECT (id, tenant_id, legal_entity_id, gstin, trade_name, registration_type, state_code, status,
+              effective_from, effective_to) ON gst_registrations TO boss_admin;
+GRANT SELECT (id, tenant_id, legal_entity_id, name, code, site_type, address, status) ON physical_sites TO boss_admin;
+GRANT SELECT (gst_reg_id) ON physical_sites TO boss_admin;
+GRANT UPDATE (name, address, updated_at) ON physical_sites TO boss_admin;
 
 GRANT EXECUTE ON FUNCTION boss_create_owner_invite(uuid, text, text, timestamptz) TO boss_admin;
 GRANT EXECUTE ON FUNCTION boss_validate_invite_token(text) TO boss_admin;
@@ -39,8 +45,8 @@ GRANT SELECT, INSERT ON tenant_config_options, units_of_measure TO boss_admin;
 -- write the industry rows inside the provisioning transaction. The admin service
 -- does not insert those rows itself.
 
--- Cross-tenant reads are limited to the control-plane rows the list API returns.
--- Customer business tables stay closed by the absence of grants and by RLS.
+-- Cross-tenant reads are limited to control-plane rows. Legal entity and site
+-- detail access uses only selected columns and the existing tenant RLS context.
 DROP POLICY IF EXISTS tenant_registry_platform_admin_read ON tenant_registry;
 CREATE POLICY tenant_registry_platform_admin_read ON tenant_registry
   FOR SELECT TO boss_admin

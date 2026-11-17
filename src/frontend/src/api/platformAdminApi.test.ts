@@ -74,19 +74,70 @@ describe("Platform Admin API client", () => {
     );
   });
 
-  it("does not consume the undocumented 424 provisioning response body", async () => {
+  it("returns activation invitation-delivery status without exposing a token", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(
+      JSON.stringify({
+        tenantId: "tenant-123",
+        tenantStatus: "active",
+        invitationStatus: "RETRY_REQUIRED",
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    ));
+    const api = createPlatformAdminApi(apiBase, async () => "platform-admin-id-token", fetcher);
+
+    await expect(api.activateTenant("tenant-123")).resolves.toMatchObject({
+      tenantId: "tenant-123",
+      tenantStatus: "active",
+      invitationStatus: "RETRY_REQUIRED",
+    });
+    expect(fetcher.mock.calls[0][0]).toBeInstanceOf(URL);
+  });
+
+  it("uses the Platform Admin API for customer detail reads and idempotent updates", async () => {
+    const fetcher = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        tenantId: "tenant-123",
+        tenantName: "Example Tenant",
+        tenantSlug: "example-tenant",
+        tenantStatus: "provisioning",
+        legalEntities: [],
+        sites: [],
+      }), { status: 200, headers: { "Content-Type": "application/json" } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        tenantId: "tenant-123",
+        updatedFields: ["tenantName"],
+      }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    const api = createPlatformAdminApi(apiBase, async () => "platform-admin-id-token", fetcher);
+
+    await expect(api.getTenantDetails("tenant-123")).resolves.toMatchObject({
+      tenantId: "tenant-123",
+      tenantName: "Example Tenant",
+    });
+    await expect(api.updateTenantDetails(
+      "tenant-123",
+      { tenantName: "Updated Tenant" },
+      "detail-update-key",
+    )).resolves.toMatchObject({ tenantId: "tenant-123", updatedFields: ["tenantName"] });
+
+    expect(String(fetcher.mock.calls[0][0])).toBe(`${apiBase}/tenants/tenant-123`);
+    const [url, init] = fetcher.mock.calls[1];
+    expect(String(url)).toBe(`${apiBase}/tenants/tenant-123/details`);
+    expect(init?.method).toBe("PATCH");
+    expect(new Headers(init?.headers).get("Idempotency-Key")).toBe("detail-update-key");
+  });
+
+  it("surfaces an unexpected provisioning failure instead of treating it as success", async () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(
       JSON.stringify({
         tenantId: "undocumented-tenant-id",
         seedingApplied: true,
         invitationStatus: "RETRY_REQUIRED",
-        adminInviteToken: "must-not-be-consumed",
       }),
       { status: 424, headers: { "Content-Type": "application/json" } },
     ));
     const api = createPlatformAdminApi(apiBase, async () => "platform-admin-id-token", fetcher);
 
-    const response = await api.provisionTenant({
+    await expect(api.provisionTenant({
       customerGroupName: "Example Group",
       tenantName: "Example Tenant",
       tenantSlug: "example-tenant",
@@ -97,9 +148,7 @@ describe("Platform Admin API client", () => {
       siteCode: "SITE-01",
       siteName: "Factory",
       industryType: TenantProvisionRequestIndustryType.FABRICATION_STEEL,
-    }, "request-key");
-
-    expect(response).toEqual({ status: 424, body: undefined });
+    }, "request-key")).rejects.toMatchObject({ status: 424 });
   });
 
   it("sends an idempotency key when retrying the initial administrator invitation", async () => {
@@ -137,4 +186,5 @@ describe("Platform Admin API client", () => {
     const [url] = fetcher.mock.calls[0];
     expect(String(url)).toContain("/admin/api/v1/tenants");
   });
+
 });

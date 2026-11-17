@@ -22,6 +22,8 @@ class TenantProvisioningTest extends PlatformAdminIntegrationTest {
         assertThat(provisioned.get("seedingApplied").asBoolean()).isTrue();
         assertThat(privileged.queryForObject("SELECT status FROM tenant_registry WHERE id = ?", String.class, tenantId))
                 .isEqualTo("provisioning");
+        assertThat(privileged.queryForObject(
+                "SELECT initial_admin_email FROM tenant_registry WHERE id = ?", String.class, tenantId)).isNull();
         assertThat(privileged.queryForObject("SELECT count(*) FROM legal_entities WHERE tenant_id = ?", Integer.class, tenantId))
                 .isEqualTo(1);
         assertThat(privileged.queryForObject("SELECT count(*) FROM physical_sites WHERE tenant_id = ?", Integer.class, tenantId))

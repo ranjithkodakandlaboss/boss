@@ -1,22 +1,30 @@
 package in.boss.admin.domain;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import in.boss.admin.api.AdminInviteResult;
-import in.boss.admin.api.ProvisionDependencyFailure;
 import in.boss.admin.api.ProvisionResult;
+import in.boss.admin.api.TenantActivationResult;
+import in.boss.admin.api.TenantDetails;
+import in.boss.admin.api.TenantDetailsUpdateRequest;
+import in.boss.admin.api.TenantDetailsUpdateResult;
 import in.boss.admin.api.TenantPage;
 import in.boss.admin.api.TenantProvisionRequest;
 import in.boss.admin.api.TenantSummary;
 import in.boss.admin.security.AdminPrincipal;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.sql.PreparedStatement;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
+import org.springframework.transaction.annotation.Transactional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -26,13 +34,13 @@ import org.springframework.jdbc.core.ConnectionCallback;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
-import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.server.ResponseStatusException;
 
 @Service
 public class TenantManagementService {
     public static final String NOT_REQUESTED = "NOT_REQUESTED";
+    public static final String PENDING_ACTIVATION = "PENDING_ACTIVATION";
     public static final String CREATED = "CREATED";
     public static final String RETRY_REQUIRED = "RETRY_REQUIRED";
     private static final Logger log = LoggerFactory.getLogger(TenantManagementService.class);
@@ -110,8 +118,13 @@ public class TenantManagementService {
             idempotency.expire(lockId);
             throw new IllegalStateException("Tenant provisioning did not complete");
         }
+        String invitationStatus = hasEmail(request.adminEmail()) ? PENDING_ACTIVATION : NOT_REQUESTED;
+        ProvisionResult result = new ProvisionResult(created.tenantId(), created.customerGroupId(),
+                created.legalEntityId(), created.siteId(), true, invitationStatus);
+        log.info("Tenant provisioned tenantId={} invitationStatus={}", created.tenantId(), invitationStatus);
+        meters.counter("boss.admin.tenant.provision", "result", "created").increment();
         try {
-            return finishInvitation(created, request.adminEmail(), actor, ipAddress, lockId);
+            return stored(lockId, HttpStatus.CREATED.value(), result);
         } catch (RuntimeException exception) {
             idempotency.expire(lockId);
             throw exception;
@@ -126,26 +139,319 @@ public class TenantManagementService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Unknown tenant status");
         }
         Integer total = jdbc.queryForObject(
-                "SELECT count(*) FROM tenant_registry WHERE (?::text IS NULL OR status = ?)",
+                "SELECT count(*) FROM tenant_registry " +
+                        "WHERE (?::text IS NULL OR status = ?)",
                 Integer.class, status, status);
         List<TenantSummary> content = jdbc.query(
                 "SELECT t.id, t.name, t.slug, t.status, t.plan_tier, c.industry_type, " +
-                        "inv.out_status AS invite_status, inv.out_email AS invite_email " +
+                        "inv.out_status AS invite_status, inv.out_email AS invite_email, inv.out_expires_at AS invite_expires_at, " +
+                        "delivery.invitation_status AS delivery_status, t.initial_admin_email " +
                         "FROM tenant_registry t " +
                         "LEFT JOIN tenant_onboarding_config c ON c.tenant_id = t.id " +
                         "LEFT JOIN LATERAL boss_get_tenant_invitation_summary(t.id) inv ON true " +
+                        "LEFT JOIN LATERAL (" +
+                        "  SELECT new_data->>'invitationStatus' AS invitation_status " +
+                        "  FROM platform_audit_events " +
+                        "  WHERE entity_id = t.id " +
+                        "    AND action IN ('tenant.admin_invite_created', 'tenant.admin_invite_retry_required') " +
+                        "  ORDER BY created_at DESC, id DESC LIMIT 1" +
+                        ") delivery ON true " +
                         "WHERE (?::text IS NULL OR t.status = ?) " +
                         "ORDER BY t.created_at DESC, t.id LIMIT ? OFFSET ?",
                 (rs, row) -> {
                     String slug = rs.getString("slug");
+                    String adminEmail = rs.getString("invite_email");
+                    if (adminEmail == null) adminEmail = rs.getString("initial_admin_email");
                     return new TenantSummary(
                             rs.getObject("id", UUID.class), rs.getString("name"), slug,
                             rs.getString("status"), rs.getString("plan_tier"), rs.getString("industry_type"),
-                            rs.getString("invite_status"), rs.getString("invite_email"),
+                            invitationStatus(rs.getString("status"), rs.getString("invite_status"),
+                                    rs.getTimestamp("invite_expires_at"), rs.getString("delivery_status"), adminEmail),
+                            adminEmail,
                             resolveWorkspaceUrl(slug));
                 },
                 status, status, size, page * size);
         return new TenantPage(content, page, total == null ? 0 : total);
+    }
+
+    public TenantDetails details(UUID tenantId) {
+        return transactions.execute(status -> {
+            setTenantContext(tenantId);
+            return loadTenantDetails(tenantId);
+        });
+    }
+
+    public AdminHttpResult updateDetails(UUID tenantId, TenantDetailsUpdateRequest request, String idempotencyKey,
+                                         AdminPrincipal actor, String ipAddress) {
+        validateKey(idempotencyKey);
+        validateDetailsUpdate(request);
+        String path = PROVISION_PATH + "/" + tenantId + "/details";
+        String hash = PlatformIdempotencyStore.requestHash("PATCH", path, jsonBytes(request));
+        PlatformIdempotencyStore.Claim claim = idempotency.claim(idempotencyKey, hash);
+        if (claim instanceof PlatformIdempotencyStore.Replay replay) return replay(replay);
+        UUID lockId = ((PlatformIdempotencyStore.Proceed) claim).rowId();
+
+        try {
+            TenantDetailsUpdateResult result = transactions.execute(status -> {
+                setTenantContext(tenantId);
+                String tenantStatus = lockTenantStatus(tenantId);
+                if ("archived".equals(tenantStatus)) {
+                    throw new ResponseStatusException(HttpStatus.CONFLICT, "Archived customer details cannot be edited");
+                }
+
+                List<String> updatedFields = new ArrayList<>();
+                if (request.tenantName() != null) {
+                    jdbc.update("UPDATE tenant_registry SET name = ?, updated_at = now() WHERE id = ?",
+                            request.tenantName().trim(), tenantId);
+                    updatedFields.add("tenantName");
+                }
+                if (request.legalEntities() != null) {
+                    for (TenantDetailsUpdateRequest.LegalEntityUpdate entity : request.legalEntities()) {
+                        if (updateLegalEntity(tenantId, entity) == 0) {
+                            throw new ResponseStatusException(HttpStatus.NOT_FOUND,
+                                    "Legal entity was not found in this tenant");
+                        }
+                        updatedFields.add("legalEntity:" + entity.id());
+                    }
+                }
+                if (request.sites() != null) {
+                    for (TenantDetailsUpdateRequest.SiteUpdate site : request.sites()) {
+                        if (updateSite(tenantId, site) == 0) {
+                            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Site was not found in this tenant");
+                        }
+                        updatedFields.add("site:" + site.id());
+                    }
+                }
+                audit(actor, "tenant.details_updated", tenantId, null,
+                        Map.of("updatedFields", updatedFields), ipAddress);
+                return new TenantDetailsUpdateResult(tenantId, List.copyOf(updatedFields));
+            });
+            if (result == null) throw new IllegalStateException("Customer detail update did not complete");
+            return stored(lockId, HttpStatus.OK.value(), result);
+        } catch (RuntimeException exception) {
+            idempotency.expire(lockId);
+            throw exception;
+        }
+    }
+
+    private TenantDetails loadTenantDetails(UUID tenantId) {
+        List<TenantDetails> tenants = jdbc.query(
+                "SELECT t.id, t.customer_group_id, cg.name AS customer_group_name, cg.slug AS customer_group_slug, " +
+                        "t.name, t.slug, t.status, t.plan_tier, c.industry_type, " +
+                        "inv.out_status AS invite_status, inv.out_email AS invite_email, " +
+                        "inv.out_expires_at AS invite_expires_at, delivery.invitation_status AS delivery_status, " +
+                        "t.initial_admin_email " +
+                        "FROM tenant_registry t " +
+                        "JOIN customer_groups cg ON cg.id = t.customer_group_id " +
+                        "LEFT JOIN tenant_onboarding_config c ON c.tenant_id = t.id " +
+                        "LEFT JOIN LATERAL boss_get_tenant_invitation_summary(t.id) inv ON true " +
+                        "LEFT JOIN LATERAL (" +
+                        "  SELECT new_data->>'invitationStatus' AS invitation_status " +
+                        "  FROM platform_audit_events " +
+                        "  WHERE entity_id = t.id " +
+                        "    AND action IN ('tenant.admin_invite_created', 'tenant.admin_invite_retry_required') " +
+                        "  ORDER BY created_at DESC, id DESC LIMIT 1" +
+                        ") delivery ON true " +
+                        "WHERE t.id = ?",
+                (rs, row) -> {
+                    String email = rs.getString("invite_email");
+                    if (email == null) email = rs.getString("initial_admin_email");
+                    return new TenantDetails(
+                            rs.getObject("id", UUID.class),
+                            rs.getObject("customer_group_id", UUID.class),
+                            rs.getString("customer_group_name"),
+                            rs.getString("customer_group_slug"),
+                            rs.getString("name"),
+                            rs.getString("slug"),
+                            rs.getString("status"),
+                            rs.getString("plan_tier"),
+                            rs.getString("industry_type"),
+                            invitationStatus(rs.getString("status"), rs.getString("invite_status"),
+                                    rs.getTimestamp("invite_expires_at"), rs.getString("delivery_status"), email),
+                            email,
+                            resolveWorkspaceUrl(rs.getString("slug")),
+                            List.of(),
+                            List.of());
+                },
+                tenantId);
+        if (tenants.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Tenant was not found");
+        }
+
+        List<TenantDetails.LegalEntityDetails> entities = jdbc.query(
+                "SELECT id, name, legal_name, pan, entity_type, registered_address::text AS address, status " +
+                        "FROM legal_entities WHERE tenant_id = ? ORDER BY id",
+                (rs, row) -> new TenantDetails.LegalEntityDetails(
+                        rs.getObject("id", UUID.class),
+                        rs.getString("name"),
+                        rs.getString("legal_name"),
+                        rs.getString("pan"),
+                        rs.getString("entity_type"),
+                        addressValue(rs.getString("address")),
+                        rs.getString("status"),
+                        List.of()),
+                tenantId);
+        Map<UUID, List<TenantDetails.GstRegistrationDetails>> registrationsByEntity = new HashMap<>();
+        jdbc.query(
+                "SELECT id, legal_entity_id, gstin, trade_name, registration_type, state_code, status, " +
+                        "effective_from, effective_to FROM gst_registrations " +
+                        "WHERE tenant_id = ? ORDER BY legal_entity_id, id",
+                (rs) -> {
+                    UUID legalEntityId = rs.getObject("legal_entity_id", UUID.class);
+                    registrationsByEntity.computeIfAbsent(legalEntityId, ignored -> new ArrayList<>())
+                            .add(new TenantDetails.GstRegistrationDetails(
+                                    rs.getObject("id", UUID.class),
+                                    rs.getString("gstin"),
+                                    rs.getString("trade_name"),
+                                    rs.getString("registration_type"),
+                                    rs.getString("state_code"),
+                                    rs.getString("status"),
+                                    rs.getObject("effective_from", java.time.LocalDate.class),
+                                    rs.getObject("effective_to", java.time.LocalDate.class)));
+                },
+                tenantId);
+        entities = entities.stream()
+                .map(entity -> new TenantDetails.LegalEntityDetails(
+                        entity.id(), entity.name(), entity.legalName(), entity.pan(), entity.entityType(),
+                        entity.registeredAddress(), entity.status(),
+                        registrationsByEntity.getOrDefault(entity.id(), List.of())))
+                .toList();
+        List<TenantDetails.SiteDetails> sites = jdbc.query(
+                "SELECT id, legal_entity_id, gst_reg_id, name, code, site_type, address::text AS address, status " +
+                        "FROM physical_sites WHERE tenant_id = ? ORDER BY id",
+                (rs, row) -> new TenantDetails.SiteDetails(
+                        rs.getObject("id", UUID.class),
+                        rs.getObject("legal_entity_id", UUID.class),
+                        rs.getObject("gst_reg_id", UUID.class),
+                        rs.getString("name"),
+                        rs.getString("code"),
+                        rs.getString("site_type"),
+                        addressValue(rs.getString("address")),
+                        rs.getString("status")),
+                tenantId);
+
+        TenantDetails tenant = tenants.getFirst();
+        return new TenantDetails(tenant.tenantId(), tenant.customerGroupId(), tenant.customerGroupName(),
+                tenant.customerGroupSlug(), tenant.tenantName(), tenant.tenantSlug(), tenant.tenantStatus(),
+                tenant.planTier(), tenant.industryType(), tenant.invitationStatus(), tenant.adminEmail(),
+                tenant.workspaceUrl(), entities, sites);
+    }
+
+    private int updateLegalEntity(UUID tenantId, TenantDetailsUpdateRequest.LegalEntityUpdate update) {
+        List<String> assignments = new ArrayList<>();
+        List<Object> parameters = new ArrayList<>();
+        if (update.name() != null) {
+            assignments.add("name = ?");
+            parameters.add(update.name().trim());
+        }
+        if (update.legalName() != null) {
+            assignments.add("legal_name = ?");
+            parameters.add(update.legalName().trim());
+        }
+        if (update.registeredAddress() != null) {
+            assignments.add("registered_address = ?::jsonb");
+            parameters.add(addressJson(update.registeredAddress()));
+        }
+        assignments.add("updated_at = now()");
+        parameters.add(update.id());
+        parameters.add(tenantId);
+        return jdbc.update("UPDATE legal_entities SET " + String.join(", ", assignments)
+                + " WHERE id = ? AND tenant_id = ?", parameters.toArray());
+    }
+
+    private int updateSite(UUID tenantId, TenantDetailsUpdateRequest.SiteUpdate update) {
+        List<String> assignments = new ArrayList<>();
+        List<Object> parameters = new ArrayList<>();
+        if (update.name() != null) {
+            assignments.add("name = ?");
+            parameters.add(update.name().trim());
+        }
+        if (update.address() != null) {
+            assignments.add("address = ?::jsonb");
+            parameters.add(addressJson(update.address()));
+        }
+        assignments.add("updated_at = now()");
+        parameters.add(update.id());
+        parameters.add(tenantId);
+        return jdbc.update("UPDATE physical_sites SET " + String.join(", ", assignments)
+                + " WHERE id = ? AND tenant_id = ?", parameters.toArray());
+    }
+
+    private void validateDetailsUpdate(TenantDetailsUpdateRequest request) {
+        if (request == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Customer details are required");
+        }
+        boolean hasUpdate = request.tenantName() != null
+                || (request.legalEntities() != null && !request.legalEntities().isEmpty())
+                || (request.sites() != null && !request.sites().isEmpty());
+        if (!hasUpdate) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "At least one editable customer detail is required");
+        }
+        if (request.tenantName() != null && request.tenantName().isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Tenant name cannot be blank");
+        }
+
+        Set<UUID> entityIds = new HashSet<>();
+        if (request.legalEntities() != null) {
+            for (TenantDetailsUpdateRequest.LegalEntityUpdate entity : request.legalEntities()) {
+                if (entity == null || entity.id() == null) {
+                    throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Legal entity ID is required");
+                }
+                if (!entityIds.add(entity.id())) {
+                    throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Legal entity IDs must be unique");
+                }
+                if (entity.name() == null && entity.legalName() == null && entity.registeredAddress() == null) {
+                    throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "A legal entity field must be provided");
+                }
+                if (isBlankWhenProvided(entity.name()) || isBlankWhenProvided(entity.legalName())) {
+                    throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Legal entity names cannot be blank");
+                }
+            }
+        }
+
+        Set<UUID> siteIds = new HashSet<>();
+        if (request.sites() != null) {
+            for (TenantDetailsUpdateRequest.SiteUpdate site : request.sites()) {
+                if (site == null || site.id() == null) {
+                    throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Site ID is required");
+                }
+                if (!siteIds.add(site.id())) {
+                    throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Site IDs must be unique");
+                }
+                if (site.name() == null && site.address() == null) {
+                    throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "A site field must be provided");
+                }
+                if (isBlankWhenProvided(site.name())) {
+                    throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Site name cannot be blank");
+                }
+            }
+        }
+    }
+
+    private boolean isBlankWhenProvided(String value) {
+        return value != null && value.isBlank();
+    }
+
+    private String addressJson(String address) {
+        return address.isBlank() ? null : json(Map.of("address", address.trim()));
+    }
+
+    private String addressValue(String addressJson) {
+        if (addressJson == null || addressJson.isBlank()) return null;
+        try {
+            JsonNode value = mapper.readTree(addressJson);
+            if (value.isTextual()) return value.asText();
+            String simpleAddress = value.path("address").asText(null);
+            if (simpleAddress != null) return simpleAddress;
+            List<String> parts = List.of(
+                    value.path("line1").asText(""),
+                    value.path("city").asText(""),
+                    value.path("state").asText(""));
+            String formatted = String.join(", ", parts.stream().filter(part -> !part.isBlank()).toList());
+            return formatted.isBlank() ? addressJson : formatted;
+        } catch (JsonProcessingException exception) {
+            throw new IllegalStateException("Stored customer address is not valid JSON", exception);
+        }
     }
 
     public TenantSummary resolveTenantBySlug(String slug) {
@@ -171,25 +477,46 @@ public class TenantManagementService {
         return results.getFirst();
     }
 
-    @Transactional
-    public void activate(UUID tenantId, AdminPrincipal actor, String ipAddress) {
-        setTenantContext(tenantId);
-        String oldStatus = lockTenantStatus(tenantId);
-        if (!"provisioning".equals(oldStatus)) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "Only a provisioning tenant can be activated");
+    public TenantActivationResult activate(UUID tenantId, AdminPrincipal actor, String ipAddress) {
+        String adminEmail = transactions.execute(status -> {
+            setTenantContext(tenantId);
+            String oldStatus = lockTenantStatus(tenantId);
+            if (!"provisioning".equals(oldStatus)) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "Only a provisioning tenant can be activated");
+            }
+            String industryType = onboardingIndustry(tenantId);
+            if (!seeds.isComplete(tenantId, industryType)) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "Industry seeding is incomplete");
+            }
+            jdbc.update("UPDATE tenant_registry SET status = 'active', updated_at = now() WHERE id = ?", tenantId);
+            audit(actor, "tenant.activated", tenantId, Map.of("status", oldStatus),
+                    Map.of("status", "active"), ipAddress);
+            return jdbc.queryForObject(
+                    "SELECT initial_admin_email FROM tenant_registry WHERE id = ?", String.class, tenantId);
+        });
+        if (adminEmail == null || adminEmail.isBlank()) {
+            log.info("Tenant activated tenantId={} invitationStatus={}", tenantId, NOT_REQUESTED);
+            meters.counter("boss.admin.tenant.lifecycle", "action", "activate").increment();
+            return new TenantActivationResult(tenantId, "active", NOT_REQUESTED);
         }
-        String industryType = onboardingIndustry(tenantId);
-        if (!seeds.isComplete(tenantId, industryType)) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "Industry seeding is incomplete");
+
+        try {
+            CustomerOwnerInvitePort.OwnerInvite invite = invites.inviteInitialOwner(tenantId, adminEmail);
+            transactions.executeWithoutResult(status -> audit(actor, "tenant.admin_invite_created", tenantId, null,
+                    Map.of("inviteId", invite.inviteId().toString(), "invitationStatus", CREATED), ipAddress));
+            log.info("Tenant activated tenantId={} invitationStatus={}", tenantId, CREATED);
+            meters.counter("boss.admin.tenant.lifecycle", "action", "activate").increment();
+            meters.counter("boss.admin.tenant.invite", "result", "created").increment();
+            return new TenantActivationResult(tenantId, "active", CREATED);
+        } catch (IdentityInviteUnavailableException exception) {
+            transactions.executeWithoutResult(status -> audit(actor, "tenant.admin_invite_retry_required", tenantId,
+                    null, Map.of("invitationStatus", RETRY_REQUIRED, "reasonCode", "DELIVERY_OR_GENERATION_FAILED"),
+                    ipAddress));
+            log.info("Tenant activated tenantId={} invitationStatus={}", tenantId, RETRY_REQUIRED);
+            meters.counter("boss.admin.tenant.lifecycle", "action", "activate").increment();
+            meters.counter("boss.admin.tenant.invite", "result", "unavailable").increment();
+            return new TenantActivationResult(tenantId, "active", RETRY_REQUIRED);
         }
-        if (invitationOutstanding(tenantId)) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT,
-                    "Initial administrator invitation must succeed before activation");
-        }
-        jdbc.update("UPDATE tenant_registry SET status = 'active', updated_at = now() WHERE id = ?", tenantId);
-        audit(actor, "tenant.activated", tenantId, Map.of("status", oldStatus), Map.of("status", "active"), ipAddress);
-        log.info("Tenant activated tenantId={}", tenantId);
-        meters.counter("boss.admin.tenant.lifecycle", "action", "activate").increment();
     }
 
     @Transactional
@@ -235,12 +562,14 @@ public class TenantManagementService {
         UUID lockId = ((PlatformIdempotencyStore.Proceed) claim).rowId();
         try {
             requireTenant(tenantId);
+            requireActiveTenant(tenantId);
             if (inviteCreated(tenantId)) {
                 AdminHttpResult conflict = stored(lockId, HttpStatus.CONFLICT.value(),
                         Map.of("error", "INVITE_ALREADY_CREATED",
                                 "message", "An initial administrator invitation was already created"));
                 return conflict;
             }
+            updateInitialAdminEmail(tenantId, email.trim(), actor, ipAddress);
             CustomerOwnerInvitePort.OwnerInvite invite = invites.inviteInitialOwner(tenantId, email);
             transactions.executeWithoutResult(status -> audit(actor, "tenant.admin_invite_created", tenantId, null,
                     Map.of("inviteId", invite.inviteId().toString(), "invitationStatus", CREATED), ipAddress));
@@ -252,46 +581,14 @@ public class TenantManagementService {
         } catch (IdentityInviteUnavailableException exception) {
             idempotency.expire(lockId);
             transactions.executeWithoutResult(status -> audit(actor, "tenant.admin_invite_retry_required", tenantId,
-                    null, Map.of("invitationStatus", RETRY_REQUIRED, "error", exception.getMessage()), ipAddress));
+                    null, Map.of("invitationStatus", RETRY_REQUIRED,
+                            "reasonCode", "DELIVERY_OR_GENERATION_FAILED"), ipAddress));
             meters.counter("boss.admin.tenant.invite", "result", "unavailable").increment();
-            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "IDENTITY_INVITE_UNAVAILABLE: " + exception.getMessage());
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                    "IDENTITY_INVITE_UNAVAILABLE: " + exception.getMessage());
         } catch (RuntimeException exception) {
             idempotency.expire(lockId);
             throw exception;
-        }
-    }
-
-    private AdminHttpResult finishInvitation(CreatedTenant created, String email, AdminPrincipal actor,
-                                             String ipAddress, UUID lockId) {
-        ProvisionResult createdWithoutInvite = new ProvisionResult(created.tenantId(), created.customerGroupId(),
-                created.legalEntityId(), created.siteId(), null, true, NOT_REQUESTED);
-        if (email == null || email.isBlank()) {
-            log.info("Tenant provisioned tenantId={} invitationStatus={}", created.tenantId(), NOT_REQUESTED);
-            meters.counter("boss.admin.tenant.provision", "result", "created").increment();
-            return stored(lockId, HttpStatus.CREATED.value(), createdWithoutInvite);
-        }
-        try {
-            CustomerOwnerInvitePort.OwnerInvite invite = invites.inviteInitialOwner(created.tenantId(), email);
-            transactions.executeWithoutResult(status -> audit(actor, "tenant.admin_invite_created", created.tenantId(),
-                    null, Map.of("inviteId", invite.inviteId().toString(), "invitationStatus", CREATED), ipAddress));
-            ProvisionResult body = new ProvisionResult(created.tenantId(), created.customerGroupId(),
-                    created.legalEntityId(), created.siteId(), invite.oneTimeToken(), true, CREATED);
-            log.info("Tenant provisioned tenantId={} invitationStatus={}", created.tenantId(), CREATED);
-            meters.counter("boss.admin.tenant.provision", "result", "created").increment();
-            return stored(lockId, HttpStatus.CREATED.value(), body);
-        } catch (IdentityInviteUnavailableException exception) {
-            String errorReason = exception.getMessage() != null ? exception.getMessage() : "Email delivery unconfigured";
-            transactions.executeWithoutResult(status -> audit(actor, "tenant.admin_invite_retry_required",
-                    created.tenantId(), null, Map.of("invitationStatus", RETRY_REQUIRED, "error", errorReason), ipAddress));
-            ProvisionDependencyFailure body = new ProvisionDependencyFailure(
-                    "ADMIN_INVITE_RETRY_REQUIRED",
-                    "The tenant was created, but the initial administrator invitation was not delivered: " + errorReason +
-                            ". Retry POST /admin/api/v1/tenants/{tenantId}/admin-invite.",
-                    created.tenantId(), created.customerGroupId(), created.legalEntityId(), created.siteId(),
-                    true, RETRY_REQUIRED);
-            log.info("Tenant provisioned tenantId={} invitationStatus={}", created.tenantId(), RETRY_REQUIRED);
-            meters.counter("boss.admin.tenant.provision", "result", "invite_retry").increment();
-            return stored(lockId, HttpStatus.FAILED_DEPENDENCY.value(), body);
         }
     }
 
@@ -302,9 +599,9 @@ public class TenantManagementService {
                 UUID.class, request.customerGroupName(), groupSlug));
         UUID tenantId = UUID.randomUUID();
         setTenantContext(tenantId);
-        jdbc.update("INSERT INTO tenant_registry(id, customer_group_id, name, slug, status, plan_tier) " +
-                        "VALUES (?, ?, ?, ?, 'provisioning', ?)",
-                tenantId, groupId, request.tenantName(), tenantSlug, request.planTier());
+        jdbc.update("INSERT INTO tenant_registry(id, customer_group_id, name, slug, status, plan_tier, initial_admin_email) " +
+                        "VALUES (?, ?, ?, ?, 'provisioning', ?, ?)",
+                tenantId, groupId, request.tenantName(), tenantSlug, request.planTier(), normalizedEmail(request.adminEmail()));
 
         String regAddrJson = null;
         if (request.registeredAddress() != null && !request.registeredAddress().isBlank()) {
@@ -363,21 +660,68 @@ public class TenantManagementService {
         }
     }
 
-    private boolean invitationOutstanding(UUID tenantId) {
-        List<Boolean> emailRequested = jdbc.query(
-                "SELECT new_data->>'adminEmailPresent' FROM platform_audit_events " +
-                        "WHERE entity_id = ? AND action = 'tenant.provisioned' ORDER BY created_at DESC LIMIT 1",
-                (rs, row) -> Boolean.valueOf(rs.getString(1)), tenantId);
-        return !emailRequested.isEmpty() && Boolean.TRUE.equals(emailRequested.getFirst())
-                && !inviteCreated(tenantId);
-    }
-
     private boolean inviteCreated(UUID tenantId) {
         List<String> statuses = jdbc.query(
                 "SELECT new_data->>'invitationStatus' FROM platform_audit_events " +
                         "WHERE entity_id = ? AND action = 'tenant.admin_invite_created' ORDER BY created_at DESC LIMIT 1",
                 (rs, row) -> rs.getString(1), tenantId);
         return !statuses.isEmpty() && CREATED.equals(statuses.getFirst());
+    }
+
+    private String invitationStatus(String tenantStatus, String inviteStatus, java.sql.Timestamp expiresAt,
+                                    String deliveryStatus, String adminEmail) {
+        if ("accepted".equalsIgnoreCase(inviteStatus)) return "ACCEPTED";
+        if ("cancelled".equalsIgnoreCase(inviteStatus)) return "CANCELLED";
+        if ("expired".equalsIgnoreCase(inviteStatus)
+                || (expiresAt != null && !expiresAt.toInstant().isAfter(java.time.Instant.now()))) {
+            return "EXPIRED";
+        }
+        if (deliveryStatus != null && !deliveryStatus.isBlank()) return deliveryStatus;
+        if ("pending".equalsIgnoreCase(inviteStatus)) return "PENDING";
+        if (hasEmail(adminEmail)) {
+            return "provisioning".equalsIgnoreCase(tenantStatus) ? PENDING_ACTIVATION : RETRY_REQUIRED;
+        }
+        return NOT_REQUESTED;
+    }
+
+    private void requireActiveTenant(UUID tenantId) {
+        List<String> statuses = jdbc.query(
+                "SELECT status FROM tenant_registry WHERE id = ?",
+                (rs, row) -> rs.getString("status"), tenantId);
+        if (statuses.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Tenant was not found");
+        }
+        if (!"active".equals(statuses.getFirst())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Administrator invitations require an active tenant");
+        }
+    }
+
+    private void updateInitialAdminEmail(UUID tenantId, String email, AdminPrincipal actor, String ipAddress) {
+        transactions.executeWithoutResult(status -> {
+            setTenantContext(tenantId);
+            List<String> currentEmails = jdbc.query(
+                    "SELECT initial_admin_email FROM tenant_registry WHERE id = ? FOR UPDATE",
+                    (rs, row) -> rs.getString("initial_admin_email"), tenantId);
+            if (currentEmails.isEmpty()) {
+                throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Tenant was not found");
+            }
+            String oldEmail = currentEmails.getFirst();
+            if (!Objects.equals(oldEmail, email)) {
+                jdbc.update("UPDATE tenant_registry SET initial_admin_email = ?, updated_at = now() WHERE id = ?",
+                        email, tenantId);
+                audit(actor, "tenant.admin_contact_updated", tenantId,
+                        Map.of("adminEmailChanged", oldEmail != null),
+                        Map.of("adminEmailChanged", true), ipAddress);
+            }
+        });
+    }
+
+    private boolean hasEmail(String email) {
+        return email != null && !email.isBlank();
+    }
+
+    private String normalizedEmail(String email) {
+        return hasEmail(email) ? email.trim() : null;
     }
 
     private String lockTenantStatus(UUID tenantId) {

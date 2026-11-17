@@ -36,7 +36,7 @@ public class SecurityConfiguration {
             }
         }
         configuration.setAllowedOriginPatterns(patterns);
-        configuration.setAllowedMethods(List.of("GET", "POST"));
+        configuration.setAllowedMethods(List.of("GET", "POST", "PATCH"));
         configuration.setAllowedHeaders(List.of("Authorization", "Content-Type", "Idempotency-Key"));
         configuration.setAllowCredentials(false);
 
