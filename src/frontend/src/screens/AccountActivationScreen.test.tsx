@@ -95,7 +95,7 @@ describe("AccountActivationScreen", () => {
 
     await waitFor(() => {
       expect(activateMock).toHaveBeenCalledWith(
-        expect.anything(),
+        import.meta.env.VITE_PLATFORM_ADMIN_API_BASE_URL,
         expect.objectContaining({
           token: "valid-secret-token",
           displayName: "John Acme",

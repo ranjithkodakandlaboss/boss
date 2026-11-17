@@ -35,7 +35,7 @@ public class GmailInvitationSender implements ResendEmailSender {
     private final String passwordFile;
 
     public GmailInvitationSender(
-            @Value("${boss.email.gmail-username:${GMAIL_USERNAME:ranjith302@gmail.com}}") String username,
+            @Value("${boss.email.gmail-username:${GMAIL_USERNAME:}}") String username,
             @Value("${boss.email.gmail-app-password:${GMAIL_APP_PASSWORD:}}") String password,
             @Value("${boss.email.gmail-app-password-file:${GMAIL_APP_PASSWORD_FILE:/secrets/gmail-app-password}}") String passwordFile) {
         this.username = username;

@@ -76,7 +76,12 @@ class TenantSlugResolutionTest extends PlatformAdminIntegrationTest {
         mvc.perform(get("/admin/api/v1/tenants/resolve").param("slug", tenantSlug))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.slug").value(tenantSlug))
-                .andExpect(jsonPath("$.workspaceUrl").isNotEmpty());
+                .andExpect(jsonPath("$.status").value("provisioning"))
+                .andExpect(jsonPath("$.workspaceUrl").value("http://" + tenantSlug + ".tenant.test"))
+                .andExpect(jsonPath("$.adminEmail").doesNotExist())
+                .andExpect(jsonPath("$.invitationStatus").doesNotExist())
+                .andExpect(jsonPath("$.planTier").doesNotExist())
+                .andExpect(jsonPath("$.industryType").doesNotExist());
 
         // 3. Resolve nonexistent slug returns 404
         mvc.perform(get("/admin/api/v1/tenants/resolve").param("slug", "non-existent-slug-" + suffix))

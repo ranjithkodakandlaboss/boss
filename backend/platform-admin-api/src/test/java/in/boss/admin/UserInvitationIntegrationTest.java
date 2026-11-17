@@ -8,13 +8,28 @@ import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import com.fasterxml.jackson.databind.JsonNode;
+import in.boss.admin.email.ResendEmailSender;
 import java.util.UUID;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
+
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.when;
 
 class UserInvitationIntegrationTest extends PlatformAdminIntegrationTest {
     private static final String EMAIL = "owner@example.test";
+
+    @MockitoBean
+    ResendEmailSender emailSender;
+
+    @BeforeEach
+    void deliverInvitationEmail() {
+        when(emailSender.sendInvitationEmail(any(), any(), any(), any(), any())).thenReturn(
+                new ResendEmailSender.EmailSendResult(true, "test-message", null));
+    }
 
     @Test
     void provisioningCreatesOneOwnerInviteAndDoesNotPersistTheToken() throws Exception {

@@ -32,6 +32,8 @@ abstract class PlatformAdminIntegrationTest {
         registry.add("spring.datasource.password", () -> PlatformAdminPostgres.ADMIN_PASSWORD);
         registry.add("spring.datasource.hikari.maximum-pool-size", () -> 4);
         registry.add("spring.datasource.hikari.minimum-idle", () -> 1);
+        registry.add("boss.admin.customer-workspace-url-template", () -> "http://{slug}.tenant.test");
+        registry.add("boss.email.invitation-url-base", () -> "http://{slug}.tenant.test/activate");
     }
 
     @Autowired MockMvc mvc;

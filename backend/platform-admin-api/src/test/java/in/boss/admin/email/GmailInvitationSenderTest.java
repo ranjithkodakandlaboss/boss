@@ -9,7 +9,7 @@ class GmailInvitationSenderTest {
     @Test
     void missingAppPasswordDoesNotOpenAConnection() {
         GmailInvitationSender sender = new GmailInvitationSender(
-                "ranjith302@gmail.com",
+                "mailer@example.com",
                 "   ",
                 "/tmp/boss-gmail-app-password-missing");
 

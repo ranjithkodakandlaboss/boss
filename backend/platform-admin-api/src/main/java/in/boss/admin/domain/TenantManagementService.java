@@ -51,7 +51,7 @@ public class TenantManagementService {
     public TenantManagementService(JdbcTemplate jdbc, ObjectMapper mapper, PlatformTransactionManager txManager,
                                    TenantDefaultsSeed seeds, CustomerOwnerInvitePort invites,
                                    PlatformIdempotencyStore idempotency, MeterRegistry meters,
-                                   @Value("${boss.admin.customer-workspace-url-template:${CUSTOMER_WORKSPACE_URL_TEMPLATE:https://boss-customer-web-dev-201664309080.asia-south1.run.app/?tenant={slug}}}") String workspaceUrlTemplate) {
+                                   @Value("${boss.admin.customer-workspace-url-template:${CUSTOMER_WORKSPACE_URL_TEMPLATE:}}") String workspaceUrlTemplate) {
         this.jdbc = jdbc;
         this.mapper = mapper;
         this.transactions = new TransactionTemplate(txManager);
@@ -64,10 +64,10 @@ public class TenantManagementService {
 
     public String resolveWorkspaceUrl(String slug) {
         if (slug == null || slug.isBlank()) return null;
-        if (workspaceUrlTemplate != null && !workspaceUrlTemplate.isBlank()) {
-            return workspaceUrlTemplate.replace("{slug}", slug);
+        if (workspaceUrlTemplate == null || workspaceUrlTemplate.isBlank() || !workspaceUrlTemplate.contains("{slug}")) {
+            return null;
         }
-        return "https://boss-customer-web-dev-201664309080.asia-south1.run.app/?tenant=" + slug;
+        return workspaceUrlTemplate.replace("{slug}", slug);
     }
 
     public AdminHttpResult provision(TenantProvisionRequest request, String idempotencyKey,
@@ -153,20 +153,17 @@ public class TenantManagementService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Slug is required");
         }
         List<TenantSummary> results = jdbc.query(
-                "SELECT t.id, t.name, t.slug, t.status, t.plan_tier, c.industry_type, " +
-                        "inv.out_status AS invite_status, inv.out_email AS invite_email " +
-                        "FROM tenant_registry t " +
-                        "LEFT JOIN tenant_onboarding_config c ON c.tenant_id = t.id " +
-                        "LEFT JOIN LATERAL boss_get_tenant_invitation_summary(t.id) inv ON true " +
-                        "WHERE t.slug = ?",
-                (rs, row) -> {
-                    String rowSlug = rs.getString("slug");
-                    return new TenantSummary(
-                            rs.getObject("id", UUID.class), rs.getString("name"), rowSlug,
-                            rs.getString("status"), rs.getString("plan_tier"), rs.getString("industry_type"),
-                            rs.getString("invite_status"), rs.getString("invite_email"),
-                            resolveWorkspaceUrl(rowSlug));
-                },
+                "SELECT t.id, t.name, t.slug, t.status FROM tenant_registry t WHERE t.slug = ?",
+                (rs, row) -> new TenantSummary(
+                        rs.getObject("id", UUID.class),
+                        rs.getString("name"),
+                        rs.getString("slug"),
+                        rs.getString("status"),
+                        null,
+                        null,
+                        null,
+                        null,
+                        resolveWorkspaceUrl(rs.getString("slug"))),
                 slug.trim().toLowerCase());
         if (results.isEmpty()) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Tenant workspace not found for slug: " + slug);

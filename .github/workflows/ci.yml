@@ -132,6 +132,13 @@ jobs:
             echo "$BAD"
             exit 1
           fi
+          DUPS=$(find backend/src/main/resources/db/migration -name 'V*.sql' -exec basename {} \; \
+                | sed -E 's/^(V[0-9]+(_[0-9]+)?)__.*/\1/' | sort | uniq -d)
+          if [ -n "$DUPS" ]; then
+            echo "Duplicate Flyway version:"
+            echo "$DUPS"
+            exit 1
+          fi
           echo "All migrations follow naming convention."
 
   build-docker:

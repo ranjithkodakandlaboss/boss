@@ -31,7 +31,7 @@ public class CustomerActivationController {
 
     public CustomerActivationController(
             JdbcTemplate jdbc,
-            @Value("${boss.admin.customer-workspace-url-template:${CUSTOMER_WORKSPACE_URL_TEMPLATE:https://boss-customer-web-dev-201664309080.asia-south1.run.app/?tenant={slug}}}") String workspaceUrlTemplate) {
+            @Value("${boss.admin.customer-workspace-url-template:${CUSTOMER_WORKSPACE_URL_TEMPLATE:}}") String workspaceUrlTemplate) {
         this.jdbc = jdbc;
         this.workspaceUrlTemplate = workspaceUrlTemplate;
     }
@@ -186,10 +186,10 @@ public class CustomerActivationController {
 
     private String resolveWorkspaceUrl(String slug) {
         if (slug == null || slug.isBlank()) return null;
-        if (workspaceUrlTemplate != null && !workspaceUrlTemplate.isBlank()) {
-            return workspaceUrlTemplate.replace("{slug}", slug);
+        if (workspaceUrlTemplate == null || workspaceUrlTemplate.isBlank() || !workspaceUrlTemplate.contains("{slug}")) {
+            return null;
         }
-        return "https://boss-customer-web-dev-201664309080.asia-south1.run.app/?tenant=" + slug;
+        return workspaceUrlTemplate.replace("{slug}", slug);
     }
 
     private String sha256(String input) {

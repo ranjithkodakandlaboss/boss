@@ -286,7 +286,7 @@ function normalizeTenantPage(body: ContractTenantPage | undefined): TenantPage {
       industryType: typeof industryType === "string" ? industryType : "",
       inviteStatus: typeof raw.inviteStatus === "string" ? raw.inviteStatus : undefined,
       inviteEmail: typeof raw.inviteEmail === "string" ? raw.inviteEmail : undefined,
-      workspaceUrl: typeof raw.workspaceUrl === "string" ? raw.workspaceUrl : `https://boss-customer-web-dev-201664309080.asia-south1.run.app/?tenant=${encodeURIComponent(slug)}`,
+      workspaceUrl: typeof raw.workspaceUrl === "string" ? raw.workspaceUrl : undefined,
     };
   });
   return { content, page: body.page, totalElements: body.totalElements };

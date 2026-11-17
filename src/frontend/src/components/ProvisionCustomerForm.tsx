@@ -283,13 +283,13 @@ export function ProvisionCustomerForm({
             }}
           >
             <div style={{ fontWeight: 600, color: "#0f172a", marginBottom: "4px" }}>
-              Customer Workspace URL Preview
+              Company workspace slug
             </div>
             <div style={{ fontFamily: "monospace", color: "#2563eb", fontSize: "13px" }}>
-              https://{values.tenantSlug || "{tenant-slug}"}.boss.com
+              {values.tenantSlug || "{tenant-slug}"}
             </div>
             <div style={{ fontSize: "11px", color: "#64748b", marginTop: "4px" }}>
-              DEV URL: <code>https://boss-customer-web-dev-201664309080.asia-south1.run.app/?tenant={values.tenantSlug || "{tenant-slug}"}</code>
+              The invitation email uses the company hostname configured on the server.
             </div>
           </div>
         </div>

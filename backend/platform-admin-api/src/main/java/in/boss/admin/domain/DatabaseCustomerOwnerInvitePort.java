@@ -33,8 +33,8 @@ public class DatabaseCustomerOwnerInvitePort implements CustomerOwnerInvitePort 
     public DatabaseCustomerOwnerInvitePort(
             JdbcTemplate jdbc,
             ResendEmailSender emailSender,
-            @Value("${boss.email.invitation-url-base:${INVITATION_URL_BASE:https://boss-customer-web-dev-201664309080.asia-south1.run.app/activate}}") String invitationUrlBase,
-            @Value("${boss.admin.customer-workspace-url-template:${CUSTOMER_WORKSPACE_URL_TEMPLATE:https://boss-customer-web-dev-201664309080.asia-south1.run.app/?tenant={slug}}}") String workspaceUrlTemplate) {
+            @Value("${boss.email.invitation-url-base:${INVITATION_URL_BASE:}}") String invitationUrlBase,
+            @Value("${boss.admin.customer-workspace-url-template:${CUSTOMER_WORKSPACE_URL_TEMPLATE:}}") String workspaceUrlTemplate) {
         this.jdbc = jdbc;
         this.emailSender = emailSender;
         this.invitationUrlBase = invitationUrlBase;
@@ -43,6 +43,12 @@ public class DatabaseCustomerOwnerInvitePort implements CustomerOwnerInvitePort 
 
     @Override
     public OwnerInvite inviteInitialOwner(UUID tenantId, String email) {
+        if (invitationUrlBase == null || invitationUrlBase.isBlank()
+                || workspaceUrlTemplate == null || !workspaceUrlTemplate.contains("{slug}")) {
+            throw new IdentityInviteUnavailableException(
+                    "Invitation URL base and customer workspace URL template must be configured before an invitation is created.");
+        }
+
         byte[] bytes = new byte[32];
         secureRandom.nextBytes(bytes);
         String oneTimeToken = HexFormat.of().formatHex(bytes);
@@ -80,10 +86,7 @@ public class DatabaseCustomerOwnerInvitePort implements CustomerOwnerInvitePort 
 
     private String resolveWorkspaceUrl(String slug) {
         if (slug == null || slug.isBlank()) return null;
-        if (workspaceUrlTemplate != null && !workspaceUrlTemplate.isBlank()) {
-            return workspaceUrlTemplate.replace("{slug}", slug);
-        }
-        return "https://boss-customer-web-dev-201664309080.asia-south1.run.app/?tenant=" + slug;
+        return workspaceUrlTemplate.replace("{slug}", slug);
     }
 
     private String resolveActivationLink(String slug, String token) {

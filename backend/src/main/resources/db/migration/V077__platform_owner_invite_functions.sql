@@ -1,4 +1,9 @@
--- V070: Customer Onboarding & Platform Owner Invite Support
+-- V077: Platform owner invite functions used by Platform Admin.
+-- V070 is already applied as purchase_requisition_lifecycle. These functions
+-- were created on the DEV database outside Flyway and must exist for a fresh
+-- database. This migration does not edit any applied script.
+-- EXECUTE is revoked from PUBLIC. boss_admin receives EXECUTE from
+-- db/boss-admin-grants.sql after that login exists.
 
 -- 1. Make invited_by nullable so platform-initiated initial owner invites do not require a prior app_user
 ALTER TABLE invite_tokens ALTER COLUMN invited_by DROP NOT NULL;
@@ -53,7 +58,7 @@ BEGIN
 END;
 $$;
 
-GRANT EXECUTE ON FUNCTION boss_create_owner_invite(UUID, TEXT, TEXT, TIMESTAMPTZ) TO boss_app_role;
+REVOKE ALL ON FUNCTION boss_create_owner_invite(UUID, TEXT, TEXT, TIMESTAMPTZ) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION boss_create_owner_invite(UUID, TEXT, TEXT, TIMESTAMPTZ) TO boss_platform_admin_role;
 
 -- 3. Stored function: boss_validate_invite_token
@@ -92,9 +97,8 @@ BEGIN
 END;
 $$;
 
-GRANT EXECUTE ON FUNCTION boss_validate_invite_token(TEXT) TO boss_app_role;
+REVOKE ALL ON FUNCTION boss_validate_invite_token(TEXT) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION boss_validate_invite_token(TEXT) TO boss_platform_admin_role;
-GRANT EXECUTE ON FUNCTION boss_validate_invite_token(TEXT) TO PUBLIC;
 
 -- 4. Stored function: boss_accept_owner_invite
 -- Atomically creates customer app_user, assigns OWNER role, updates invite status, and activates tenant
@@ -199,9 +203,8 @@ BEGIN
 END;
 $$;
 
-GRANT EXECUTE ON FUNCTION boss_accept_owner_invite(TEXT, TEXT, TEXT, TEXT) TO boss_app_role;
+REVOKE ALL ON FUNCTION boss_accept_owner_invite(TEXT, TEXT, TEXT, TEXT) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION boss_accept_owner_invite(TEXT, TEXT, TEXT, TEXT) TO boss_platform_admin_role;
-GRANT EXECUTE ON FUNCTION boss_accept_owner_invite(TEXT, TEXT, TEXT, TEXT) TO PUBLIC;
 
 -- 5. Stored function: boss_get_tenant_invitation_summary
 -- Retrieves invitation state for platform admin tenant lifecycle visibility
@@ -234,7 +237,7 @@ BEGIN
 END;
 $$;
 
-GRANT EXECUTE ON FUNCTION boss_get_tenant_invitation_summary(UUID) TO boss_app_role;
+REVOKE ALL ON FUNCTION boss_get_tenant_invitation_summary(UUID) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION boss_get_tenant_invitation_summary(UUID) TO boss_platform_admin_role;
 
 -- 6. Stored function: boss_register_gstin
@@ -289,5 +292,20 @@ BEGIN
 END;
 $$;
 
-GRANT EXECUTE ON FUNCTION boss_register_gstin(UUID, UUID, TEXT, TEXT) TO boss_app_role;
+REVOKE ALL ON FUNCTION boss_register_gstin(UUID, UUID, TEXT, TEXT) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION boss_register_gstin(UUID, UUID, TEXT, TEXT) TO boss_platform_admin_role;
+
+-- The deployed Platform Admin login is boss_admin. It is created outside Flyway.
+-- Grant EXECUTE when that login already exists so revoking PUBLIC does not
+-- remove the access the running admin service uses.
+DO $boss_admin_invite_grants$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'boss_admin') THEN
+    GRANT EXECUTE ON FUNCTION boss_create_owner_invite(UUID, TEXT, TEXT, TIMESTAMPTZ) TO boss_admin;
+    GRANT EXECUTE ON FUNCTION boss_validate_invite_token(TEXT) TO boss_admin;
+    GRANT EXECUTE ON FUNCTION boss_accept_owner_invite(TEXT, TEXT, TEXT, TEXT) TO boss_admin;
+    GRANT EXECUTE ON FUNCTION boss_get_tenant_invitation_summary(UUID) TO boss_admin;
+    GRANT EXECUTE ON FUNCTION boss_register_gstin(UUID, UUID, TEXT, TEXT) TO boss_admin;
+  END IF;
+END
+$boss_admin_invite_grants$;

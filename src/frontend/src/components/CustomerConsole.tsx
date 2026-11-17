@@ -412,17 +412,19 @@ export function CustomerConsole({ api, adminEmail, onSignOut }: CustomerConsoleP
                         </td>
                         <td>
                           <div><code>{tenant.slug}</code></div>
-                          <div style={{ marginTop: "4px" }}>
-                            <a
-                              href={tenant.workspaceUrl || `https://boss-customer-web-dev-201664309080.asia-south1.run.app/?tenant=${encodeURIComponent(tenant.slug)}`}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="workspace-link"
-                              style={{ fontSize: "11px", color: "#2563eb", textDecoration: "underline", display: "inline-flex", alignItems: "center", gap: "2px" }}
-                            >
-                              Workspace URL ↗
-                            </a>
-                          </div>
+                          {tenant.workspaceUrl ? (
+                            <div style={{ marginTop: "4px" }}>
+                              <a
+                                href={tenant.workspaceUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="workspace-link"
+                                style={{ fontSize: "11px", color: "#2563eb", textDecoration: "underline", display: "inline-flex", alignItems: "center", gap: "2px" }}
+                              >
+                                Workspace URL ↗
+                              </a>
+                            </div>
+                          ) : null}
                         </td>
                         <td><StatusBadge status={tenant.status} /></td>
                         <td>{formatStatus(tenant.industryType || "") || "—"}</td>
@@ -648,21 +650,13 @@ function ProvisioningResult({
           ))}
         </dl>
         <div style={{ margin: "20px 0", padding: "16px", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: "8px" }}>
-          <span style={{ fontSize: "11px", fontWeight: 700, textTransform: "uppercase", color: "#64748b", letterSpacing: "0.5px" }}>Customer Workspace URL</span>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: "6px", flexWrap: "wrap", gap: "8px" }}>
-            <code style={{ fontSize: "13px", color: "#0f172a", wordBreak: "break-all" }}>
-              {`https://boss-customer-web-dev-201664309080.asia-south1.run.app/?tenant=${encodeURIComponent(outcome.tenantSlug || "")}`}
-            </code>
-            <a
-              href={`https://boss-customer-web-dev-201664309080.asia-south1.run.app/?tenant=${encodeURIComponent(outcome.tenantSlug || "")}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="button button-small button-secondary"
-              style={{ textDecoration: "none" }}
-            >
-              Open Workspace ↗
-            </a>
+          <span style={{ fontSize: "11px", fontWeight: 700, textTransform: "uppercase", color: "#64748b", letterSpacing: "0.5px" }}>Company workspace slug</span>
+          <div style={{ marginTop: "6px" }}>
+            <code style={{ fontSize: "13px", color: "#0f172a", wordBreak: "break-all" }}>{outcome.tenantSlug || "Not returned"}</code>
           </div>
+          <p style={{ margin: "8px 0 0", fontSize: "12px", color: "#64748b" }}>
+            The invitation uses the company workspace URL configured for this environment. That URL is shown on the customer list.
+          </p>
         </div>
         <div className="result-status-row">
           <div>

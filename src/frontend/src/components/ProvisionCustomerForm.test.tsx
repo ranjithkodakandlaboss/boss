@@ -27,9 +27,8 @@ describe("ProvisionCustomerForm slug generation", () => {
     expect(tenantSlugInput.value).toBe("alpha-tech-systems");
 
     // Live URL preview visible in the form
-    expect(screen.getByText("Customer Workspace URL Preview")).toBeInTheDocument();
-    expect(screen.getByText("https://alpha-tech-systems.boss.com")).toBeInTheDocument();
-    expect(screen.getByText(/boss-customer-web-dev/)).toBeInTheDocument();
+    expect(screen.getByText("Company workspace slug")).toBeInTheDocument();
+    expect(screen.getByText("alpha-tech-systems")).toBeInTheDocument();
   });
 
   it("allows admin to edit the slug before provisioning", async () => {
@@ -53,6 +52,6 @@ describe("ProvisionCustomerForm slug generation", () => {
     await user.type(tenantSlugInput, "custom-beta-slug");
 
     expect(tenantSlugInput.value).toBe("custom-beta-slug");
-    expect(screen.getByText("https://custom-beta-slug.boss.com")).toBeInTheDocument();
+    expect(screen.getByText("custom-beta-slug")).toBeInTheDocument();
   });
 });
