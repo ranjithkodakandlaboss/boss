@@ -6,6 +6,7 @@ import { signIn, signOut } from "../auth/session";
 import PoDetailPage from "../sales/proto/PODetail";
 import { SalesProvider } from "../sales/proto/runtime";
 import ProcurementHome from "./proto/Procurement";
+import SupplierRFQCreate from "./proto/SupplierRFQCreate";
 import { ProcurementProvider, useStore } from "./proto/runtime";
 import Suppliers from "./proto/Suppliers";
 
@@ -225,6 +226,34 @@ it("creates one linked purchase requisition for unavailable material and retries
   expect(posts()).toHaveLength(2);
   expect((posts()[1][1]?.headers as Headers).get("Idempotency-Key")).toBe(key);
   expect(created.count).toBe(2);
+});
+
+function renderSupplierRfq(mode: "invite" | "quote") {
+  return render(
+    <MemoryRouter initialEntries={[`/procurement/supplier-rfq/new?mode=${mode}&pr=${prId}`]}>
+      <ProcurementProvider>
+        <Routes>
+          <Route path="/procurement/supplier-rfq/new" element={<SupplierRFQCreate />} />
+        </Routes>
+      </ProcurementProvider>
+    </MemoryRouter>,
+  );
+}
+
+it("opens invite and record-quotation for a purchase requisition whose lines are catalog items", async () => {
+  installFetch((url, init) => {
+    if (url.includes("/items") || url.includes("/uoms")) {
+      return json(JSON.parse(page([{ id: itemId, code: "SHAFT", name: "Shaft", uomId, symbol: "EA", uomSymbol: "EA" }])));
+    }
+    return procurementFetch(url, init);
+  });
+  const { unmount } = renderSupplierRfq("invite");
+  expect(await screen.findByRole("heading", { name: "Invite Suppliers for Quotation" })).toBeInTheDocument();
+  expect(screen.getByText("Steel House")).toBeInTheDocument();
+  unmount();
+  renderSupplierRfq("quote");
+  expect(await screen.findByRole("heading", { name: "Record Supplier Quotation" })).toBeInTheDocument();
+  expect(screen.getByText("Shaft")).toBeInTheDocument();
 });
 
 function QuoteHarness() {

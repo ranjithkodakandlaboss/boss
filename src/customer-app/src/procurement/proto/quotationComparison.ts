@@ -110,8 +110,17 @@ export function matchSuppliersForPR(
   sites: Site[] = []
 ): MatchedSupplierOption[] {
   const prLines = pr.lines ?? [];
+  const sameText = (left?: string | null, right?: string | null) => {
+    const a = (left ?? '').trim().toLowerCase();
+    const b = (right ?? '').trim().toLowerCase();
+    return a.length > 0 && a === b;
+  };
+  const materialForLine = (line: PRLine) => materials.find(m =>
+    m.id === line.materialItemId
+    || sameText(m.itemCode, line.materialCode)
+    || sameText(m.name, line.materialName));
   const prMaterials = prLines
-    .map(l => materials.find(m => m.id === l.materialItemId || m.itemCode === l.materialCode || m.name.toLowerCase() === l.materialName.toLowerCase()))
+    .map(materialForLine)
     .filter((m): m is MaterialItem => Boolean(m));
   const deliverSite = sites.find(s => s.id === pr.deliverToSiteId);
 
@@ -124,9 +133,7 @@ export function matchSuppliersForPR(
 
       // 1. Direct supplier-item association (preferredSupplierIds)
       for (const line of prLines) {
-        const mat = materials.find(
-          m => m.id === line.materialItemId || m.itemCode === line.materialCode || m.name.toLowerCase() === line.materialName.toLowerCase()
-        );
+        const mat = materialForLine(line);
         if (mat?.preferredSupplierIds?.includes(supplier.id)) {
           score += 45;
           matchedLines.push(line.materialName);
@@ -137,7 +144,7 @@ export function matchSuppliersForPR(
       // 2. Category alignment
       const supCat = (supplier.category ?? '').toLowerCase();
       const catHits = prMaterials.filter(m => {
-        const mc = m.categoryName.toLowerCase();
+        const mc = (m.categoryName ?? '').toLowerCase();
         return (supCat.includes('steel') && (mc.includes('steel') || mc.includes('bar') || mc.includes('plate')))
           || (supCat.includes('fastener') && mc.includes('fastener'))
           || (supCat.includes('consumable') && (mc.includes('consumable') || mc.includes('welding') || mc.includes('lubricant')))
@@ -164,7 +171,7 @@ export function matchSuppliersForPR(
       }
 
       // 5. Location match
-      if (deliverSite && supplier.city && deliverSite.city.toLowerCase() === supplier.city.toLowerCase()) {
+      if (deliverSite && sameText(deliverSite.city, supplier.city)) {
         score += 8;
         basis.push(`Local to ${deliverSite.city} (shorter transit)`);
       }
@@ -197,10 +204,15 @@ function getLinePrice(l: SupplierQuotationLine): number {
 }
 
 function matchQuotationLine(prLine: PRLine, qLines: SupplierQuotationLine[]): SupplierQuotationLine | undefined {
+  const sameText = (left?: string | null, right?: string | null) => {
+    const a = (left ?? '').trim().toLowerCase();
+    const b = (right ?? '').trim().toLowerCase();
+    return a.length > 0 && a === b;
+  };
   return qLines.find(ql =>
     (ql.materialItemId && prLine.materialItemId && ql.materialItemId === prLine.materialItemId)
-    || (ql.materialCode && prLine.materialCode && ql.materialCode.toLowerCase() === prLine.materialCode.toLowerCase())
-    || ql.materialName.toLowerCase() === prLine.materialName.toLowerCase()
+    || sameText(ql.materialCode, prLine.materialCode)
+    || sameText(ql.materialName, prLine.materialName)
   );
 }
 
