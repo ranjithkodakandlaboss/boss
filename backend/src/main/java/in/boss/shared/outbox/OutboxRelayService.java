@@ -66,6 +66,9 @@ public class OutboxRelayService {
         try {
             pubSubTemplate.publish(topic, payload).get();
             markPublished(rowId);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            log.warn("Publishing outbox row {} interrupted: {}", rowId, e.getMessage());
         } catch (Exception e) {
             log.warn("Failed to publish outbox row {}: {}", rowId, e.getMessage());
             int attempts = jdbc.queryForObject(

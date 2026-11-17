@@ -12,7 +12,6 @@ import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabas
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.mock.web.MockFilterChain;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.test.context.DynamicPropertyRegistry;
@@ -438,6 +437,20 @@ class IdempotencyIntegrationTest {
                 .as("WhatsApp webhook must bypass idempotency key requirement")
                 .isEqualTo(1);
         assertThat(resp.getStatus()).isNotEqualTo(400);
+    }
+
+    @Test
+    void oversizedPayload_exceedingLimit_throwsException() {
+        setTenantContext();
+        String key = UUID.randomUUID().toString();
+        var req = postRequest("/api/v1/items", "x", key);
+        req.setContent(new byte[10 * 1024 * 1024 + 1]);
+
+        var resp = new MockHttpServletResponse();
+        org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+                filter.doFilter(req, resp, (rq, rs) -> {}))
+                .isInstanceOf(java.io.IOException.class)
+                .hasMessageContaining("exceeds maximum allowed size");
     }
 
     // ---- helpers ----

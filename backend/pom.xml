@@ -112,6 +112,12 @@
       <groupId>com.google.firebase</groupId>
       <artifactId>firebase-admin</artifactId>
       <version>9.4.2</version>
+      <exclusions>
+        <exclusion>
+          <groupId>commons-logging</groupId>
+          <artifactId>commons-logging</artifactId>
+        </exclusion>
+      </exclusions>
     </dependency>
     <!-- The default Google HTTP transport gunzips Identity Toolkit responses twice on
          Java 21, so Firebase user creation and token checks fail closed. Apache HttpClient

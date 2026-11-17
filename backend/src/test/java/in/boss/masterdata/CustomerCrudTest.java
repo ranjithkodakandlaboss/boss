@@ -3,7 +3,6 @@ package in.boss.masterdata;
 import in.boss.masterdata.api.dto.ContactDto;
 import in.boss.masterdata.api.dto.CreateCustomerRequest;
 import in.boss.masterdata.api.dto.CustomerDto;
-import in.boss.masterdata.api.dto.PageResponse;
 import in.boss.masterdata.api.dto.UpdateCustomerRequest;
 import in.boss.masterdata.domain.CustomerService;
 import in.boss.masterdata.domain.DuplicateEntityException;

@@ -106,27 +106,31 @@ public class GmailInvitationSender implements ResendEmailSender {
             workspaceSection = """
                 <div style="background-color: #f1f5f9; border: 1px solid #e2e8f0; border-radius: 6px; padding: 12px 16px; margin: 16px 0;">
                   <span style="font-size: 12px; font-weight: 600; text-transform: uppercase; color: #64748b; letter-spacing: 0.5px; display: block; margin-bottom: 4px;">Customer Workspace URL</span>
-                  <a href="%s" style="color: #2563eb; text-decoration: none; font-weight: 600; font-size: 14px; word-break: break-all;">%s</a>
+                  <a href="{WORKSPACE_URL}" style="color: #2563eb; text-decoration: none; font-weight: 600; font-size: 14px; word-break: break-all;">{WORKSPACE_URL}</a>
                 </div>
-                """.formatted(workspaceUrl, workspaceUrl);
+                """.replace("{WORKSPACE_URL}", workspaceUrl);
         }
         return """
             <!DOCTYPE html>
             <html lang="en">
             <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f8fafc; margin: 0; padding: 40px 16px; color: #0f172a;">
-              <table align="center" width="100%%" style="max-width: 580px; background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px;">
+              <table align="center" width="100%" style="max-width: 580px; background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px;">
                 <tr><td style="padding: 36px 32px;">
                   <h2 style="margin: 0 0 16px 0;">Welcome to BOSS</h2>
-                  <p>You have been invited as the initial <strong>Administrator</strong> for <strong>%s</strong>.</p>
-                  %s
+                  <p>You have been invited as the initial <strong>Administrator</strong> for <strong>{TENANT_NAME}</strong>.</p>
+                  {WORKSPACE_SECTION}
                   <p>To complete your organization setup and access your workspace, activate your account and set your password.</p>
-                  <p><a href="%s">Activate Your Account</a></p>
-                  <p>%s</p>
-                  <p>This invitation link is valid until %s.</p>
+                  <p><a href="{ACTIVATION_LINK}">Activate Your Account</a></p>
+                  <p>{ACTIVATION_LINK}</p>
+                  <p>This invitation link is valid until {FORMATTED_EXPIRY}.</p>
                 </td></tr>
               </table>
             </body>
             </html>
-            """.formatted(tenantName, workspaceSection, activationLink, activationLink, formattedExpiry);
+            """
+                .replace("{TENANT_NAME}", tenantName)
+                .replace("{WORKSPACE_SECTION}", workspaceSection)
+                .replace("{ACTIVATION_LINK}", activationLink)
+                .replace("{FORMATTED_EXPIRY}", formattedExpiry);
     }
 }

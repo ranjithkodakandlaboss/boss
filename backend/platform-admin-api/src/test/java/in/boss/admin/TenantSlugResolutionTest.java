@@ -1,10 +1,7 @@
 package in.boss.admin;
 
-import in.boss.admin.activation.CustomerActivationController;
-import in.boss.admin.api.TenantSummary;
 import in.boss.admin.domain.CustomerOwnerInvitePort;
 import in.boss.admin.domain.TenantManagementService;
-import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
@@ -15,7 +12,6 @@ import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 
-import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;

@@ -149,4 +149,11 @@ class ConfigOptionsRlsTest {
                 tenantA);
         assertThat(itemCatCount).isEqualTo(1);
     }
+
+    @Test
+    void unknownCategory_returnsEmptyList_withoutPollutingCache() {
+        setTenant(tenantA);
+        List<ConfigOptionDto> opts = configService.getOptions("NON_EXISTENT_CATEGORY_XYZ");
+        assertThat(opts).isEmpty();
+    }
 }
