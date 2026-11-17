@@ -120,35 +120,40 @@ public class CustomerActivationController {
     public ResponseEntity<CustomerActivationResponse> activateAccount(@Valid @RequestBody CustomerActivationRequest request) {
         String tokenHash = sha256(request.token().trim());
 
-        // 1. Validate invite exists and is pending
-        List<Map<String, Object>> invites = jdbc.queryForList(
-                "SELECT id, tenant_id, email, role, status, expires_at FROM invite_tokens WHERE token_hash = ?",
+        // 1. Validate invite exists and is pending via SECURITY DEFINER function
+        List<ValidateInviteResponse> results = jdbc.query(
+                "SELECT out_invite_id, out_tenant_id, out_tenant_name, out_tenant_slug, out_email, out_role, out_status, out_expires_at, out_is_expired " +
+                        "FROM boss_validate_invite_token(?)",
+                (rs, rowNum) -> {
+                    String slug = rs.getString("out_tenant_slug");
+                    return new ValidateInviteResponse(
+                            true,
+                            rs.getObject("out_invite_id", UUID.class),
+                            rs.getObject("out_tenant_id", UUID.class),
+                            rs.getString("out_tenant_name"),
+                            slug,
+                            rs.getString("out_email"),
+                            rs.getString("out_role"),
+                            rs.getString("out_status"),
+                            rs.getTimestamp("out_expires_at"),
+                            rs.getBoolean("out_is_expired"),
+                            resolveWorkspaceUrl(slug));
+                },
                 tokenHash);
-        if (invites.isEmpty()) {
+
+        if (results.isEmpty()) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Invalid invitation token");
         }
-        Map<String, Object> invite = invites.getFirst();
-        if (!"pending".equals(invite.get("status"))) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "Invitation token is already " + invite.get("status"));
+        ValidateInviteResponse invite = results.getFirst();
+        if (!"pending".equals(invite.status())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Invitation token is already " + invite.status());
         }
-        Timestamp expiresAt = (Timestamp) invite.get("expires_at");
-        if (expiresAt != null && expiresAt.toInstant().isBefore(java.time.Instant.now())) {
+        if (invite.isExpired()) {
             throw new ResponseStatusException(HttpStatus.GONE, "Invitation token has expired");
         }
 
-        UUID tenantId = (UUID) invite.get("tenant_id");
-        List<Map<String, Object>> tenants = jdbc.queryForList(
-                "SELECT status, slug FROM tenant_registry WHERE id = ?", tenantId);
-        if (tenants.isEmpty()) {
-            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Associated tenant not found");
-        }
-        String tenantStatus = (String) tenants.getFirst().get("status");
-        String actualSlug = (String) tenants.getFirst().get("slug");
-
-        if (!"active".equals(tenantStatus)) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN,
-                    "Tenant is not active. Platform administrator must activate the tenant before user login.");
-        }
+        UUID tenantId = invite.tenantId();
+        String actualSlug = invite.tenantSlug();
 
         // Validate workspace slug isolation if passed
         if (request.tenantSlug() != null && !request.tenantSlug().isBlank()
@@ -159,8 +164,8 @@ public class CustomerActivationController {
 
         // 2. Accept invite using stored procedure
         List<UUID> userIds = jdbc.query(
-                "SELECT boss_accept_owner_invite(?, ?, ?, ?)",
-                (rs, rowNum) -> rs.getObject(1, UUID.class),
+                "SELECT out_user_id FROM boss_accept_owner_invite(?, ?, ?, ?)",
+                (rs, rowNum) -> rs.getObject("out_user_id", UUID.class),
                 tokenHash,
                 request.firebaseUid(),
                 request.displayName(),

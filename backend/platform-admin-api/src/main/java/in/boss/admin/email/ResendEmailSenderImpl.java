@@ -150,7 +150,7 @@ public class ResendEmailSenderImpl implements ResendEmailSender {
           <title>BOSS Workspace Invitation</title>
         </head>
         <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f8fafc; margin: 0; padding: 40px 16px; color: #0f172a;">
-          <table align="center" width="100%" style="max-width: 580px; background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.06); border-spacing: 0;">
+          <table align="center" width="100%%" style="max-width: 580px; background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.06); border-spacing: 0;">
             <tr>
               <td style="background-color: #0f172a; padding: 24px 32px; text-align: left;">
                 <span style="display: inline-block; background-color: #2563eb; color: #ffffff; font-weight: 800; font-size: 18px; width: 36px; height: 36px; line-height: 36px; text-align: center; border-radius: 6px; margin-right: 12px; vertical-align: middle;">B</span>
