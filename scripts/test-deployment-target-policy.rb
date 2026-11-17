@@ -12,16 +12,17 @@ target = inputs&.fetch("deploy_target", nil)
 unless target == {
   "description" => "Deployment target",
   "type" => "choice",
-  "options" => %w[admin customer],
+  "options" => %w[admin customer customer-web],
   "required" => true
 }
-  abort "workflow_dispatch must require deploy_target choice with admin and customer options"
+  abort "workflow_dispatch must require deploy_target choice with admin, customer, and customer-web options"
 end
 
 jobs = workflow.fetch("jobs")
 expected_conditions = {
   "deploy-dev" => "github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.deploy_target == 'customer'",
-  "deploy-admin-dev" => "github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.deploy_target == 'admin'"
+  "deploy-admin-dev" => "github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.deploy_target == 'admin'",
+  "deploy-customer-web-dev" => "github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.deploy_target == 'customer-web'"
 }
 
 expected_conditions.each do |job_name, expected|
@@ -37,25 +38,29 @@ def deploys?(job_condition, event_name:, ref:, target:)
     target == "customer"
   when :admin
     target == "admin"
+  when :customer_web
+    target == "customer-web"
   else
     false
   end
 end
 
 [
-  ["admin", true, false],
-  ["customer", false, true],
-  ["", false, false],
-  ["invalid", false, false]
-].each do |target_value, expected_admin, expected_customer|
+  ["admin", true, false, false],
+  ["customer", false, true, false],
+  ["customer-web", false, false, true],
+  ["", false, false, false],
+  ["invalid", false, false, false]
+].each do |target_value, expected_admin, expected_customer, expected_customer_web|
   actual_admin = deploys?(:admin, event_name: "workflow_dispatch", ref: "refs/heads/main", target: target_value)
   actual_customer = deploys?(:customer, event_name: "workflow_dispatch", ref: "refs/heads/main", target: target_value)
-  unless [actual_admin, actual_customer] == [expected_admin, expected_customer]
+  actual_customer_web = deploys?(:customer_web, event_name: "workflow_dispatch", ref: "refs/heads/main", target: target_value)
+  unless [actual_admin, actual_customer, actual_customer_web] == [expected_admin, expected_customer, expected_customer_web]
     abort "deployment target #{target_value.inspect} did not select exactly the expected job"
   end
 end
 
-%w[admin customer].each do |target_value|
+%w[admin customer customer-web].each do |target_value|
   actual_admin = deploys?(:admin, event_name: "push", ref: "refs/heads/main", target: target_value)
   actual_customer = deploys?(:customer, event_name: "workflow_dispatch", ref: "refs/heads/feature", target: target_value)
   abort "event/ref protections failed for target #{target_value}" if actual_admin || actual_customer

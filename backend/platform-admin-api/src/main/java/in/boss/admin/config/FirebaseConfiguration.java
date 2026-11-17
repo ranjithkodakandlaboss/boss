@@ -19,6 +19,7 @@ public class FirebaseConfiguration {
         FirebaseOptions options = FirebaseOptions.builder()
                 .setCredentials(GoogleCredentials.getApplicationDefault())
                 .setProjectId(projectId)
+                .setHttpTransport(new com.google.api.client.http.javanet.NetHttpTransport())
                 .build();
         return FirebaseApp.initializeApp(options, "boss-platform-admin");
     }
