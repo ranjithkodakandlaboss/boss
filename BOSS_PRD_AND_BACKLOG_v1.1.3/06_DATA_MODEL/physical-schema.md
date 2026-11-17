@@ -849,8 +849,8 @@ CREATE TABLE supplier_quotations (
   sq_number       TEXT NOT NULL,
   supplier_id     UUID NOT NULL REFERENCES suppliers(id),
   pr_id           UUID REFERENCES purchase_requisitions(id),
-  status          TEXT NOT NULL DEFAULT 'received'
-                    CHECK (status IN ('received','evaluated','accepted','rejected','expired')),
+  status          TEXT NOT NULL DEFAULT 'requested'
+                    CHECK (status IN ('requested','received','under_review','selected','rejected')),
   quote_date      DATE NOT NULL,
   valid_until     DATE,
   currency        TEXT NOT NULL DEFAULT 'INR',
@@ -859,7 +859,8 @@ CREATE TABLE supplier_quotations (
   notes           TEXT,
   created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  UNIQUE (tenant_id, sq_number)
+  UNIQUE (tenant_id, sq_number),
+  UNIQUE (tenant_id, id, supplier_id, pr_id)
 );
 
 CREATE TABLE supplier_quotation_lines (
@@ -890,12 +891,12 @@ CREATE TABLE supplier_purchase_orders (
   tenant_id       UUID NOT NULL REFERENCES tenant_registry(id),
   spo_number      TEXT NOT NULL,
   supplier_id     UUID NOT NULL REFERENCES suppliers(id),
-  pr_id           UUID REFERENCES purchase_requisitions(id),
-  sq_id           UUID REFERENCES supplier_quotations(id),
+  pr_id           UUID NOT NULL REFERENCES purchase_requisitions(id),
+  sq_id           UUID NOT NULL REFERENCES supplier_quotations(id),
   site_id         UUID NOT NULL REFERENCES physical_sites(id),
   billing_gst_id  UUID REFERENCES gst_registrations(id),
   status          TEXT NOT NULL DEFAULT 'draft'
-                    CHECK (status IN ('draft','issued','partially_received','fully_received','cancelled')),
+                    CHECK (status IN ('draft','issued','acknowledged','partially_received','fully_received','cancelled')),
   order_date      DATE NOT NULL,
   promised_date   DATE,
   currency        TEXT NOT NULL DEFAULT 'INR',
@@ -905,8 +906,13 @@ CREATE TABLE supplier_purchase_orders (
   created_by      UUID NOT NULL,
   created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  UNIQUE (tenant_id, spo_number)
+  UNIQUE (tenant_id, spo_number),
+  CONSTRAINT fk_spos_selected_quote_context
+    FOREIGN KEY (tenant_id, sq_id, supplier_id, pr_id)
+    REFERENCES supplier_quotations (tenant_id, id, supplier_id, pr_id)
 );
+
+-- V071 adds the equivalent composite relationship to the runtime `spos` table.
 
 CREATE TABLE spo_lines (
   id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),

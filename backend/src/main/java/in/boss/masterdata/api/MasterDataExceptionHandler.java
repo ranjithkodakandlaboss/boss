@@ -7,11 +7,13 @@ import in.boss.masterdata.domain.LifecycleException;
 import in.boss.masterdata.domain.MaxBomLevelExceededException;
 import in.boss.masterdata.domain.ValidationException;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.HttpStatusCode;
 import org.springframework.http.ProblemDetail;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.net.URI;
 import java.util.stream.Collectors;
@@ -40,6 +42,15 @@ public class MasterDataExceptionHandler {
         ProblemDetail pd = ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, ex.getMessage());
         pd.setType(URI.create("urn:boss:error:bad-request"));
         pd.setTitle("Validation or Business Rule Error");
+        return pd;
+    }
+
+    @ExceptionHandler(ResponseStatusException.class)
+    public ProblemDetail handleResponseStatus(ResponseStatusException ex) {
+        HttpStatusCode status = ex.getStatusCode();
+        String detail = ex.getReason() != null ? ex.getReason() : "The request was rejected";
+        ProblemDetail pd = ProblemDetail.forStatusAndDetail(status, detail);
+        pd.setTitle(status instanceof HttpStatus http ? http.getReasonPhrase() : "Request rejected");
         return pd;
     }
 

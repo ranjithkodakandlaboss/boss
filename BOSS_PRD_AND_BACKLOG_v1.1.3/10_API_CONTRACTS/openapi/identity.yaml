@@ -6,11 +6,11 @@ info:
     Identity, authentication, tenant context, user management, and RBAC for BOSS.
     Firebase Auth handles password/OAuth; this API manages tenant users, roles, and invite flows.
 
-    **Auth:** All endpoints require `Authorization: Bearer {firebase_id_token}` EXCEPT `/auth/me`
-    (which is used for first login after Firebase sign-in).
+    **Auth:** Customer endpoints require `Authorization: Bearer {firebase_id_token}`.
+    `POST /auth/activate` is public. It accepts the invitation token and ignores a bearer token.
 
-    **Tenant context:** `X-Tenant-Id` header is required on all customer endpoints; RLS enforces
-    isolation. The backend also reads tenant from the JWT claim for security cross-checks.
+    **Tenant context:** The backend resolves the tenant from the Firebase UID. Callers do not
+    send `X-Tenant-Id`. Row-level security uses that resolved tenant.
 servers:
   - url: https://api.boss.app/api/v1
     description: Production
@@ -108,13 +108,52 @@ components:
         totalPages: { type: integer }
 
 paths:
+  /auth/activate:
+    post:
+      operationId: activateInvitation
+      summary: Activate an invitation and create the Firebase user
+      description: |
+        Consumes the one-time `adminInviteToken` created by Platform Admin. Hash the exact
+        returned token with SHA-256 over UTF-8 and store lowercase hex in `invite_tokens.token_hash`.
+        This endpoint trims surrounding whitespace, then uses that same hash. The token is single-use:
+        status must be `pending` and `expires_at` must be in the future. Success sets status to
+        `accepted` and creates the Firebase user in the customer Firebase project, not the Platform
+        Admin project. The tenant must already be `active`. A bearer token is ignored.
+      tags: [Identity]
+      security: []
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, password]
+              properties:
+                token: { type: string }
+                password: { type: string, minLength: 6 }
+                displayName: { type: string }
+      responses:
+        '201':
+          description: User activated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UserProfile' }
+        '400': { description: Token or password is missing or too short }
+        '404': { description: Token was not found }
+        '409': { description: Token is no longer pending, or Firebase rejected the user }
+
   /auth/me:
     get:
       operationId: getCurrentUser
       summary: Get current user profile and tenant context
       description: |
-        Called after Firebase sign-in. Returns the BOSS user profile, roles, and tenant.
-        Creates the app_users record on first call if Firebase UID is new.
+        Called after Firebase sign-in. Returns the activated user profile, roles, and tenant.
+        The user row is created by `POST /auth/activate`, not by this call.
       tags: [Identity]
       security:
         - firebaseBearer: []

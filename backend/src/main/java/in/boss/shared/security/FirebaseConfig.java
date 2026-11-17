@@ -1,5 +1,6 @@
 package in.boss.shared.security;
 
+import com.google.api.client.http.apache.v2.ApacheHttpTransport;
 import com.google.auth.oauth2.GoogleCredentials;
 import com.google.firebase.FirebaseApp;
 import com.google.firebase.FirebaseOptions;
@@ -15,6 +16,7 @@ import org.springframework.util.StringUtils;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.GeneralSecurityException;
 
 @Configuration
 public class FirebaseConfig {
@@ -29,13 +31,14 @@ public class FirebaseConfig {
 
     @Bean
     @ConditionalOnMissingBean(FirebaseApp.class)
-    public FirebaseApp firebaseApp() throws IOException {
+    public FirebaseApp firebaseApp() throws IOException, GeneralSecurityException {
         if (!FirebaseApp.getApps().isEmpty()) {
             return FirebaseApp.getInstance();
         }
 
         FirebaseOptions.Builder builder = FirebaseOptions.builder()
-                .setProjectId(projectId);
+                .setProjectId(projectId)
+                .setHttpTransport(new ApacheHttpTransport());
 
         if (StringUtils.hasText(credentialPath)) {
             GoogleCredentials credentials = GoogleCredentials.fromStream(

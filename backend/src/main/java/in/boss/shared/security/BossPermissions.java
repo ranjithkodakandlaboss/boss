@@ -67,6 +67,10 @@ public final class BossPermissions {
     public static final String PURCHASE_WRITE =
             "hasAnyRole('OWNER','OPS_MANAGER','PURCHASE_MANAGER')";
 
+    /** Supplier quotation and SPO management — Purchase Manager or Owner. */
+    public static final String PROCUREMENT_MANAGE =
+            "hasAnyRole('OWNER','PURCHASE_MANAGER')";
+
     /** PR access — roles permitted to create and view purchase requisitions. */
     public static final String PR_ACCESS =
             "hasAnyRole('OWNER','OPS_MANAGER','PURCHASE_MANAGER','PRODUCTION_SUPERVISOR','STORE_KEEPER')";
