@@ -1,0 +1,194 @@
+name: Deploy Customer DEV
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Exact commit to build. This workflow deploys only d5269f156546fdaf2977b1046a04f31b3e6da06a.
+        required: true
+        default: d5269f156546fdaf2977b1046a04f31b3e6da06a
+        type: string
+      confirm:
+        description: Type dev to deploy the Customer App and Customer API to GCP DEV.
+        required: true
+        type: string
+
+concurrency:
+  group: deploy-customer-dev
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Build and deploy Customer DEV
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/deploy/customer-dev-d5269f1' && inputs.confirm == 'dev' && inputs.source_sha == 'd5269f156546fdaf2977b1046a04f31b3e6da06a'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      GCP_PROJECT_ID: boss-dev-514813
+      GCP_REGION: asia-south1
+      ARTIFACT_REGISTRY_REPOSITORY: boss-docker
+      SOURCE_SHA: d5269f156546fdaf2977b1046a04f31b3e6da06a
+      API_SERVICE: boss-api-dev
+      WEB_SERVICE: boss-customer-web-dev
+    steps:
+      - name: Checkout deployment files
+        uses: actions/checkout@v4
+        with:
+          ref: deploy/customer-dev-d5269f1
+          path: workflow
+
+      - name: Checkout the authorised application commit
+        uses: actions/checkout@v4
+        with:
+          ref: d5269f156546fdaf2977b1046a04f31b3e6da06a
+          path: source
+
+      - name: Confirm the source commit
+        working-directory: source
+        run: |
+          set -euo pipefail
+          actual="$(git rev-parse HEAD)"
+          if [[ "${actual}" != "${SOURCE_SHA}" ]]; then
+            echo "::error::Refusing to deploy ${actual}. The authorised commit is ${SOURCE_SHA}."
+            exit 1
+          fi
+          git merge-base --is-ancestor "${SOURCE_SHA}" HEAD
+          echo "Deploying application commit ${actual}"
+          echo "source_sha=${actual}" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: "21"
+          distribution: temurin
+          cache: maven
+          cache-dependency-path: source/backend/pom.xml
+
+      - name: Package the Customer API
+        working-directory: source
+        run: mvn -B -ntp -f backend/pom.xml package -DskipTests
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: source/src/customer-app/package-lock.json
+
+      - name: Read the Firebase web key from the current DEV app
+        id: firebase
+        run: |
+          set -euo pipefail
+          python3 - << 'PY'
+          import re, urllib.request
+          base = "https://boss-customer-web-dev-4pu7albm6a-el.a.run.app"
+          html = urllib.request.urlopen(base + "/", timeout=30).read().decode()
+          match = re.search(r'src="([^"]+\.js)"', html)
+          if not match:
+              raise SystemExit("The current Customer App bundle was not found")
+          url = match.group(1)
+          if url.startswith("/"):
+              url = base + url
+          script = urllib.request.urlopen(url, timeout=30).read().decode()
+          key = re.search(r"AIza[0-9A-Za-z_\-]{20,}", script)
+          if not key:
+              raise SystemExit("The current Customer App has no Firebase web key")
+          path = "firebase-web-key"
+          with open(path, "w", encoding="utf-8") as handle:
+              handle.write(key.group(0))
+          print("Firebase web key read from the current DEV bundle")
+          PY
+
+      - name: Build the Customer App
+        working-directory: source/src/customer-app
+        env:
+          VITE_CUSTOMER_API_URL: ""
+        run: |
+          set -euo pipefail
+          VITE_FIREBASE_API_KEY="$(cat "$GITHUB_WORKSPACE/firebase-web-key")"
+          export VITE_FIREBASE_API_KEY
+          echo "::add-mask::${VITE_FIREBASE_API_KEY}"
+          npm ci
+          npm run build
+          python3 - << 'PY'
+          from pathlib import Path
+          scripts = list(Path("dist/assets").glob("*.js"))
+          text = "\n".join(path.read_text() for path in scripts)
+          if "127.0.0.1" in text or "localhost" in text:
+              raise SystemExit("The Customer App bundle still points at a local API")
+          if "identitytoolkit.googleapis.com" not in text:
+              raise SystemExit("The Customer App bundle has no Firebase sign-in")
+          if "/sales/quotation" not in text:
+              raise SystemExit("The Customer App bundle has no Sales quotation route")
+          print("bundle_ok", len(scripts))
+          PY
+          rm -rf "$GITHUB_WORKSPACE/workflow/deploy/customer-web/dist"
+          cp -R dist "$GITHUB_WORKSPACE/workflow/deploy/customer-web/dist"
+          rm -f "$GITHUB_WORKSPACE/firebase-web-key"
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker "${GCP_REGION}-docker.pkg.dev" --quiet
+
+      - name: Build and push the Customer API image
+        working-directory: source
+        run: |
+          set -euo pipefail
+          image="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${ARTIFACT_REGISTRY_REPOSITORY}/boss-api:${SOURCE_SHA}"
+          docker build --file Dockerfile.runtime --tag "${image}" .
+          docker push "${image}"
+          echo "api_image=${image}" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Build and push the Customer App image
+        working-directory: workflow/deploy/customer-web
+        run: |
+          set -euo pipefail
+          image="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${ARTIFACT_REGISTRY_REPOSITORY}/boss-customer-web:${SOURCE_SHA}"
+          docker build --tag "${image}" .
+          docker push "${image}"
+          echo "web_image=${image}" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Deploy the Customer API image
+        run: |
+          set -euo pipefail
+          image="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${ARTIFACT_REGISTRY_REPOSITORY}/boss-api:${SOURCE_SHA}"
+          gcloud run services update "${API_SERVICE}" \
+            --project "${GCP_PROJECT_ID}" \
+            --region "${GCP_REGION}" \
+            --image "${image}" \
+            --update-labels "source-sha=${SOURCE_SHA}"
+
+      - name: Deploy the Customer App image
+        run: |
+          set -euo pipefail
+          image="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${ARTIFACT_REGISTRY_REPOSITORY}/boss-customer-web:${SOURCE_SHA}"
+          gcloud run services update "${WEB_SERVICE}" \
+            --project "${GCP_PROJECT_ID}" \
+            --region "${GCP_REGION}" \
+            --image "${image}" \
+            --update-labels "source-sha=${SOURCE_SHA}"
+
+      - name: Record the deployed revisions
+        run: |
+          set -euo pipefail
+          echo "### Deployed revisions" >> "$GITHUB_STEP_SUMMARY"
+          gcloud run services describe "${API_SERVICE}" \
+            --project "${GCP_PROJECT_ID}" \
+            --region "${GCP_REGION}" \
+            --format='value(status.latestReadyRevisionName,status.traffic)' | tee -a "$GITHUB_STEP_SUMMARY"
+          gcloud run services describe "${WEB_SERVICE}" \
+            --project "${GCP_PROJECT_ID}" \
+            --region "${GCP_REGION}" \
+            --format='value(status.latestReadyRevisionName,status.traffic)' | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "Platform Admin was not updated." >> "$GITHUB_STEP_SUMMARY"
