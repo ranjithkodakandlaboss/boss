@@ -31,6 +31,8 @@ public final class BossPermissions {
             "hasRole('ACCOUNTS_STAFF')";
     public static final String QUALITY_INSPECTOR =
             "hasRole('QUALITY_INSPECTOR')";
+    public static final String FIELD_WORKER =
+            "hasRole('FIELD_WORKER')";
     public static final String PLATFORM_ADMIN =
             "hasRole('PLATFORM_ADMIN')";
 
@@ -40,16 +42,51 @@ public final class BossPermissions {
     public static final String OWNER_OR_OPS =
             "hasAnyRole('OWNER','OPS_MANAGER')";
 
+    /** Concession approval — FD-approved policy strictly limits to OWNER or OPS_MANAGER. */
+    public static final String CONCESSION_APPROVE =
+            "hasAnyRole('OWNER','OPS_MANAGER')";
+
+    /**
+     * Commercial data access (material costs, margins, selling prices).
+     * Excludes floor-level roles (PRODUCTION_SUPERVISOR, STORE_KEEPER, QUALITY_INSPECTOR, FIELD_WORKER).
+     */
+    public static final String COMMERCIAL_DATA_READ =
+            "hasAnyRole('OWNER','OPS_MANAGER','SALES_MANAGER','PURCHASE_MANAGER','ACCOUNTS_STAFF')";
+
     /** Owner, Ops Manager or Sales Manager — sales-oriented access. */
     public static final String SALES_ACCESS =
+            "hasAnyRole('OWNER','OPS_MANAGER','SALES_MANAGER')";
+
+    public static final String SALES_WRITE =
             "hasAnyRole('OWNER','OPS_MANAGER','SALES_MANAGER')";
 
     /** Owner, Ops Manager or Purchase Manager — procurement access. */
     public static final String PURCHASE_ACCESS =
             "hasAnyRole('OWNER','OPS_MANAGER','PURCHASE_MANAGER')";
 
+    public static final String PURCHASE_WRITE =
+            "hasAnyRole('OWNER','OPS_MANAGER','PURCHASE_MANAGER')";
+
+    /** Supplier quotation and SPO management — Purchase Manager or Owner. */
+    public static final String PROCUREMENT_MANAGE =
+            "hasAnyRole('OWNER','PURCHASE_MANAGER')";
+
+    /** PR access — roles permitted to create and view purchase requisitions. */
+    public static final String PR_ACCESS =
+            "hasAnyRole('OWNER','OPS_MANAGER','PURCHASE_MANAGER','PRODUCTION_SUPERVISOR','STORE_KEEPER')";
+
+    public static final String PR_WRITE =
+            "hasAnyRole('OWNER','OPS_MANAGER','PURCHASE_MANAGER','PRODUCTION_SUPERVISOR','STORE_KEEPER')";
+
+    /** PR approval and rejection — restricted to Purchase Manager, Ops Manager, or Owner. */
+    public static final String PR_APPROVE =
+            "hasAnyRole('OWNER','OPS_MANAGER','PURCHASE_MANAGER')";
+
     /** Anyone who can create or manage production jobs. */
     public static final String PRODUCTION_ACCESS =
+            "hasAnyRole('OWNER','OPS_MANAGER','PRODUCTION_SUPERVISOR')";
+
+    public static final String PRODUCTION_WRITE =
             "hasAnyRole('OWNER','OPS_MANAGER','PRODUCTION_SUPERVISOR')";
 
     /** Anyone who can touch stock or warehouse records. */
@@ -63,6 +100,9 @@ public final class BossPermissions {
     /** Anyone who can raise or manage quality inspections. */
     public static final String QUALITY_ACCESS =
             "hasAnyRole('OWNER','OPS_MANAGER','QUALITY_INSPECTOR','PRODUCTION_SUPERVISOR')";
+
+    public static final String QUALITY_WRITE =
+            "hasAnyRole('OWNER','OPS_MANAGER','QUALITY_INSPECTOR')";
 
     /** Anyone who can read or write invoices and receipts. */
     public static final String ACCOUNTS_ACCESS =

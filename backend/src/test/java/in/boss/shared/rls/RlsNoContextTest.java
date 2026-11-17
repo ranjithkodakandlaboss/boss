@@ -77,10 +77,14 @@ class RlsNoContextTest {
                 + "ON CONFLICT (slug) DO UPDATE SET status = 'active' RETURNING id::text",
                 String.class, groupId));
         // Insert an item so the items table has data
+        UUID uomId = UUID.fromString(jdbc.queryForObject(
+                "INSERT INTO units_of_measure (tenant_id, name, symbol, uom_type, is_base) "
+                + "VALUES (?, 'Piece', 'PCS', 'quantity', true) RETURNING id::text",
+                String.class, tenantId));
         jdbc.update(
-                "INSERT INTO items (tenant_id, name, sku, uom_id) "
-                + "SELECT ?, 'Test Item', 'SKU-NO-CTX', id FROM uoms WHERE tenant_id = ? LIMIT 1",
-                tenantId, tenantId);
+                "INSERT INTO items (tenant_id, code, name, item_type, base_uom_id) "
+                + "VALUES (?, 'SKU-NO-CTX', 'Test Item', 'raw_material', ?)",
+                tenantId, uomId);
 
         var ds = new DriverManagerDataSource(
                 postgres.getJdbcUrl(), APP_USER, APP_PASS);

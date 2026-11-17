@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en" class="theme-aurora" data-theme="light">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>BOSS — Business Operating Solution System</title>
+    <script>
+      (function () {
+        try {
+          var palette = localStorage.getItem("eoss-palette");
+          if (palette !== "aurora" && palette !== "ocean" && palette !== "graphite") palette = "aurora";
+          var mode = localStorage.getItem("eoss-theme");
+          if (mode !== "light" && mode !== "dark") mode = "light";
+          var root = document.documentElement;
+          root.classList.remove("theme-aurora", "theme-ocean", "theme-graphite");
+          root.classList.add("theme-" + palette);
+          root.setAttribute("data-theme", mode);
+        } catch (e) {}
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

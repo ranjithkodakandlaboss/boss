@@ -47,29 +47,48 @@ public class FirebaseJwtFilter extends OncePerRequestFilter {
                                     @NonNull FilterChain chain)
             throws ServletException, IOException {
         try {
+            if (isActivation(request)) {
+                chain.doFilter(request, response);
+                return;
+            }
             String token = extractBearerToken(request);
             if (token != null) {
-                FirebaseToken decoded = firebaseAuth.verifyIdToken(token);
-                BossContext ctx = tenantContextResolver.resolve(decoded.getUid());
+                try {
+                    FirebaseToken decoded = firebaseAuth.verifyIdToken(token);
+                    BossContext ctx = tenantContextResolver.resolve(decoded.getUid());
 
-                if (ctx != null) {
-                    BossContextHolder.set(ctx);
-                    List<SimpleGrantedAuthority> authorities = ctx.roles().stream()
-                            .map(r -> new SimpleGrantedAuthority("ROLE_" + r))
-                            .toList();
-                    var auth = new UsernamePasswordAuthenticationToken(
-                            ctx.firebaseUid(), null, authorities);
-                    SecurityContextHolder.getContext().setAuthentication(auth);
+                    if (ctx != null) {
+                        BossContextHolder.set(ctx);
+                        List<SimpleGrantedAuthority> authorities = ctx.roles().stream()
+                                .map(r -> new SimpleGrantedAuthority("ROLE_" + r))
+                                .toList();
+                        var auth = new UsernamePasswordAuthenticationToken(
+                                ctx.firebaseUid(), null, authorities);
+                        SecurityContextHolder.getContext().setAuthentication(auth);
+                    } else if (tenantContextResolver.isInactive(decoded.getUid())) {
+                        response.setStatus(HttpServletResponse.SC_FORBIDDEN);
+                        response.setContentType("application/json");
+                        response.getWriter().write(
+                                "{\"title\":\"Forbidden\",\"status\":403,"
+                                + "\"detail\":\"User is suspended or deactivated\"}");
+                        return;
+                    }
+                } catch (Exception ex) {
+                    log.debug("JWT validation failed: {}", ex.getMessage());
+                    response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+                    return;
                 }
             }
             chain.doFilter(request, response);
-        } catch (Exception ex) {
-            log.debug("JWT validation failed: {}", ex.getMessage());
-            response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
         } finally {
             BossContextHolder.clear();
             SecurityContextHolder.clearContext();
         }
+    }
+
+    private boolean isActivation(HttpServletRequest request) {
+        return "POST".equalsIgnoreCase(request.getMethod())
+                && "/api/v1/auth/activate".equals(request.getRequestURI());
     }
 
     private String extractBearerToken(HttpServletRequest request) {

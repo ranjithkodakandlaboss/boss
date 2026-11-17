@@ -1,0 +1,5 @@
+# Existing HIGH SpotBugs / Find Security Bugs findings. This is a baseline, not a suppression.
+# The gate prints every finding and fails when a HIGH count rises or a new HIGH key appears.
+# Format: module<TAB>bugType<TAB>className<TAB>count
+customer-api	SPRING_CSRF_PROTECTION_DISABLED	in.boss.shared.security.BossSecurityConfig	1
+platform-admin-api	SPRING_CSRF_PROTECTION_DISABLED	in.boss.admin.security.SecurityConfiguration	1
