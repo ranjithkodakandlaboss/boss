@@ -33,6 +33,8 @@ public class AdminAuthenticationFilter extends OncePerRequestFilter {
         return uri.equals("/actuator/health")
                 || uri.startsWith("/actuator/health/")
                 || uri.startsWith("/admin/api/v1/invites/")
+                || uri.equals("/admin/api/v1/tenants/resolve")
+                || uri.startsWith("/admin/api/v1/tenants/by-slug/")
                 || uri.equals("/error")
                 || uri.equals("/")
                 || uri.startsWith("/assets/")

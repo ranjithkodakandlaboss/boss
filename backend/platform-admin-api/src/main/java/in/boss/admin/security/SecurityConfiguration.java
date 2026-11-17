@@ -52,6 +52,7 @@ public class SecurityConfiguration {
                         .requestMatchers(
                                 "/actuator/health", "/actuator/health/**", "/error",
                                 "/admin/api/v1/invites/**",
+                                "/admin/api/v1/tenants/resolve", "/admin/api/v1/tenants/by-slug/**",
                                 "/", "/index.html", "/assets/**", "/*.ico", "/*.svg", "/*.png", "/*.js", "/*.css"
                         ).permitAll()
                         .anyRequest().authenticated())

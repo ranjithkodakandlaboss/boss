@@ -17,6 +17,7 @@ export type TenantSummary = {
 } & {
   inviteStatus?: string;
   inviteEmail?: string;
+  workspaceUrl?: string;
 };
 export interface TenantPage {
   content: TenantSummary[];
@@ -285,14 +286,22 @@ function normalizeTenantPage(body: ContractTenantPage | undefined): TenantPage {
       industryType: typeof industryType === "string" ? industryType : "",
       inviteStatus: typeof raw.inviteStatus === "string" ? raw.inviteStatus : undefined,
       inviteEmail: typeof raw.inviteEmail === "string" ? raw.inviteEmail : undefined,
+      workspaceUrl: typeof raw.workspaceUrl === "string" ? raw.workspaceUrl : `https://boss-customer-web-dev-201664309080.asia-south1.run.app/?tenant=${encodeURIComponent(slug)}`,
     };
   });
   return { content, page: body.page, totalElements: body.totalElements };
 }
 
-export async function validateInviteToken(baseUrl: string | undefined, token: string): Promise<ValidateInviteResponse> {
+export async function validateInviteToken(
+  baseUrl: string | undefined,
+  token: string,
+  tenantSlug?: string,
+): Promise<ValidateInviteResponse> {
   const root = (baseUrl || "").replace(/\/+$/, "");
-  const endpoint = root ? `${root}/invites/validate?token=${encodeURIComponent(token)}` : `/admin/api/v1/invites/validate?token=${encodeURIComponent(token)}`;
+  let endpoint = root ? `${root}/invites/validate?token=${encodeURIComponent(token)}` : `/admin/api/v1/invites/validate?token=${encodeURIComponent(token)}`;
+  if (tenantSlug) {
+    endpoint += `&tenant=${encodeURIComponent(tenantSlug)}`;
+  }
   const response = await fetch(endpoint, {
     method: "GET",
     headers: { Accept: "application/json" },

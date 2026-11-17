@@ -16,7 +16,16 @@ type FieldErrors = Partial<Record<keyof TenantProvisionRequest, string>>;
 interface ProvisionCustomerFormProps {
   onCancel: () => void;
   onSubmit: (request: TenantProvisionRequest) => Promise<ProvisionResponse>;
-  onCreated: (response: ProvisionResponse, initialAdminEmail: string, tenantName: string) => void;
+  onCreated: (response: ProvisionResponse, initialAdminEmail: string, tenantName: string, tenantSlug: string) => void;
+}
+
+export function generateSlug(name: string): string {
+  return name
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 63);
 }
 
 export function validateProvisionRequest(values: TenantProvisionRequest): FieldErrors {
@@ -35,6 +44,18 @@ export function validateProvisionRequest(values: TenantProvisionRequest): FieldE
 
   for (const field of requiredFields) {
     if (!String(values[field] ?? "").trim()) errors[field] = "This field is required.";
+  }
+  if (values.tenantSlug) {
+    if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(values.tenantSlug)) {
+      errors.tenantSlug = "Enter a valid slug with lowercase letters, numbers, and single hyphens (for example, acme-mfg).";
+    } else if (values.tenantSlug.length < 2 || values.tenantSlug.length > 63) {
+      errors.tenantSlug = "Slug must be between 2 and 63 characters.";
+    }
+  }
+  if (values.customerGroupSlug) {
+    if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(values.customerGroupSlug)) {
+      errors.customerGroupSlug = "Enter a valid slug with lowercase letters, numbers, and single hyphens.";
+    }
   }
   if (values.pan && !/^[A-Z]{5}[0-9]{4}[A-Z]$/.test(values.pan)) {
     errors.pan = "Enter a valid 10-character PAN in uppercase (for example, ABCDE1234F).";
@@ -87,6 +108,8 @@ export function ProvisionCustomerForm({
   const [errors, setErrors] = useState<FieldErrors>({});
   const [submitError, setSubmitError] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [slugCustomized, setSlugCustomized] = useState(false);
+  const [groupSlugCustomized, setGroupSlugCustomized] = useState(false);
 
   function updateField<K extends keyof TenantProvisionRequest>(
     key: K,
@@ -97,46 +120,85 @@ export function ProvisionCustomerForm({
     setSubmitError("");
   }
 
+  function handleGroupNameChange(name: string) {
+    const derivedSlug = generateSlug(name);
+    setValues((current) => ({
+      ...current,
+      customerGroupName: name,
+      customerGroupSlug: groupSlugCustomized ? current.customerGroupSlug : derivedSlug,
+      tenantSlug: slugCustomized ? current.tenantSlug : derivedSlug,
+    }));
+    setErrors((current) => ({
+      ...current,
+      customerGroupName: undefined,
+    }));
+    setSubmitError("");
+  }
+
+  function handleTenantNameChange(name: string) {
+    const derivedSlug = generateSlug(name);
+    setValues((current) => ({
+      ...current,
+      tenantName: name,
+      tenantSlug: slugCustomized ? current.tenantSlug : derivedSlug,
+    }));
+    setErrors((current) => ({ ...current, tenantName: undefined, tenantSlug: undefined }));
+    setSubmitError("");
+  }
+
+  function handleTenantSlugChange(slug: string) {
+    const prevAuto = generateSlug(values.tenantName);
+    if (!slugCustomized && prevAuto && slug.startsWith(prevAuto) && slug.length > prevAuto.length) {
+      setSlugCustomized(true);
+      updateField("tenantSlug", slug.slice(prevAuto.length).toLowerCase());
+      return;
+    }
+    setSlugCustomized(true);
+    updateField("tenantSlug", slug.toLowerCase());
+  }
+
+  function handleGroupSlugChange(slug: string) {
+    const prevAuto = generateSlug(values.customerGroupName);
+    if (!groupSlugCustomized && prevAuto && slug.startsWith(prevAuto) && slug.length > prevAuto.length) {
+      setGroupSlugCustomized(true);
+      updateField("customerGroupSlug", slug.slice(prevAuto.length).toLowerCase());
+      return;
+    }
+    setGroupSlugCustomized(true);
+    updateField("customerGroupSlug", slug.toLowerCase());
+  }
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const nextErrors = validateProvisionRequest(values);
-    setErrors(nextErrors);
-    if (Object.keys(nextErrors).length > 0) return;
-
+    if (Object.keys(nextErrors).length > 0) {
+      setErrors(nextErrors);
+      setSubmitError("Review the highlighted fields before submitting.");
+      return;
+    }
     setSubmitting(true);
     setSubmitError("");
-    const initialAdminEmail = values.adminEmail?.trim() ?? "";
-    const request: TenantProvisionRequest = {
-      ...values,
-      customerGroupSlug: values.customerGroupSlug?.trim() || undefined,
-      tenantSlug: values.tenantSlug.trim(),
-      planTier: values.planTier.trim() || "pilot",
-      pan: values.pan.trim(),
-      gstin: values.gstin?.trim() || undefined,
-      registeredAddress: values.registeredAddress?.trim() || undefined,
-      siteAddress: values.siteAddress?.trim() || undefined,
-      adminFullName: values.adminFullName?.trim() || undefined,
-      adminPhone: values.adminPhone?.trim() || undefined,
-      adminEmail: initialAdminEmail || undefined,
-    };
-
     try {
-      const response = await onSubmit(request);
-      onCreated(response, initialAdminEmail, values.tenantName);
+      const response = await onSubmit(values);
+      onCreated(response, values.adminEmail ?? "", values.tenantName, values.tenantSlug);
     } catch (error) {
-      setSubmitError(error instanceof PlatformAdminApiError
-        ? `${error.message} (HTTP ${error.status})`
-        : error instanceof Error ? error.message : "The request could not be completed.");
+      if (error instanceof PlatformAdminApiError) {
+        setSubmitError(error.status === 0 ? error.message : `${error.message} (HTTP ${error.status})`);
+      } else {
+        setSubmitError(error instanceof Error ? error.message : "Customer provisioning failed.");
+      }
     } finally {
       setSubmitting(false);
     }
   }
 
   return (
-    <form className="form-page" noValidate onSubmit={handleSubmit}>
-      <header className="page-heading">
+    <form className="provision-form" onSubmit={handleSubmit} noValidate>
+      <header className="page-header">
         <div>
-          <p className="eyebrow">CUSTOMER ONBOARDING</p>
+          <button type="button" className="back-link" onClick={onCancel}>
+            ← Customer directory
+          </button>
           <h1>Create customer</h1>
           <p className="subheading">Register the company and provision its first BOSS tenant.</p>
         </div>
@@ -158,16 +220,16 @@ export function ProvisionCustomerForm({
             label="Customer group name"
             value={values.customerGroupName}
             error={errors.customerGroupName}
-            onChange={(value) => updateField("customerGroupName", value)}
+            onChange={handleGroupNameChange}
             required
           />
           <TextField
             name="customerGroupSlug"
             label="Customer group slug"
-            hint="Optional. If omitted, the API derives it from the group name."
+            hint="Optional. Auto-derived from the company name if left untouched."
             value={values.customerGroupSlug ?? ""}
             error={errors.customerGroupSlug}
-            onChange={(value) => updateField("customerGroupSlug", value)}
+            onChange={handleGroupSlugChange}
           />
         </div>
       </section>
@@ -186,16 +248,16 @@ export function ProvisionCustomerForm({
             label="Tenant name"
             value={values.tenantName}
             error={errors.tenantName}
-            onChange={(value) => updateField("tenantName", value)}
+            onChange={handleTenantNameChange}
             required
           />
           <TextField
             name="tenantSlug"
             label="Tenant slug"
-            hint="Used to identify this workspace."
+            hint="Auto-generated URL slug. Edit to customize."
             value={values.tenantSlug}
             error={errors.tenantSlug}
-            onChange={(value) => updateField("tenantSlug", value)}
+            onChange={handleTenantSlugChange}
             required
           />
           <TextField
@@ -206,6 +268,30 @@ export function ProvisionCustomerForm({
             error={errors.planTier}
             onChange={(value) => updateField("planTier", value)}
           />
+
+          <div
+            className="workspace-url-preview"
+            style={{
+              gridColumn: "1 / -1",
+              marginTop: "-4px",
+              padding: "12px 16px",
+              background: "#f8fafc",
+              border: "1px solid #e2e8f0",
+              borderRadius: "6px",
+              fontSize: "12px",
+              color: "#334155",
+            }}
+          >
+            <div style={{ fontWeight: 600, color: "#0f172a", marginBottom: "4px" }}>
+              Customer Workspace URL Preview
+            </div>
+            <div style={{ fontFamily: "monospace", color: "#2563eb", fontSize: "13px" }}>
+              https://{values.tenantSlug || "{tenant-slug}"}.boss.com
+            </div>
+            <div style={{ fontSize: "11px", color: "#64748b", marginTop: "4px" }}>
+              DEV URL: <code>https://boss-customer-web-dev-201664309080.asia-south1.run.app/?tenant={values.tenantSlug || "{tenant-slug}"}</code>
+            </div>
+          </div>
         </div>
       </section>
 
@@ -272,16 +358,17 @@ export function ProvisionCustomerForm({
           <span className="section-number">04</span>
           <div>
             <h2 id="site-heading">Initial site</h2>
-            <p>Create the first physical site for this tenant.</p>
+            <p>Every tenant begins with one primary physical site.</p>
           </div>
         </div>
         <div className="field-grid">
           <TextField
             name="siteCode"
             label="Site code"
+            hint="A short identifier, for example SITE-01."
             value={values.siteCode}
             error={errors.siteCode}
-            onChange={(value) => updateField("siteCode", value)}
+            onChange={(value) => updateField("siteCode", value.toUpperCase())}
             required
           />
           <TextField
@@ -295,11 +382,60 @@ export function ProvisionCustomerForm({
           <TextField
             name="siteAddress"
             label="Site address"
-            hint="Physical site location address."
+            hint="Physical address of the manufacturing site or warehouse."
             value={values.siteAddress ?? ""}
             error={errors.siteAddress}
             onChange={(value) => updateField("siteAddress", value)}
           />
+        </div>
+      </section>
+
+      <section className="form-section" aria-labelledby="admin-heading">
+        <div className="section-heading">
+          <span className="section-number">05</span>
+          <div>
+            <h2 id="admin-heading">Initial customer administrator</h2>
+            <p>Owner-level account that receives the setup invitation.</p>
+          </div>
+        </div>
+        <div className="field-grid">
+          <TextField
+            name="adminFullName"
+            label="Administrator full name"
+            hint="Full legal name of the organization owner."
+            value={values.adminFullName ?? ""}
+            error={errors.adminFullName}
+            onChange={(value) => updateField("adminFullName", value)}
+          />
+          <TextField
+            name="adminEmail"
+            label="Administrator email"
+            hint="Invitation email will be delivered to this address."
+            value={values.adminEmail ?? ""}
+            error={errors.adminEmail}
+            onChange={(value) => updateField("adminEmail", value)}
+            type="email"
+          />
+          <TextField
+            name="adminPhone"
+            label="Administrator phone"
+            hint="Optional. Contact phone number."
+            value={values.adminPhone ?? ""}
+            error={errors.adminPhone}
+            onChange={(value) => updateField("adminPhone", value)}
+          />
+        </div>
+      </section>
+
+      <section className="form-section" aria-labelledby="industry-heading">
+        <div className="section-heading">
+          <span className="section-number">06</span>
+          <div>
+            <h2 id="industry-heading">Industry template</h2>
+            <p>Seeds baseline master data and configuration options.</p>
+          </div>
+        </div>
+        <div className="field-grid">
           <SelectField
             name="industryType"
             label="Industry type"
@@ -314,64 +450,16 @@ export function ProvisionCustomerForm({
         </div>
       </section>
 
-      <section className="form-section" aria-labelledby="invite-heading">
-        <div className="section-heading">
-          <span className="section-number">05</span>
-          <div>
-            <h2 id="invite-heading">Initial administrator</h2>
-            <p>Provide initial administrator details for invitation and workspace activation.</p>
-          </div>
-        </div>
-        <div className="field-grid">
-          <TextField
-            name="adminFullName"
-            label="Administrator full name"
-            value={values.adminFullName ?? ""}
-            error={errors.adminFullName}
-            onChange={(value) => updateField("adminFullName", value)}
-          />
-          <TextField
-            name="adminEmail"
-            label="Administrator email"
-            type="email"
-            value={values.adminEmail ?? ""}
-            error={errors.adminEmail}
-            onChange={(value) => updateField("adminEmail", value)}
-          />
-          <TextField
-            name="adminPhone"
-            label="Administrator phone"
-            type="tel"
-            hint="Contact number with country code, e.g. +91 9876543210."
-            value={values.adminPhone ?? ""}
-            error={errors.adminPhone}
-            onChange={(value) => updateField("adminPhone", value)}
-          />
-        </div>
-      </section>
-
-      <div className="form-actions">
-        <button className="button button-quiet" type="button" onClick={onCancel} disabled={submitting}>
+      <footer className="form-actions">
+        <button type="button" className="button button-secondary" onClick={onCancel} disabled={submitting}>
           Cancel
         </button>
-        <button className="button button-primary" type="submit" disabled={submitting}>
-          {submitting ? "Provisioning…" : "Create customer"}
+        <button type="submit" className="button button-primary" disabled={submitting}>
+          {submitting ? "Creating customer..." : "Create customer"}
         </button>
-      </div>
+      </footer>
     </form>
   );
-}
-
-interface TextFieldProps {
-  name: keyof TenantProvisionRequest;
-  label: string;
-  value: string;
-  error?: string;
-  hint?: string;
-  type?: string;
-  required?: boolean;
-  maxLength?: number;
-  onChange: (value: string) => void;
 }
 
 function TextField({
@@ -380,72 +468,70 @@ function TextField({
   value,
   error,
   hint,
-  type = "text",
-  required = false,
-  maxLength,
+  required,
   onChange,
-}: TextFieldProps) {
-  const helpId = `${name}-help`;
-  const errorId = `${name}-error`;
+  type = "text",
+  maxLength,
+}: {
+  name: string;
+  label: string;
+  value: string;
+  error?: string;
+  hint?: string;
+  required?: boolean;
+  onChange: (value: string) => void;
+  type?: string;
+  maxLength?: number;
+}) {
+  const id = `field-${name}`;
   return (
-    <div className="field">
-      <label htmlFor={name}>
-        {label} {required && <span className="required-mark" aria-hidden="true">*</span>}
+    <div className={`field ${error ? "has-error" : ""}`}>
+      <label htmlFor={id}>
+        {label} {required && <span className="required-star">*</span>}
       </label>
       <input
-        id={name}
+        id={id}
         name={name}
         type={type}
         value={value}
-        maxLength={maxLength}
-        required={required}
+        onChange={(event) => onChange(event.target.value)}
         aria-invalid={Boolean(error)}
-        aria-describedby={error ? errorId : hint ? helpId : undefined}
-        onChange={(event) => onChange(event.currentTarget.value)}
+        aria-describedby={error ? `${id}-error` : hint ? `${id}-hint` : undefined}
+        maxLength={maxLength}
       />
-      {hint && !error && <span className="field-hint" id={helpId}>{hint}</span>}
-      {error && <span className="field-error" id={errorId}>{error}</span>}
+      {hint && !error && <span id={`${id}-hint`} className="field-hint">{hint}</span>}
+      {error && <span id={`${id}-error`} className="field-error" role="alert">{error}</span>}
     </div>
   );
 }
 
-interface SelectFieldProps {
+function SelectField({
+  name,
+  label,
+  value,
+  error,
+  options,
+  onChange,
+}: {
   name: string;
   label: string;
   value: string;
   error?: string;
   options: string[];
   onChange: (value: string) => void;
-}
-
-function SelectField({ name, label, value, error, options, onChange }: SelectFieldProps) {
-  const errorId = `${name}-error`;
+}) {
+  const id = `field-${name}`;
   return (
-    <div className="field">
-      <label htmlFor={name}>{label} <span className="required-mark" aria-hidden="true">*</span></label>
-      <select
-        id={name}
-        name={name}
-        value={value}
-        aria-invalid={Boolean(error)}
-        aria-describedby={error ? errorId : undefined}
-        onChange={(event) => onChange(event.currentTarget.value)}
-      >
+    <div className={`field ${error ? "has-error" : ""}`}>
+      <label htmlFor={id}>{label}</label>
+      <select id={id} name={name} value={value} onChange={(event) => onChange(event.target.value)}>
         {options.map((option) => (
-          <option value={option} key={option}>{formatOption(option)}</option>
+          <option key={option} value={option}>
+            {option}
+          </option>
         ))}
       </select>
-      {error && <span className="field-error" id={errorId}>{error}</span>}
+      {error && <span className="field-error" role="alert">{error}</span>}
     </div>
   );
-}
-
-function formatOption(value: string): string {
-  return value
-    .toLowerCase()
-    .split("_")
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ")
-    .replace("Llp", "LLP")
-    .replace("Huf", "HUF");
 }

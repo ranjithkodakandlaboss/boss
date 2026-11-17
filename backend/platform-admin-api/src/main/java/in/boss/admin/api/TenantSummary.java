@@ -10,9 +10,15 @@ public record TenantSummary(
         String planTier,
         String industryType,
         String invitationStatus,
-        String adminEmail) {
+        String adminEmail,
+        String workspaceUrl) {
+
+    public TenantSummary(UUID id, String name, String slug, String status, String planTier, String industryType,
+                         String invitationStatus, String adminEmail) {
+        this(id, name, slug, status, planTier, industryType, invitationStatus, adminEmail, null);
+    }
 
     public TenantSummary(UUID id, String name, String slug, String status, String planTier, String industryType) {
-        this(id, name, slug, status, planTier, industryType, null, null);
+        this(id, name, slug, status, planTier, industryType, null, null, null);
     }
 }

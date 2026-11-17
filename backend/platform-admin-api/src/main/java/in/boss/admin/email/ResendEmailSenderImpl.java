@@ -48,7 +48,7 @@ public class ResendEmailSenderImpl implements ResendEmailSender {
     }
 
     @Override
-    public EmailSendResult sendInvitationEmail(String toEmail, String tenantName, String activationLink, Instant expiresAt) {
+    public EmailSendResult sendInvitationEmail(String toEmail, String tenantName, String workspaceUrl, String activationLink, Instant expiresAt) {
         String apiKey = resolveApiKey();
         if (apiKey == null || apiKey.isBlank()) {
             String message = "Resend API key is not configured. Add a secret version to GCP Secret Manager [boss-resend-api-key-dev] or set RESEND_API_KEY.";
@@ -60,7 +60,7 @@ public class ResendEmailSenderImpl implements ResendEmailSender {
                 .withZone(ZoneId.of("UTC"))
                 .format(expiresAt);
 
-        String htmlBody = buildHtmlEmail(tenantName, activationLink, formattedExpiry);
+        String htmlBody = buildHtmlEmail(tenantName, workspaceUrl, activationLink, formattedExpiry);
 
         try {
             Map<String, Object> payload = Map.of(
@@ -109,11 +109,12 @@ public class ResendEmailSenderImpl implements ResendEmailSender {
         if (apiKeyFilePath != null && !apiKeyFilePath.isBlank()) {
             try {
                 Path path = Paths.get(apiKeyFilePath);
-                if (Files.exists(path) && Files.isReadable(path)) {
-                    return Files.readString(path).trim();
+                if (Files.exists(path)) {
+                    String fileContent = Files.readString(path).trim();
+                    if (!fileContent.isEmpty()) return fileContent;
                 }
             } catch (IOException e) {
-                log.debug("Could not read API key from file {}: {}", apiKeyFilePath, e.getMessage());
+                log.debug("Resend API key file could not be read at {}: {}", apiKeyFilePath, e.getMessage());
             }
         }
         return null;
@@ -129,7 +130,17 @@ public class ResendEmailSenderImpl implements ResendEmailSender {
         return body.length() > 200 ? body.substring(0, 200) + "..." : body;
     }
 
-    private String buildHtmlEmail(String tenantName, String activationLink, String formattedExpiry) {
+    private String buildHtmlEmail(String tenantName, String workspaceUrl, String activationLink, String formattedExpiry) {
+        String workspaceSection = "";
+        if (workspaceUrl != null && !workspaceUrl.isBlank()) {
+            workspaceSection = """
+                <div style="background-color: #f1f5f9; border: 1px solid #e2e8f0; border-radius: 6px; padding: 12px 16px; margin: 16px 0;">
+                  <span style="font-size: 12px; font-weight: 600; text-transform: uppercase; color: #64748b; letter-spacing: 0.5px; display: block; margin-bottom: 4px;">Customer Workspace URL</span>
+                  <a href="%s" style="color: #2563eb; text-decoration: none; font-weight: 600; font-size: 14px; word-break: break-all;">%s</a>
+                </div>
+            """.formatted(workspaceUrl, workspaceUrl);
+        }
+
         return """
         <!DOCTYPE html>
         <html lang="en">
@@ -152,6 +163,7 @@ public class ResendEmailSenderImpl implements ResendEmailSender {
                 <p style="margin: 0 0 16px 0; line-height: 1.6; color: #334155; font-size: 15px;">
                   You have been invited as the initial <strong>Administrator</strong> for <strong>%s</strong>.
                 </p>
+                %s
                 <p style="margin: 0 0 28px 0; line-height: 1.6; color: #334155; font-size: 15px;">
                   To complete your organization setup and access your workspace, please activate your account and set your password.
                 </p>
@@ -164,19 +176,19 @@ public class ResendEmailSenderImpl implements ResendEmailSender {
                 <p style="margin: 0 0 28px 0; font-size: 13px; color: #2563eb; word-break: break-all;">
                   %s
                 </p>
-                <div style="border-top: 1px solid #e2e8f0; padding-top: 20px; margin-top: 28px;">
-                  <p style="margin: 0 0 6px 0; font-size: 12px; color: #64748b;">
-                    <strong>Security Notice:</strong> This link is single-use and will expire on <strong>%s</strong>.
-                  </p>
-                  <p style="margin: 0; font-size: 12px; color: #94a3b8;">
-                    If you were not expecting this invitation, please contact your platform administrator or ignore this email.
-                  </p>
-                </div>
+                <p style="margin: 0; font-size: 12px; color: #94a3b8; border-top: 1px solid #f1f5f9; padding-top: 16px;">
+                  This invitation link is valid until %s. If you did not expect this invitation, you can ignore this email.
+                </p>
+              </td>
+            </tr>
+            <tr>
+              <td style="background-color: #f8fafc; padding: 16px 32px; border-top: 1px solid #e2e8f0; text-align: center; font-size: 12px; color: #94a3b8;">
+                BOSS Manufacturing Execution Platform &bull; Automated Platform Operations
               </td>
             </tr>
           </table>
         </body>
         </html>
-        """.formatted(tenantName, activationLink, activationLink, formattedExpiry);
+        """.formatted(tenantName, workspaceSection, activationLink, activationLink, formattedExpiry);
     }
 }

@@ -19,6 +19,7 @@ import java.util.Set;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.ConnectionCallback;
@@ -45,10 +46,12 @@ public class TenantManagementService {
     private final CustomerOwnerInvitePort invites;
     private final PlatformIdempotencyStore idempotency;
     private final MeterRegistry meters;
+    private final String workspaceUrlTemplate;
 
     public TenantManagementService(JdbcTemplate jdbc, ObjectMapper mapper, PlatformTransactionManager txManager,
                                    TenantDefaultsSeed seeds, CustomerOwnerInvitePort invites,
-                                   PlatformIdempotencyStore idempotency, MeterRegistry meters) {
+                                   PlatformIdempotencyStore idempotency, MeterRegistry meters,
+                                   @Value("${boss.admin.customer-workspace-url-template:${CUSTOMER_WORKSPACE_URL_TEMPLATE:https://boss-customer-web-dev-201664309080.asia-south1.run.app/?tenant={slug}}}") String workspaceUrlTemplate) {
         this.jdbc = jdbc;
         this.mapper = mapper;
         this.transactions = new TransactionTemplate(txManager);
@@ -56,6 +59,15 @@ public class TenantManagementService {
         this.invites = invites;
         this.idempotency = idempotency;
         this.meters = meters;
+        this.workspaceUrlTemplate = workspaceUrlTemplate;
+    }
+
+    public String resolveWorkspaceUrl(String slug) {
+        if (slug == null || slug.isBlank()) return null;
+        if (workspaceUrlTemplate != null && !workspaceUrlTemplate.isBlank()) {
+            return workspaceUrlTemplate.replace("{slug}", slug);
+        }
+        return "https://boss-customer-web-dev-201664309080.asia-south1.run.app/?tenant=" + slug;
     }
 
     public AdminHttpResult provision(TenantProvisionRequest request, String idempotencyKey,
@@ -65,6 +77,19 @@ public class TenantManagementService {
         if (groupSlug.isBlank()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Customer group slug is required");
         }
+        String tenantSlug = tenantSlug(request);
+        if (tenantSlug.isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Tenant slug is required");
+        }
+
+        // Validate slug formatting: lowercase alphanumeric with single hyphens, 2-63 chars
+        if (!tenantSlug.matches("^[a-z0-9]+(?:-[a-z0-9]+)*$") || tenantSlug.length() < 2 || tenantSlug.length() > 63) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid tenant slug format: " + tenantSlug);
+        }
+        if (!groupSlug.matches("^[a-z0-9]+(?:-[a-z0-9]+)*$") || groupSlug.length() < 2 || groupSlug.length() > 63) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid customer group slug format: " + groupSlug);
+        }
+
         PlatformIdempotencyStore.Claim claim = idempotency.claim(idempotencyKey, provisionHash(request));
         if (claim instanceof PlatformIdempotencyStore.Replay replay) {
             return replay(replay);
@@ -72,7 +97,7 @@ public class TenantManagementService {
         UUID lockId = ((PlatformIdempotencyStore.Proceed) claim).rowId();
         CreatedTenant created;
         try {
-            created = transactions.execute(status -> createTenant(request, groupSlug, actor, ipAddress));
+            created = transactions.execute(status -> createTenant(request, groupSlug, tenantSlug, actor, ipAddress));
         } catch (RuntimeException exception) {
             idempotency.expire(lockId);
             if (isSlugConflict(exception)) {
@@ -111,12 +136,42 @@ public class TenantManagementService {
                         "LEFT JOIN LATERAL boss_get_tenant_invitation_summary(t.id) inv ON true " +
                         "WHERE (?::text IS NULL OR t.status = ?) " +
                         "ORDER BY t.created_at DESC, t.id LIMIT ? OFFSET ?",
-                (rs, row) -> new TenantSummary(
-                        rs.getObject("id", UUID.class), rs.getString("name"), rs.getString("slug"),
-                        rs.getString("status"), rs.getString("plan_tier"), rs.getString("industry_type"),
-                        rs.getString("invite_status"), rs.getString("invite_email")),
+                (rs, row) -> {
+                    String slug = rs.getString("slug");
+                    return new TenantSummary(
+                            rs.getObject("id", UUID.class), rs.getString("name"), slug,
+                            rs.getString("status"), rs.getString("plan_tier"), rs.getString("industry_type"),
+                            rs.getString("invite_status"), rs.getString("invite_email"),
+                            resolveWorkspaceUrl(slug));
+                },
                 status, status, size, page * size);
         return new TenantPage(content, page, total == null ? 0 : total);
+    }
+
+    public TenantSummary resolveTenantBySlug(String slug) {
+        if (slug == null || slug.isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Slug is required");
+        }
+        List<TenantSummary> results = jdbc.query(
+                "SELECT t.id, t.name, t.slug, t.status, t.plan_tier, c.industry_type, " +
+                        "inv.out_status AS invite_status, inv.out_email AS invite_email " +
+                        "FROM tenant_registry t " +
+                        "LEFT JOIN tenant_onboarding_config c ON c.tenant_id = t.id " +
+                        "LEFT JOIN LATERAL boss_get_tenant_invitation_summary(t.id) inv ON true " +
+                        "WHERE t.slug = ?",
+                (rs, row) -> {
+                    String rowSlug = rs.getString("slug");
+                    return new TenantSummary(
+                            rs.getObject("id", UUID.class), rs.getString("name"), rowSlug,
+                            rs.getString("status"), rs.getString("plan_tier"), rs.getString("industry_type"),
+                            rs.getString("invite_status"), rs.getString("invite_email"),
+                            resolveWorkspaceUrl(rowSlug));
+                },
+                slug.trim().toLowerCase());
+        if (results.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Tenant workspace not found for slug: " + slug);
+        }
+        return results.getFirst();
     }
 
     @Transactional
@@ -243,7 +298,7 @@ public class TenantManagementService {
         }
     }
 
-    private CreatedTenant createTenant(TenantProvisionRequest request, String groupSlug,
+    private CreatedTenant createTenant(TenantProvisionRequest request, String groupSlug, String tenantSlug,
                                        AdminPrincipal actor, String ipAddress) {
         UUID groupId = Objects.requireNonNull(jdbc.queryForObject(
                 "INSERT INTO customer_groups(name, slug) VALUES (?, ?) RETURNING id",
@@ -252,7 +307,7 @@ public class TenantManagementService {
         setTenantContext(tenantId);
         jdbc.update("INSERT INTO tenant_registry(id, customer_group_id, name, slug, status, plan_tier) " +
                         "VALUES (?, ?, ?, ?, 'provisioning', ?)",
-                tenantId, groupId, request.tenantName(), request.tenantSlug(), request.planTier());
+                tenantId, groupId, request.tenantName(), tenantSlug, request.planTier());
 
         String regAddrJson = null;
         if (request.registeredAddress() != null && !request.registeredAddress().isBlank()) {
@@ -290,6 +345,7 @@ public class TenantManagementService {
                 "legalEntityId", legalEntityId.toString(),
                 "siteId", siteId.toString(),
                 "status", "provisioning",
+                "slug", tenantSlug,
                 "industryType", request.industryType(),
                 "seedingApplied", true,
                 "adminEmailPresent", emailPresent), ipAddress);
@@ -320,61 +376,65 @@ public class TenantManagementService {
     }
 
     private boolean inviteCreated(UUID tenantId) {
-        Integer created = jdbc.queryForObject(
-                "SELECT count(*) FROM platform_audit_events WHERE entity_id = ? AND action = 'tenant.admin_invite_created'",
-                Integer.class, tenantId);
-        return created != null && created > 0;
-    }
-
-    private void requireTenant(UUID tenantId) {
-        transactions.executeWithoutResult(status -> {
-            setTenantContext(tenantId);
-            lockTenantStatus(tenantId);
-        });
-    }
-
-    private String onboardingIndustry(UUID tenantId) {
-        List<String> types = jdbc.query(
-                "SELECT industry_type FROM tenant_onboarding_config WHERE tenant_id = ?",
+        List<String> statuses = jdbc.query(
+                "SELECT new_data->>'invitationStatus' FROM platform_audit_events " +
+                        "WHERE entity_id = ? AND action = 'tenant.admin_invite_created' ORDER BY created_at DESC LIMIT 1",
                 (rs, row) -> rs.getString(1), tenantId);
-        if (types.isEmpty()) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "Tenant onboarding configuration is missing");
-        }
-        return types.getFirst();
+        return !statuses.isEmpty() && CREATED.equals(statuses.getFirst());
     }
 
     private String lockTenantStatus(UUID tenantId) {
         List<String> statuses = jdbc.query(
                 "SELECT status FROM tenant_registry WHERE id = ? FOR UPDATE",
                 (rs, row) -> rs.getString(1), tenantId);
-        if (statuses.isEmpty()) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Tenant not found");
+        if (statuses.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Tenant was not found");
+        }
         return statuses.getFirst();
     }
 
+    private String onboardingIndustry(UUID tenantId) {
+        List<String> industries = jdbc.query(
+                "SELECT industry_type FROM tenant_onboarding_config WHERE tenant_id = ?",
+                (rs, row) -> rs.getString(1), tenantId);
+        if (industries.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Tenant onboarding configuration was not found");
+        }
+        return industries.getFirst();
+    }
+
+    private void requireTenant(UUID tenantId) {
+        Integer count = jdbc.queryForObject(
+                "SELECT count(*) FROM tenant_registry WHERE id = ?", Integer.class, tenantId);
+        if (count == null || count == 0) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Tenant was not found");
+        }
+    }
+
     private void setTenantContext(UUID tenantId) {
-        jdbc.execute((ConnectionCallback<Boolean>) connection -> {
-            try (PreparedStatement statement = connection.prepareStatement(
-                    "SELECT set_config('app.current_tenant_id', ?, true)")) {
-                statement.setString(1, tenantId.toString());
-                statement.execute();
-                return true;
+        jdbc.execute((ConnectionCallback<Void>) con -> {
+            try (PreparedStatement ps = con.prepareStatement("SELECT set_config('app.current_tenant_id', ?, true)")) {
+                ps.setString(1, tenantId.toString());
+                ps.execute();
             }
+            return null;
         });
     }
 
     private void audit(AdminPrincipal actor, String action, UUID entityId, Map<String, Object> oldData,
                        Map<String, Object> newData, String ipAddress) {
-        try {
-            jdbc.update("INSERT INTO platform_audit_events(admin_id, entity_type, entity_id, action, old_data, new_data, ip_address) " +
-                            "VALUES (?, ?, ?, ?, ?::jsonb, ?::jsonb, ?::inet)",
-                    actor.adminId(), "tenant_registry", entityId, action, json(oldData), json(newData), ipAddress);
-        } catch (JsonProcessingException exception) {
-            throw new IllegalStateException("Could not serialize platform audit event", exception);
-        }
+        jdbc.update("INSERT INTO platform_audit_events(admin_id, action, entity_type, entity_id, " +
+                        "old_data, new_data, ip_address) VALUES (?, ?, 'tenant', ?, ?::jsonb, ?::jsonb, ?::inet)",
+                actor == null ? null : actor.adminId(), action, entityId, json(oldData), json(newData), ipAddress);
     }
 
-    private String json(Map<String, Object> data) throws JsonProcessingException {
-        return data == null ? null : mapper.writeValueAsString(data);
+    private String json(Object value) {
+        if (value == null) return null;
+        try {
+            return mapper.writeValueAsString(value);
+        } catch (JsonProcessingException exception) {
+            throw new IllegalStateException("Could not serialize audit data", exception);
+        }
     }
 
     private String storedJson(Object body) {
@@ -419,10 +479,20 @@ public class TenantManagementService {
 
     private String groupSlug(TenantProvisionRequest request) {
         if (request.customerGroupSlug() != null && !request.customerGroupSlug().isBlank()) {
-            return request.customerGroupSlug();
+            return request.customerGroupSlug().trim().toLowerCase().replaceAll("[^a-z0-9]+", "-").replaceAll("^-+|-+$", "");
         }
         return request.customerGroupName().trim().toLowerCase().replaceAll("[^a-z0-9]+", "-")
-                .replaceAll("^-|-$", "");
+                .replaceAll("^-+|-+$", "");
+    }
+
+    private String tenantSlug(TenantProvisionRequest request) {
+        if (request.tenantSlug() != null && !request.tenantSlug().isBlank()) {
+            return request.tenantSlug().trim().toLowerCase().replaceAll("[^a-z0-9]+", "-").replaceAll("^-+|-+$", "");
+        }
+        if (request.tenantName() != null && !request.tenantName().isBlank()) {
+            return request.tenantName().trim().toLowerCase().replaceAll("[^a-z0-9]+", "-").replaceAll("^-+|-+$", "");
+        }
+        return groupSlug(request);
     }
 
     private record CreatedTenant(UUID tenantId, UUID customerGroupId, UUID legalEntityId, UUID siteId) { }
