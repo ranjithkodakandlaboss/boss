@@ -22,7 +22,9 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
@@ -92,7 +94,14 @@ public class CustomerPoService {
                 """,
                 note, context.userId(), tenantId, quotationId);
         CpoResponse created = cpoLookup.read(tenantId, cpoId);
-        auditService.record("QUOTATION", quotationId, "OWNER_ACCEPTANCE", null, toJson(created));
+        Map<String, String> beforeDecision = new LinkedHashMap<>();
+        beforeDecision.put("status", quotation.status());
+        Map<String, String> afterDecision = new LinkedHashMap<>();
+        afterDecision.put("status", "accepted");
+        afterDecision.put("decisionNote", note == null ? "" : note);
+        afterDecision.put("customerPoRef", customerPoRef == null ? "" : customerPoRef);
+        afterDecision.put("cpoNumber", cpoNumber);
+        auditService.record("QUOTATION", quotationId, "OWNER_ACCEPTANCE", toJson(beforeDecision), toJson(afterDecision));
         auditService.record("CPO", cpoId, "CREATE_FROM_ACCEPTANCE", null, toJson(created));
         return new AcceptResult(created, true);
     }
@@ -115,6 +124,7 @@ public class CustomerPoService {
         if (!EDITABLE.contains(status)) {
             throw conflict("Customer PO commercial fields can only be edited while it is open or on hold");
         }
+        CpoResponse before = cpoLookup.read(tenantId, cpoId);
         jdbc.update("""
                 UPDATE cpos
                    SET customer_po_ref = ?, notes = ?, required_by_date = ?,
@@ -124,7 +134,7 @@ public class CustomerPoService {
                 request.customerPoRef(), request.notes(), request.requiredByDate(), request.paymentTerms(),
                 tenantId, cpoId);
         CpoResponse result = cpoLookup.read(tenantId, cpoId);
-        auditService.record("CPO", cpoId, "UPDATE", null, toJson(result));
+        auditService.record("CPO", cpoId, "UPDATE", toJson(before), toJson(result));
         return result;
     }
 
@@ -138,10 +148,11 @@ public class CustomerPoService {
         if (!allowed) {
             throw conflict("Invalid Customer PO status transition: " + current + " -> " + nextStatus);
         }
+        CpoResponse before = cpoLookup.read(tenantId, cpoId);
         jdbc.update("UPDATE cpos SET status = ?, updated_at = NOW() WHERE tenant_id = ? AND id = ?",
                 nextStatus, tenantId, cpoId);
         CpoResponse result = cpoLookup.read(tenantId, cpoId);
-        auditService.record("CPO", cpoId, "STATUS_" + nextStatus.toUpperCase(), null, toJson(result));
+        auditService.record("CPO", cpoId, "STATUS_" + nextStatus.toUpperCase(), toJson(before), toJson(result));
         return result;
     }
 
