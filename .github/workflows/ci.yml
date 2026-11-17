@@ -424,6 +424,10 @@ jobs:
             --project "${GCP_PROJECT_ID}" \
             --image "${IMAGE_URI}" \
             --update-labels "source-sha=${GITHUB_SHA}"
+          gcloud run services update-traffic "${CLOUD_RUN_SERVICE}" \
+            --region "${GCP_REGION}" \
+            --project "${GCP_PROJECT_ID}" \
+            --to-latest
 
   deploy-admin-dev:
     name: Build, push, and deploy Platform Admin dev
