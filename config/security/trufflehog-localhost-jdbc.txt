@@ -4,3 +4,6 @@ jdbc:postgresql://localhost:5432/boss
 jdbc:postgresql://localhost:5432/boss_test
 jdbc:postgresql://localhost:5432/test_flyway_v001_v010
 jdbc:postgresql://localhost:...
+# Cloud SQL socket-factory URL fragments. No user, password, or host.
+jdbc:postgresql:///boss?cloudSqlInstance=$
+jdbc:postgresql:///boss\\?cloudSqlInstance=

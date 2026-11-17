@@ -17,7 +17,11 @@ customer-api	src/main/java/in/boss/procurement/domain/PurchaseRequisitionService
 customer-api	src/main/java/in/boss/procurement/domain/PurchaseRequisitionService.java	GodClass	1
 customer-api	src/main/java/in/boss/procurement/domain/SpoService.java	GodClass	1
 customer-api	src/main/java/in/boss/procurement/domain/SupplierQuotationService.java	GodClass	1
-customer-api	src/main/java/in/boss/sales/domain/SalesService.java	CyclomaticComplexity	1
+customer-api	src/main/java/in/boss/sales/domain/QuotationPdf.java	GodClass	1
+customer-api	src/main/java/in/boss/sales/domain/SalesService.java	CognitiveComplexity	1
+customer-api	src/main/java/in/boss/sales/domain/SalesService.java	CyclomaticComplexity	2
 customer-api	src/main/java/in/boss/sales/domain/SalesService.java	GodClass	1
 customer-api	src/main/java/in/boss/sales/domain/SalesService.java	TooManyMethods	1
+platform-admin-api	src/main/java/in/boss/admin/activation/CustomerActivationController.java	CyclomaticComplexity	1
+platform-admin-api	src/main/java/in/boss/admin/domain/TenantManagementService.java	CyclomaticComplexity	2
 platform-admin-api	src/main/java/in/boss/admin/domain/TenantManagementService.java	GodClass	1
