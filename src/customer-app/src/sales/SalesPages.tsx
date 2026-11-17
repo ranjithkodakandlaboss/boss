@@ -1,5 +1,5 @@
 import { FormEvent, ReactNode, useEffect, useMemo, useState } from "react";
-import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { ApiError } from "../auth/api";
 import StatusChip from "../components/shared/StatusChip";
 import Tabs from "../components/shared/Tabs";
@@ -9,26 +9,15 @@ import EmptyState from "../components/shared/EmptyState";
 import ErrorState from "../components/shared/ErrorState";
 import LoadingState from "../components/shared/LoadingState";
 import {
-  Cpo, Customer, ItemOption, Quotation, QuoteLine, Rfq, RfqLine, UomOption,
+  Cpo, ItemOption, Quotation, QuoteLine, RfqLine, UomOption,
   inr, salesApi, when,
 } from "./api";
+import { useLoad } from "./load";
+
+export { SalesHome } from "./SalesWorkspace";
 
 function message(error: unknown) {
   return error instanceof ApiError || error instanceof Error ? error.message : "The request failed";
-}
-
-function useLoad<T>(loader: () => Promise<T>, deps: unknown[]) {
-  const [data, setData] = useState<T | null>(null);
-  const [error, setError] = useState("");
-  const [loading, setLoading] = useState(true);
-  useEffect(() => {
-    let live = true;
-    setLoading(true);
-    loader().then((value) => { if (live) setData(value); }).catch((caught) => { if (live) setError(message(caught)); }).finally(() => { if (live) setLoading(false); });
-    return () => { live = false; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, deps);
-  return { data, error, loading };
 }
 
 function Back({ to, label }: { to: string; label: string }) {
@@ -41,94 +30,6 @@ function Card({ title, children }: { title: string; children: ReactNode }) {
       <h2 className="text-sm font-bold">{title}</h2>
       {children}
     </section>
-  );
-}
-
-export function SalesHome() {
-  const [params, setParams] = useSearchParams();
-  const tab = params.get("tab") || "pos";
-  const q = params.get("q") ?? "";
-  const [query, setQuery] = useState(q);
-  const customerId = params.get("customer") ?? "";
-  const pos = useLoad(() => salesApi.cpos(q, customerId), [q, customerId, tab]);
-  const rfqs = useLoad(() => salesApi.rfqs(q, customerId), [q, customerId, tab]);
-  const quotes = useLoad(() => salesApi.quotations(q, customerId), [q, customerId, tab]);
-  const customers = useLoad(() => salesApi.customers(q), [q, tab]);
-
-  function setTab(next: string) {
-    const updated = new URLSearchParams(params);
-    updated.set("tab", next);
-    setParams(updated, { replace: true });
-  }
-
-  const activeCustomers = (customers.data ?? []).filter((customer) => customer.status !== "inactive").length;
-  const openValue = (pos.data ?? []).filter((po) => po.status === "open").reduce((sum, po) => sum + po.lines.reduce((lineSum, line) => lineSum + line.lineTotal, 0), 0);
-
-  return (
-    <div className="flex flex-col min-h-[calc(100vh-var(--topbar-h))]">
-      <div className="px-6 py-4 border-b flex items-center justify-between gap-4" style={{ borderColor: "var(--border)", background: "var(--surface)" }}>
-        <div>
-          <h1 className="text-lg font-bold">{tab === "rfqs" ? "Customer RFQs" : tab === "quotations" ? "Quotations" : tab === "customers" ? "Customer Directory" : "Customer POs"}</h1>
-          <p className="text-xs mt-0.5 text-[var(--text-2)]">{(pos.data ?? []).filter((po) => po.status === "open").length} open Customer POs · {activeCustomers} active customers · {inr(openValue)} in progress</p>
-        </div>
-        <div className="flex gap-2">
-          {tab === "pos" && <Link to="/sales/po/new"><Button>Add Customer PO</Button></Link>}
-          {tab === "rfqs" && <>
-            <Link to="/sales/quotation/new"><Button variant="ghost">Direct Quotation</Button></Link>
-            <Link to="/sales/rfq/new"><Button>Add RFQ</Button></Link>
-          </>}
-          {tab === "customers" && <Link to="/sales/customers/new"><Button>Add New Customer</Button></Link>}
-        </div>
-      </div>
-      <Tabs tabs={[
-        { id: "pos", label: `Customer POs (${pos.data?.length ?? 0})` },
-        { id: "rfqs", label: `RFQs (${rfqs.data?.length ?? 0})` },
-        { id: "quotations", label: `Quotations (${quotes.data?.length ?? 0})` },
-        { id: "customers", label: "Customer Directory" },
-      ]} active={tab} onChange={setTab} />
-      <form className="px-6 py-3" onSubmit={(event) => { event.preventDefault(); const updated = new URLSearchParams(params); if (query) updated.set("q", query); else updated.delete("q"); setParams(updated, { replace: true }); }}>
-        <input className="eoss-input w-full max-w-md" value={query} onChange={(event) => setQuery(event.target.value)} placeholder={tab === "customers" ? "Search customers" : tab === "quotations" ? "Search quotation number, RFQ or customer" : tab === "rfqs" ? "Search RFQ number or customer name" : "Search Customer PO number or customer name"} />
-      </form>
-      <div className="px-6 pb-8 overflow-auto">
-        {tab === "pos" && <RecordTable loading={pos.loading} error={pos.error} rows={pos.data ?? []} empty="No records" columns={["PO Number", "Customer", "Date", "Value", "Lines", "Terms", "Status"]} render={(po: Cpo) => [
-          <Link key="n" to={`/sales/po/${po.id}`} className="font-semibold text-[var(--brand)]">{po.cpoNumber}</Link>,
-          <Link key="c" to={`/sales/customers/${po.customerId}`}>{po.customerName}</Link>,
-          when(po.orderDate), inr(po.lines.reduce((sum, line) => sum + line.lineTotal, 0) - (po.discountAmount ?? 0)), String(po.lines.length), po.paymentTerms ? `Net ${po.paymentTerms}` : "—", <StatusChip key="s" status={po.status} />,
-        ]} />}
-        {tab === "rfqs" && <RecordTable loading={rfqs.loading} error={rfqs.error} rows={rfqs.data ?? []} empty="No records" columns={["RFQ Number", "Customer", "Received", "Required By", "Lines", "Channel", "Status"]} render={(rfq: Rfq) => [
-          <Link key="n" to={`/sales/rfq/${rfq.id}`} className="font-semibold text-[var(--brand)]">{rfq.rfqNumber}</Link>,
-          <Link key="c" to={`/sales/customers/${rfq.customerId}`}>{rfq.customerName}</Link>,
-          when(rfq.receivedDate), when(rfq.requiredDate), String(rfq.lines.length), rfq.receivedVia || "—", <StatusChip key="s" status={rfq.status} />,
-        ]} />}
-        {tab === "quotations" && <RecordTable loading={quotes.loading} error={quotes.error} rows={quotes.data ?? []} empty="No records" columns={["Quotation #", "Customer", "RFQ Ref", "Quoted Date", "Valid Until", "Total Value", "Revision", "Status"]} render={(quote: Quotation) => [
-          <Link key="n" to={`/sales/quotation/${quote.id}`} className="font-semibold text-[var(--brand)]">{quote.quotationNumber}</Link>,
-          <Link key="c" to={`/sales/customers/${quote.customerId}`}>{quote.customerName}</Link>,
-          quote.rfqId ? <Link key="r" to={`/sales/rfq/${quote.rfqId}`}>{quote.rfqNumber || "RFQ"}</Link> : "—",
-          when(quote.createdAt), when(quote.validUntil), inr(quote.lines.reduce((sum, line) => sum + (line.lineTotal ?? 0), 0) - (quote.discountAmount ?? 0)), `Rev ${quote.revision}`, <StatusChip key="s" status={quote.status} />,
-        ]} />}
-        {tab === "customers" && <RecordTable loading={customers.loading} error={customers.error} rows={customers.data ?? []} empty="No records" columns={["Customer", "GSTIN / State", "Contact", "Terms", "Status"]} render={(customer: Customer) => [
-          <Link key="n" to={`/sales/customers/${customer.id}`} className="font-semibold text-[var(--brand)]">{customer.name}</Link>,
-          `${customer.gstin || "—"} / ${customer.address?.state || "—"}`,
-          customer.contacts?.[0]?.name || "—",
-          customer.creditDays != null ? `Net ${customer.creditDays}` : "—",
-          <StatusChip key="s" status={customer.status || "active"} />,
-        ]} />}
-      </div>
-    </div>
-  );
-}
-
-function RecordTable<T extends { id: string }>({ columns, rows, render, loading, error, empty }: { columns: string[]; rows: T[]; render: (row: T) => ReactNode[]; loading: boolean; error: string; empty: string }) {
-  if (loading) return <LoadingState label="Loading records" />;
-  if (error) return <ErrorState body={error} />;
-  if (!rows.length) return <EmptyState title={empty} body="Nothing is stored for this search yet." />;
-  return (
-    <div className="overflow-auto">
-      <table className="eoss-table">
-        <thead><tr>{columns.map((column) => <th key={column}>{column}</th>)}</tr></thead>
-        <tbody>{rows.map((row) => <tr key={row.id}>{render(row).map((cell, index) => <td key={index}>{cell}</td>)}</tr>)}</tbody>
-      </table>
-    </div>
   );
 }
 
@@ -470,9 +371,9 @@ export function QuotationDetailPage() {
       {quote.decisionChannel && <p className="text-sm">Decision recorded by the owner ({quote.decisionChannel}) {quote.decidedAt ? `on ${when(quote.decidedAt)}` : ""}{quote.decisionNote ? ` · ${quote.decisionNote}` : ""}. This is not customer self-service acceptance.</p>}
       <div className="flex flex-wrap gap-2">
         {quote.status === "draft" && <Button onClick={() => run(() => salesApi.quotationStatus(id, "sent"))}>Submit to Customer</Button>}
-        {["sent", "negotiating"].includes(quote.status) && <Button onClick={() => run(() => salesApi.accept(id, { customerPoRef: reference, confirmationNote: note }))}>Record customer acceptance</Button>}
+        {["sent", "negotiating"].includes(quote.status) && <Button onClick={() => run(() => salesApi.accept(id, { customerPoRef: reference, confirmationNote: note }))}>Mark Accepted</Button>}
         {["sent", "negotiating"].includes(quote.status) && <Button variant="danger" onClick={() => run(() => salesApi.quotationStatus(id, "rejected", note))}>Record decline</Button>}
-        {!["accepted", "superseded", "expired"].includes(quote.status) && <Button variant="ghost" onClick={() => run(() => salesApi.revise(id, { changeReason: reason || "Customer requested changes", lines: quote.lines.map((line) => ({ itemId: line.itemId, qty: line.qty, uomId: line.uomId, unitPrice: line.unitPrice, deliveryWeeks: line.deliveryWeeks, gstRate: line.gstRate, discountPct: line.discountPct, drawingNumber: line.drawingNumber, drawingRevision: line.drawingRevision, description: line.description })) }))}>Revise quotation</Button>}
+        {!["accepted", "superseded", "expired"].includes(quote.status) && <Button variant="ghost" onClick={() => run(() => salesApi.revise(id, { changeReason: reason || "Customer requested changes", lines: quote.lines.map((line) => ({ itemId: line.itemId, qty: line.qty, uomId: line.uomId, unitPrice: line.unitPrice, deliveryWeeks: line.deliveryWeeks, gstRate: line.gstRate, discountPct: line.discountPct, drawingNumber: line.drawingNumber, drawingRevision: line.drawingRevision, description: line.description })) }))}>Revise Quotation</Button>}
         <Button variant="ghost" onClick={() => salesApi.quotationPdf(id).catch((caught) => setError(message(caught)))}>Download PDF</Button>
       </div>
       {["sent", "negotiating"].includes(quote.status) && <p className="text-xs text-[var(--text-3)]">No response leaves this quotation awaiting a decision. Nothing is accepted and no Customer PO is created. Submit to Customer marks the quotation sent inside BOSS. It does not send email or WhatsApp.</p>}
@@ -565,18 +466,85 @@ export function PoDetailPage() {
       <div className="flex justify-between"><div><h1 className="text-lg font-bold">{po.cpoNumber}</h1><Link className="text-sm text-[var(--brand)]" to={`/sales/customers/${po.customerId}`}>{po.customerName}</Link></div><StatusChip status={po.status} /></div>
       <div className="flex gap-2">{editable && po.status === "open" && <Button variant="ghost" onClick={() => status("on_hold")}>Hold</Button>}{po.status === "on_hold" && <Button onClick={() => status("open")}>Release hold</Button>}{["open", "on_hold", "partial"].includes(po.status) && <Button variant="danger" onClick={() => status("cancelled")}>Cancel</Button>}</div>
       {error && <p role="alert" className="text-sm text-[var(--error)]">{error}</p>}
-      <Tabs tabs={[{ id: "overview", label: "Overview" }, { id: "lines", label: "Line Items" }, { id: "history", label: "History" }]} active={tab} onChange={setTab} />
-      {tab === "overview" && <Card title="Source and decision">
-        <p>Order date {when(po.orderDate)} · Required {when(po.requiredByDate)} · Terms {po.paymentTerms ?? "—"} days</p>
-        {po.quotationId && <Link className="block text-[var(--brand)]" to={`/sales/quotation/${po.quotationId}`}>Quotation {po.quotationNumber} rev {po.quotationRevision}</Link>}
-        {po.rfqId && <Link className="block text-[var(--brand)]" to={`/sales/rfq/${po.rfqId}`}>RFQ {po.rfqNumber}</Link>}
-        <p>Owner-recorded decision {po.decisionChannel || "—"}{po.decisionNote ? ` · ${po.decisionNote}` : ""}</p>
-        <p>Goods {inr(goods)} · Discount {inr(po.discountAmount)} · Before tax {inr(goods - (po.discountAmount ?? 0))}</p>
-        <p className="text-xs text-[var(--text-3)]">Accepted unit prices stay locked. Production, dispatch and invoice steps are later in the order journey.</p>
-        {editable && <form onSubmit={save} className="grid md:grid-cols-2 gap-3"><TextField label="Customer reference" value={reference} onChange={(event) => setReference(event.target.value)} /><TextField label="Notes" value={notes} onChange={(event) => setNotes(event.target.value)} /><Button type="submit">Save permitted fields</Button></form>}
-      </Card>}
-      {tab === "lines" && <table className="eoss-table"><thead><tr><th>Item</th><th>Qty</th><th>UOM</th><th>Unit Price</th><th>Line Value</th></tr></thead><tbody>{po.lines.map((line) => <tr key={line.id}><td>{line.itemCode} {line.itemName}<div className="text-xs">{line.drawingNumber} {line.description}</div></td><td>{line.qty}</td><td>{line.uomSymbol}</td><td>{inr(line.unitPrice)}</td><td>{inr(line.lineTotal)}</td></tr>)}</tbody></table>}
+      <Tabs tabs={[{ id: "overview", label: "Overview" }, { id: "lines", label: "Line Items" }, { id: "amendments", label: "Amendments" }, { id: "jobs", label: "Linked Jobs (0)" }, { id: "documents", label: "Documents" }, { id: "history", label: "History" }]} active={tab} onChange={setTab} />
+      {tab === "overview" && <div className="grid lg:grid-cols-2 gap-4">
+        <Card title="PO Details">
+          <p>Accepted date {when(po.orderDate)}</p>
+          <p>Required by {when(po.requiredByDate)}</p>
+          <p>Payment terms {po.paymentTerms != null ? `Net ${po.paymentTerms}` : "—"}</p>
+          <p>Customer reference {po.customerPoRef || "—"}</p>
+          <p>Currency INR</p>
+        </Card>
+        <Card title="Source">
+          {po.quotationId && <Link className="block text-[var(--brand)]" to={`/sales/quotation/${po.quotationId}`}>Quotation {po.quotationNumber} rev {po.quotationRevision}</Link>}
+          {po.rfqId && <Link className="block text-[var(--brand)]" to={`/sales/rfq/${po.rfqId}`}>RFQ {po.rfqNumber}</Link>}
+          <p>Owner-recorded decision {po.decisionChannel || "—"}{po.decisionNote ? ` · ${po.decisionNote}` : ""}</p>
+          <p>Goods {inr(goods)} · Discount {inr(po.discountAmount)} · Before tax {inr(goods - (po.discountAmount ?? 0))}</p>
+          <p className="text-xs text-[var(--text-3)]">Accepted unit prices stay locked. Production, dispatch and invoice steps appear here when those modules are connected.</p>
+          {editable && <form onSubmit={save} className="grid md:grid-cols-2 gap-3"><TextField label="Customer reference" value={reference} onChange={(event) => setReference(event.target.value)} /><TextField label="Notes" value={notes} onChange={(event) => setNotes(event.target.value)} /><Button type="submit">Save permitted fields</Button></form>}
+        </Card>
+      </div>}
+      {tab === "lines" && <table className="eoss-table"><thead><tr><th>#</th><th>Drawing / Part No.</th><th>Rev</th><th>Description</th><th>Qty</th><th>UOM</th><th>Rate</th><th>Value</th></tr></thead><tbody>{po.lines.map((line, index) => <tr key={line.id}><td>{index + 1}</td><td>{line.drawingNumber || line.itemCode}</td><td>{line.drawingRevision || "—"}</td><td>{line.description || line.itemName}</td><td>{line.qty}</td><td>{line.uomSymbol}</td><td>{inr(line.unitPrice)}</td><td>{inr(line.lineTotal)}</td></tr>)}</tbody></table>}
+      {tab === "amendments" && <p className="text-sm text-[var(--text-2)]">No amendments yet. Create a revised Customer PO from the header. Accepted prices stay locked until a later commercial revision is approved.</p>}
+      {tab === "jobs" && <p className="text-sm text-[var(--text-2)]">No jobs linked to this PO yet.</p>}
+      {tab === "documents" && <p className="text-sm text-[var(--text-2)]">No documents are stored on this Customer PO yet.</p>}
       {tab === "history" && <History entries={history.data ?? []} />}
     </div>
+  );
+}
+
+export function PoAmendPage() {
+  const { id = "" } = useParams();
+  const navigate = useNavigate();
+  const record = useLoad(() => salesApi.cpo(id), [id]);
+  const [reason, setReason] = useState("delivery_date");
+  const [note, setNote] = useState("");
+  const [paymentTerms, setPaymentTerms] = useState("");
+  const [requiredBy, setRequiredBy] = useState("");
+  const [error, setError] = useState("");
+  if (record.loading) return <LoadingState label="Loading Customer PO" />;
+  if (record.error || !record.data) return <ErrorState body={record.error || "Customer PO not found"} />;
+  const po = record.data;
+  const locked = po.status === "cancelled" || po.status === "fulfilled";
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    if (reason === "price_revision" || reason === "qty_change") {
+      setError("Accepted quantities and prices stay locked. Choose a delivery date or commercial-terms change.");
+      return;
+    }
+    try {
+      await salesApi.updateCpo(id, {
+        customerPoRef: po.customerPoRef,
+        notes: note || po.notes,
+        requiredByDate: requiredBy || po.requiredByDate,
+        paymentTerms: paymentTerms ? Number(paymentTerms) : po.paymentTerms,
+      });
+      navigate(`/sales/po/${id}`);
+    } catch (caught) { setError(message(caught)); }
+  }
+  if (locked) return <div className="p-8 max-w-xl mx-auto text-center"><h1 className="text-lg font-bold">Revision unavailable</h1><p className="text-sm text-[var(--text-2)] mt-2">Commercial revisions are available only while the Customer PO is open. This PO remains preserved as history.</p><Button onClick={() => navigate(`/sales/po/${id}`)}>Back to Customer PO</Button></div>;
+  return (
+    <form onSubmit={submit} className="p-6 max-w-3xl mx-auto space-y-5">
+      <Back to={`/sales/po/${id}`} label={`Back to ${po.cpoNumber}`} />
+      <h1 className="text-xl font-bold">Create Revised Customer PO</h1>
+      <p className="text-sm text-[var(--text-2)]">{po.cpoNumber} · {po.customerName}</p>
+      <p className="text-xs rounded-xl p-3" style={{ background: "rgba(245,158,11,0.08)" }}>The current PO remains binding. Accepted line rates and quantities stay locked. A delivery date, payment terms, or note change is saved on this PO.</p>
+      <SelectField label="Amendment Reason *" value={reason} onChange={(event) => setReason(event.target.value)}>
+        <option value="qty_change">Quantity Change</option>
+        <option value="price_revision">Price Revision</option>
+        <option value="delivery_date">Delivery Date Change</option>
+        <option value="spec_change">Specification / Drawing Revision</option>
+        <option value="commercial_terms">Commercial Terms</option>
+        <option value="other">Other</option>
+      </SelectField>
+      <div className="grid md:grid-cols-2 gap-3">
+        {po.lines.map((line) => <p key={line.id} className="text-sm">{line.drawingNumber || line.itemCode} · {line.description || line.itemName} · qty {line.qty} · {inr(line.unitPrice)}</p>)}
+        <TextField label={`Payment terms (current ${po.paymentTerms ?? "—"})`} value={paymentTerms} onChange={(event) => setPaymentTerms(event.target.value)} placeholder="Leave blank to keep current" />
+        <TextField label="Required date" type="date" value={requiredBy} onChange={(event) => setRequiredBy(event.target.value)} />
+      </div>
+      <TextField label="Change description *" value={note} onChange={(event) => setNote(event.target.value)} required />
+      {error && <p role="alert" className="text-sm text-[var(--error)]">{error}</p>}
+      <Button type="submit">Submit Revision for Approval</Button>
+    </form>
   );
 }

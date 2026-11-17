@@ -10,7 +10,7 @@ import ActivatePage from "./screens/ActivatePage";
 import LoginPage from "./screens/LoginPage";
 import OnboardingPage from "./screens/OnboardingPage";
 import ScreenPage from "./screens/ScreenPage";
-import { CustomerDetailPage, CustomerFormPage, PoCreatePage, PoDetailPage, QuotationDetailPage, QuotationFormPage, RfqDetailPage, RfqFormPage, SalesHome } from "./sales/SalesPages";
+import { CustomerDetailPage, CustomerFormPage, PoAmendPage, PoCreatePage, PoDetailPage, QuotationDetailPage, QuotationFormPage, RfqDetailPage, RfqFormPage, SalesHome } from "./sales/SalesPages";
 
 function Background({ pathname }: { pathname: string }) {
   const screen = findScreen(pathname.split("?")[0]);
@@ -92,6 +92,7 @@ function Guard() {
         <Route path="sales/quotation/new" element={<QuotationFormPage />} />
         <Route path="sales/quotation/:id" element={<QuotationDetailPage />} />
         <Route path="sales/po/new" element={<PoCreatePage />} />
+        <Route path="sales/po/:id/amend" element={<PoAmendPage />} />
         <Route path="sales/po/:id" element={<PoDetailPage />} />
         <Route path="sales/customers" element={<Navigate to="/sales?tab=customers" replace />} />
         <Route path="settings" element={<Navigate to="/admin" replace />} />

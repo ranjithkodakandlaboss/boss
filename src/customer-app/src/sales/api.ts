@@ -105,6 +105,7 @@ export type CpoLine = {
   lineTotal: number;
   description?: string;
   drawingNumber?: string;
+  drawingRevision?: string;
 };
 export type Cpo = {
   id: string;

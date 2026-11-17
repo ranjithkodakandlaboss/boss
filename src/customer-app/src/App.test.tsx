@@ -58,7 +58,7 @@ describe("customer app shell", () => {
 
   it("shows an empty table instead of seeded rows", async () => {
     renderAt("/sales");
-    expect(await screen.findByText("No records")).toBeInTheDocument();
+    expect(await screen.findByText("No POs match the current filters")).toBeInTheDocument();
     expect(screen.queryByText(/PO-2026/)).not.toBeInTheDocument();
   });
 

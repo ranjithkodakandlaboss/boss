@@ -46,7 +46,7 @@ it("records owner acceptance against the open revision and creates one Customer 
   expect(await screen.findByRole("heading", { name: /QT-1/ })).toBeInTheDocument();
   expect(screen.getByText(/Rev 2/)).toBeInTheDocument();
   expect(screen.getByText(/does not send email or WhatsApp/)).toBeInTheDocument();
-  await userEvent.click(screen.getByRole("button", { name: "Record customer acceptance" }));
+  await userEvent.click(screen.getByRole("button", { name: "Mark Accepted" }));
   expect(await screen.findByText("PO opened")).toBeInTheDocument();
   const acceptCall = vi.mocked(fetch).mock.calls.find((call) => String(call[0]).endsWith("/accept"));
   expect(acceptCall?.[1]?.method).toBe("POST");
