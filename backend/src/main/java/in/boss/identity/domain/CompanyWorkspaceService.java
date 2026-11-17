@@ -113,15 +113,29 @@ public class CompanyWorkspaceService {
                 && !GSTIN.matcher(request.gstin().trim()).matches()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "GSTIN format is invalid");
         }
+        if (request.sites() != null) {
+            for (CompanySaveRequest.SiteInput site : request.sites()) {
+                boolean named = site.name() != null && !site.name().isBlank();
+                boolean coded = site.code() != null && !site.code().isBlank();
+                if (named != coded) {
+                    throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "A site needs both a name and a code");
+                }
+            }
+        }
         if (complete) {
             boolean namedSite = request.sites() != null && request.sites().stream()
-                    .anyMatch(site -> site.name() != null && !site.name().isBlank());
-            if (!namedSite) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "A site name is required");
+                    .anyMatch(site -> site.name() != null && !site.name().isBlank()
+                            && site.code() != null && !site.code().isBlank());
+            if (!namedSite) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "A site name and code are required");
         }
     }
 
     private void saveGst(UUID tenantId, UUID legalEntityId, CompanySaveRequest request) {
-        if (Boolean.TRUE.equals(request.gstNotApplicable()) || request.gstin() == null || request.gstin().isBlank()) return;
+        if (Boolean.TRUE.equals(request.gstNotApplicable()) || request.gstin() == null || request.gstin().isBlank()) {
+            jdbc.update("UPDATE gst_registrations SET status = 'cancelled', updated_at = now() "
+                    + "WHERE tenant_id = ? AND status = 'active'", tenantId);
+            return;
+        }
         String gstin = request.gstin().trim();
         List<UUID> existing = jdbc.query(
                 "SELECT id FROM gst_registrations WHERE tenant_id = ? AND gstin = ?",
@@ -131,7 +145,7 @@ public class CompanyWorkspaceService {
                             + "VALUES (?, ?, ?, ?, ?)",
                     tenantId, legalEntityId, gstin, blankToNull(request.tradingName()), LocalDate.now());
         } else {
-            jdbc.update("UPDATE gst_registrations SET trade_name = ?, updated_at = now() WHERE id = ?",
+            jdbc.update("UPDATE gst_registrations SET trade_name = ?, status = 'active', updated_at = now() WHERE id = ?",
                     blankToNull(request.tradingName()), existing.get(0));
         }
     }

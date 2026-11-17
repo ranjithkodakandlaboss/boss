@@ -39,6 +39,7 @@ type Draft = {
   state: string;
   gstin: string;
   gstNotApplicable: boolean;
+  siteId: string;
   siteName: string;
   siteCode: string;
   siteCity: string;
@@ -51,7 +52,7 @@ type Draft = {
 
 const EMPTY: Draft = {
   companyName: "", tradingName: "", legalName: "", entityType: "PRIVATE_LIMITED", pan: "", email: "", phone: "",
-  addressLine: "", city: "", state: "", gstin: "", gstNotApplicable: false, siteName: "", siteCode: "", siteCity: "",
+  addressLine: "", city: "", state: "", gstin: "", gstNotApplicable: false, siteId: "", siteName: "", siteCode: "", siteCity: "",
   siteState: "", storeName: "", storeCode: "", inviteEmail: "", inviteRole: "SALES_MANAGER",
 };
 
@@ -71,6 +72,7 @@ function fromCompany(company: CompanyRecord | undefined): Draft {
     city: company?.city ?? "",
     state: company?.state ?? "",
     gstin: company?.gstin ?? "",
+    siteId: site?.id ?? "",
     siteName: site?.name ?? "",
     siteCode: site?.code ?? "",
     siteCity: site?.city ?? "",
@@ -94,7 +96,7 @@ function payload(draft: Draft) {
     phone: draft.phone,
     gstin: draft.gstNotApplicable ? "" : draft.gstin,
     gstNotApplicable: draft.gstNotApplicable,
-    sites: draft.siteName ? [{ name: draft.siteName, code: draft.siteCode, siteType: "factory", city: draft.siteCity, state: draft.siteState }] : [],
+    sites: draft.siteName ? [{ id: draft.siteId || undefined, name: draft.siteName, code: draft.siteCode, siteType: "factory", city: draft.siteCity, state: draft.siteState }] : [],
     stores: draft.storeName ? [{ siteCode: draft.siteCode, name: draft.storeName, code: draft.storeCode, storeType: "raw_material" }] : [],
   };
 }
@@ -211,7 +213,7 @@ export default function OnboardingPage() {
           <section className="grid sm:grid-cols-2 gap-4">
             <h1 className="sm:col-span-2 text-xl font-bold">Sites & Locations</h1>
             <TextField label="Site Name *" name="siteName" value={draft.siteName} onChange={(event) => update("siteName", event.target.value)} />
-            <TextField label="Code" name="siteCode" value={draft.siteCode} onChange={(event) => update("siteCode", event.target.value.toUpperCase())} />
+            <TextField label="Code *" name="siteCode" value={draft.siteCode} onChange={(event) => update("siteCode", event.target.value.toUpperCase())} />
             <TextField label="City" name="siteCity" value={draft.siteCity} onChange={(event) => update("siteCity", event.target.value)} />
             <TextField label="State" name="siteState" value={draft.siteState} onChange={(event) => update("siteState", event.target.value)} />
           </section>

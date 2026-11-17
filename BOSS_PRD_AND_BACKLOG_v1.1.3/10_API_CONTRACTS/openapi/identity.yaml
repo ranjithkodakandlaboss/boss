@@ -6,11 +6,11 @@ info:
     Identity, authentication, tenant context, user management, and RBAC for BOSS.
     Firebase Auth handles password/OAuth; this API manages tenant users, roles, and invite flows.
 
-    **Auth:** All endpoints require `Authorization: Bearer {firebase_id_token}` EXCEPT `/auth/me`
-    (which is used for first login after Firebase sign-in).
+    **Auth:** Customer endpoints require `Authorization: Bearer {firebase_id_token}`.
+    `POST /auth/activate` is public. It accepts the invitation token and ignores a bearer token.
 
-    **Tenant context:** `X-Tenant-Id` header is required on all customer endpoints; RLS enforces
-    isolation. The backend also reads tenant from the JWT claim for security cross-checks.
+    **Tenant context:** The backend resolves the tenant from the Firebase UID. Callers do not
+    send `X-Tenant-Id`. Row-level security uses that resolved tenant.
 servers:
   - url: https://api.boss.app/api/v1
     description: Production
@@ -149,8 +149,8 @@ paths:
       operationId: getCurrentUser
       summary: Get current user profile and tenant context
       description: |
-        Called after Firebase sign-in. Returns the BOSS user profile, roles, and tenant.
-        Creates the app_users record on first call if Firebase UID is new.
+        Called after Firebase sign-in. Returns the activated user profile, roles, and tenant.
+        The user row is created by `POST /auth/activate`, not by this call.
       tags: [Identity]
       security:
         - firebaseBearer: []

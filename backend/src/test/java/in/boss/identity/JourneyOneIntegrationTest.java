@@ -123,6 +123,90 @@ class JourneyOneIntegrationTest {
     }
 
     @Test
+    void activationIgnoresAStaleBearerAndCompanyEditsFollowRoleAndPersistenceRules() throws Exception {
+        String slug = "rules-" + UUID.randomUUID().toString().substring(0, 8);
+        UUID tenant = provision(jdbc, slug);
+        String token = "rules-" + UUID.randomUUID();
+        invite(tenant, slug + "@example.test", token);
+        when(firebaseAuth.verifyIdToken("rejected-session")).thenThrow(new IllegalArgumentException("rejected"));
+        when(firebaseAuth.createUser(any())).thenAnswer(invocation -> {
+            UserRecord record = mock(UserRecord.class);
+            when(record.getUid()).thenReturn("uid-" + UUID.randomUUID());
+            return record;
+        });
+
+        JsonNode owner = json.readTree(mvc.perform(post("/api/v1/auth/activate")
+                        .header("Authorization", "Bearer rejected-session")
+                        .header("Idempotency-Key", "activate-stale-" + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"token\":\"" + token + "\",\"password\":\"rules-pass\",\"displayName\":\"Rules Owner\"}"))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString());
+        stubSession("rules-owner", owner.get("firebaseUid").asText());
+
+        mvc.perform(put("/api/v1/company").header("Authorization", "Bearer rules-owner")
+                        .header("Idempotency-Key", "missing-code-" + tenant)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(companyBody(slug, true, "")))
+                .andExpect(status().isBadRequest());
+
+        mvc.perform(put("/api/v1/company").header("Authorization", "Bearer rules-owner")
+                        .header("Idempotency-Key", "gst-" + tenant)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(companyBody(slug, false, "PLANT")))
+                .andExpect(status().isOk());
+        JsonNode withGst = json.readTree(mvc.perform(get("/api/v1/company").header("Authorization", "Bearer rules-owner"))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
+        assertThat(withGst.get("gstin").asText()).isEqualTo("27ABCDE1234F1Z5");
+
+        mvc.perform(put("/api/v1/company").header("Authorization", "Bearer rules-owner")
+                        .header("Idempotency-Key", "gst-clear-" + tenant)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(companyBody(slug, true, "PLANT")))
+                .andExpect(status().isOk());
+        JsonNode cleared = json.readTree(mvc.perform(get("/api/v1/company").header("Authorization", "Bearer rules-owner"))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
+        assertThat(cleared.get("gstin").isNull()).isTrue();
+
+        UUID salesUser = UUID.randomUUID();
+        jdbc.update("INSERT INTO app_users(id, tenant_id, firebase_uid, email, display_name, status) VALUES (?, ?, ?, ?, ?, 'active')",
+                salesUser, tenant, "sales-" + slug, "sales-" + slug + "@example.test", "Sales");
+        jdbc.update("INSERT INTO user_roles(tenant_id, user_id, role) VALUES (?, ?, 'SALES_MANAGER')", tenant, salesUser);
+        stubSession("rules-sales", "sales-" + slug);
+        mvc.perform(get("/api/v1/company").header("Authorization", "Bearer rules-sales"))
+                .andExpect(status().isOk());
+        mvc.perform(put("/api/v1/company").header("Authorization", "Bearer rules-sales")
+                        .header("Idempotency-Key", "sales-" + tenant)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(companyBody(slug, true, "PLANT")))
+                .andExpect(status().isForbidden());
+
+        jdbc.update("UPDATE tenant_registry SET status = 'suspended' WHERE id = ?", tenant);
+        String blocked = "blocked-" + UUID.randomUUID();
+        invite(tenant, "blocked-" + slug + "@example.test", blocked);
+        mvc.perform(post("/api/v1/auth/activate")
+                        .header("Idempotency-Key", "activate-blocked-" + blocked)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"token\":\"" + blocked + "\",\"password\":\"rules-pass\",\"displayName\":\"Blocked\"}"))
+                .andExpect(status().isForbidden());
+        Integer created = jdbc.queryForObject(
+                "SELECT count(*) FROM app_users WHERE tenant_id = ? AND email = ?",
+                Integer.class, tenant, "blocked-" + slug + "@example.test");
+        assertThat(created).isZero();
+    }
+
+    private static String companyBody(String slug, boolean gstSkipped, String siteCode) {
+        String gst = gstSkipped
+                ? "\"gstNotApplicable\":true"
+                : "\"gstNotApplicable\":false,\"gstin\":\"27ABCDE1234F1Z5\"";
+        String site = siteCode.isBlank()
+                ? "\"sites\":[{\"name\":\"Plant\",\"code\":\"\"}]"
+                : "\"sites\":[{\"name\":\"Plant\",\"code\":\"" + siteCode + "\",\"siteType\":\"factory\",\"city\":\"Pune\",\"state\":\"Maharashtra\"}]";
+        return "{\"companyName\":\"" + slug + "\",\"legalName\":\"" + slug + " Pvt Ltd\",\"city\":\"Pune\",\"state\":\"Maharashtra\","
+                + "\"email\":\"office@" + slug + ".test\"," + gst + "," + site + "}";
+    }
+
+    @Test
     void inviteLookupExecuteIsLimitedToAppAndPlatformAdminRoles() {
         String function = "public.boss_lookup_invite_by_hash(text)";
         assertThat(privilege("public", function)).isFalse();

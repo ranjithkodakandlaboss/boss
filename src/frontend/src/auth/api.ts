@@ -12,7 +12,7 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers);
   if (init.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
   const token = currentToken();
-  if (token) headers.set("Authorization", `Bearer ${token}`);
+  if (token && path !== "/api/v1/auth/activate") headers.set("Authorization", `Bearer ${token}`);
   const response = await fetch(`${base}${path}`, { ...init, headers });
   if (response.status === 204) return undefined as T;
   const text = await response.text();

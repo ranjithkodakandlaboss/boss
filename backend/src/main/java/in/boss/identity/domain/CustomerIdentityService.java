@@ -69,7 +69,14 @@ public class CustomerIdentityService {
         String uid = createFirebaseUser(invite.email(), request.password(), request.displayName());
         BossContextHolder.set(new BossContext(invite.tenantId(), null, Set.of(invite.role()), null, uid));
         try {
-            return transactions.execute(status -> accept(invite, uid, request.displayName()));
+            return transactions.execute(status -> {
+                String tenantStatus = jdbc.queryForObject(
+                        "SELECT status FROM tenant_registry WHERE id = ?", String.class, invite.tenantId());
+                if (!"active".equals(tenantStatus)) {
+                    throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Tenant is not active");
+                }
+                return accept(invite, uid, request.displayName());
+            });
         } catch (RuntimeException exception) {
             deleteFirebaseUser(uid);
             throw exception;

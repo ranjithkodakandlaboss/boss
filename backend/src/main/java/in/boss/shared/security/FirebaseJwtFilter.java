@@ -47,6 +47,10 @@ public class FirebaseJwtFilter extends OncePerRequestFilter {
                                     @NonNull FilterChain chain)
             throws ServletException, IOException {
         try {
+            if (isActivation(request)) {
+                chain.doFilter(request, response);
+                return;
+            }
             String token = extractBearerToken(request);
             if (token != null) {
                 try {
@@ -80,6 +84,11 @@ public class FirebaseJwtFilter extends OncePerRequestFilter {
             BossContextHolder.clear();
             SecurityContextHolder.clearContext();
         }
+    }
+
+    private boolean isActivation(HttpServletRequest request) {
+        return "POST".equalsIgnoreCase(request.getMethod())
+                && "/api/v1/auth/activate".equals(request.getRequestURI());
     }
 
     private String extractBearerToken(HttpServletRequest request) {
