@@ -12,11 +12,16 @@ customer-api	src/main/java/in/boss/masterdata/domain/impl/CustomerServiceImpl.ja
 customer-api	src/main/java/in/boss/masterdata/domain/impl/ItemServiceImpl.java	GodClass	1
 customer-api	src/main/java/in/boss/masterdata/domain/impl/SupplierServiceImpl.java	CyclomaticComplexity	1
 customer-api	src/main/java/in/boss/masterdata/domain/impl/SupplierServiceImpl.java	GodClass	1
+customer-api	src/main/java/in/boss/procurement/domain/GoodsReceiptService.java	CyclomaticComplexity	1
+customer-api	src/main/java/in/boss/procurement/domain/IncomingInspectionService.java	CyclomaticComplexity	1
 customer-api	src/main/java/in/boss/procurement/domain/PurchaseRequisitionService.java	CognitiveComplexity	1
 customer-api	src/main/java/in/boss/procurement/domain/PurchaseRequisitionService.java	CyclomaticComplexity	3
 customer-api	src/main/java/in/boss/procurement/domain/PurchaseRequisitionService.java	GodClass	1
+customer-api	src/main/java/in/boss/procurement/domain/PurchaseRequisitionService.java	TooManyMethods	1
+customer-api	src/main/java/in/boss/procurement/domain/SpoAmendmentFileService.java	GodClass	1
 customer-api	src/main/java/in/boss/procurement/domain/SpoService.java	GodClass	1
 customer-api	src/main/java/in/boss/procurement/domain/SupplierQuotationService.java	GodClass	1
+customer-api	src/main/java/in/boss/sales/domain/CustomerPoService.java	CyclomaticComplexity	1
 customer-api	src/main/java/in/boss/sales/domain/QuotationPdf.java	GodClass	1
 customer-api	src/main/java/in/boss/sales/domain/SalesService.java	CognitiveComplexity	1
 customer-api	src/main/java/in/boss/sales/domain/SalesService.java	CyclomaticComplexity	2
