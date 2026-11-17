@@ -4,6 +4,8 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, CheckCircle2, FileText, Plus, Trash2 } from 'lucide-react';
 import { useStore } from './runtime';
 import { useReturnNavigation } from './useReturnNavigation';
+import AddIfEmpty from './AddIfEmpty';
+import { newCustomer, saveSite } from './quickMasters';
 import type { CustomerPO } from './types';
 
 const TODAY = new Date().toISOString().slice(0, 10);
@@ -26,7 +28,7 @@ export default function CustomerPOCreate() {
 
   const {
     quotations, quotationLines, customerPos, customers, sites,
-    convertQuotationToPO, showToast,
+    addCustomer, reload, convertQuotationToPO, showToast,
   } = useStore();
   const { goBack, originUrl } = useReturnNavigation('/sales?tab=pos');
 
@@ -132,9 +134,24 @@ export default function CustomerPOCreate() {
                     </div>
                     <div>
                       <label className="block text-xs font-medium text-[var(--text-2)] mb-1">Fulfilling Site</label>
-                      <select value={deliverToSiteId} onChange={e => setDeliverToSiteId(e.target.value)} className="eoss-input w-full">
-                        {sites.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                      </select>
+                      <AddIfEmpty
+                        empty={sites.length === 0}
+                        title="No sites yet"
+                        hint="Add the plant or warehouse that will fulfil this order."
+                        fields={[{ key: 'name', label: 'Site name' }]}
+                        submitLabel="Save site"
+                        onSubmit={async (values) => {
+                          const saved = await saveSite(values.name || '');
+                          const created = (saved.sites ?? []).find((site) => site.name === (values.name || '').trim());
+                          await reload();
+                          if (created?.id) setDeliverToSiteId(created.id);
+                        }}
+                      >
+                        <select value={deliverToSiteId} onChange={e => setDeliverToSiteId(e.target.value)} className="eoss-input w-full">
+                          <option value="">Select a site…</option>
+                          {sites.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                        </select>
+                      </AddIfEmpty>
                     </div>
                   </div>
                 )}
@@ -181,17 +198,49 @@ export default function CustomerPOCreate() {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
                     <label className="block text-xs font-medium text-[var(--text-2)] mb-1">Customer *</label>
-                    <select className="eoss-input w-full" value={customerId} onChange={e => setCustomerId(e.target.value)}>
-                      {customers.map(c => (
-                        <option key={c.id} value={c.id}>{c.tradingName || c.legalName}</option>
-                      ))}
-                    </select>
+                    <AddIfEmpty
+                      empty={customers.length === 0}
+                      title="No customers yet"
+                      hint="Add the business customer here."
+                      fields={[{ key: 'legalName', label: 'Legal name' }, { key: 'city', label: 'City' }]}
+                      submitLabel="Save customer"
+                      onSubmit={async (values) => {
+                        const name = (values.legalName || '').trim();
+                        const city = (values.city || '').trim();
+                        if (!name || !city) throw new Error('Enter a legal name and city.');
+                        const saved = await addCustomer(newCustomer(name, city));
+                        if (!saved?.id) throw new Error('Customer was not saved.');
+                        setCustomerId(saved.id);
+                      }}
+                    >
+                      <select className="eoss-input w-full" value={customerId} onChange={e => setCustomerId(e.target.value)}>
+                        <option value="">Select customer…</option>
+                        {customers.map(c => (
+                          <option key={c.id} value={c.id}>{c.tradingName || c.legalName || 'Customer'}</option>
+                        ))}
+                      </select>
+                    </AddIfEmpty>
                   </div>
                   <div>
                     <label className="block text-xs font-medium text-[var(--text-2)] mb-1">Fulfilling Site</label>
-                    <select className="eoss-input w-full" value={deliverToSiteId} onChange={e => setDeliverToSiteId(e.target.value)}>
-                      {sites.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                    </select>
+                    <AddIfEmpty
+                      empty={sites.length === 0}
+                      title="No sites yet"
+                      hint="Add the plant or warehouse that will fulfil this order."
+                      fields={[{ key: 'name', label: 'Site name' }]}
+                      submitLabel="Save site"
+                      onSubmit={async (values) => {
+                        const saved = await saveSite(values.name || '');
+                        const created = (saved.sites ?? []).find((site) => site.name === (values.name || '').trim());
+                        await reload();
+                        if (created?.id) setDeliverToSiteId(created.id);
+                      }}
+                    >
+                      <select className="eoss-input w-full" value={deliverToSiteId} onChange={e => setDeliverToSiteId(e.target.value)}>
+                        <option value="">Select a site…</option>
+                        {sites.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                      </select>
+                    </AddIfEmpty>
                   </div>
                   <div>
                     <label className="block text-xs font-medium text-[var(--text-2)] mb-1">Payment Terms</label>

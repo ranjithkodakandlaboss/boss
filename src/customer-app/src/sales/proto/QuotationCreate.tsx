@@ -4,6 +4,8 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, Plus, Trash2, Check, AlertTriangle, Layers } from 'lucide-react';
 import clsx from 'clsx';
 import { useStore } from './runtime';
+import AddIfEmpty from './AddIfEmpty';
+import { newCustomer, saveCatalogItem, saveUnit } from './quickMasters';
 import type { CustomerQuotation, CustomerQuotationLine } from './types';
 
 const DEMO_NOW = new Date().toISOString().slice(0, 10);
@@ -43,7 +45,7 @@ function newLine(n: number, rfqLine?: any): QLine {
 export default function QuotationCreate() {
   const { rfqId } = useParams<{ rfqId: string }>();
   const navigate = useNavigate();
-  const { rfqs, customers, addQuotation, createDirectQuotation, currentUser, boms, catalog, uoms } = useStore();
+  const { rfqs, customers, addCustomer, addQuotation, createDirectQuotation, currentUser, boms, catalog, uoms, reload } = useStore();
 
   const rfq = rfqs.find(r => r.id === rfqId) as (typeof rfqs[0] & Record<string, any>) | undefined;
   const rfqLines: any[] = rfq?.lines ?? [];
@@ -180,11 +182,28 @@ export default function QuotationCreate() {
             <div className="grid md:grid-cols-3 gap-4">
               {isDirect && (
                 <Field label="Customer *" className="md:col-span-2">
-                  <select value={customerId} onChange={e => setCustomerId(e.target.value)} className="eoss-input">
-                    {customers.map(c => (
-                      <option key={c.id} value={c.id}>{c.tradingName || c.legalName}</option>
-                    ))}
-                  </select>
+                  <AddIfEmpty
+                    empty={customers.length === 0}
+                    title="No customers yet"
+                    hint="Add the business customer here. It is the same list used on RFQs and customer POs."
+                    fields={[{ key: 'legalName', label: 'Legal name' }, { key: 'city', label: 'City' }]}
+                    submitLabel="Save customer"
+                    onSubmit={async (values) => {
+                      const name = (values.legalName || '').trim();
+                      const city = (values.city || '').trim();
+                      if (!name || !city) throw new Error('Enter a legal name and city.');
+                      const saved = await addCustomer(newCustomer(name, city));
+                      if (!saved?.id) throw new Error('Customer was not saved.');
+                      setCustomerId(saved.id);
+                    }}
+                  >
+                    <select value={customerId} onChange={e => setCustomerId(e.target.value)} className="eoss-input">
+                      <option value="">Select customer…</option>
+                      {customers.map(c => (
+                        <option key={c.id} value={c.id}>{c.tradingName || c.legalName || 'Customer'}</option>
+                      ))}
+                    </select>
+                  </AddIfEmpty>
                 </Field>
               )}
               <Field label="Quotation Date">
@@ -214,6 +233,44 @@ export default function QuotationCreate() {
           </Card>
 
           {/* Lines */}
+          {catalog.length === 0 && (
+            <AddIfEmpty
+              empty
+              title="The item list is empty"
+              hint="A quotation line needs an item from the item master. Add the first one here."
+              fields={[{ key: 'code', label: 'Code' }, { key: 'name', label: 'Name' }]}
+              submitLabel="Save item and use it on line 1"
+              onSubmit={async (values) => {
+                const item = await saveCatalogItem({ code: values.code || '', name: values.name || '' }, uoms);
+                await reload();
+                const first = lines[0];
+                if (first) {
+                  updateLine(first.id, 'itemId', item.id);
+                  if (!first.productName) updateLine(first.id, 'productName', item.name);
+                  if (item.uomSymbol) updateLine(first.id, 'uom', item.uomSymbol);
+                }
+              }}
+            >
+              {null}
+            </AddIfEmpty>
+          )}
+          {uoms.length === 0 && (
+            <AddIfEmpty
+              empty
+              title="No units yet"
+              hint="Add a unit such as NOS or KG before pricing a line."
+              fields={[{ key: 'name', label: 'Unit name' }, { key: 'symbol', label: 'Symbol' }]}
+              submitLabel="Save unit"
+              onSubmit={async (values) => {
+                const unit = await saveUnit(values.name || '', values.symbol || '');
+                await reload();
+                const first = lines[0];
+                if (first) updateLine(first.id, 'uom', unit.symbol);
+              }}
+            >
+              {null}
+            </AddIfEmpty>
+          )}
           <Card title="Quotation Lines" trailing={
             <button onClick={addLine} className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold text-white" style={{ background: 'var(--brand-fill)' }}>
               <Plus size={12} /> Add Line

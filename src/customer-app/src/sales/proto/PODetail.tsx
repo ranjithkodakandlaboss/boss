@@ -3,6 +3,8 @@ import React, { useMemo, useState } from 'react';
 import { useParams, useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, FilePlus, ExternalLink, ChevronRight, Ban, CheckCircle2, Layers, Factory } from 'lucide-react';
 import { useStore } from './runtime';
+import AddIfEmpty from './AddIfEmpty';
+import { saveSite } from './quickMasters';
 import StatusChip from '../../components/shared/StatusChip';
 import clsx from 'clsx';
 import DocumentActions from './workflow/DocumentActions';
@@ -23,7 +25,7 @@ export default function PODetail() {
     purchaseReqs, supplierInvitations, supplierQuotations, grns, dispatches, invoices,
     payments, paymentAllocations,
     materials, lots, storeLocations, sites, supplierPos, supplierPoLines,
-    currentUser, updateCustomerPo, resolvePoAmendment, assessAndAllocateCustomerPO, showToast,
+    currentUser, updateCustomerPo, resolvePoAmendment, assessAndAllocateCustomerPO, showToast, reload,
   } = useStore();
   const { goBack, originUrl } = useReturnNavigation('/sales?tab=pos');
   const [allocResultMsg, setAllocResultMsg] = useState<{ status: string; message: string; prId?: string; prNumber?: string } | null>(null);
@@ -421,14 +423,29 @@ export default function PODetail() {
               </p>
             </div>
             <div className="flex items-center gap-2">
-              <select
-                className="eoss-input text-xs py-1.5"
-                value={checkSiteId}
-                onChange={e => setCheckSiteId(e.target.value)}
-                aria-label="Fulfilling site for material check"
+              <AddIfEmpty
+                empty={sites.length === 0}
+                title="No sites yet"
+                hint="Add the plant or warehouse that fulfils this order."
+                fields={[{ key: 'name', label: 'Site name' }]}
+                submitLabel="Save site"
+                onSubmit={async (values) => {
+                  const saved = await saveSite(values.name || '');
+                  const created = (saved.sites ?? []).find((site) => site.name === (values.name || '').trim());
+                  await reload();
+                  if (created?.id) setCheckSiteId(created.id);
+                }}
               >
-                {sites.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-              </select>
+                <select
+                  className="eoss-input text-xs py-1.5"
+                  value={checkSiteId}
+                  onChange={e => setCheckSiteId(e.target.value)}
+                  aria-label="Fulfilling site for material check"
+                >
+                  <option value="">Select a site…</option>
+                  {sites.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                </select>
+              </AddIfEmpty>
               <button
                 type="button"
                 onClick={() => {

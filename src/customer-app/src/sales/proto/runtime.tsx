@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { Outlet, useLocation } from "react-router-dom";
-import { ApiError, safeRandomUUID } from "../../auth/api";
+import { ApiError, api, safeRandomUUID } from "../../auth/api";
+import type { CompanyRecord } from "../../auth/types";
 import { useCustomer } from "../../auth/CustomerState";
 import {
   allPages,
@@ -400,6 +401,7 @@ export function SalesProvider({ children }: { children?: ReactNode }) {
   const [poLines, setPoLines] = useState<POLine[]>([]);
   const [catalog, setCatalog] = useState<CatalogItem[]>([]);
   const [uoms, setUoms] = useState<UomOption[]>([]);
+  const [sites, setSites] = useState<{ id: string; name: string }[]>([]);
   const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([]);
   const [toasts, setToasts] = useState<ToastItem[]>([]);
 
@@ -427,6 +429,12 @@ export function SalesProvider({ children }: { children?: ReactNode }) {
     setPoLines(mapPoLines(poRows));
     setCatalog(itemRows);
     setUoms(uomRows);
+    try {
+      const company = await api<CompanyRecord>("/api/v1/company");
+      setSites((company.sites ?? []).filter((site) => site.id && site.name).map((site) => ({ id: site.id as string, name: site.name })));
+    } catch {
+      setSites([]);
+    }
   }, []);
 
   useEffect(() => {
@@ -517,6 +525,7 @@ export function SalesProvider({ children }: { children?: ReactNode }) {
       poLines,
       catalog,
       uoms,
+      sites,
       currentUser,
       companyConfig,
       auditEvents,
@@ -660,7 +669,7 @@ export function SalesProvider({ children }: { children?: ReactNode }) {
       addDocument: () => showToast({ type: "info", title: "Document file was not stored", body: "Notes typed on the record are saved. File upload is not connected." }),
       appendAuditEvent: () => undefined,
     };
-  }, [auditEvents, catalog, companyConfig, currentUser, customerPos, customers, guard, poLines, quotations, ready, reload, removeToast, rfqs, showToast, toasts, uoms]);
+  }, [auditEvents, catalog, companyConfig, currentUser, customerPos, customers, guard, poLines, quotations, ready, reload, removeToast, rfqs, showToast, sites, toasts, uoms]);
 
   return (
     <SalesContext.Provider value={value}>

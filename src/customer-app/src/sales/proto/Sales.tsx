@@ -6,6 +6,8 @@ import {
   FileText, Briefcase, DollarSign, Clock, User, X, Pencil, XCircle
 } from 'lucide-react';
 import { useStore } from './runtime';
+import AddIfEmpty from './AddIfEmpty';
+import { newCustomer } from './quickMasters';
 import StatusChip, { getStatusLabel } from '../../components/shared/StatusChip';
 import clsx from 'clsx';
 import type { CustomerRFQ, CustomerPO } from './types';
@@ -561,7 +563,7 @@ export default function Sales() {
 }
 
 function NewRFQModal({ onClose, onSave }: { onClose: () => void; onSave: (r: CustomerRFQ) => void }) {
-  const { currentUser, addRfq, customers: CUSTOMERS } = useStore();
+  const { currentUser, addRfq, addCustomer, customers: CUSTOMERS } = useStore();
   const [form, setForm] = useState({
     customerId: '', customerName: '', requiredBy: '', channel: 'Email', lineCount: '1',
   });
@@ -584,13 +586,29 @@ function NewRFQModal({ onClose, onSave }: { onClose: () => void; onSave: (r: Cus
         <div className="space-y-3">
           <div>
             <label className="block text-xs font-medium text-[var(--text-2)] mb-1">Customer *</label>
-            <select className="eoss-input w-full" value={form.customerId} onChange={e => {
-              const c = CUSTOMERS.find(x => x.id === e.target.value);
-              setForm(f => ({ ...f, customerId: e.target.value, customerName: c?.tradingName ?? c?.legalName ?? '' }));
-            }}>
-              <option value="">Select customer…</option>
-              {CUSTOMERS.map(c => <option key={c.id} value={c.id}>{c.tradingName ?? c.legalName}</option>)}
-            </select>
+            <AddIfEmpty
+              empty={CUSTOMERS.length === 0}
+              title="No customers yet"
+              hint="Add the business customer, then pick it for this RFQ."
+              fields={[{ key: 'legalName', label: 'Legal name' }, { key: 'city', label: 'City' }]}
+              submitLabel="Save customer"
+              onSubmit={async (values) => {
+                const name = (values.legalName || '').trim();
+                const city = (values.city || '').trim();
+                if (!name || !city) throw new Error('Enter a legal name and city.');
+                const saved = await addCustomer(newCustomer(name, city));
+                if (!saved?.id) throw new Error('Customer was not saved.');
+                setForm(f => ({ ...f, customerId: saved.id, customerName: saved.tradingName || saved.legalName }));
+              }}
+            >
+              <select className="eoss-input w-full" value={form.customerId} onChange={e => {
+                const c = CUSTOMERS.find(x => x.id === e.target.value);
+                setForm(f => ({ ...f, customerId: e.target.value, customerName: c?.tradingName ?? c?.legalName ?? '' }));
+              }}>
+                <option value="">Select customer…</option>
+                {CUSTOMERS.map(c => <option key={c.id} value={c.id}>{c.tradingName || c.legalName || 'Customer'}</option>)}
+              </select>
+            </AddIfEmpty>
           </div>
           <div>
             <label className="block text-xs font-medium text-[var(--text-2)] mb-1">Required By *</label>
@@ -620,7 +638,7 @@ function NewRFQModal({ onClose, onSave }: { onClose: () => void; onSave: (r: Cus
 }
 
 function DirectOrderModal({ onClose, onSave }: { onClose: () => void; onSave: (po: CustomerPO) => void }) {
-  const { customers, currentUser } = useStore();
+  const { customers, currentUser, addCustomer } = useStore();
   const [customerId, setCustomerId] = useState('');
   const [value, setValue] = useState('');
   const customer = customers.find(c => c.id === customerId);
@@ -629,7 +647,7 @@ function DirectOrderModal({ onClose, onSave }: { onClose: () => void; onSave: (p
     const id = `cpo-direct-${Date.now()}`;
     onSave({ id, poNumber: `DPO-${String(Date.now()).slice(-6)}`, customerId, customerName: customer.tradingName || customer.legalName, acceptedDate: new Date().toISOString().slice(0, 10), paymentTerms: customer.paymentTerms, status: 'active', totalValue: Number(value), currency: customer.currency, lineCount: 1, deliveryTerms: 'To be confirmed' });
   };
-  return <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"><div className="w-full max-w-md rounded-2xl border p-6 shadow-2xl" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}><div className="flex items-center justify-between mb-4"><div><h3 className="font-bold text-[var(--text)]">Direct customer order</h3><p className="text-xs text-[var(--text-2)] mt-1">Use only when no quotation was prepared. The record will be clearly labelled.</p></div><button type="button" onClick={onClose}><X size={16} /></button></div><div className="space-y-3"><label className="block text-xs text-[var(--text-2)]">Customer<select className="eoss-input w-full mt-1" value={customerId} onChange={e => setCustomerId(e.target.value)}><option value="">Select customer…</option>{customers.map(c => <option key={c.id} value={c.id}>{c.tradingName || c.legalName}</option>)}</select></label><label className="block text-xs text-[var(--text-2)]">Order value<input type="number" min="1" className="eoss-input w-full mt-1" value={value} onChange={e => setValue(e.target.value)} /></label><p className="text-[11px] text-[var(--text-3)]">Created by {currentUser.name}. Credit review is applied using the demo customer account.</p></div><div className="flex gap-2 mt-5"><button type="button" onClick={onClose} className="flex-1 py-2 rounded-lg border text-sm" style={{ borderColor: 'var(--border)' }}>Cancel</button><button type="button" onClick={submit} disabled={!customer || !value} className="flex-1 py-2 rounded-lg text-sm font-semibold text-white disabled:opacity-40" style={{ background: 'var(--brand-fill)' }}>Create direct order</button></div></div></div>;
+  return <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"><div className="w-full max-w-md rounded-2xl border p-6 shadow-2xl" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}><div className="flex items-center justify-between mb-4"><div><h3 className="font-bold text-[var(--text)]">Direct customer order</h3><p className="text-xs text-[var(--text-2)] mt-1">Use only when no quotation was prepared. The record will be clearly labelled.</p></div><button type="button" onClick={onClose}><X size={16} /></button></div><div className="space-y-3"><label className="block text-xs text-[var(--text-2)]">Customer<AddIfEmpty empty={customers.length === 0} title="No customers yet" hint="Add the business customer here." fields={[{ key: 'legalName', label: 'Legal name' }, { key: 'city', label: 'City' }]} submitLabel="Save customer" onSubmit={async (values) => { const name = (values.legalName || '').trim(); const city = (values.city || '').trim(); if (!name || !city) throw new Error('Enter a legal name and city.'); const saved = await addCustomer(newCustomer(name, city)); if (!saved?.id) throw new Error('Customer was not saved.'); setCustomerId(saved.id); }}><select className="eoss-input w-full mt-1" value={customerId} onChange={e => setCustomerId(e.target.value)}><option value="">Select customer…</option>{customers.map(c => <option key={c.id} value={c.id}>{c.tradingName || c.legalName || 'Customer'}</option>)}</select></AddIfEmpty></label><label className="block text-xs text-[var(--text-2)]">Order value<input type="number" min="1" className="eoss-input w-full mt-1" value={value} onChange={e => setValue(e.target.value)} /></label><p className="text-[11px] text-[var(--text-3)]">Created by {currentUser.name}. Credit review is applied using the demo customer account.</p></div><div className="flex gap-2 mt-5"><button type="button" onClick={onClose} className="flex-1 py-2 rounded-lg border text-sm" style={{ borderColor: 'var(--border)' }}>Cancel</button><button type="button" onClick={submit} disabled={!customer || !value} className="flex-1 py-2 rounded-lg text-sm font-semibold text-white disabled:opacity-40" style={{ background: 'var(--brand-fill)' }}>Create direct order</button></div></div></div>;
 }
 
 function Metric({ icon, label, value, small }: { icon: React.ReactNode; label: string; value: string; small?: boolean }) {

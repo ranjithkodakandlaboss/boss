@@ -135,6 +135,22 @@ export type Cpo = {
 };
 export type ItemOption = { id: string; code: string; name: string; uomId: string; uomSymbol?: string; gstRate?: number };
 export type UomOption = { id: string; symbol: string; name: string };
+
+export function createUom(body: { name: string; symbol: string; uomType?: string; isBase?: boolean }) {
+  return api<UomOption>("/api/v1/uoms", {
+    method: "POST",
+    headers: { "Idempotency-Key": key() },
+    body: JSON.stringify(body),
+  });
+}
+
+export function createItem(body: { code: string; name: string; itemType: string; uomId: string }) {
+  return api<ItemOption>("/api/v1/items", {
+    method: "POST",
+    headers: { "Idempotency-Key": key() },
+    body: JSON.stringify(body),
+  });
+}
 export type FieldChange = { field: string; previousValue: string; newValue: string };
 export type AuditEntry = { id: string; actorId?: string; actorName?: string; action: string; createdAt: string; changes?: FieldChange[] };
 

@@ -3,6 +3,9 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, ArrowRight, Plus, Trash2, Check, FileText, Package, Settings, Upload, Eye } from 'lucide-react';
 import { useStore } from './runtime';
+import { createItem, createUom } from '../api';
+import AddIfEmpty from './AddIfEmpty';
+import { newCustomer, saveUnit } from './quickMasters';
 import type { CustomerRFQ } from './types';
 
 type Step = 1 | 2 | 3 | 4 | 5;
@@ -40,7 +43,10 @@ function newLine(n: number): RFQLine {
 
 export default function RFQCreate() {
   const navigate = useNavigate();
-  const { addRfq, currentUser, customers: CUSTOMERS, catalog, uoms } = useStore();
+  const { addRfq, addCustomer, currentUser, customers: CUSTOMERS, catalog, uoms, reload } = useStore();
+  const [itemDraft, setItemDraft] = useState({ code: '', name: '', uomId: '' });
+  const [itemError, setItemError] = useState('');
+  const [savingItem, setSavingItem] = useState(false);
   const [step, setStep] = useState<Step>(1);
 
   // Step 1: Header
@@ -65,6 +71,38 @@ export default function RFQCreate() {
   const [docNotes, setDocNotes] = useState('');
 
   const customer = CUSTOMERS.find(c => c.id === customerId);
+  const customerLabel = (entry: { tradingName?: string; legalName?: string }) =>
+    (entry.tradingName || entry.legalName || 'Customer').trim();
+
+  async function saveFirstItem(lineId: string) {
+    const code = itemDraft.code.trim();
+    const name = itemDraft.name.trim();
+    if (!code || !name) {
+      setItemError('Enter an item code and name.');
+      return;
+    }
+    setSavingItem(true);
+    setItemError('');
+    try {
+      let uomId = itemDraft.uomId || uoms[0]?.id;
+      let uomSymbol = uoms.find(unit => unit.id === uomId)?.symbol || '';
+      if (!uomId) {
+        const unit = await createUom({ name: 'Numbers', symbol: 'NOS', uomType: 'quantity', isBase: true });
+        uomId = unit.id;
+        uomSymbol = unit.symbol || 'NOS';
+      }
+      const item = await createItem({ code, name, itemType: 'FINISHED_GOOD', uomId });
+      await reload();
+      updateLine(lineId, 'itemId', item.id);
+      updateLine(lineId, 'description', item.name || name);
+      updateLine(lineId, 'uom', item.uomSymbol || uomSymbol);
+      setItemDraft({ code: '', name: '', uomId: '' });
+    } catch (error) {
+      setItemError(error instanceof Error ? error.message : 'The item was not saved');
+    } finally {
+      setSavingItem(false);
+    }
+  }
 
   const addLine = () => setLines(ls => [...ls, newLine(ls.length + 1)]);
   const removeLine = (id: string) => setLines(ls => ls.filter(l => l.id !== id).map((l, i) => ({ ...l, lineNumber: i + 1 })));
@@ -168,10 +206,26 @@ export default function RFQCreate() {
               <FormCard title="Customer & Channel">
                 <div className="grid md:grid-cols-2 gap-4">
                   <Field label="Customer *">
-                    <select value={customerId} onChange={e => setCustomerId(e.target.value)} className="eoss-input">
-                      <option value="">— Select customer —</option>
-                      {CUSTOMERS.map(c => <option key={c.id} value={c.id}>{c.tradingName ?? c.legalName}</option>)}
-                    </select>
+                    <AddIfEmpty
+                      empty={CUSTOMERS.length === 0}
+                      title="No customers yet"
+                      hint="Add the business customer here. The same record is then available on quotations and customer POs."
+                      fields={[{ key: 'legalName', label: 'Legal name' }, { key: 'city', label: 'City' }]}
+                      submitLabel="Save customer"
+                      onSubmit={async (values) => {
+                        const name = (values.legalName || '').trim();
+                        const city = (values.city || '').trim();
+                        if (!name || !city) throw new Error('Enter a legal name and city.');
+                        const saved = await addCustomer(newCustomer(name, city));
+                        if (!saved?.id) throw new Error('Customer was not saved.');
+                        setCustomerId(saved.id);
+                      }}
+                    >
+                      <select value={customerId} onChange={e => setCustomerId(e.target.value)} className="eoss-input">
+                        <option value="">— Select customer —</option>
+                        {CUSTOMERS.map(c => <option key={c.id} value={c.id}>{customerLabel(c)}</option>)}
+                      </select>
+                    </AddIfEmpty>
                   </Field>
                   <Field label="Received Via">
                     <select value={channel} onChange={e => setChannel(e.target.value)} className="eoss-input">
@@ -217,6 +271,30 @@ export default function RFQCreate() {
           {/* Step 2: Lines */}
           {step === 2 && (
             <div className="space-y-4">
+              {catalog.length === 0 && (
+                <div className="rounded-xl border p-4 space-y-3" style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}>
+                  <p className="text-sm font-semibold text-[var(--text)]">The item list is empty</p>
+                  <p className="text-xs text-[var(--text-2)]">An RFQ line needs an item from the item master. Add the first one here. The same item is then available on quotations, purchase lines and stock.</p>
+                  <div className="grid md:grid-cols-3 gap-3">
+                    <label className="text-xs font-medium text-[var(--text-2)]">Code
+                      <input className="eoss-input w-full mt-1" value={itemDraft.code} onChange={e => setItemDraft(d => ({ ...d, code: e.target.value.toUpperCase() }))} />
+                    </label>
+                    <label className="text-xs font-medium text-[var(--text-2)]">Name
+                      <input className="eoss-input w-full mt-1" value={itemDraft.name} onChange={e => setItemDraft(d => ({ ...d, name: e.target.value }))} />
+                    </label>
+                    <label className="text-xs font-medium text-[var(--text-2)]">Unit
+                      <select className="eoss-input w-full mt-1" value={itemDraft.uomId || uoms[0]?.id || ''} onChange={e => setItemDraft(d => ({ ...d, uomId: e.target.value }))}>
+                        {uoms.length === 0 && <option value="">NOS will be created</option>}
+                        {uoms.map(unit => <option key={unit.id} value={unit.id}>{unit.symbol} · {unit.name}</option>)}
+                      </select>
+                    </label>
+                  </div>
+                  {itemError && <p className="text-xs text-[var(--error,#DC2626)]">{itemError}</p>}
+                  <button type="button" disabled={savingItem} onClick={() => saveFirstItem(lines[0].id)} className="px-3 py-1.5 rounded-lg text-xs font-semibold text-white" style={{ background: 'var(--brand-fill)' }}>
+                    {savingItem ? 'Saving item…' : 'Save item and use it on line 1'}
+                  </button>
+                </div>
+              )}
               <div className="flex items-center justify-between">
                 <p className="text-sm text-[var(--text-2)]">Add each part / drawing to be quoted.</p>
                 <button onClick={addLine} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-white" style={{ background: 'var(--brand-fill)' }}>
@@ -264,10 +342,23 @@ export default function RFQCreate() {
                       <input type="number" min={1} value={l.quantity} onChange={e => updateLine(l.id, 'quantity', parseInt(e.target.value) || 1)} className="eoss-input" />
                     </Field>
                     <Field label="UOM">
-                      <select value={l.uom} onChange={e => updateLine(l.id, 'uom', e.target.value)} className="eoss-input">
-                        <option value="">{uoms.length ? 'Select a unit…' : 'Units are not loaded'}</option>
-                        {uoms.map(unit => <option key={unit.id} value={unit.symbol}>{unit.symbol}</option>)}
-                      </select>
+                      <AddIfEmpty
+                        empty={uoms.length === 0}
+                        title="No units yet"
+                        hint="Add a unit such as NOS or KG. It is shared by sales, purchase and stock lines."
+                        fields={[{ key: 'name', label: 'Unit name' }, { key: 'symbol', label: 'Symbol' }]}
+                        submitLabel="Save unit"
+                        onSubmit={async (values) => {
+                          const unit = await saveUnit(values.name || '', values.symbol || '');
+                          await reload();
+                          updateLine(l.id, 'uom', unit.symbol);
+                        }}
+                      >
+                        <select value={l.uom} onChange={e => updateLine(l.id, 'uom', e.target.value)} className="eoss-input">
+                          <option value="">Select a unit…</option>
+                          {uoms.map(unit => <option key={unit.id} value={unit.symbol}>{unit.symbol}</option>)}
+                        </select>
+                      </AddIfEmpty>
                     </Field>
                     <Field label="Target Price (₹)">
                       <input type="number" min={0} value={l.targetPrice} onChange={e => updateLine(l.id, 'targetPrice', e.target.value === '' ? '' : parseFloat(e.target.value))} className="eoss-input" placeholder="Optional" />

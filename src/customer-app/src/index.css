@@ -691,6 +691,10 @@ body {
 }
 .eoss-input::placeholder { color: var(--text-3); }
 select.eoss-input { cursor: pointer; }
+select.eoss-input option {
+  color: #1A1F36;
+  background: #ffffff;
+}
 
 /* Shared workspace controls: search and filters use the same footprint everywhere. */
 .eoss-search-input {
