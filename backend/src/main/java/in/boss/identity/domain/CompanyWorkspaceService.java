@@ -271,10 +271,12 @@ public class CompanyWorkspaceService {
 
     private List<Map<String, Object>> stores(UUID tenantId) {
         return jdbc.query(
-                "SELECT s.name, s.code, s.store_type, p.code AS site_code FROM stores s "
+                "SELECT s.id, s.site_id, s.name, s.code, s.store_type, p.code AS site_code FROM stores s "
                         + "JOIN physical_sites p ON p.id = s.site_id WHERE s.tenant_id = ? ORDER BY s.created_at",
                 (rs, row) -> {
                     Map<String, Object> store = new LinkedHashMap<>();
+                    store.put("id", rs.getObject("id", UUID.class));
+                    store.put("siteId", rs.getObject("site_id", UUID.class));
                     store.put("name", rs.getString("name"));
                     store.put("code", rs.getString("code"));
                     store.put("storeType", rs.getString("store_type"));

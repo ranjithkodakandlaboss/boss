@@ -18,7 +18,7 @@ const fmt = (d?: string) => formatDisplayDate(d);
 const fmtMoney = (n: number) => n ? `₹${Math.round(n).toLocaleString('en-IN')}` : '—';
 
 function quoteTotal(q: SupplierQuotation) {
-  return q.lines.reduce((sum, l) => {
+  return (q.lines ?? []).reduce((sum, l) => {
     const qty = l.quotedQty ?? l.orderedQty ?? 1;
     const rate = l.unitPrice ?? l.unitRate ?? 0;
     const base = l.lineTotal || qty * rate;
@@ -54,6 +54,25 @@ export default function PRDetail() {
   const [rejectQuoteModal, setRejectQuoteModal] = useState<SupplierQuotation | null>(null);
   const [quoteRejectReason, setQuoteRejectReason] = useState('');
 
+  const lines = pr?.lines ?? [];
+  const totalEstValue = lines.reduce((s, l) => s + (l.estimatedPrice ?? 0) * (l.requiredQty ?? 0), 0);
+  const prQuotations = supplierQuotations.filter(q => q.prId === pr?.id);
+  const activePrQuotations = prQuotations.filter(q => !['rejected', 'approval_rejected'].includes(q.status));
+  const prInvitations = supplierInvitations.filter(i => i.prId === pr?.id);
+  const selectedQuotation = activePrQuotations.find(q => q.status === 'selected');
+  const linkedSpo = pr ? supplierPos.find(s => s.prId === pr.id && !['cancelled', 'supplier_declined'].includes(s.status)) : undefined;
+  const linkedGrns = linkedSpo ? grns.filter(g => g.spoId === linkedSpo.id) : [];
+  const minQuoteTotal = activePrQuotations.length > 0 ? Math.min(...activePrQuotations.map(quoteTotal)) : 0;
+  const minDeliveryDays = activePrQuotations.length > 0 ? Math.min(...activePrQuotations.map(q => q.deliveryDays)) : 0;
+  const prComparison = useMemo(
+    () => (pr && prQuotations.length >= 2 ? compareAndRecommendQuotations(pr, prQuotations, suppliers, supplierPos) : null),
+    [pr, prQuotations, suppliers, supplierPos],
+  );
+  const activePrComparison = useMemo(
+    () => (pr && activePrQuotations.length >= 2 ? compareAndRecommendQuotations(pr, activePrQuotations, suppliers, supplierPos) : null),
+    [pr, activePrQuotations, suppliers, supplierPos],
+  );
+
   if (!pr) {
     return (
       <div className="p-8 text-center text-sm text-[var(--text-2)]">
@@ -65,27 +84,6 @@ export default function PRDetail() {
   const isPrBlocked = pr.status === 'rejected' || pr.status === 'cancelled';
   const canApprove = ['owner', 'buyer'].includes(currentUser.role);
   const canEditPr = ['owner', 'buyer', 'supervisor'].includes(currentUser.role) && !['converted', 'cancelled', 'rejected'].includes(pr.status);
-  const lines = pr.lines ?? [];
-  const totalEstValue = lines.reduce((s, l) => s + (l.estimatedPrice ?? 0) * (l.requiredQty ?? 0), 0);
-
-  const prQuotations = supplierQuotations.filter(q => q.prId === pr.id);
-  const activePrQuotations = prQuotations.filter(q => !['rejected', 'approval_rejected'].includes(q.status));
-  const prInvitations = supplierInvitations.filter(i => i.prId === pr.id);
-  const selectedQuotation = activePrQuotations.find(q => q.status === 'selected');
-  const linkedSpo = supplierPos.find(s => s.prId === pr.id && !['cancelled', 'supplier_declined'].includes(s.status));
-  const linkedGrns = linkedSpo ? grns.filter(g => g.spoId === linkedSpo.id) : [];
-
-  const minQuoteTotal = activePrQuotations.length > 0 ? Math.min(...activePrQuotations.map(quoteTotal)) : 0;
-  const minDeliveryDays = activePrQuotations.length > 0 ? Math.min(...activePrQuotations.map(q => q.deliveryDays)) : 0;
-
-  const prComparison = useMemo(
-    () => (prQuotations.length >= 2 ? compareAndRecommendQuotations(pr, prQuotations, suppliers, supplierPos) : null),
-    [pr, prQuotations, suppliers, supplierPos],
-  );
-  const activePrComparison = useMemo(
-    () => (activePrQuotations.length >= 2 ? compareAndRecommendQuotations(pr, activePrQuotations, suppliers, supplierPos) : null),
-    [pr, activePrQuotations, suppliers, supplierPos],
-  );
   const recommendedQuoteId = activePrComparison?.recommendedQuoteId;
   const effectiveWinnerId = chosenQuoteId || selectedQuotation?.id || recommendedQuoteId || activePrQuotations[0]?.id || '';
   const isOverridingRec = Boolean(recommendedQuoteId && effectiveWinnerId && effectiveWinnerId !== recommendedQuoteId);

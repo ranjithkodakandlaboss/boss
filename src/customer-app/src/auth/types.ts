@@ -24,7 +24,7 @@ export type CompanyRecord = {
   financialYear: string | null;
   currency: string | null;
   sites: { id?: string; name: string; code: string; siteType?: string; city?: string; state?: string; addressLine?: string }[];
-  stores: { name: string; code: string; siteCode: string; storeType?: string }[];
+  stores: { id?: string; siteId?: string; name: string; code: string; siteCode: string; storeType?: string }[];
 };
 
 export type OnboardingState = {

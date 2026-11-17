@@ -39,11 +39,11 @@ export default function SupplierPODetail() {
 
   const lines = supplierPoLines.filter(l => l.spoId === id);
   const linkedGrns = grns.filter(g => g.spoId === po.id);
-  const linkedBills = supplierBills.filter(b => b.spoId === po.id && b.status !== 'void');
+  const linkedBills = (supplierBills ?? []).filter(b => b.spoId === po.id && b.status !== 'void');
   const linkedBillPayIds = new Set(
-    supplierPaymentAllocations.filter(a => linkedBills.some(b => b.id === a.billId)).map(a => a.paymentId)
+    (supplierPaymentAllocations ?? []).filter(a => linkedBills.some(b => b.id === a.billId)).map(a => a.paymentId)
   );
-  const linkedSupplierPayments = supplierPayments.filter(p => linkedBillPayIds.has(p.id) && p.status !== 'reversed');
+  const linkedSupplierPayments = (supplierPayments ?? []).filter(p => linkedBillPayIds.has(p.id) && p.status !== 'reversed');
   const canEdit = ['owner', 'buyer', 'storekeeper'].includes(currentUser.role);
   const canApprove = ['owner', 'buyer'].includes(currentUser.role);
   const pr = purchaseReqs.find(p => p.id === po.prId);

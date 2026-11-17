@@ -382,6 +382,7 @@ export function ProcurementProvider({ children }: { children?: ReactNode }) {
     const nextSites = (company?.sites ?? []).filter((site) => site.id && site.name).map((site) => ({
       id: site.id as string,
       name: site.name,
+      code: site.code,
       city: site.city,
       state: site.state,
       status: "active",
@@ -437,11 +438,11 @@ export function ProcurementProvider({ children }: { children?: ReactNode }) {
     })));
     setUoms(uomRows.map((uom) => ({ id: uom.id, symbol: uom.symbol })));
     setSites(nextSites);
-    setStoreLocations((company?.stores ?? []).filter((store) => (store as { id?: string }).id).map((store) => ({
-      id: (store as { id?: string }).id,
-      name: store.name,
-      siteId: nextSites.find((site) => site.name && store.siteCode)?.id,
-    })));
+    setStoreLocations((company?.stores ?? []).flatMap((store) => {
+      if (!store.id) return [];
+      const siteId = store.siteId || nextSites.find((site) => site.code && site.code === store.siteCode)?.id;
+      return [{ id: store.id, name: store.name, siteId, locationType: store.storeType, code: store.code }];
+    }));
     dataRef.current = {
       suppliers: supplierRows,
       prs: mappedPrs,
@@ -501,7 +502,7 @@ export function ProcurementProvider({ children }: { children?: ReactNode }) {
       sentDate: quote.deliveryStatus === "sent" ? "Sent" : "",
       responseDueDate: quote.validUntil,
       status: "awaiting_quotation",
-      quotationId: quote.id,
+      quotationId: undefined,
       deliveryStatus: quote.deliveryStatus,
       deliveryRecipient: quote.deliveryRecipient,
       deliveryError: quote.deliveryError,
@@ -538,6 +539,7 @@ export function ProcurementProvider({ children }: { children?: ReactNode }) {
       auditEvents: [],
       supplierBills: [],
       supplierPayments: [],
+      supplierPaymentAllocations: [],
       supplierCatalog: [],
       poAmendments,
       approvalRequests,
@@ -660,7 +662,7 @@ export function ProcurementProvider({ children }: { children?: ReactNode }) {
         return created;
       }),
       addSupplierQuotation: async (quote: any) => guard(async () => {
-        const existing = (dataRef.current.quotes as any[]).find((item) => item.prId === quote.prId && item.supplierId === quote.supplierId && item.status === "requested");
+        const existing = ((dataRef.current.quotes as any[] | undefined) ?? []).find((item) => item.prId === quote.prId && item.supplierId === quote.supplierId && item.status === "requested");
         const created = existing ? { id: existing.id } : await procurementApi.createQuotation(quote.prId, quote.supplierId);
         const pr = purchaseReqs.find((item) => item.id === quote.prId);
         const lines = (quote.lines ?? []).map((line: any) => {

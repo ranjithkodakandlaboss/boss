@@ -114,7 +114,7 @@ export default function Procurement() {
     matchStatus(qt.status) && (!q || qt.quoteNumber.toLowerCase().includes(q) || qt.supplierName.toLowerCase().includes(q) || (qt.prNumber ?? '').toLowerCase().includes(q))
   );
   const filteredQuotes = sortRows(filteredQuotesBase, sortKey, sortDir, (qt, key) => {
-    const values: Record<string, unknown> = { number: qt.quoteNumber, supplier: qt.supplierName, date: qt.quoteDate, validUntil: qt.validUntil, leadTime: qt.deliveryDays, terms: qt.paymentTerms, value: qt.lines.reduce((s, l) => s + l.lineTotal, 0), status: qt.status };
+    const values: Record<string, unknown> = { number: qt.quoteNumber, supplier: qt.supplierName, date: qt.quoteDate, validUntil: qt.validUntil, leadTime: qt.deliveryDays, terms: qt.paymentTerms, value: (qt.lines ?? []).reduce((s, l) => s + l.lineTotal, 0), status: qt.status };
     return values[key] ?? qt.quoteDate;
   });
   const overduePOs = supplierPos.filter(p => p.status === 'overdue' && matchSite(p.deliverToSiteId) && (!q || p.poNumber.toLowerCase().includes(q) || p.supplierName.toLowerCase().includes(q))).length;
@@ -459,7 +459,7 @@ export default function Procurement() {
                 </div>
                 <div className="md:hidden space-y-2">
                   {filteredQuotes.map(qt => {
-                    const total = qt.lines.reduce((s, l) => s + l.lineTotal, 0) + (qt.taxAmount ?? 0) + (qt.deliveryCharges ?? 0) - (qt.discountAmount ?? 0);
+                    const total = (qt.lines ?? []).reduce((s, l) => s + l.lineTotal, 0) + (qt.taxAmount ?? 0) + (qt.deliveryCharges ?? 0) - (qt.discountAmount ?? 0);
                     const grouped = supplierQuotations.filter(x => x.prId && x.prId === qt.prId);
                     const checked = selectedQuoteIds.includes(qt.id);
                     return (
@@ -499,7 +499,7 @@ export default function Procurement() {
                   </tr></thead>
                   <tbody>
                     {filteredQuotes.map(q => {
-                      const total = q.lines.reduce((s, l) => s + l.lineTotal, 0) + (q.taxAmount ?? 0) + (q.deliveryCharges ?? 0) - (q.discountAmount ?? 0);
+                      const total = (q.lines ?? []).reduce((s, l) => s + l.lineTotal, 0) + (q.taxAmount ?? 0) + (q.deliveryCharges ?? 0) - (q.discountAmount ?? 0);
                       const grouped = supplierQuotations.filter(x => x.prId && x.prId === q.prId && !['rejected', 'approval_rejected'].includes(x.status));
                       const checked = selectedQuoteIds.includes(q.id);
                       return (
