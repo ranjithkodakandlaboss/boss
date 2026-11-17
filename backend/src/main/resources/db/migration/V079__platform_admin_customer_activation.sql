@@ -1,4 +1,4 @@
--- Keep the intended administrator contact independent of the owner invitation state.
+-- Keep the intended administrator contact separate from the invitation lifecycle.
 ALTER TABLE tenant_registry
     ADD COLUMN initial_admin_email TEXT;
 
