@@ -113,9 +113,12 @@ paths:
       operationId: activateInvitation
       summary: Activate an invitation and create the Firebase user
       description: |
-        Accepts the one-time invitation token created for this email. The password is sent to
-        Firebase Auth. The plaintext token is not stored. This endpoint is public because the
-        caller does not yet have a customer session.
+        Consumes the one-time `adminInviteToken` created by Platform Admin. Hash the exact
+        returned token with SHA-256 over UTF-8 and store lowercase hex in `invite_tokens.token_hash`.
+        This endpoint trims surrounding whitespace, then uses that same hash. The token is single-use:
+        status must be `pending` and `expires_at` must be in the future. Success sets status to
+        `accepted` and creates the Firebase user in the customer Firebase project, not the Platform
+        Admin project. The tenant must already be `active`. A bearer token is ignored.
       tags: [Identity]
       security: []
       parameters:

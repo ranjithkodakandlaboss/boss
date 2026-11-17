@@ -13,18 +13,17 @@ export default function ActivatePage() {
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
-    const email = String(data.get("email") ?? "");
     const password = String(data.get("password") ?? "");
     const token = String(data.get("token") ?? "");
     setPending(true);
     setError("");
     try {
-      await api("/api/v1/auth/activate", {
+      const user = await api<{ email: string }>("/api/v1/auth/activate", {
         method: "POST",
         headers: { "Idempotency-Key": crypto.randomUUID() },
         body: JSON.stringify({ token, password, displayName: String(data.get("displayName") ?? "") }),
       });
-      signIn(await firebaseSignIn(email, password));
+      signIn(await firebaseSignIn(user.email, password));
       window.location.assign("/onboarding");
     } catch (caught) {
       setError(caught instanceof ApiError || caught instanceof Error ? caught.message : "Activation failed");
@@ -40,8 +39,8 @@ export default function ActivatePage() {
         <p className="text-sm text-[var(--text-2)]">Use the invitation token from your workspace administrator.</p>
         <TextField label="Invitation token" name="token" required defaultValue={params.get("token") ?? ""} />
         <TextField label="Display name" name="displayName" />
-        <TextField label="Email" name="email" type="email" required />
         <TextField label="Password" name="password" type="password" required minLength={6} />
+        <p className="text-xs text-[var(--text-3)]">The password is created for the email address on the invitation.</p>
         {error && <p role="alert" className="text-sm text-[var(--error)]">{error}</p>}
         <Button type="submit" disabled={pending}>{pending ? "Activating" : "Activate"}</Button>
         <p className="text-xs text-[var(--text-3)]"><Link className="underline" to="/login">Back to sign in</Link></p>

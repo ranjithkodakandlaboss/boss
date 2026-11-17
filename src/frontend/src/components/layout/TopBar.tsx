@@ -2,8 +2,6 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Bell, Check, ChevronDown, HelpCircle, Menu, Search, Settings } from "lucide-react";
 import clsx from "clsx";
-import { useCustomer } from "../../auth/CustomerState";
-import { signOut } from "../../auth/session";
 import { useShell } from "../../shell/ShellContext";
 import { PALETTES } from "../../shell/theme";
 import QuickNewMenu from "./QuickNewMenu";
@@ -12,7 +10,6 @@ import Modal from "../shared/Modal";
 
 export default function TopBar({ onOpenMenu }: { onOpenMenu?: () => void }) {
   const { collapsed, palette, mode, setPalette, setMode } = useShell();
-  const customer = useCustomer();
   const navigate = useNavigate();
   const [searchOpen, setSearchOpen] = useState(false);
   const [themeMenuOpen, setThemeMenuOpen] = useState(false);
@@ -45,9 +42,9 @@ export default function TopBar({ onOpenMenu }: { onOpenMenu?: () => void }) {
           )}
           <button type="button" onClick={() => navigate("/admin")} className="flex flex-col text-left" title="Open Company Details in Admin & Settings" aria-label="Open Company Details in Admin & Settings">
             <span className="text-sm sm:text-base font-extrabold text-[var(--text)] tracking-tight inline-flex items-center gap-1">
-              {customer.tenant?.name ?? "Company"} <ChevronDown size={13} className="text-[var(--text-2)] hidden sm:inline" />
+              Company <ChevronDown size={13} className="text-[var(--text-2)] hidden sm:inline" />
             </span>
-            <span className="text-[10px] sm:text-[11px] text-[var(--text-2)] font-medium hidden md:inline">{customer.user?.email ?? "Profile unavailable until sign-in"}</span>
+            <span className="text-[10px] sm:text-[11px] text-[var(--text-2)] font-medium hidden md:inline">Profile unavailable until sign-in</span>
           </button>
         </div>
         <div className="flex-1 flex justify-center sm:justify-start max-w-xs sm:max-w-md lg:max-w-xl mx-1 sm:mx-3 md:mx-6">
@@ -107,8 +104,8 @@ export default function TopBar({ onOpenMenu }: { onOpenMenu?: () => void }) {
               </>
             )}
           </div>
-          <button type="button" onClick={() => setProfileOpen(true)} className="w-8 h-8 sm:w-9 sm:h-9 rounded-full text-white text-xs font-bold" style={{ background: "linear-gradient(135deg, var(--brand), var(--brand-secondary, #A855F7))" }} aria-label={customer.user?.displayName ?? "Not signed in"}>
-            {(customer.user?.displayName ?? "?").slice(0, 1)}
+          <button type="button" onClick={() => setProfileOpen(true)} className="w-8 h-8 sm:w-9 sm:h-9 rounded-full text-white text-xs font-bold" style={{ background: "linear-gradient(135deg, var(--brand), var(--brand-secondary, #A855F7))" }} aria-label="Not signed in">
+            ?
           </button>
         </div>
       </header>
@@ -117,9 +114,8 @@ export default function TopBar({ onOpenMenu }: { onOpenMenu?: () => void }) {
         <p className="text-sm text-[var(--text-2)]">No notifications. The customer notification feed is not connected.</p>
       </Modal>
       <Modal open={profileOpen} title="My Profile" onClose={() => setProfileOpen(false)}>
-        <p className="text-sm font-semibold text-[var(--text)]">{customer.user?.displayName || customer.user?.email || "Not signed in"}</p>
-        <p className="text-xs text-[var(--text-2)] mt-1">{customer.user?.roles.map((role) => role.role).join(", ") || "Role and name come from the customer session."}</p>
-        {customer.user && <button type="button" className="mt-3 text-xs font-semibold underline" onClick={() => { signOut(); window.location.assign("/login"); }}>Sign out</button>}
+        <p className="text-sm font-semibold text-[var(--text)]">Not signed in</p>
+        <p className="text-xs text-[var(--text-2)] mt-1">Role and name come from the customer session. No demo user is shown.</p>
         <button type="button" onClick={() => { setProfileOpen(false); navigate("/admin"); }} className="mt-4 w-full flex items-center justify-center gap-2 py-2 rounded-xl border text-xs font-semibold" style={{ borderColor: "var(--border)" }}>
           <Settings size={14} /> Open Admin & System Settings
         </button>
