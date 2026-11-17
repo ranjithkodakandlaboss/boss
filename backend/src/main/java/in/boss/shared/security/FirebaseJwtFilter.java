@@ -61,6 +61,13 @@ public class FirebaseJwtFilter extends OncePerRequestFilter {
                         var auth = new UsernamePasswordAuthenticationToken(
                                 ctx.firebaseUid(), null, authorities);
                         SecurityContextHolder.getContext().setAuthentication(auth);
+                    } else if (tenantContextResolver.isInactive(decoded.getUid())) {
+                        response.setStatus(HttpServletResponse.SC_FORBIDDEN);
+                        response.setContentType("application/json");
+                        response.getWriter().write(
+                                "{\"title\":\"Forbidden\",\"status\":403,"
+                                + "\"detail\":\"User is suspended or deactivated\"}");
+                        return;
                     }
                 } catch (Exception ex) {
                     log.debug("JWT validation failed: {}", ex.getMessage());

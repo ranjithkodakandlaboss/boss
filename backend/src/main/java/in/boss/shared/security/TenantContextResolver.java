@@ -50,4 +50,16 @@ public class TenantContextResolver {
         return new BossContext(tenantId, userId, Collections.unmodifiableSet(roles),
                 siteId, firebaseUid);
     }
+
+    /**
+     * True when this Firebase UID belongs to a user who is not active.
+     * An unknown UID returns false so the caller can treat it as signed-out.
+     */
+    public boolean isInactive(String firebaseUid) {
+        List<Map<String, Object>> rows = jdbc.queryForList(
+                "SELECT out_status FROM boss_resolve_firebase_uid(?)",
+                firebaseUid);
+        if (rows.isEmpty() || rows.get(0).get("out_status") == null) return false;
+        return !"active".equals(rows.get(0).get("out_status").toString());
+    }
 }

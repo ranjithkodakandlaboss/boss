@@ -108,6 +108,42 @@ components:
         totalPages: { type: integer }
 
 paths:
+  /auth/activate:
+    post:
+      operationId: activateInvitation
+      summary: Activate an invitation and create the Firebase user
+      description: |
+        Accepts the one-time invitation token created for this email. The password is sent to
+        Firebase Auth. The plaintext token is not stored. This endpoint is public because the
+        caller does not yet have a customer session.
+      tags: [Identity]
+      security: []
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, password]
+              properties:
+                token: { type: string }
+                password: { type: string, minLength: 6 }
+                displayName: { type: string }
+      responses:
+        '201':
+          description: User activated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UserProfile' }
+        '400': { description: Token or password is missing or too short }
+        '404': { description: Token was not found }
+        '409': { description: Token is no longer pending, or Firebase rejected the user }
+
   /auth/me:
     get:
       operationId: getCurrentUser

@@ -28,6 +28,7 @@ public class BossSecurityConfig {
             .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers("/actuator/health", "/actuator/info").permitAll()
+                .requestMatchers(org.springframework.http.HttpMethod.POST, "/api/v1/auth/activate").permitAll()
                 .anyRequest().authenticated()
             )
             .addFilterBefore(firebaseJwtFilter, UsernamePasswordAuthenticationFilter.class)

@@ -9,6 +9,7 @@ import { SelectField, TextField } from "../components/shared/Fields";
 import Button from "../components/shared/Button";
 import ConfirmDialog from "../components/shared/ConfirmDialog";
 import { getStatusLabel } from "../components/shared/StatusChip";
+import CompanyPanel from "./CompanyPanel";
 import HomePage from "./HomePage";
 import OnboardingPage from "./OnboardingPage";
 
@@ -140,7 +141,8 @@ function Workspace({ screen }: { screen: ScreenDef }) {
           ))}
         </div>
       )}
-      {(screen.kind === "record" || screen.kind === "admin") && !screen.columns && (
+      {screen.path === "admin" && tab === "company" && <CompanyPanel />}
+      {(screen.kind === "record" || screen.kind === "admin") && !screen.columns && !(screen.path === "admin" && tab === "company") && (
         <StateBody state={state} title="No records" />
       )}
       {screen.kind === "record" && screen.columns && <DataTable columns={screen.columns} state={state} emptyTitle="No lines" />}

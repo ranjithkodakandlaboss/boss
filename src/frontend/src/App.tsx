@@ -3,8 +3,12 @@ import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router-
 import { X } from "lucide-react";
 import AppShell from "./components/layout/AppShell";
 import { sheetParent } from "./components/layout/sheetRoutes";
+import { CustomerProvider, useCustomer } from "./auth/CustomerState";
 import { ShellProvider } from "./shell/ShellContext";
-import { findScreen, screens } from "./screens/catalog";
+import { findScreen } from "./screens/catalog";
+import ActivatePage from "./screens/ActivatePage";
+import LoginPage from "./screens/LoginPage";
+import OnboardingPage from "./screens/OnboardingPage";
 import ScreenPage from "./screens/ScreenPage";
 
 function Background({ pathname }: { pathname: string }) {
@@ -61,18 +65,36 @@ function RoutedScreen() {
   );
 }
 
+function Guard() {
+  const location = useLocation();
+  const customer = useCustomer();
+  if (!customer.ready) return <p role="status">Loading session</p>;
+  const open = location.pathname === "/login" || location.pathname === "/activate";
+  if (!customer.user && !open) return <Navigate to="/login" replace />;
+  if (customer.user && !customer.onboarding?.completed && location.pathname !== "/onboarding" && !open) {
+    return <Navigate to="/onboarding" replace />;
+  }
+  return (
+    <Routes>
+      <Route path="login" element={<LoginPage />} />
+      <Route path="activate" element={<ActivatePage />} />
+      <Route path="onboarding" element={<OnboardingPage />} />
+      <Route element={<AppShell />}>
+        <Route path="sales/customers" element={<Navigate to="/sales?tab=customers" replace />} />
+        <Route path="settings" element={<Navigate to="/admin" replace />} />
+        <Route path="admin/audit" element={<Navigate to="/audit" replace />} />
+        <Route path="*" element={<RoutedScreen />} />
+      </Route>
+    </Routes>
+  );
+}
+
 export default function App() {
   return (
     <ShellProvider>
-      <Routes>
-        <Route path="onboarding" element={<ScreenPage screen={screens.find((screen) => screen.kind === "onboarding")!} />} />
-        <Route element={<AppShell />}>
-          <Route path="sales/customers" element={<Navigate to="/sales?tab=customers" replace />} />
-          <Route path="settings" element={<Navigate to="/admin" replace />} />
-          <Route path="admin/audit" element={<Navigate to="/audit" replace />} />
-          <Route path="*" element={<RoutedScreen />} />
-        </Route>
-      </Routes>
+      <CustomerProvider>
+        <Guard />
+      </CustomerProvider>
     </ShellProvider>
   );
 }
