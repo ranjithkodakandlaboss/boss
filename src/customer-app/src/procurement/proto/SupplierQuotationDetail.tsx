@@ -48,15 +48,16 @@ export default function SupplierQuotationDetail() {
   );
   const canApprove = ['owner', 'buyer'].includes(currentUser.role);
 
-  const subtotal = quote.lines.reduce((s, l) => s + (l.lineTotal || (l.quotedQty ?? l.orderedQty ?? 1) * (l.unitPrice ?? l.unitRate ?? 0)), 0);
-  const taxTotal = quote.taxAmount ?? quote.lines.reduce((s, l) => {
+  const quoteLines = quote.lines ?? [];
+  const subtotal = quoteLines.reduce((s, l) => s + (l.lineTotal || (l.quotedQty ?? l.orderedQty ?? 1) * (l.unitPrice ?? l.unitRate ?? 0)), 0);
+  const taxTotal = quote.taxAmount ?? quoteLines.reduce((s, l) => {
     const base = l.lineTotal || (l.quotedQty ?? l.orderedQty ?? 1) * (l.unitPrice ?? l.unitRate ?? 0);
     return s + base * ((l.taxPct ?? 0) / 100);
   }, 0);
   const grandTotal = Math.round(subtotal + taxTotal + (quote.deliveryCharges ?? 0) - (quote.discountAmount ?? 0));
 
   const handleSavePricing = () => {
-    const updatedLines = quote.lines.map(l => {
+    const updatedLines = quoteLines.map(l => {
       const rate = linePrices[l.id] ?? l.unitPrice ?? l.unitRate ?? 0;
       const qty = l.quotedQty ?? l.orderedQty ?? 1;
       return { ...l, unitPrice: rate, unitRate: rate, lineTotal: Math.round(qty * rate) };
@@ -278,7 +279,7 @@ export default function SupplierQuotationDetail() {
               </tr>
             </thead>
             <tbody>
-              {quote.lines.map((l, i) => {
+              {quoteLines.map((l, i) => {
                 const rate = l.unitPrice ?? l.unitRate ?? 0;
                 const qty = l.quotedQty ?? l.orderedQty ?? 1;
                 return (

@@ -183,7 +183,7 @@ export function matchSuppliersForPR(
       return {
         supplier,
         score,
-        recommended: false,
+        recommended: score >= 25,
         matchedLines: Array.from(new Set(matchedLines)),
         basis: Array.from(new Set(basis)),
         historicalPoCount: supplierSpos.length,
@@ -248,7 +248,7 @@ export function compareAndRecommendQuotations(
   // Build line-by-line matrix
   const rows: PRLineComparisonRow[] = prLines.map(prLine => {
     const cells: LineComparisonCell[] = quotes.map(q => {
-      const matched = matchQuotationLine(prLine, q.lines);
+      const matched = matchQuotationLine(prLine, q.lines ?? []);
       if (!matched) {
         return {
           quoteId: q.id,
@@ -301,8 +301,9 @@ export function compareAndRecommendQuotations(
   // Evaluate each quote holistically
   const evaluations: QuoteEvaluation[] = quotes.map(q => {
     const supplier = suppliers.find(s => s.id === q.supplierId);
-    const subtotal = q.lines.reduce((s, l) => s + (l.lineTotal || getLineQty(l) * getLinePrice(l)), 0);
-    const taxAmount = q.taxAmount ?? q.lines.reduce((s, l) => s + ((l.lineTotal || 0) * (l.taxPct ?? 0)) / 100, 0);
+    const quoteLines = q.lines ?? [];
+    const subtotal = quoteLines.reduce((s, l) => s + (l.lineTotal || getLineQty(l) * getLinePrice(l)), 0);
+    const taxAmount = q.taxAmount ?? quoteLines.reduce((s, l) => s + ((l.lineTotal || 0) * (l.taxPct ?? 0)) / 100, 0);
     const deliveryCharges = q.deliveryCharges ?? 0;
     const discountAmount = q.discountAmount ?? 0;
     const landedTotal = Math.max(0, subtotal + taxAmount + deliveryCharges - discountAmount);
@@ -334,7 +335,7 @@ export function compareAndRecommendQuotations(
     if (!q.validUntil) missingInfo.push('Quotation validity date not provided');
     if (!q.paymentTerms) missingInfo.push('Payment terms not stated');
     if (!q.attachmentName && !q.attachmentRef) missingInfo.push('Supplier quotation document/PDF not attached');
-    if (q.lines.some(l => l.freightIncluded == null) && !deliveryCharges) {
+    if (quoteLines.some(l => l.freightIncluded == null) && !deliveryCharges) {
       missingInfo.push('Freight inclusion not explicitly confirmed');
     }
 
