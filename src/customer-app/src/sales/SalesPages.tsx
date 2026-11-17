@@ -11,10 +11,11 @@ import DetailList from "../components/shared/DetailList";
 import ErrorState from "../components/shared/ErrorState";
 import LoadingState from "../components/shared/LoadingState";
 import {
-  AuditEntry, Cpo, ItemOption, Quotation, QuoteLine, RfqLine, UomOption,
+  AuditEntry, Cpo, Quotation, QuoteLine, RfqLine,
   inr, salesApi, when,
 } from "./api";
 import { useLoad } from "./load";
+import { RfqWizard } from "./RfqWizard";
 
 export { SalesHome } from "./SalesWorkspace";
 
@@ -88,7 +89,13 @@ export function CustomerFormPage() {
       </Card>
       <Card title="Commercial terms">
         <div className="grid md:grid-cols-2 gap-4">
-          <TextField label="Payment terms (days)" name="creditDays" type="number" min={0} defaultValue={customer?.creditDays ?? 30} />
+          <SelectField label="Payment terms" name="creditDays" defaultValue={String(customer?.creditDays ?? 30)}>
+            <option value="0">Advance</option>
+            <option value="15">Net 15</option>
+            <option value="30">Net 30</option>
+            <option value="45">Net 45</option>
+            <option value="60">Net 60</option>
+          </SelectField>
           <TextField label="Credit Limit (₹)" name="creditLimit" type="number" min={0} defaultValue={customer?.creditLimit ?? 0} />
         </div>
       </Card>
@@ -103,7 +110,6 @@ export function CustomerDetailPage() {
   const navigate = useNavigate();
   const customer = useLoad(() => salesApi.customer(id), [id]);
   const rfqs = useLoad(() => salesApi.rfqs("", id), [id]);
-  const quotes = useLoad(() => salesApi.quotations("", id), [id]);
   const pos = useLoad(() => salesApi.cpos("", id), [id]);
   const history = useLoad(() => salesApi.history("CUSTOMER", id), [id]);
   const [tab, setTab] = useState("overview");
@@ -123,12 +129,19 @@ export function CustomerDetailPage() {
         <div className="flex gap-2"><StatusChip status={record.status || "active"} /><Link to={`/sales/customers/${id}/edit`}><Button variant="ghost">Edit</Button></Link>{record.status !== "inactive" && <Button variant="danger" onClick={deactivate}>Deactivate</Button>}</div>
       </div>
       {error && <p role="alert" className="text-sm text-[var(--error)]">{error}</p>}
-      <Tabs tabs={[{ id: "overview", label: "Overview" }, { id: "orders", label: "Orders" }, { id: "rfqs", label: "RFQs" }, { id: "quotes", label: "Quotations" }, { id: "contacts", label: "Contacts" }, { id: "history", label: "History" }]} active={tab} onChange={setTab} />
-      {tab === "overview" && <Card title="Identity"><DetailList items={[{ label: "GSTIN", value: record.gstin || "—" }, { label: "PAN", value: record.pan || "—" }, { label: "Address", value: [record.address?.line1, record.address?.city, record.address?.state].filter(Boolean).join(", ") || "—" }, { label: "Payment terms", value: record.creditDays != null ? `${record.creditDays} days` : "—" }, { label: "Credit limit", value: inr(record.creditLimit) }]} /><p className="text-xs text-[var(--text-3)] mt-3">Invoices and receipts are not part of this Sales release.</p></Card>}
+      <Tabs tabs={[{ id: "overview", label: "Overview" }, { id: "orders", label: `Orders (${pos.data?.length ?? 0})` }, { id: "rfqs", label: `RFQs (${rfqs.data?.length ?? 0})` }, { id: "invoices", label: "Invoices (0)" }, { id: "payments", label: "Payments (0)" }, { id: "contacts", label: `Contacts (${record.contacts?.length ?? 0})` }, { id: "documents", label: "Documents (0)" }, { id: "history", label: "History" }]} active={tab} onChange={setTab} />
+      {tab === "overview" && <div className="grid lg:grid-cols-2 gap-4">
+        <Card title="Identity"><DetailList items={[{ label: "Legal name", value: record.legalName || record.name }, { label: "PAN", value: record.pan || "—" }, { label: "GSTIN", value: record.gstin || "—" }, { label: "City", value: record.address?.city || "—" }, { label: "State", value: record.address?.state || "—" }, { label: "Address", value: record.address?.line1 || "—" }]} /></Card>
+        <Card title="Contact"><DetailList items={[{ label: "Person", value: record.contacts?.[0]?.name || "—" }, { label: "Email", value: record.contacts?.[0]?.email || "—" }, { label: "Phone", value: record.contacts?.[0]?.phone || "—" }]} /></Card>
+        <Card title="Commercial"><DetailList items={[{ label: "Payment terms", value: record.creditDays ? `Net ${record.creditDays}` : "Advance" }, { label: "Credit limit", value: inr(record.creditLimit) }, { label: "Currency", value: "INR" }]} /></Card>
+        <Card title="Account exposure"><DetailList items={[{ label: "PO value", value: inr((pos.data ?? []).reduce((sum, po) => sum + po.lines.reduce((lineSum, line) => lineSum + line.lineTotal, 0), 0)) }, { label: "Invoiced", value: inr(0) }, { label: "Paid", value: inr(0) }, { label: "Outstanding", value: inr(0) }, { label: "Available credit", value: inr(record.creditLimit) }]} /><p className="text-xs text-[var(--text-3)]">Not enough payment history. Invoices and receipts are not part of this Sales release.</p></Card>
+      </div>}
       {tab === "orders" && <LinkedList rows={pos.data ?? []} href={(row) => `/sales/po/${row.id}`} label={(row) => `${row.cpoNumber} · ${row.status}`} />}
       {tab === "rfqs" && <LinkedList rows={rfqs.data ?? []} href={(row) => `/sales/rfq/${row.id}`} label={(row) => `${row.rfqNumber} · ${row.status}`} />}
-      {tab === "quotes" && <LinkedList rows={quotes.data ?? []} href={(row) => `/sales/quotation/${row.id}`} label={(row) => `${row.quotationNumber} rev ${row.revision} · ${row.status}`} />}
-      {tab === "contacts" && <ul>{(record.contacts ?? []).map((contact) => <li key={contact.name}>{contact.name} · {contact.email} · {contact.phone}</li>)}</ul>}
+      {tab === "invoices" && <EmptyState title="No invoices" body="Customer invoices are not connected in this Sales release." />}
+      {tab === "payments" && <EmptyState title="No payments" body="Customer receipts are not connected in this Sales release." />}
+      {tab === "contacts" && <ul>{(record.contacts ?? []).map((contact) => <li key={contact.name}>{contact.name} · {contact.email || "—"} · {contact.phone || "—"}</li>)}</ul>}
+      {tab === "documents" && <EmptyState title="No documents" body="Customer documents are not stored in this Sales release." />}
       {tab === "history" && <History entries={history.data ?? []} />}
     </div>
   );
@@ -189,82 +202,8 @@ function History({ entries }: { entries: AuditEntry[] }) {
   );
 }
 
-function blankLine(item?: ItemOption, uom?: UomOption): RfqLine {
-  return { itemId: item?.id || "", uomId: item?.uomId || uom?.id || "", qty: 1, description: item?.name || "" };
-}
-
 export function RfqFormPage() {
-  const { id } = useParams();
-  const navigate = useNavigate();
-  const existing = useLoad(() => id ? salesApi.rfq(id) : Promise.resolve(null), [id]);
-  const customers = useLoad(() => salesApi.customers(), []);
-  const items = useLoad(() => salesApi.items(), []);
-  const uoms = useLoad(() => salesApi.uoms(), []);
-  const [lines, setLines] = useState<RfqLine[]>([blankLine()]);
-  const [error, setError] = useState("");
-  useEffect(() => { if (existing.data) setLines(existing.data.lines); }, [existing.data]);
-  if (existing.loading || customers.loading || items.loading) return <LoadingState label="Loading RFQ" />;
-
-  async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const data = new FormData(event.currentTarget);
-    if (lines.some((line) => !line.itemId || !line.uomId || line.qty <= 0)) { setError("Each line needs an item, unit and quantity."); return; }
-    const body = {
-      customerId: String(data.get("customerId") || existing.data?.customerId),
-      requiredDate: String(data.get("requiredDate") || "") || null,
-      receivedDate: String(data.get("receivedDate") || "") || null,
-      receivedVia: String(data.get("receivedVia") || ""),
-      customerRef: String(data.get("customerRef") || ""),
-      paymentTerms: Number(data.get("paymentTerms") || 30),
-      deliveryTerms: String(data.get("deliveryTerms") || ""),
-      notes: String(data.get("notes") || ""),
-      lines: lines.map((line) => ({ ...line, qty: Number(line.qty) })),
-    };
-    try {
-      const saved = await salesApi.saveRfq(body, id);
-      navigate(`/sales/rfq/${saved.id}`);
-    } catch (caught) { setError(message(caught)); }
-  }
-
-  const back = "/sales?tab=rfqs";
-  return (
-    <RecordSheet title={id ? "Edit RFQ" : "Add RFQ"} subtitle="Header and line items saved on the RFQ" width="lg" onClose={() => navigate(back)} secondary={{ label: "Cancel", onClick: () => navigate(back) }} primary={{ label: id ? "Save RFQ" : "Create RFQ", onClick: () => document.querySelector<HTMLFormElement>("#rfq-form")?.requestSubmit() }}>
-    <form id="rfq-form" onSubmit={submit} className="space-y-5">
-      <Card title="Header">
-        <div className="grid md:grid-cols-2 gap-4">
-          {!id && <SelectField label="Customer *" name="customerId" required defaultValue="">{(customers.data ?? []).filter((customer) => customer.status !== "inactive").map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}</SelectField>}
-          <TextField label="Received Date" name="receivedDate" type="date" defaultValue={existing.data?.receivedDate || new Date().toISOString().slice(0, 10)} />
-          <TextField label="Required By" name="requiredDate" type="date" defaultValue={existing.data?.requiredDate || ""} />
-          <TextField label="Received Via" name="receivedVia" defaultValue={existing.data?.receivedVia || ""} placeholder="Email, phone, WhatsApp" />
-          <TextField label="Customer reference" name="customerRef" defaultValue={existing.data?.customerRef || ""} />
-          <TextField label="Payment Terms (days)" name="paymentTerms" type="number" defaultValue={existing.data?.paymentTerms ?? 30} />
-          <TextField label="Delivery Terms" name="deliveryTerms" defaultValue={existing.data?.deliveryTerms || ""} />
-          <TextField label="Internal notes" name="notes" defaultValue={existing.data?.notes || ""} />
-        </div>
-      </Card>
-      <Card title="Line items">
-        {lines.map((line, index) => (
-          <div key={index} className="grid md:grid-cols-4 gap-2 border-t pt-3">
-            <SelectField label="Item *" value={line.itemId} onChange={(event) => {
-              const item = (items.data ?? []).find((option) => option.id === event.target.value);
-              setLines(lines.map((entry, entryIndex) => entryIndex === index ? { ...entry, itemId: event.target.value, uomId: item?.uomId || entry.uomId, description: entry.description || item?.name || "" } : entry));
-            }}><option value="">Select item</option>{(items.data ?? []).map((item) => <option key={item.id} value={item.id}>{item.code} · {item.name}</option>)}</SelectField>
-            <TextField label="Drawing No." value={line.drawingNumber || ""} onChange={(event) => setLines(lines.map((entry, i) => i === index ? { ...entry, drawingNumber: event.target.value } : entry))} />
-            <TextField label="Revision" value={line.drawingRevision || ""} onChange={(event) => setLines(lines.map((entry, i) => i === index ? { ...entry, drawingRevision: event.target.value } : entry))} />
-            <TextField label="Material" value={line.material || ""} onChange={(event) => setLines(lines.map((entry, i) => i === index ? { ...entry, material: event.target.value } : entry))} />
-            <TextField label="Description" value={line.description || ""} onChange={(event) => setLines(lines.map((entry, i) => i === index ? { ...entry, description: event.target.value } : entry))} />
-            <TextField label="Qty *" type="number" min="0.001" step="0.001" value={line.qty} onChange={(event) => setLines(lines.map((entry, i) => i === index ? { ...entry, qty: Number(event.target.value) } : entry))} />
-            <SelectField label="UOM" value={line.uomId} onChange={(event) => setLines(lines.map((entry, i) => i === index ? { ...entry, uomId: event.target.value } : entry))}>{(uoms.data ?? []).map((uom) => <option key={uom.id} value={uom.id}>{uom.symbol}</option>)}</SelectField>
-            <TextField label="Notes" value={line.notes || ""} onChange={(event) => setLines(lines.map((entry, i) => i === index ? { ...entry, notes: event.target.value } : entry))} />
-          </div>
-        ))}
-        <Button variant="ghost" onClick={() => setLines([...lines, blankLine(items.data?.[0], uoms.data?.[0])])}>Add line</Button>
-      </Card>
-      <p className="text-xs text-[var(--text-3)]">Documents are not stored on the RFQ in this release. Specifications stay on the line.</p>
-      {error && <p role="alert" className="text-sm text-[var(--error)]">{error}</p>}
-    </form>
-    </RecordSheet>
-  );
+  return <RfqWizard />;
 }
 
 export function RfqDetailPage() {
@@ -294,11 +233,13 @@ export function RfqDetailPage() {
         <Link to={`/sales/rfq/${id}/quotation/new`}><Button>Create quotation</Button></Link>
       </div>
       {error && <p role="alert" className="text-sm text-[var(--error)]">{error}</p>}
-      <Tabs tabs={[{ id: "overview", label: "Overview" }, { id: "lines", label: "Line Items" }, { id: "technical", label: "Technical & Quality" }, { id: "commercial", label: "Commercial & Delivery" }, { id: "history", label: "History" }]} active={tab} onChange={setTab} />
-      {tab === "overview" && <Card title="Source"><DetailList items={[{ label: "Received", value: when(rfq.receivedDate) }, { label: "Channel", value: rfq.receivedVia || "—" }, { label: "Customer reference", value: rfq.customerRef || "—" }, { label: "Required by", value: when(rfq.requiredDate) }]} /><div className="space-y-1 mt-3">{linked.map((quote) => <Link key={quote.id} className="block text-[var(--brand)]" to={`/sales/quotation/${quote.id}`}>{quote.quotationNumber} rev {quote.revision} · {quote.status}</Link>)}{!linked.length && <p>No quotation yet.</p>}</div></Card>}
+      <Tabs tabs={[{ id: "overview", label: "Overview" }, { id: "lines", label: `Line Items (${rfq.lines.length})` }, { id: "technical", label: "Technical & Quality" }, { id: "commercial", label: "Commercial & Delivery" }, { id: "documents", label: "Documents" }, { id: "clarifications", label: "Clarifications (0)" }, { id: "history", label: "Revision History" }]} active={tab} onChange={setTab} />
+      {tab === "overview" && <Card title="Source"><DetailList items={[{ label: "Owner", value: rfq.ownerName || "—" }, { label: "Received", value: when(rfq.receivedDate) }, { label: "Channel", value: rfq.receivedVia || "—" }, { label: "Customer reference", value: rfq.customerRef || "—" }, { label: "Required by", value: when(rfq.requiredDate) }, { label: "Payment terms", value: String(rfq.technicalRequirements?.paymentTermsLabel || (rfq.paymentTerms != null ? `Net ${rfq.paymentTerms}` : "—")) }, { label: "Delivery terms", value: rfq.deliveryTerms || "—" }]} /><div className="space-y-1 mt-3">{linked.map((quote) => <Link key={quote.id} className="block text-[var(--brand)]" to={`/sales/quotation/${quote.id}`}>{quote.quotationNumber} rev {quote.revision} · {quote.status}</Link>)}{!linked.length && <p>No quotation yet.</p>}</div></Card>}
       {tab === "lines" && <LineTable lines={rfq.lines} />}
-      {tab === "technical" && <ul>{rfq.lines.map((line, index) => <li key={line.id || index}>{line.drawingNumber || "—"} rev {line.drawingRevision || "—"} · {line.material || "—"} · {line.description || line.itemName} · {line.notes || ""}</li>)}</ul>}
-      {tab === "commercial" && <p>Payment terms {rfq.paymentTerms ?? "—"} days · {rfq.deliveryTerms || "No delivery terms"} · {rfq.notes || "No internal notes"}</p>}
+      {tab === "technical" && <DetailList items={[{ label: "Standards", value: String(rfq.technicalRequirements?.standards || "—") }, { label: "Inspection", value: String(rfq.technicalRequirements?.inspectionLevel || "—") }, { label: "Surface finish", value: String(rfq.technicalRequirements?.surfaceFinish || "—") }, { label: "Heat treatment", value: String(rfq.technicalRequirements?.heatTreatment || "—") }, { label: "Packaging", value: String(rfq.technicalRequirements?.packagingRequirements || "—") }, { label: "Traceability", value: rfq.technicalRequirements?.traceability ? "Required" : "Not required" }, { label: "Special notes", value: String(rfq.technicalRequirements?.specialNotes || "—") }]} />}
+      {tab === "commercial" && <DetailList items={[{ label: "Payment terms", value: String(rfq.technicalRequirements?.paymentTermsLabel || (rfq.paymentTerms != null ? `${rfq.paymentTerms} days` : "—")) }, { label: "Delivery terms", value: rfq.deliveryTerms || "—" }, { label: "Internal notes", value: rfq.notes || "—" }]} />}
+      {tab === "documents" && <p className="text-sm">{String(rfq.technicalRequirements?.documentNotes || "No document note. Files are not stored on the RFQ.")}</p>}
+      {tab === "clarifications" && <EmptyState title="No clarifications" body="Customer clarifications are not stored in this Sales release." />}
       {tab === "history" && <History entries={history.data ?? []} />}
     </div>
   );
@@ -414,7 +355,13 @@ export function QuotationDetailPage() {
     <div className="p-6 space-y-4 max-w-5xl">
       <Back to="/sales?tab=quotations" label="Quotations" />
       <div className="flex justify-between gap-3"><div><h1 className="text-lg font-bold">{quote.quotationNumber} · Rev {quote.revision}</h1><Link className="text-sm text-[var(--brand)]" to={`/sales/customers/${quote.customerId}`}>{quote.customerName}</Link></div><StatusChip status={quote.status} /></div>
-      <p className="text-sm text-[var(--text-2)]">Valid until {when(quote.validUntil)} · Payment {quote.paymentTerms ?? "—"} days · {quote.deliveryTerms || "No delivery commitment"}</p>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <Card title="Total value"><p className="text-lg font-bold">{inr(goods)}</p></Card>
+        <Card title="Lines"><p className="text-lg font-bold">{quote.lines.length}</p></Card>
+        <Card title="Prepared by"><p className="text-sm font-semibold">{history.data?.[0]?.actorName || "—"}</p></Card>
+        <Card title="Currency"><p className="text-lg font-bold">INR</p></Card>
+      </div>
+      <p className="text-sm text-[var(--text-2)]">Valid until {when(quote.validUntil)} · Payment {quote.paymentTerms != null ? `Net ${quote.paymentTerms}` : "—"} · {quote.deliveryTerms || "No delivery commitment"}</p>
       {quote.decisionChannel && <p className="text-sm">Decision recorded by the owner ({quote.decisionChannel}) {quote.decidedAt ? `on ${when(quote.decidedAt)}` : ""}{quote.decisionNote ? ` · ${quote.decisionNote}` : ""}. This is not customer self-service acceptance.</p>}
       <div className="flex flex-wrap gap-2">
         {quote.status === "draft" && <Button onClick={() => run(() => salesApi.quotationStatus(id, "sent"))}>Submit to Customer</Button>}
@@ -523,7 +470,13 @@ export function PoDetailPage() {
           {po.rfqId && <Link className="block text-[var(--brand)]" to={`/sales/rfq/${po.rfqId}`}>RFQ {po.rfqNumber}</Link>}
           <p>Owner-recorded decision {po.decisionChannel || "—"}{po.decisionNote ? ` · ${po.decisionNote}` : ""}</p>
           <p>Goods {inr(goods)} · Discount {inr(po.discountAmount)} · Before tax {inr(goods - (po.discountAmount ?? 0))}</p>
-          <p className="text-xs text-[var(--text-3)]">Accepted unit prices stay locked. Production, dispatch and invoice steps appear here when those modules are connected.</p>
+          <p className="text-xs text-[var(--text-3)]">Accepted unit prices stay locked.</p>
+          <ol className="text-sm space-y-1 mt-3">
+            <li>Customer RFQ {po.rfqNumber || "—"}</li>
+            <li>Customer Quotation {po.quotationNumber || "—"} rev {po.quotationRevision ?? "—"}</li>
+            <li>Customer PO {po.cpoNumber}</li>
+            {["Material Assessment", "Purchase Requisition", "Supplier PO", "GRN & Inspection", "Production Job", "Dispatch", "Customer Invoice", "Customer Payment"].map((stage) => <li key={stage} className="text-[var(--text-3)]">{stage} — not connected</li>)}
+          </ol>
           {editable && <form onSubmit={save} className="grid md:grid-cols-2 gap-3"><TextField label="Customer reference" value={reference} onChange={(event) => setReference(event.target.value)} /><TextField label="Notes" value={notes} onChange={(event) => setNotes(event.target.value)} /><Button type="submit">Save permitted fields</Button></form>}
         </Card>
       </div>}

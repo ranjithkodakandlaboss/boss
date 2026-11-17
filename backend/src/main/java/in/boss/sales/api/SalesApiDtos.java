@@ -16,6 +16,7 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 public final class SalesApiDtos {
@@ -51,11 +52,12 @@ public final class SalesApiDtos {
             @Size(max = 200) String deliveryTerms,
             @Min(0) @Max(365) Integer paymentTerms,
             @Size(max = 40) String receivedVia,
-            LocalDate receivedDate) {
+            LocalDate receivedDate,
+            Map<String, Object> technicalRequirements) {
         @JsonIgnore
         public CreateRfqRequest(UUID customerId, UUID rfqTypeId, String rfqTypeLabel,
                                  LocalDate requiredDate, List<@Valid RfqLineRequest> lines) {
-            this(customerId, rfqTypeId, rfqTypeLabel, requiredDate, lines, null, null, null, null, null, null);
+            this(customerId, rfqTypeId, rfqTypeLabel, requiredDate, lines, null, null, null, null, null, null, null);
         }
     }
 
@@ -69,11 +71,12 @@ public final class SalesApiDtos {
             @Size(max = 200) String deliveryTerms,
             @Min(0) @Max(365) Integer paymentTerms,
             @Size(max = 40) String receivedVia,
-            LocalDate receivedDate) {
+            LocalDate receivedDate,
+            Map<String, Object> technicalRequirements) {
         @JsonIgnore
         public UpdateRfqRequest(UUID rfqTypeId, String rfqTypeLabel, LocalDate requiredDate,
                                  List<@Valid RfqLineRequest> lines) {
-            this(rfqTypeId, rfqTypeLabel, requiredDate, lines, null, null, null, null, null, null);
+            this(rfqTypeId, rfqTypeLabel, requiredDate, lines, null, null, null, null, null, null, null);
         }
     }
 
@@ -123,7 +126,9 @@ public final class SalesApiDtos {
             String deliveryTerms,
             Integer paymentTerms,
             String receivedVia,
-            LocalDate receivedDate) {}
+            LocalDate receivedDate,
+            String ownerName,
+            Map<String, Object> technicalRequirements) {}
 
     public record CreateQuotationLineRequest(
             @NotNull UUID itemId,

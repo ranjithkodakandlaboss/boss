@@ -46,6 +46,8 @@ export type Rfq = {
   deliveryTerms?: string;
   paymentTerms?: number;
   receivedVia?: string;
+  ownerName?: string;
+  technicalRequirements?: Record<string, unknown>;
   lines: RfqLine[];
   createdAt?: string;
 };
