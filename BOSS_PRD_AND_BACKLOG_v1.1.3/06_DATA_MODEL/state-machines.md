@@ -175,36 +175,73 @@ stateDiagram-v2
 
 ---
 
-## 7. Supplier Purchase Orders — SPO (`spos`)
-**Migration:** `V023__spos.sql`  
-**Database Constraint:** `CHECK (status IN ('open', 'partial', 'fulfilled', 'cancelled', 'closed'))`
+## 7. Supplier Quotations (`supplier_quotations`)
+**Migration:** `V022__supplier_quotations.sql`, reconciled by `V071__supplier_quotation_spo_lifecycle.sql`
+**Database Constraint:** `CHECK (status IN ('requested', 'received', 'under_review', 'selected', 'rejected'))`
 
 ```mermaid
 stateDiagram-v2
-    [*] --> open: SPO issued to supplier
-    open --> partial: First GRN accepted (partial receipt)
-    partial --> partial: Subsequent partial GRNs accepted
-    partial --> fulfilled: All items received per ordered qty
-    open --> fulfilled: Single shipment received in full
-    fulfilled --> closed: Supplier bill matched and paid
-    open --> cancelled: SPO cancelled before receipt
-    partial --> cancelled: Remaining balance cancelled
-    closed --> [*]
+    [*] --> requested: Request quotation from supplier
+    requested --> received: Supplier quotation recorded
+    received --> under_review: Purchase review begins
+    under_review --> selected: Selected / approved for ordering
+    under_review --> rejected: Not selected
+    rejected --> [*]
+```
+
+### Transition Matrix
+| Source State | Target State | Triggering Event / Action | Permitted Principal | Side Effects / Enforcement |
+|---|---|---|---|---|
+| `[*]` | `requested` | Request a quotation against an approved PR | `PURCHASE_MANAGER`, `OWNER` | Tenant, supplier, and PR relationships are validated; creation is audited |
+| `requested` | `received` | Record the supplier's quote and lines | `PURCHASE_MANAGER`, `OWNER` | Quote remains linked to its supplier and PR; change is audited |
+| `received` | `under_review` | Begin comparison/review | `PURCHASE_MANAGER`, `OWNER` | No order or inventory side effect |
+| `under_review` | `selected` | Select/approve the quotation | `PURCHASE_MANAGER`, `OWNER` | Selection is the approval required to create an SPO; change is audited |
+| `under_review` | `rejected` | Reject the quotation | `PURCHASE_MANAGER`, `OWNER` | Rejected quotations cannot be used to create an SPO; change is audited |
+
+`selected` and `rejected` are terminal quotation states. A selected quotation remains the approved source of its SPO; it is not changed when the SPO is later received or cancelled. Invalid transitions are rejected by the procurement service. Every transition is tenant-scoped, role-checked, transactional, and audited through `AuditService`.
+
+---
+
+## 8. Supplier Purchase Orders — SPO (`spos`)
+**Migration:** `V023__spos.sql`, reconciled by `V071__supplier_quotation_spo_lifecycle.sql`
+**Database Constraint:** `CHECK (status IN ('draft', 'issued', 'acknowledged', 'partially_received', 'fully_received', 'cancelled'))`
+
+```mermaid
+stateDiagram-v2
+    [*] --> draft: Create from selected quotation
+    draft --> issued: Issue to supplier
+    draft --> cancelled: Cancel before issue
+    issued --> acknowledged: Supplier acknowledgment recorded
+    issued --> partially_received: Accepted GRN reports partial receipt
+    issued --> fully_received: Accepted GRN reports full receipt
+    acknowledged --> partially_received: Accepted GRN reports partial receipt
+    acknowledged --> fully_received: Accepted GRN reports full receipt
+    partially_received --> partially_received: Further partial receipt
+    partially_received --> fully_received: Remaining quantity received
+    issued --> cancelled: Cancel before receipt
+    acknowledged --> cancelled: Cancel before receipt
+    partially_received --> cancelled: Cancel remaining quantity
+    fully_received --> [*]
     cancelled --> [*]
 ```
 
 ### Transition Matrix
 | Source State | Target State | Triggering Event / Action | Permitted Principal | Side Effects / Enforcement |
 |---|---|---|---|---|
-| `[*]` | `open` | Issue SPO to vendor | `PURCHASE_MANAGER`, `OWNER` | Vendor delivery schedule initiated |
-| `open` | `partial` | Inbound GRN accepted for partial qty | System / Store Keeper | Inward stock ledger updated; outstanding balance recalculated |
-| `partial` / `open` | `fulfilled` | Final GRN accepted (100% received) | System / Store Keeper | Inward goods complete; pending 3-way match |
-| `fulfilled` | `closed` | 3-way match & accounting close | `ACCOUNTS_STAFF`, `OWNER` | Financial settlement completed |
-| `open` / `partial` | `cancelled` | Cancel order / short-close | `PURCHASE_MANAGER`, `OWNER` | Unreceived quantities terminated |
+| `[*]` | `draft` | Create from a selected quotation | `PURCHASE_MANAGER`, `OWNER` | Quotation, PR, supplier, and tenant must match; quotation reference is mandatory; creation is audited |
+| `draft` | `issued` | Issue order to supplier | `PURCHASE_MANAGER`, `OWNER` | Outgoing communication is outside this story; transition is audited |
+| `draft` | `cancelled` | Cancel an unissued order | `PURCHASE_MANAGER`, `OWNER` | No receiving or inventory effects |
+| `issued` | `acknowledged` | Record supplier acknowledgment | `PURCHASE_MANAGER`, `OWNER` | Acknowledgment is recorded and audited |
+| `issued` / `acknowledged` | `partially_received` / `fully_received` | Accepted GRN updates receipt progress | Receiving workflow in Issue #51 | Receipt quantities and inventory are owned by Issue #51; this story does not implement GRNs or inventory updates |
+| `partially_received` | `partially_received` | Accept another GRN without completing the order | Receiving workflow in Issue #51 | Receipt quantities are owned by Issue #51 |
+| `partially_received` | `fully_received` | Accepted GRN completes ordered quantities | Receiving workflow in Issue #51 | Receipt quantities are owned by Issue #51 |
+| `issued` / `acknowledged` / `partially_received` | `cancelled` | Cancel order or remaining quantity | `PURCHASE_MANAGER`, `OWNER` | Already received quantities are not reversed; transition is audited |
+
+`fully_received` and `cancelled` are terminal. Supplier-bill matching and financial close do not add another SPO status in this lifecycle. Receiving-driven status changes are implemented with Issue #51, not by the quotation/SPO APIs in Issue #48. Invalid transitions are rejected server-side; every transition is tenant-scoped, role-checked, transactional, and audited through `AuditService`.
 
 ---
 
-## 8. Goods Received Notes — GRN (`grns`)
+## 9. Goods Received Notes — GRN (`grns`)
 **Migration:** `V024__grns.sql`  
 **Database Constraint:** `CHECK (status IN ('draft', 'inspected', 'accepted', 'partially_accepted', 'rejected', 'closed'))`
 
@@ -233,7 +270,7 @@ stateDiagram-v2
 
 ---
 
-## 9. Production Jobs (`production_jobs`)
+## 10. Production Jobs (`production_jobs`)
 **Migration:** `V025__production_jobs.sql`  
 **Database Constraint:** `CHECK (status IN ('planned', 'released', 'in_progress', 'completed', 'cancelled', 'on_hold'))`
 
@@ -265,7 +302,7 @@ stateDiagram-v2
 
 ---
 
-## 10. Customer Invoices (`invoices`)
+## 11. Customer Invoices (`invoices`)
 **Migration:** `V031__invoices.sql`  
 **Database Constraint:** `CHECK (status IN ('draft', 'issued', 'paid', 'partially_paid', 'overdue', 'cancelled', 'credit_note'))`
 
@@ -299,7 +336,7 @@ stateDiagram-v2
 
 ---
 
-## 11. Concessions & NCRs (`concessions`, `ncrs`)
+## 12. Concessions & NCRs (`concessions`, `ncrs`)
 **Migration:** `V028__ncrs_and_concessions.sql`  
 **Database Constraints:**  
 - `ncrs.status IN ('open', 'under_review', 'resolved', 'closed', 'scrapped')`  

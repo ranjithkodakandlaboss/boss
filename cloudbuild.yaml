@@ -51,4 +51,4 @@ options:
 
 substitutions:
   _IMAGE: 'asia-south1-docker.pkg.dev/boss-dev-514813/boss-docker/boss-api:cloudbuild-latest'
-  _ADMIN_IMAGE: 'asia-south1-docker.pkg.dev/boss-dev-514813/boss/boss-admin-api:cloudbuild-latest'
+  _ADMIN_IMAGE: 'asia-south1-docker.pkg.dev/boss-dev-514813/boss/boss-admin-api:bootstrap-v1'

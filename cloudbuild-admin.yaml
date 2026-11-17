@@ -1,0 +1,30 @@
+steps:
+  - name: 'eclipse-temurin:21-jdk-alpine'
+    entrypoint: 'sh'
+    args:
+      - '-c'
+      - 'apk add --no-cache maven && cd backend/platform-admin-api && mvn -B -ntp package -DskipTests'
+    id: 'build-admin-jar'
+
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '--platform'
+      - 'linux/amd64'
+      - '-t'
+      - '${_ADMIN_IMAGE}'
+      - '-f'
+      - 'backend/platform-admin-api/Dockerfile'
+      - 'backend/platform-admin-api'
+    waitFor: ['build-admin-jar']
+    id: 'build-admin-image'
+
+images:
+  - '${_ADMIN_IMAGE}'
+
+options:
+  machineType: 'E2_HIGHCPU_8'
+  logging: CLOUD_LOGGING_ONLY
+
+substitutions:
+  _ADMIN_IMAGE: 'asia-south1-docker.pkg.dev/boss-dev-514813/boss/boss-admin-api:bootstrap-v1'

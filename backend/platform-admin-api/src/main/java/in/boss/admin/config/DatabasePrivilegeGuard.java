@@ -126,6 +126,12 @@ public class DatabasePrivilegeGuard {
                 throw new IllegalStateException(
                         "Platform Admin must be able to execute seed_tenant_defaults. Apply db/boss-admin-grants.sql.");
             }
+            if (!Boolean.TRUE.equals(jdbc.queryForObject(
+                    "SELECT has_function_privilege(current_user, 'public.boss_create_owner_invite(uuid, text, text, timestamptz)', 'EXECUTE')",
+                    Boolean.class))) {
+                throw new IllegalStateException(
+                        "Platform Admin must be able to execute boss_create_owner_invite. Apply db/boss-admin-grants.sql.");
+            }
             if (listPolicies == null || listPolicies != 2) {
                 throw new IllegalStateException(
                         "Platform Admin list policies are missing. Apply db/boss-admin-grants.sql before starting.");

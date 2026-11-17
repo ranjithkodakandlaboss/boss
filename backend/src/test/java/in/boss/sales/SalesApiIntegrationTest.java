@@ -10,6 +10,8 @@ import in.boss.sales.api.SalesApiDtos.ReviseQuotationRequest;
 import in.boss.sales.api.SalesApiDtos.RfqLineRequest;
 import in.boss.sales.api.SalesApiDtos.RfqResponse;
 import in.boss.sales.api.SalesApiDtos.UpdateRfqRequest;
+import in.boss.sales.api.SalesApiDtos.AcceptQuotationRequest;
+import in.boss.sales.domain.CustomerPoService;
 import in.boss.sales.domain.SalesService;
 import in.boss.shared.context.BossContext;
 import in.boss.shared.context.BossContextHolder;
@@ -53,6 +55,9 @@ class SalesApiIntegrationTest extends BaseMasterDataIntegrationTest {
 
     @Autowired
     private SalesService salesService;
+
+    @Autowired
+    private CustomerPoService customerPoService;
 
     @Autowired
     private MockMvc mockMvc;
@@ -388,6 +393,66 @@ class SalesApiIntegrationTest extends BaseMasterDataIntegrationTest {
         assertThat(jdbc.queryForObject(
                 "SELECT COUNT(*) FROM rfqs WHERE tenant_id = ? AND customer_id = ?",
                 Integer.class, tenantId, customerId)).isEqualTo(1);
+    }
+
+    @Test
+    void ownerAcceptanceCreatesOneCustomerPoAndRejectionDoesNot() {
+        var quotation = sentQuotation(new BigDecimal("20.00"));
+        var first = customerPoService.accept(quotation.id(), new AcceptQuotationRequest("OFFLINE-14", "Confirmed by phone"));
+        var second = customerPoService.accept(quotation.id(), new AcceptQuotationRequest("OFFLINE-14", "Confirmed by phone"));
+
+        assertThat(first.created()).isTrue();
+        assertThat(second.created()).isFalse();
+        assertThat(second.cpo().id()).isEqualTo(first.cpo().id());
+        assertThat(first.cpo().quotationId()).isEqualTo(quotation.id());
+        assertThat(first.cpo().quotationRevision()).isEqualTo(quotation.revision());
+        assertThat(first.cpo().rfqId()).isEqualTo(quotation.rfqId());
+        assertThat(first.cpo().status()).isEqualTo("open");
+        assertThat(first.cpo().decisionChannel()).isEqualTo("OWNER_RECORDED");
+        assertThat(first.cpo().decidedBy()).isEqualTo(BossContextHolder.get().userId());
+        assertThat(first.cpo().lines().get(0).unitPrice()).isEqualByComparingTo("20.00");
+        assertThat(jdbc.queryForObject(
+                "SELECT COUNT(*) FROM cpos WHERE tenant_id = ? AND quotation_id = ?",
+                Integer.class, tenantId, quotation.id())).isEqualTo(1);
+        assertThat(salesService.getQuotation(quotation.id()).status()).isEqualTo("accepted");
+        assertThat(customerPoService.update(first.cpo().id(),
+                new in.boss.sales.api.SalesApiDtos.UpdateCpoRequest("OFFLINE-15", "Updated reference", null, 45))
+                .customerPoRef()).isEqualTo("OFFLINE-15");
+        assertThat(customerPoService.get(first.cpo().id()).lines().get(0).unitPrice()).isEqualByComparingTo("20.00");
+
+        var declined = sentQuotation(new BigDecimal("18.00"));
+        salesService.updateQuotationStatus(declined.id(), "rejected", "Customer declined offline");
+        assertThat(salesService.getQuotation(declined.id()).decisionChannel()).isEqualTo("OWNER_RECORDED");
+        assertThat(jdbc.queryForObject(
+                "SELECT COUNT(*) FROM cpos WHERE tenant_id = ? AND quotation_id = ?",
+                Integer.class, tenantId, declined.id())).isZero();
+
+        var waiting = sentQuotation(new BigDecimal("19.00"));
+        assertThat(salesService.getQuotation(waiting.id()).status()).isEqualTo("sent");
+        assertThat(waiting.cpoId()).isNull();
+        assertThat(jdbc.queryForObject(
+                "SELECT COUNT(*) FROM cpos WHERE tenant_id = ? AND quotation_id = ?",
+                Integer.class, tenantId, waiting.id())).isZero();
+    }
+
+    @Test
+    void customerDeactivationKeepsTheRfq() {
+        RfqResponse rfq = salesService.createRfq(new CreateRfqRequest(
+                customerId, null, null, null,
+                List.of(new RfqLineRequest(finishedItemId, BigDecimal.ONE, uomId, "keep"))));
+        jdbc.update("UPDATE customers SET is_active = FALSE WHERE tenant_id = ? AND id = ?", tenantId, customerId);
+        assertThat(salesService.getRfq(rfq.id()).customerId()).isEqualTo(customerId);
+        assertThat(salesService.getRfq(rfq.id()).lines()).hasSize(1);
+    }
+
+    private in.boss.sales.api.SalesApiDtos.QuotationResponse sentQuotation(BigDecimal price) {
+        RfqResponse rfq = salesService.createRfq(new CreateRfqRequest(
+                customerId, null, null, null,
+                List.of(new RfqLineRequest(finishedItemId, new BigDecimal("2"), uomId, null))));
+        var draft = salesService.createQuotation(new CreateQuotationRequest(
+                customerId, rfq.id(), null,
+                List.of(new CreateQuotationLineRequest(finishedItemId, new BigDecimal("2"), uomId, price, 1))));
+        return salesService.updateQuotationStatus(draft.id(), "sent");
     }
 
     private boolean reviseAtBarrier(

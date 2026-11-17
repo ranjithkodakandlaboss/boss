@@ -2,6 +2,7 @@ package in.boss.sales.domain;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import in.boss.masterdata.api.dto.BOMExplosionMaterialDto;
 import in.boss.masterdata.api.dto.CustomerDto;
@@ -12,6 +13,8 @@ import in.boss.masterdata.domain.CustomerService;
 import in.boss.masterdata.domain.EntityNotFoundException;
 import in.boss.masterdata.domain.ItemService;
 import in.boss.masterdata.domain.UomService;
+import in.boss.sales.api.SalesApiDtos.AuditEntry;
+import in.boss.sales.api.SalesApiDtos.FieldChange;
 import in.boss.sales.api.SalesApiDtos.CreateQuotationLineRequest;
 import in.boss.sales.api.SalesApiDtos.CreateQuotationRequest;
 import in.boss.sales.api.SalesApiDtos.CreateRfqRequest;
@@ -21,10 +24,12 @@ import in.boss.sales.api.SalesApiDtos.OfferedUnitPrice;
 import in.boss.sales.api.SalesApiDtos.PageResponse;
 import in.boss.sales.api.SalesApiDtos.QuotationLineResponse;
 import in.boss.sales.api.SalesApiDtos.QuotationResponse;
+import in.boss.sales.api.SalesApiDtos.RevisionLink;
 import in.boss.sales.api.SalesApiDtos.ReviseQuotationRequest;
 import in.boss.sales.api.SalesApiDtos.RfqLineRequest;
 import in.boss.sales.api.SalesApiDtos.RfqLineResponse;
 import in.boss.sales.api.SalesApiDtos.RfqResponse;
+import in.boss.sales.api.SalesApiDtos.UpdateQuotationRequest;
 import in.boss.sales.api.SalesApiDtos.UpdateRfqRequest;
 import in.boss.shared.audit.AuditService;
 import in.boss.shared.context.BossContext;
@@ -45,7 +50,10 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
@@ -90,14 +98,18 @@ public class SalesService {
 
         UUID rfqId = UUID.randomUUID();
         String rfqNumber = nextDocumentNumber("RFQ");
+        LocalDate received = request.receivedDate() != null ? request.receivedDate() : LocalDate.now();
         jdbc.update("""
                 INSERT INTO rfqs
                   (id, tenant_id, rfq_number, customer_id, site_id, status, received_date,
-                   required_by_date, rfq_type_id, rfq_type_label, created_by)
-                VALUES (?, ?, ?, ?, ?, 'draft', CURRENT_DATE, ?, ?, ?, ?)
+                   required_by_date, rfq_type_id, rfq_type_label, customer_ref, notes,
+                   delivery_terms, payment_terms, received_via, created_by, technical_requirements)
+                VALUES (?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb)
                 """,
-                rfqId, tenantId, rfqNumber, request.customerId(), siteId, request.requiredDate(),
-                request.rfqTypeId(), request.rfqTypeLabel(), context.userId());
+                rfqId, tenantId, rfqNumber, request.customerId(), siteId, received, request.requiredDate(),
+                request.rfqTypeId(), request.rfqTypeLabel(), request.customerRef(), request.notes(),
+                request.deliveryTerms(), request.paymentTerms(), request.receivedVia(), context.userId(),
+                jsonOrNull(request.technicalRequirements()));
         replaceRfqLines(tenantId, rfqId, request.lines());
 
         RfqResponse result = readRfq(tenantId, rfqId);
@@ -107,28 +119,41 @@ public class SalesService {
 
     @Transactional(readOnly = true)
     public PageResponse<RfqResponse> listRfqs(UUID customerId, String status, int page, int size) {
+        return listRfqs(customerId, status, null, page, size);
+    }
+
+    @Transactional(readOnly = true)
+    public PageResponse<RfqResponse> listRfqs(UUID customerId, String status, String query, int page, int size) {
         UUID tenantId = requireContext().tenantId();
         validatePage(page, size);
         if (status != null && !RFQ_STATUSES.contains(status)) {
             throw badRequest("Unsupported RFQ status");
         }
 
-        StringBuilder where = new StringBuilder(" WHERE tenant_id = ?");
+        StringBuilder where = new StringBuilder(" WHERE r.tenant_id = ?");
         List<Object> args = new ArrayList<>();
         args.add(tenantId);
         if (customerId != null) {
-            where.append(" AND customer_id = ?");
+            where.append(" AND r.customer_id = ?");
             args.add(customerId);
         }
         if (status != null) {
-            where.append(" AND status = ?");
+            where.append(" AND r.status = ?");
             args.add(status);
         }
-        Long total = jdbc.queryForObject("SELECT COUNT(*) FROM rfqs" + where, Long.class, args.toArray());
+        if (query != null && !query.isBlank()) {
+            where.append(" AND (r.rfq_number ILIKE ? OR c.name ILIKE ? OR COALESCE(r.customer_ref, '') ILIKE ?)");
+            String like = "%" + query.trim() + "%";
+            args.add(like);
+            args.add(like);
+            args.add(like);
+        }
+        String from = " FROM rfqs r JOIN customers c ON c.tenant_id = r.tenant_id AND c.id = r.customer_id";
+        Long total = jdbc.queryForObject("SELECT COUNT(*)" + from + where, Long.class, args.toArray());
         args.add(size);
         args.add((long) page * size);
         List<UUID> ids = jdbc.query(
-                "SELECT id FROM rfqs" + where + " ORDER BY created_at DESC, id LIMIT ? OFFSET ?",
+                "SELECT r.id" + from + where + " ORDER BY r.created_at DESC, r.id LIMIT ? OFFSET ?",
                 (rs, rowNum) -> rs.getObject("id", UUID.class), args.toArray());
         List<RfqResponse> content = ids.stream().map(id -> readRfq(tenantId, id)).toList();
         return new PageResponse<>(content, page, size, total == null ? 0 : total);
@@ -146,17 +171,23 @@ public class SalesService {
         if (!"draft".equals(status)) {
             throw conflict("RFQ lines can only be edited while the RFQ is draft");
         }
+        RfqResponse before = readRfq(tenantId, rfqId);
         jdbc.update("""
                 UPDATE rfqs
-                   SET required_by_date = ?, rfq_type_id = ?, rfq_type_label = ?, updated_at = NOW()
+                   SET required_by_date = ?, rfq_type_id = ?, rfq_type_label = ?,
+                       customer_ref = ?, notes = ?, delivery_terms = ?, payment_terms = ?,
+                       received_via = ?, received_date = COALESCE(?, received_date),
+                       technical_requirements = ?::jsonb, updated_at = NOW()
                  WHERE tenant_id = ? AND id = ?
                 """,
-                request.requiredDate(), request.rfqTypeId(), request.rfqTypeLabel(), tenantId, rfqId);
+                request.requiredDate(), request.rfqTypeId(), request.rfqTypeLabel(),
+                request.customerRef(), request.notes(), request.deliveryTerms(), request.paymentTerms(),
+                request.receivedVia(), request.receivedDate(), jsonOrNull(request.technicalRequirements()), tenantId, rfqId);
         jdbc.update("DELETE FROM rfq_lines WHERE tenant_id = ? AND rfq_id = ?", tenantId, rfqId);
         replaceRfqLines(tenantId, rfqId, request.lines());
 
         RfqResponse result = readRfq(tenantId, rfqId);
-        auditService.record("RFQ", rfqId, "UPDATE", null, toJson(result));
+        auditService.record("RFQ", rfqId, "UPDATE", toJson(before), toJson(result));
         return result;
     }
 
@@ -169,10 +200,11 @@ public class SalesService {
         if (!validTransition) {
             throw conflict("Invalid RFQ status transition: " + current + " -> " + nextStatus);
         }
+        RfqResponse before = readRfq(tenantId, rfqId);
         jdbc.update("UPDATE rfqs SET status = ?, updated_at = NOW() WHERE tenant_id = ? AND id = ?",
                 nextStatus, tenantId, rfqId);
         RfqResponse result = readRfq(tenantId, rfqId);
-        auditService.record("RFQ", rfqId, "STATUS_" + nextStatus.toUpperCase(), null, toJson(result));
+        auditService.record("RFQ", rfqId, "STATUS_" + nextStatus.toUpperCase(), toJson(before), toJson(result));
         return result;
     }
 
@@ -200,11 +232,12 @@ public class SalesService {
         jdbc.update("""
                 INSERT INTO quotations
                   (id, tenant_id, quotation_number, rfq_id, customer_id, site_id, revision,
-                   status, valid_until, created_by)
-                VALUES (?, ?, ?, ?, ?, ?, 1, 'draft', ?, ?)
+                   status, valid_until, payment_terms, delivery_terms, notes, discount_amount, created_by)
+                VALUES (?, ?, ?, ?, ?, ?, 1, 'draft', ?, COALESCE(?, 30), ?, ?, COALESCE(?, 0), ?)
                 """,
                 quotationId, tenantId, quotationNumber, request.rfqId(), request.customerId(),
-                siteId, request.validUntil(), context.userId());
+                siteId, request.validUntil(), request.paymentTerms(), request.deliveryTerms(),
+                request.notes(), request.discountAmount(), context.userId());
         BigDecimal estimatedTotal = replaceQuotationLines(tenantId, quotationId, request.lines());
         jdbc.update("UPDATE quotations SET estimated_material_cost = ? WHERE tenant_id = ? AND id = ?",
                 estimatedTotal, tenantId, quotationId);
@@ -219,9 +252,127 @@ public class SalesService {
         return readQuotation(requireContext().tenantId(), quotationId);
     }
 
+    @Transactional(readOnly = true)
+    public byte[] quotationPdf(UUID quotationId) {
+        UUID tenantId = requireContext().tenantId();
+        QuotationResponse quotation = readQuotation(tenantId, quotationId);
+        return QuotationPdf.render(quotation, seller(tenantId), buyer(tenantId, quotation.customerId()));
+    }
+
+    @Transactional(readOnly = true)
+    public PageResponse<QuotationResponse> listQuotations(
+            UUID customerId, UUID rfqId, String status, String query, int page, int size) {
+        UUID tenantId = requireContext().tenantId();
+        validatePage(page, size);
+        StringBuilder where = new StringBuilder(" WHERE q.tenant_id = ?");
+        List<Object> args = new ArrayList<>();
+        args.add(tenantId);
+        if (customerId != null) {
+            where.append(" AND q.customer_id = ?");
+            args.add(customerId);
+        }
+        if (rfqId != null) {
+            where.append(" AND q.rfq_id = ?");
+            args.add(rfqId);
+        }
+        if (status != null && !status.isBlank()) {
+            where.append(" AND q.status = ?");
+            args.add(status);
+        }
+        if (query != null && !query.isBlank()) {
+            where.append(" AND (q.quotation_number ILIKE ? OR c.name ILIKE ? OR COALESCE(r.rfq_number, '') ILIKE ?)");
+            String like = "%" + query.trim() + "%";
+            args.add(like);
+            args.add(like);
+            args.add(like);
+        }
+        String from = """
+                 FROM quotations q
+                 JOIN customers c ON c.tenant_id = q.tenant_id AND c.id = q.customer_id
+                 LEFT JOIN rfqs r ON r.tenant_id = q.tenant_id AND r.id = q.rfq_id
+                """;
+        Long total = jdbc.queryForObject("SELECT COUNT(*)" + from + where, Long.class, args.toArray());
+        args.add(size);
+        args.add((long) page * size);
+        List<UUID> ids = jdbc.query(
+                "SELECT q.id" + from + where + " ORDER BY q.created_at DESC, q.revision DESC, q.id LIMIT ? OFFSET ?",
+                (rs, rowNum) -> rs.getObject("id", UUID.class), args.toArray());
+        List<QuotationResponse> content = ids.stream().map(id -> readQuotation(tenantId, id)).toList();
+        return new PageResponse<>(content, page, size, total == null ? 0 : total);
+    }
+
+    @Transactional
+    public QuotationResponse updateDraftQuotation(UUID quotationId, UpdateQuotationRequest request) {
+        UUID tenantId = requireContext().tenantId();
+        String status = quotationStatus(tenantId, quotationId);
+        if (!"draft".equals(status)) {
+            throw conflict("Only a draft quotation can be edited. Revise a sent quotation instead.");
+        }
+        QuotationResponse before = readQuotation(tenantId, quotationId);
+        jdbc.update("""
+                UPDATE quotations
+                   SET valid_until = ?, payment_terms = COALESCE(?, payment_terms),
+                       delivery_terms = ?, notes = ?, discount_amount = COALESCE(?, discount_amount),
+                       updated_at = NOW()
+                 WHERE tenant_id = ? AND id = ?
+                """,
+                request.validUntil(), request.paymentTerms(), request.deliveryTerms(), request.notes(),
+                request.discountAmount(), tenantId, quotationId);
+        jdbc.update("DELETE FROM quotation_lines WHERE tenant_id = ? AND quotation_id = ?", tenantId, quotationId);
+        BigDecimal estimatedTotal = replaceQuotationLines(tenantId, quotationId, request.lines());
+        jdbc.update("UPDATE quotations SET estimated_material_cost = ? WHERE tenant_id = ? AND id = ?",
+                estimatedTotal, tenantId, quotationId);
+        QuotationResponse result = readQuotation(tenantId, quotationId);
+        auditService.record("QUOTATION", quotationId, "UPDATE", toJson(before), toJson(result));
+        return result;
+    }
+
+    @Transactional(readOnly = true)
+    public List<AuditEntry> listHistory(String entityType, UUID entityId) {
+        UUID tenantId = requireContext().tenantId();
+        if (!Set.of("CUSTOMER", "RFQ", "QUOTATION", "CPO").contains(entityType)) {
+            throw badRequest("Unsupported history type");
+        }
+        if (!historySubjectExists(tenantId, entityType, entityId)) {
+            throw notFound("Record not found");
+        }
+        return jdbc.query("""
+                SELECT e.id, e.actor_id, COALESCE(u.display_name, u.email) AS actor_name,
+                       e.action, e.created_at, e.old_data::text AS old_data, e.new_data::text AS new_data
+                  FROM audit_events e
+                  LEFT JOIN app_users u ON u.id = e.actor_id AND u.tenant_id = e.tenant_id
+                 WHERE e.tenant_id = ? AND e.entity_type = ? AND e.entity_id = ?
+                 ORDER BY e.created_at DESC, e.id DESC
+                """, (rs, rowNum) -> new AuditEntry(
+                rs.getObject("id", UUID.class),
+                rs.getObject("actor_id", UUID.class),
+                rs.getString("actor_name"),
+                rs.getString("action"),
+                instant(rs, "created_at"),
+                fieldChanges(rs.getString("old_data"), rs.getString("new_data"))),
+                tenantId, entityType, entityId);
+    }
+
+    private boolean historySubjectExists(UUID tenantId, String entityType, UUID entityId) {
+        String table = switch (entityType) {
+            case "CUSTOMER" -> "customers";
+            case "RFQ" -> "rfqs";
+            case "QUOTATION" -> "quotations";
+            case "CPO" -> "cpos";
+            default -> throw badRequest("Unsupported history type");
+        };
+        return count("SELECT COUNT(*) FROM " + table + " WHERE tenant_id = ? AND id = ?", tenantId, entityId) > 0;
+    }
+
     @Transactional
     public QuotationResponse updateQuotationStatus(UUID quotationId, String nextStatus) {
-        UUID tenantId = requireContext().tenantId();
+        return updateQuotationStatus(quotationId, nextStatus, null);
+    }
+
+    @Transactional
+    public QuotationResponse updateQuotationStatus(UUID quotationId, String nextStatus, String note) {
+        BossContext context = requireContext();
+        UUID tenantId = context.tenantId();
         String current = quotationStatus(tenantId, quotationId);
         boolean validTransition = ("draft".equals(current) && "sent".equals(nextStatus))
                 || (Set.of("sent", "negotiating").contains(current)
@@ -229,10 +380,21 @@ public class SalesService {
         if (!validTransition) {
             throw conflict("Invalid quotation status transition: " + current + " -> " + nextStatus);
         }
-        jdbc.update("UPDATE quotations SET status = ?, updated_at = NOW() WHERE tenant_id = ? AND id = ?",
-                nextStatus, tenantId, quotationId);
+        QuotationResponse before = readQuotation(tenantId, quotationId);
+        if ("rejected".equals(nextStatus)) {
+            jdbc.update("""
+                    UPDATE quotations
+                       SET status = ?, decision_channel = 'OWNER_RECORDED', decision_note = ?,
+                           decided_by = ?, decided_at = NOW(), updated_at = NOW()
+                     WHERE tenant_id = ? AND id = ?
+                    """,
+                    nextStatus, note, context.userId(), tenantId, quotationId);
+        } else {
+            jdbc.update("UPDATE quotations SET status = ?, updated_at = NOW() WHERE tenant_id = ? AND id = ?",
+                    nextStatus, tenantId, quotationId);
+        }
         QuotationResponse result = readQuotation(tenantId, quotationId);
-        auditService.record("QUOTATION", quotationId, "STATUS_" + nextStatus.toUpperCase(), null, toJson(result));
+        auditService.record("QUOTATION", quotationId, "STATUS_" + nextStatus.toUpperCase(), toJson(before), toJson(result));
         return result;
     }
 
@@ -307,14 +469,18 @@ public class SalesService {
         UUID revisedId = UUID.randomUUID();
         LocalDate validUntil = request.validUntil() != null ? request.validUntil() : original.validUntil();
         UUID siteId = quotationSiteId(tenantId, quotationId);
+        Integer paymentTerms = request.paymentTerms() != null ? request.paymentTerms() : original.paymentTerms();
+        String deliveryTerms = request.deliveryTerms() != null ? request.deliveryTerms() : original.deliveryTerms();
+        String notes = request.notes() != null ? request.notes() : original.notes();
+        BigDecimal discount = request.discountAmount() != null ? request.discountAmount() : original.discountAmount();
         jdbc.update("""
                 INSERT INTO quotations
                   (id, tenant_id, quotation_number, rfq_id, customer_id, site_id, revision,
-                   status, valid_until, created_by)
-                VALUES (?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?)
+                   status, valid_until, payment_terms, delivery_terms, notes, discount_amount, created_by)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 'draft', ?, COALESCE(?, 30), ?, ?, COALESCE(?, 0), ?)
                 """,
                 revisedId, tenantId, original.quotationNumber(), original.rfqId(), original.customerId(),
-                siteId, nextRevision, validUntil, context.userId());
+                siteId, nextRevision, validUntil, paymentTerms, deliveryTerms, notes, discount, context.userId());
         BigDecimal estimatedTotal = replaceQuotationLines(tenantId, revisedId, request.lines());
         jdbc.update("UPDATE quotations SET estimated_material_cost = ? WHERE tenant_id = ? AND id = ?",
                 estimatedTotal, tenantId, revisedId);
@@ -331,11 +497,13 @@ public class SalesService {
             requireItemAndUom(line.itemId(), line.uomId());
             jdbc.update("""
                     INSERT INTO rfq_lines
-                      (id, tenant_id, rfq_id, line_no, item_id, quantity, uom_id, specifications)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                      (id, tenant_id, rfq_id, line_no, item_id, quantity, uom_id, specifications,
+                       drawing_number, drawing_revision, material, description, target_price, notes, required_by)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     UUID.randomUUID(), tenantId, rfqId, lineNo++, line.itemId(), line.qty(),
-                    line.uomId(), line.customerSpecRef());
+                    line.uomId(), line.customerSpecRef(), line.drawingNumber(), line.drawingRevision(),
+                    line.material(), line.description(), line.targetPrice(), line.notes(), line.requiredBy());
         }
     }
 
@@ -356,11 +524,13 @@ public class SalesService {
             jdbc.update("""
                     INSERT INTO quotation_lines
                       (id, tenant_id, quotation_id, line_no, item_id, quantity, uom_id,
-                       unit_price, delivery_days, estimated_material_cost_per_unit)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                       unit_price, delivery_days, estimated_material_cost_per_unit,
+                       gst_rate, discount_pct, drawing_number, drawing_revision, description)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, 0), ?, ?, ?)
                     """,
                     UUID.randomUUID(), tenantId, quotationId, lineNo++, line.itemId(), line.qty(),
-                    line.uomId(), line.unitPrice(), deliveryDays, costPerUnit);
+                    line.uomId(), line.unitPrice(), deliveryDays, costPerUnit, line.gstRate(),
+                    line.discountPct(), line.drawingNumber(), line.drawingRevision(), line.description());
         }
         return allCostsKnown ? totalCost.setScale(2, RoundingMode.HALF_UP) : null;
     }
@@ -393,10 +563,14 @@ public class SalesService {
 
     private RfqResponse readRfq(UUID tenantId, UUID rfqId) {
         List<RfqHeader> headers = jdbc.query("""
-                SELECT id, rfq_number, customer_id, rfq_type_id, rfq_type_label,
-                       status, required_by_date, created_at
-                  FROM rfqs
-                 WHERE tenant_id = ? AND id = ?
+                SELECT r.id, r.rfq_number, r.customer_id, r.rfq_type_id, r.rfq_type_label,
+                       r.status, r.required_by_date, r.created_at, r.customer_ref, r.notes,
+                       r.delivery_terms, r.payment_terms, r.received_via, r.received_date,
+                       r.technical_requirements::text AS technical_requirements,
+                       COALESCE(u.display_name, u.email) AS owner_name
+                  FROM rfqs r
+                  LEFT JOIN app_users u ON u.id = r.created_by AND u.tenant_id = r.tenant_id
+                 WHERE r.tenant_id = ? AND r.id = ?
                 """, (rs, rowNum) -> new RfqHeader(
                 rs.getObject("id", UUID.class),
                 rs.getString("rfq_number"),
@@ -405,14 +579,24 @@ public class SalesService {
                 rs.getString("rfq_type_label"),
                 rs.getString("status"),
                 localDate(rs, "required_by_date"),
-                instant(rs, "created_at")), tenantId, rfqId);
+                instant(rs, "created_at"),
+                rs.getString("customer_ref"),
+                rs.getString("notes"),
+                rs.getString("delivery_terms"),
+                (Integer) rs.getObject("payment_terms"),
+                rs.getString("received_via"),
+                localDate(rs, "received_date"),
+                rs.getString("owner_name"),
+                rs.getString("technical_requirements")), tenantId, rfqId);
         if (headers.isEmpty()) {
             throw notFound("RFQ not found");
         }
         RfqHeader header = headers.get(0);
         CustomerDto customer = customerService.getCustomer(header.customerId());
         List<RfqLineData> lineData = jdbc.query("""
-                SELECT id, line_no, item_id, quantity, uom_id, specifications
+                SELECT id, line_no, item_id, quantity, uom_id, specifications,
+                       drawing_number, drawing_revision, material, description,
+                       target_price, notes, required_by
                   FROM rfq_lines
                  WHERE tenant_id = ? AND rfq_id = ?
                  ORDER BY line_no
@@ -422,24 +606,39 @@ public class SalesService {
                 rs.getObject("item_id", UUID.class),
                 rs.getBigDecimal("quantity"),
                 rs.getObject("uom_id", UUID.class),
-                rs.getString("specifications")), tenantId, rfqId);
+                rs.getString("specifications"),
+                rs.getString("drawing_number"),
+                rs.getString("drawing_revision"),
+                rs.getString("material"),
+                rs.getString("description"),
+                rs.getBigDecimal("target_price"),
+                rs.getString("notes"),
+                localDate(rs, "required_by")), tenantId, rfqId);
         List<RfqLineResponse> lines = lineData.stream().map(line -> {
             ItemDto item = itemService.getItem(line.itemId());
             UomDto uom = uomService.getUom(line.uomId());
             return new RfqLineResponse(line.id(), line.lineNo(), line.itemId(), item.getCode(),
-                    item.getName(), line.quantity(), line.uomId(), uom.getSymbol(), line.specifications());
+                    item.getName(), line.quantity(), line.uomId(), uom.getSymbol(), line.specifications(),
+                    line.drawingNumber(), line.drawingRevision(), line.material(), line.description(),
+                    line.targetPrice(), line.notes(), line.requiredBy());
         }).toList();
         return new RfqResponse(header.id(), header.rfqNumber(), header.customerId(), customer.getName(),
                 header.rfqTypeId(), header.rfqTypeLabel(), header.status(), header.requiredDate(),
-                lines, header.createdAt());
+                lines, header.createdAt(), header.customerRef(), header.notes(), header.deliveryTerms(),
+                header.paymentTerms(), header.receivedVia(), header.receivedDate(), header.ownerName(),
+                readMap(header.technicalRequirements()));
     }
 
     private QuotationResponse readQuotation(UUID tenantId, UUID quotationId) {
         List<QuotationHeader> headers = jdbc.query("""
-                SELECT id, quotation_number, rfq_id, customer_id, revision, status,
-                       valid_until, created_at
-                  FROM quotations
-                 WHERE tenant_id = ? AND id = ?
+                SELECT q.id, q.quotation_number, q.rfq_id, q.customer_id, q.revision, q.status,
+                       q.valid_until, q.created_at, q.payment_terms, q.delivery_terms, q.notes,
+                       q.discount_amount, q.decision_channel, q.decision_note, q.decided_by, q.decided_at,
+                       r.rfq_number, cpo.id AS cpo_id, cpo.cpo_number
+                  FROM quotations q
+                  LEFT JOIN rfqs r ON r.tenant_id = q.tenant_id AND r.id = q.rfq_id
+                  LEFT JOIN cpos cpo ON cpo.tenant_id = q.tenant_id AND cpo.quotation_id = q.id
+                 WHERE q.tenant_id = ? AND q.id = ?
                 """, (rs, rowNum) -> new QuotationHeader(
                 rs.getObject("id", UUID.class),
                 rs.getString("quotation_number"),
@@ -448,14 +647,26 @@ public class SalesService {
                 rs.getInt("revision"),
                 rs.getString("status"),
                 localDate(rs, "valid_until"),
-                instant(rs, "created_at")), tenantId, quotationId);
+                instant(rs, "created_at"),
+                (Integer) rs.getObject("payment_terms"),
+                rs.getString("delivery_terms"),
+                rs.getString("notes"),
+                rs.getBigDecimal("discount_amount"),
+                rs.getString("decision_channel"),
+                rs.getString("decision_note"),
+                rs.getObject("decided_by", UUID.class),
+                instant(rs, "decided_at"),
+                rs.getString("rfq_number"),
+                rs.getObject("cpo_id", UUID.class),
+                rs.getString("cpo_number")), tenantId, quotationId);
         if (headers.isEmpty()) {
             throw notFound("Quotation not found");
         }
         QuotationHeader header = headers.get(0);
         CustomerDto customer = customerService.getCustomer(header.customerId());
         List<QuotationLineData> lineData = jdbc.query("""
-                SELECT id, item_id, quantity, uom_id, unit_price, delivery_days
+                SELECT id, item_id, quantity, uom_id, unit_price, delivery_days,
+                       gst_rate, discount_pct, drawing_number, drawing_revision, description
                   FROM quotation_lines
                  WHERE tenant_id = ? AND quotation_id = ?
                  ORDER BY line_no
@@ -465,19 +676,36 @@ public class SalesService {
                 rs.getBigDecimal("quantity"),
                 rs.getObject("uom_id", UUID.class),
                 rs.getBigDecimal("unit_price"),
-                (Integer) rs.getObject("delivery_days")), tenantId, quotationId);
+                (Integer) rs.getObject("delivery_days"),
+                rs.getBigDecimal("gst_rate"),
+                rs.getBigDecimal("discount_pct"),
+                rs.getString("drawing_number"),
+                rs.getString("drawing_revision"),
+                rs.getString("description")), tenantId, quotationId);
         List<QuotationLineResponse> lines = lineData.stream().map(line -> {
             ItemDto item = itemService.getItem(line.itemId());
             UomDto uom = uomService.getUom(line.uomId());
             return new QuotationLineResponse(line.id(), line.itemId(), item.getCode(), item.getName(),
                     line.quantity(), line.uomId(), uom.getSymbol(), line.unitPrice(),
-                    line.quantity().multiply(line.unitPrice()).setScale(2, RoundingMode.HALF_UP),
-                    line.deliveryDays() == null ? null : line.deliveryDays() / 7);
+                    commercialLineTotal(line.quantity(), line.unitPrice(), line.discountPct()),
+                    line.deliveryDays() == null ? null : line.deliveryDays() / 7,
+                    line.gstRate(), line.discountPct(), line.drawingNumber(), line.drawingRevision(),
+                    line.description());
         }).toList();
         List<NegotiationEntryResponse> history = readNegotiationHistory(tenantId, quotationId);
+        List<RevisionLink> revisions = jdbc.query("""
+                SELECT id, revision, status FROM quotations
+                 WHERE tenant_id = ? AND quotation_number = ?
+                 ORDER BY revision
+                """, (rs, rowNum) -> new RevisionLink(
+                rs.getObject("id", UUID.class), rs.getInt("revision"), rs.getString("status")),
+                tenantId, header.quotationNumber());
         return new QuotationResponse(header.id(), header.quotationNumber(), header.rfqId(),
                 header.customerId(), customer.getName(), header.revision(), header.status(),
-                header.validUntil(), lines, history, header.createdAt());
+                header.validUntil(), lines, history, header.createdAt(), header.paymentTerms(),
+                header.deliveryTerms(), header.notes(), header.discountAmount(), header.decisionChannel(),
+                header.decisionNote(), header.decidedBy(), header.decidedAt(), header.cpoId(),
+                header.cpoNumber(), header.rfqNumber(), revisions);
     }
 
     private List<NegotiationEntryResponse> readNegotiationHistory(UUID tenantId, UUID quotationId) {
@@ -644,11 +872,19 @@ public class SalesService {
     }
 
     private UUID requireActiveSite(BossContext context) {
-        UUID siteId = context.siteId();
-        if (siteId == null) {
-            throw badRequest("A site must be selected to create a sales document");
+        if (context.siteId() != null) {
+            return context.siteId();
         }
-        return siteId;
+        List<UUID> sites = jdbc.query(
+                "SELECT id FROM physical_sites WHERE tenant_id = ? AND status = 'active' ORDER BY created_at, id",
+                (rs, rowNum) -> rs.getObject("id", UUID.class), context.tenantId());
+        if (sites.size() == 1) {
+            return sites.get(0);
+        }
+        if (sites.isEmpty()) {
+            throw badRequest("Add an active site before creating a sales document");
+        }
+        throw badRequest("Select a site before creating a sales document");
     }
 
     private BossContext requireContext() {
@@ -680,6 +916,132 @@ public class SalesService {
         }
     }
 
+    private QuotationPdf.Party seller(UUID tenantId) {
+        List<Map<String, Object>> rows = jdbc.queryForList("""
+                SELECT le.legal_name, le.pan, le.registered_address::text AS address,
+                       (SELECT gstin FROM gst_registrations
+                         WHERE tenant_id = le.tenant_id AND status = 'active'
+                         ORDER BY created_at LIMIT 1) AS gstin,
+                       (SELECT contact_email FROM company_profiles
+                         WHERE tenant_id = le.tenant_id ORDER BY created_at LIMIT 1) AS email,
+                       (SELECT contact_phone FROM company_profiles
+                         WHERE tenant_id = le.tenant_id ORDER BY created_at LIMIT 1) AS phone
+                  FROM legal_entities le
+                 WHERE le.tenant_id = ?
+                 ORDER BY le.created_at
+                 LIMIT 1
+                """, tenantId);
+        if (rows.isEmpty()) return new QuotationPdf.Party("", "", "", "", "", "", "", "", "");
+        Map<String, Object> row = rows.get(0);
+        String[] address = addressParts(stringValue(row.get("address")));
+        return new QuotationPdf.Party(stringValue(row.get("legal_name")), address[0], address[1], address[2],
+                stringValue(row.get("gstin")), stringValue(row.get("pan")),
+                stringValue(row.get("email")), stringValue(row.get("phone")), "");
+    }
+
+    private QuotationPdf.Party buyer(UUID tenantId, UUID customerId) {
+        if (customerId == null) return new QuotationPdf.Party("", "", "", "", "", "", "", "", "");
+        List<Map<String, Object>> rows = jdbc.queryForList("""
+                SELECT c.legal_name, c.name, c.gstin, c.pan, c.billing_address::text AS address,
+                       ct.name AS contact_name, ct.email, ct.phone
+                  FROM customers c
+                  LEFT JOIN LATERAL (
+                    SELECT name, email, phone FROM customer_contacts
+                     WHERE tenant_id = c.tenant_id AND customer_id = c.id
+                     ORDER BY is_primary DESC, created_at LIMIT 1
+                  ) ct ON true
+                 WHERE c.tenant_id = ? AND c.id = ?
+                """, tenantId, customerId);
+        if (rows.isEmpty()) return new QuotationPdf.Party("", "", "", "", "", "", "", "", "");
+        Map<String, Object> row = rows.get(0);
+        String[] address = addressParts(stringValue(row.get("address")));
+        String name = stringValue(row.get("legal_name"));
+        if (name.isBlank()) name = stringValue(row.get("name"));
+        return new QuotationPdf.Party(name, address[0], address[1], address[2],
+                stringValue(row.get("gstin")), stringValue(row.get("pan")),
+                stringValue(row.get("email")), stringValue(row.get("phone")), stringValue(row.get("contact_name")));
+    }
+
+    private String[] addressParts(String json) {
+        if (json == null || json.isBlank()) return new String[] {"", "", ""};
+        try {
+            JsonNode node = objectMapper.readTree(json);
+            return new String[] {node.path("line1").asText(""), node.path("city").asText(""), node.path("state").asText("")};
+        } catch (JsonProcessingException exception) {
+            return new String[] {json, "", ""};
+        }
+    }
+
+    private List<FieldChange> fieldChanges(String oldJson, String newJson) {
+        JsonNode previous = readTree(oldJson);
+        JsonNode next = readTree(newJson);
+        if ((previous == null || !previous.isObject()) && (next == null || !next.isObject())) return List.of();
+        Map<String, JsonNode> keys = new LinkedHashMap<>();
+        if (previous != null && previous.isObject()) previous.fieldNames().forEachRemaining(key -> keys.put(key, previous.get(key)));
+        if (next != null && next.isObject()) next.fieldNames().forEachRemaining(key -> keys.putIfAbsent(key, next.get(key)));
+        List<FieldChange> changes = new ArrayList<>();
+        for (String key : keys.keySet()) {
+            if (changes.size() == 12 || skipHistoryField(key)) continue;
+            JsonNode before = previous == null ? null : previous.get(key);
+            JsonNode after = next == null ? null : next.get(key);
+            if ((before != null && before.isContainerNode()) || (after != null && after.isContainerNode())) {
+                int beforeCount = before != null && before.isArray() ? before.size() : 0;
+                int afterCount = after != null && after.isArray() ? after.size() : 0;
+                if (before != null && before.isArray() && beforeCount != afterCount) {
+                    changes.add(new FieldChange(label(key), beforeCount + " rows", afterCount + " rows"));
+                }
+                continue;
+            }
+            String beforeValue = scalar(before);
+            String afterValue = scalar(after);
+            if (!beforeValue.equals(afterValue)) changes.add(new FieldChange(label(key), beforeValue, afterValue));
+        }
+        return changes;
+    }
+
+    private static boolean skipHistoryField(String key) {
+        String lower = key.toLowerCase(Locale.ENGLISH);
+        return lower.equals("id") || lower.endsWith("id") || lower.endsWith("by")
+                || lower.equals("createdat") || lower.equals("updatedat");
+    }
+
+    private JsonNode readTree(String json) {
+        if (json == null || json.isBlank()) return null;
+        try {
+            return objectMapper.readTree(json);
+        } catch (JsonProcessingException exception) {
+            return null;
+        }
+    }
+
+    private static String scalar(JsonNode node) {
+        if (node == null || node.isNull()) return "—";
+        String value = node.asText();
+        return value == null || value.isBlank() ? "—" : value;
+    }
+
+    private static String label(String key) {
+        String spaced = key.replaceAll("([a-z])([A-Z])", "$1 $2").replace('_', ' ');
+        return spaced.substring(0, 1).toUpperCase(Locale.ENGLISH) + spaced.substring(1);
+    }
+
+    private static String stringValue(Object value) {
+        return value == null ? "" : value.toString();
+    }
+
+    private String jsonOrNull(Object value) {
+        return value == null ? null : toJson(value);
+    }
+
+    private Map<String, Object> readMap(String json) {
+        if (json == null || json.isBlank()) return Map.of();
+        try {
+            return objectMapper.readValue(json, new TypeReference<>() {});
+        } catch (JsonProcessingException exception) {
+            return Map.of();
+        }
+    }
+
     private String toJson(Object value) {
         try {
             return objectMapper.writeValueAsString(value);
@@ -700,18 +1062,33 @@ public class SalesService {
         return new ResponseStatusException(HttpStatus.CONFLICT, message);
     }
 
-    private record RfqHeader(UUID id, String rfqNumber, UUID customerId, UUID rfqTypeId,
-                             String rfqTypeLabel, String status, LocalDate requiredDate, Instant createdAt) {}
+    static BigDecimal commercialLineTotal(BigDecimal qty, BigDecimal unitPrice, BigDecimal discountPct) {
+        BigDecimal discount = discountPct == null ? BigDecimal.ZERO : discountPct.movePointLeft(2);
+        return qty.multiply(unitPrice).multiply(BigDecimal.ONE.subtract(discount))
+                .setScale(2, RoundingMode.HALF_UP);
+    }
 
-    private record RfqLineData(UUID id, int lineNo, UUID itemId, BigDecimal quantity,
-                               UUID uomId, String specifications) {}
+    private record RfqHeader(UUID id, String rfqNumber, UUID customerId, UUID rfqTypeId,
+                             String rfqTypeLabel, String status, LocalDate requiredDate, Instant createdAt,
+                             String customerRef, String notes, String deliveryTerms, Integer paymentTerms,
+                             String receivedVia, LocalDate receivedDate, String ownerName, String technicalRequirements) {}
+
+    private record RfqLineData(UUID id, int lineNo, UUID itemId, BigDecimal quantity, UUID uomId,
+                               String specifications, String drawingNumber, String drawingRevision,
+                               String material, String description, BigDecimal targetPrice, String notes,
+                               LocalDate requiredBy) {}
 
     private record QuotationHeader(UUID id, String quotationNumber, UUID rfqId, UUID customerId,
-                                   int revision, String status, LocalDate validUntil,
-                                   Instant createdAt) {}
+                                   int revision, String status, LocalDate validUntil, Instant createdAt,
+                                   Integer paymentTerms, String deliveryTerms, String notes,
+                                   BigDecimal discountAmount, String decisionChannel, String decisionNote,
+                                   UUID decidedBy, Instant decidedAt, String rfqNumber, UUID cpoId,
+                                   String cpoNumber) {}
 
     private record QuotationLineData(UUID id, UUID itemId, BigDecimal quantity, UUID uomId,
-                                    BigDecimal unitPrice, Integer deliveryDays) {}
+                                    BigDecimal unitPrice, Integer deliveryDays, BigDecimal gstRate,
+                                    BigDecimal discountPct, String drawingNumber, String drawingRevision,
+                                    String description) {}
 
     private record NegotiationRow(UUID id, int round, String partyType, String offeredUnitPrices,
                                   String note, Instant createdAt) {}
