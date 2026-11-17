@@ -105,11 +105,52 @@ export function CustomerFormPage() {
   );
 }
 
+function lakh(value: number) {
+  return `₹${(value / 100000).toFixed(2)}L`;
+}
+
+function poValue(po: Cpo) {
+  return po.lines.reduce((sum, line) => sum + (line.lineTotal || 0), 0);
+}
+
+function poDisplay(status: string) {
+  if (status === "open") return "active";
+  if (status === "fulfilled") return "complete";
+  if (status === "on_hold") return "hold";
+  return status;
+}
+
+function rfqDisplay(status: string, quoted: boolean) {
+  if (status === "cancelled") return "cancelled";
+  if (status === "closed") return "converted";
+  if (quoted) return "quoted";
+  return "open";
+}
+
+function DataTable({ title, headers, rows, empty }: { title?: string; headers: string[]; rows: ReactNode[][]; empty: string }) {
+  return (
+    <div className="rounded-xl border overflow-hidden max-w-5xl" style={{ borderColor: "var(--border)", background: "var(--surface)" }}>
+      {title && <div className="px-4 py-3 border-b text-sm font-semibold" style={{ borderColor: "var(--border)", background: "var(--surface-2)" }}>{title}</div>}
+      <table className="w-full text-sm">
+        <thead style={{ background: "var(--surface-2)", borderBottom: "1px solid var(--border)" }}>
+          <tr>{headers.map((header) => <th key={header} className="text-left px-4 py-2.5 text-xs font-semibold" style={{ color: "var(--text-3)" }}>{header}</th>)}</tr>
+        </thead>
+        <tbody>
+          {rows.length === 0
+            ? <tr><td colSpan={headers.length} className="px-4 py-10 text-center text-sm" style={{ color: "var(--text-3)" }}>{empty}</td></tr>
+            : rows.map((cells, index) => <tr key={index} style={{ borderBottom: "1px solid var(--border)" }}>{cells.map((cell, cellIndex) => <td key={cellIndex} className="px-4 py-3 align-middle">{cell}</td>)}</tr>)}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 export function CustomerDetailPage() {
   const { id = "" } = useParams();
   const navigate = useNavigate();
   const customer = useLoad(() => salesApi.customer(id), [id]);
   const rfqs = useLoad(() => salesApi.rfqs("", id), [id]);
+  const quotes = useLoad(() => salesApi.quotations("", id), [id]);
   const pos = useLoad(() => salesApi.cpos("", id), [id]);
   const history = useLoad(() => salesApi.history("CUSTOMER", id), [id]);
   const [tab, setTab] = useState("overview");
@@ -117,6 +158,12 @@ export function CustomerDetailPage() {
   if (customer.loading) return <LoadingState label="Loading customer" />;
   if (customer.error || !customer.data) return <ErrorState body={customer.error || "Customer not found"} />;
   const record = customer.data;
+  const orders = pos.data ?? [];
+  const enquiries = rfqs.data ?? [];
+  const quotedIds = new Set((quotes.data ?? []).map((quote) => quote.rfqId).filter(Boolean));
+  const orderedValue = orders.reduce((sum, po) => sum + poValue(po), 0);
+  const contact = record.contacts?.[0];
+  const terms = record.creditDays ? `Net ${record.creditDays}` : "Advance";
   async function deactivate() {
     try { await salesApi.deactivateCustomer(id); navigate("/sales?tab=customers"); }
     catch (caught) { setError(message(caught)); }
@@ -124,32 +171,75 @@ export function CustomerDetailPage() {
   return (
     <div className="p-6 space-y-4">
       <Back to="/sales?tab=customers" label="Customer Directory" />
-      <div className="flex items-center justify-between gap-3">
-        <div><h1 className="text-lg font-bold">{record.name}</h1><p className="text-xs text-[var(--text-2)]">{record.code} · {record.legalName}</p></div>
-        <div className="flex gap-2"><StatusChip status={record.status || "active"} /><Link to={`/sales/customers/${id}/edit`}><Button variant="ghost">Edit</Button></Link>{record.status !== "inactive" && <Button variant="danger" onClick={deactivate}>Deactivate</Button>}</div>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="flex items-center gap-2"><h1 className="text-xl font-bold">{record.name}</h1><StatusChip status={record.status || "active"} /></div>
+          <p className="text-sm text-[var(--text-2)]">{record.legalName} · {[record.address?.city, record.address?.state].filter(Boolean).join(", ") || record.code}</p>
+          <div className="mt-3 flex flex-wrap gap-6 text-sm">
+            <div><div className="text-[10px] text-[var(--text-3)]">Payment Terms</div><div className="font-semibold">{terms}</div></div>
+            <div><div className="text-[10px] text-[var(--text-3)]">Currency</div><div className="font-semibold">INR</div></div>
+            <div><div className="text-[10px] text-[var(--text-3)]">Credit Limit</div><div className="font-semibold text-[var(--brand)]">₹{(record.creditLimit ?? 0).toLocaleString("en-IN")}</div></div>
+          </div>
+        </div>
+        <div className="flex gap-2"><Link to={`/sales/customers/${id}/edit`}><Button variant="ghost">Edit</Button></Link>{record.status !== "inactive" && <Button variant="danger" onClick={deactivate}>Deactivate</Button>}</div>
       </div>
       {error && <p role="alert" className="text-sm text-[var(--error)]">{error}</p>}
-      <Tabs tabs={[{ id: "overview", label: "Overview" }, { id: "orders", label: `Orders (${pos.data?.length ?? 0})` }, { id: "rfqs", label: `RFQs (${rfqs.data?.length ?? 0})` }, { id: "invoices", label: "Invoices (0)" }, { id: "payments", label: "Payments (0)" }, { id: "contacts", label: `Contacts (${record.contacts?.length ?? 0})` }, { id: "documents", label: "Documents (0)" }, { id: "history", label: "History" }]} active={tab} onChange={setTab} />
-      {tab === "overview" && <div className="grid lg:grid-cols-2 gap-4">
-        <Card title="Identity"><DetailList items={[{ label: "Legal name", value: record.legalName || record.name }, { label: "PAN", value: record.pan || "—" }, { label: "GSTIN", value: record.gstin || "—" }, { label: "City", value: record.address?.city || "—" }, { label: "State", value: record.address?.state || "—" }, { label: "Address", value: record.address?.line1 || "—" }]} /></Card>
-        <Card title="Contact"><DetailList items={[{ label: "Person", value: record.contacts?.[0]?.name || "—" }, { label: "Email", value: record.contacts?.[0]?.email || "—" }, { label: "Phone", value: record.contacts?.[0]?.phone || "—" }]} /></Card>
-        <Card title="Commercial"><DetailList items={[{ label: "Payment terms", value: record.creditDays ? `Net ${record.creditDays}` : "Advance" }, { label: "Credit limit", value: inr(record.creditLimit) }, { label: "Currency", value: "INR" }]} /></Card>
-        <Card title="Account exposure"><DetailList items={[{ label: "PO value", value: inr((pos.data ?? []).reduce((sum, po) => sum + po.lines.reduce((lineSum, line) => lineSum + line.lineTotal, 0), 0)) }, { label: "Invoiced", value: inr(0) }, { label: "Paid", value: inr(0) }, { label: "Outstanding", value: inr(0) }, { label: "Available credit", value: inr(record.creditLimit) }]} /><p className="text-xs text-[var(--text-3)]">Not enough payment history. Invoices and receipts are not part of this Sales release.</p></Card>
+      <Tabs tabs={[
+        { id: "overview", label: "Overview" },
+        { id: "orders", label: `Customer POs (${orders.length})` },
+        { id: "rfqs", label: `RFQs (${enquiries.length})` },
+        { id: "invoices", label: "Invoices (0)" },
+        { id: "payments", label: "Payments (0)" },
+        { id: "contacts", label: "Contacts" },
+        { id: "documents", label: "Documents" },
+        { id: "history", label: "History" },
+      ]} active={tab} onChange={setTab} />
+      {tab === "overview" && <div className="grid lg:grid-cols-3 gap-4 max-w-5xl">
+        <div className="lg:col-span-2 space-y-4">
+          <Card title="Identity"><DetailList items={[{ label: "PAN", value: record.pan || "—" }, { label: "GSTIN", value: record.gstin || "—" }, { label: "State", value: record.address?.state || "—" }, { label: "City", value: record.address?.city || "—" }]} /></Card>
+          <Card title="Contact"><DetailList items={[{ label: "Contact Person", value: contact?.name || "—" }, { label: "Email", value: contact?.email || "—" }, { label: "Phone", value: contact?.phone || "—" }]} /></Card>
+        </div>
+        <div className="space-y-4">
+          <Card title="Commercial"><DetailList items={[{ label: "Payment Terms", value: terms }, { label: "Currency", value: "INR" }, { label: "Credit Limit", value: `₹${(record.creditLimit ?? 0).toLocaleString("en-IN")}` }]} /></Card>
+          <Card title="Account Exposure">
+            <DetailList items={[{ label: "Customer POs", value: `${orders.length} · ${lakh(orderedValue)}` }, { label: "Invoiced", value: lakh(0) }, { label: "Paid", value: lakh(0) }, { label: "Outstanding", value: lakh(0) }, { label: "Overdue", value: lakh(0) }, { label: "Available Credit", value: record.creditLimit == null ? "Not configured" : lakh(record.creditLimit) }]} />
+            <div className="mt-3 pt-3 border-t text-xs" style={{ borderColor: "var(--border)" }}>
+              <div className="flex justify-between"><span className="text-[var(--text-3)]">Credit utilisation</span><span className="font-semibold">0%</span></div>
+              <div className="h-1.5 rounded-full mt-1.5" style={{ background: "var(--surface-2)" }}><div className="h-full rounded-full w-0" style={{ background: "var(--brand-fill)" }} /></div>
+              <p className="mt-2 text-[var(--text-3)]">Not Enough Payment History</p>
+            </div>
+          </Card>
+          <Card title="Quick Links">
+            <div className="space-y-2">
+              <button type="button" className="w-full text-left px-3 py-2 rounded-lg border text-xs font-medium" style={{ borderColor: "var(--border)", background: "var(--surface-2)" }} onClick={() => setTab("orders")}>{orders.length} Purchase Order{orders.length === 1 ? "" : "s"}</button>
+              <button type="button" className="w-full text-left px-3 py-2 rounded-lg border text-xs font-medium" style={{ borderColor: "var(--border)", background: "var(--surface-2)" }} onClick={() => setTab("rfqs")}>{enquiries.length} Customer RFQ{enquiries.length === 1 ? "" : "s"}</button>
+              <button type="button" className="w-full text-left px-3 py-2 rounded-lg border text-xs font-medium" style={{ borderColor: "var(--border)", background: "var(--surface-2)" }} onClick={() => setTab("documents")}>0 Customer Documents →</button>
+            </div>
+          </Card>
+        </div>
       </div>}
-      {tab === "orders" && <LinkedList rows={pos.data ?? []} href={(row) => `/sales/po/${row.id}`} label={(row) => `${row.cpoNumber} · ${row.status}`} />}
-      {tab === "rfqs" && <LinkedList rows={rfqs.data ?? []} href={(row) => `/sales/rfq/${row.id}`} label={(row) => `${row.rfqNumber} · ${row.status}`} />}
-      {tab === "invoices" && <EmptyState title="No invoices" body="Customer invoices are not connected in this Sales release." />}
-      {tab === "payments" && <EmptyState title="No payments" body="Customer receipts are not connected in this Sales release." />}
-      {tab === "contacts" && <ul>{(record.contacts ?? []).map((contact) => <li key={contact.name}>{contact.name} · {contact.email || "—"} · {contact.phone || "—"}</li>)}</ul>}
-      {tab === "documents" && <EmptyState title="No documents" body="Customer documents are not stored in this Sales release." />}
+      {tab === "orders" && <DataTable headers={["PO Number", "Accepted", "Value", "Lines", "Payment", "Status"]} empty="No orders on record." rows={orders.map((po) => [
+        <button type="button" className="font-mono text-xs font-bold text-[var(--brand)]" onClick={() => navigate(`/sales/po/${po.id}`)}>{po.cpoNumber}</button>,
+        <span className="text-xs text-[var(--text-2)]">{when(po.orderDate)}</span>,
+        <span className="font-mono text-sm font-semibold">{lakh(poValue(po))}</span>,
+        <span className="text-xs">{po.lines.length}</span>,
+        <span className="text-xs">{po.paymentTerms != null ? `Net ${po.paymentTerms}` : "—"}</span>,
+        <StatusChip status={poDisplay(po.status)} size="sm" />,
+      ])} />}
+      {tab === "rfqs" && <DataTable headers={["RFQ Number", "Received", "Required By", "Lines", "Status"]} empty="No RFQs on record." rows={enquiries.map((rfq) => [
+        <button type="button" className="font-mono text-xs font-bold text-[var(--brand)]" onClick={() => navigate(`/sales/rfq/${rfq.id}`)}>{rfq.rfqNumber}</button>,
+        <span className="text-xs text-[var(--text-2)]">{when(rfq.receivedDate)}</span>,
+        <span className="text-xs text-[var(--text-2)]">{when(rfq.requiredDate)}</span>,
+        <span className="text-xs">{rfq.lines.length}</span>,
+        <StatusChip status={rfqDisplay(rfq.status, quotedIds.has(rfq.id))} size="sm" />,
+      ])} />}
+      {tab === "invoices" && <DataTable title="Customer Invoices (0)" headers={["Invoice #", "PO Ref", "Invoice Date", "Due Date", "Total", "Balance", "Status"]} rows={[]} empty="No posted invoices yet." />}
+      {tab === "payments" && <DataTable title="Payment Receipts (0)" headers={["Receipt #", "Date", "Method / UTR", "Amount", "Unallocated", "Status"]} rows={[]} empty="No payment receipts recorded yet." />}
+      {tab === "contacts" && <Card title="Primary Contact"><div className="flex items-center gap-3"><div className="w-10 h-10 rounded-full flex items-center justify-center font-bold text-white text-sm" style={{ background: "var(--brand-fill)" }}>{(contact?.name || "?").split(" ").map((part) => part[0]).join("").slice(0, 2).toUpperCase()}</div><div><div className="font-semibold text-sm">{contact?.name || "—"}</div><div className="text-xs text-[var(--text-3)]">{contact?.email || "—"} · {contact?.phone || "—"}</div></div></div></Card>}
+      {tab === "documents" && <DataTable title="Customer Documents" headers={["Title", "Type", "Uploaded by", "Date"]} rows={[]} empty="No documents on record." />}
       {tab === "history" && <History entries={history.data ?? []} />}
     </div>
   );
-}
-
-function LinkedList<T extends { id: string }>({ rows, href, label }: { rows: T[]; href: (row: T) => string; label: (row: T) => string }) {
-  if (!rows.length) return <EmptyState title="No records" body="Nothing is linked yet." />;
-  return <ul className="space-y-2">{rows.map((row) => <li key={row.id}><Link className="text-[var(--brand)] font-semibold" to={href(row)}>{label(row)}</Link></li>)}</ul>;
 }
 
 function actionLabel(action: string) {
@@ -234,7 +324,7 @@ export function RfqDetailPage() {
       </div>
       {error && <p role="alert" className="text-sm text-[var(--error)]">{error}</p>}
       <Tabs tabs={[{ id: "overview", label: "Overview" }, { id: "lines", label: `Line Items (${rfq.lines.length})` }, { id: "technical", label: "Technical & Quality" }, { id: "commercial", label: "Commercial & Delivery" }, { id: "documents", label: "Documents" }, { id: "clarifications", label: "Clarifications (0)" }, { id: "history", label: "Revision History" }]} active={tab} onChange={setTab} />
-      {tab === "overview" && <Card title="Source"><DetailList items={[{ label: "Owner", value: rfq.ownerName || "—" }, { label: "Received", value: when(rfq.receivedDate) }, { label: "Channel", value: rfq.receivedVia || "—" }, { label: "Customer reference", value: rfq.customerRef || "—" }, { label: "Required by", value: when(rfq.requiredDate) }, { label: "Payment terms", value: String(rfq.technicalRequirements?.paymentTermsLabel || (rfq.paymentTerms != null ? `Net ${rfq.paymentTerms}` : "—")) }, { label: "Delivery terms", value: rfq.deliveryTerms || "—" }]} /><div className="space-y-1 mt-3">{linked.map((quote) => <Link key={quote.id} className="block text-[var(--brand)]" to={`/sales/quotation/${quote.id}`}>{quote.quotationNumber} rev {quote.revision} · {quote.status}</Link>)}{!linked.length && <p>No quotation yet.</p>}</div></Card>}
+      {tab === "overview" && <div className="space-y-4"><Card title="Source"><DetailList items={[{ label: "Owner", value: rfq.ownerName || "—" }, { label: "Received", value: when(rfq.receivedDate) }, { label: "Channel", value: rfq.receivedVia || "—" }, { label: "Customer reference", value: rfq.customerRef || "—" }, { label: "Required by", value: when(rfq.requiredDate) }, { label: "Payment terms", value: String(rfq.technicalRequirements?.paymentTermsLabel || (rfq.paymentTerms != null ? `Net ${rfq.paymentTerms}` : "—")) }, { label: "Delivery terms", value: rfq.deliveryTerms || "—" }]} /></Card><DataTable title="Quotations" headers={["Quotation", "Revision", "Status", "Valid until"]} empty="No quotation yet." rows={linked.map((quote) => [<Link className="font-mono text-xs font-bold text-[var(--brand)]" to={`/sales/quotation/${quote.id}`}>{quote.quotationNumber}</Link>, <span>Rev {quote.revision}</span>, <StatusChip status={quote.status === "sent" ? "submitted" : quote.status} size="sm" />, <span className="text-xs">{when(quote.validUntil)}</span>])} /></div>}
       {tab === "lines" && <LineTable lines={rfq.lines} />}
       {tab === "technical" && <DetailList items={[{ label: "Standards", value: String(rfq.technicalRequirements?.standards || "—") }, { label: "Inspection", value: String(rfq.technicalRequirements?.inspectionLevel || "—") }, { label: "Surface finish", value: String(rfq.technicalRequirements?.surfaceFinish || "—") }, { label: "Heat treatment", value: String(rfq.technicalRequirements?.heatTreatment || "—") }, { label: "Packaging", value: String(rfq.technicalRequirements?.packagingRequirements || "—") }, { label: "Traceability", value: rfq.technicalRequirements?.traceability ? "Required" : "Not required" }, { label: "Special notes", value: String(rfq.technicalRequirements?.specialNotes || "—") }]} />}
       {tab === "commercial" && <DetailList items={[{ label: "Payment terms", value: String(rfq.technicalRequirements?.paymentTermsLabel || (rfq.paymentTerms != null ? `${rfq.paymentTerms} days` : "—")) }, { label: "Delivery terms", value: rfq.deliveryTerms || "—" }, { label: "Internal notes", value: rfq.notes || "—" }]} />}
@@ -246,7 +336,18 @@ export function RfqDetailPage() {
 }
 
 function LineTable({ lines }: { lines: RfqLine[] }) {
-  return <table className="eoss-table"><thead><tr><th>#</th><th>Item</th><th>Qty</th><th>UOM</th><th>Drawing</th></tr></thead><tbody>{lines.map((line, index) => <tr key={line.id || index}><td>{line.seq || index + 1}</td><td>{line.itemCode} {line.itemName}</td><td>{line.qty}</td><td>{line.uomSymbol}</td><td>{line.drawingNumber || "—"}</td></tr>)}</tbody></table>;
+  return <DataTable headers={["#", "Drawing / Part No.", "Rev", "Description", "Material", "Qty", "UOM", "Target Price", "Required By", "Notes"]} empty="No line items recorded." rows={lines.map((line, index) => [
+    <span className="font-mono text-xs text-[var(--text-3)]">{line.seq || index + 1}</span>,
+    <span className="font-mono text-xs font-semibold text-[var(--brand)]">{line.drawingNumber || line.itemCode || "—"}</span>,
+    <span className="font-mono text-xs">{line.drawingRevision || "—"}</span>,
+    <span>{line.description || line.itemName || "—"}</span>,
+    <span className="text-xs">{line.material || "—"}</span>,
+    <span className="font-mono">{line.qty}</span>,
+    <span className="text-xs">{line.uomSymbol || "—"}</span>,
+    <span className="font-mono">{line.targetPrice ? inr(line.targetPrice) : "—"}</span>,
+    <span className="text-xs">{when(line.requiredBy)}</span>,
+    <span className="text-xs">{line.notes || "—"}</span>,
+  ])} />;
 }
 
 export function QuotationFormPage() {
@@ -481,9 +582,9 @@ export function PoDetailPage() {
         </Card>
       </div>}
       {tab === "lines" && <table className="eoss-table"><thead><tr><th>#</th><th>Drawing / Part No.</th><th>Rev</th><th>Description</th><th>Qty</th><th>UOM</th><th>Rate</th><th>Value</th></tr></thead><tbody>{po.lines.map((line, index) => <tr key={line.id}><td>{index + 1}</td><td>{line.drawingNumber || line.itemCode}</td><td>{line.drawingRevision || "—"}</td><td>{line.description || line.itemName}</td><td>{line.qty}</td><td>{line.uomSymbol}</td><td>{inr(line.unitPrice)}</td><td>{inr(line.lineTotal)}</td></tr>)}</tbody></table>}
-      {tab === "amendments" && <p className="text-sm text-[var(--text-2)]">No amendments yet. Create a revised Customer PO from the header. Accepted prices stay locked until a later commercial revision is approved.</p>}
-      {tab === "jobs" && <p className="text-sm text-[var(--text-2)]">No jobs linked to this PO yet.</p>}
-      {tab === "documents" && <p className="text-sm text-[var(--text-2)]">No documents are stored on this Customer PO yet.</p>}
+      {tab === "amendments" && <DataTable title="Amendments" headers={["Revision", "Reason", "Requested by", "Status"]} rows={[]} empty="No amendments recorded for this PO." />}
+      {tab === "jobs" && <DataTable title="Linked Jobs (0)" headers={["Job #", "Description", "Current Stage", "Status", "Due Date", "Value"]} rows={[]} empty="No jobs linked to this PO." />}
+      {tab === "documents" && <DataTable title="Documents" headers={["Title", "Type", "Uploaded by", "Date"]} rows={[]} empty="No documents are stored on this Customer PO yet." />}
       {tab === "history" && <History entries={history.data ?? []} />}
     </div>
   );
