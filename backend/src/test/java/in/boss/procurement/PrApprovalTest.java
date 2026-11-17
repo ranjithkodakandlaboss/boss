@@ -199,7 +199,7 @@ class PrApprovalTest extends BaseMasterDataIntegrationTest {
         UUID prLine2Id = approvedPr.lines().get(1).id();
 
         // 1. Partial ordered: Create active issued SPO with 5 units of Line 1
-        UUID spo1Id = insertSpo("open");
+        UUID spo1Id = insertSpo("issued", pr.id());
         insertSpoLine(spo1Id, prLine1Id, 1, item1Id, BigDecimal.valueOf(5), BigDecimal.valueOf(15.0));
 
         PurchaseRequisitionResponse partialPr = prService.recalculateCoverage(pr.id());
@@ -207,7 +207,7 @@ class PrApprovalTest extends BaseMasterDataIntegrationTest {
         assertThat(partialPr.lines().get(0).orderedQty()).isEqualByComparingTo(BigDecimal.valueOf(5));
 
         // 2. Cancelled SPOs do not count towards coverage
-        UUID cancelledSpoId = insertSpo("cancelled");
+        UUID cancelledSpoId = insertSpo("cancelled", pr.id());
         insertSpoLine(cancelledSpoId, prLine2Id, 1, item2Id, BigDecimal.valueOf(20), BigDecimal.valueOf(30.0));
 
         PurchaseRequisitionResponse stillPartial = prService.recalculateCoverage(pr.id());
@@ -215,7 +215,7 @@ class PrApprovalTest extends BaseMasterDataIntegrationTest {
         assertThat(stillPartial.lines().get(1).orderedQty()).isEqualByComparingTo(BigDecimal.ZERO);
 
         // 3. Complete ordering: Add active SPO with remaining (Line 1: 5, Line 2: 20)
-        UUID spo2Id = insertSpo("open");
+        UUID spo2Id = insertSpo("issued", pr.id());
         insertSpoLine(spo2Id, prLine1Id, 1, item1Id, BigDecimal.valueOf(5), BigDecimal.valueOf(15.0));
         insertSpoLine(spo2Id, prLine2Id, 2, item2Id, BigDecimal.valueOf(20), BigDecimal.valueOf(30.0));
 
@@ -247,7 +247,7 @@ class PrApprovalTest extends BaseMasterDataIntegrationTest {
         prService.approvePr(pr.id());
 
         UUID prLineId = pr.lines().get(0).id();
-        UUID spoId = insertSpo("open");
+        UUID spoId = insertSpo("issued", pr.id());
         insertSpoLine(spoId, prLineId, 1, item1Id, BigDecimal.valueOf(5), BigDecimal.valueOf(15.0));
 
         // Attempt to cancel PR with active supplier commitments -> 409 Conflict
@@ -263,13 +263,18 @@ class PrApprovalTest extends BaseMasterDataIntegrationTest {
         assertThat(cancelled.status()).isEqualTo("cancelled");
     }
 
-    private UUID insertSpo(String status) {
+    private UUID insertSpo(String status, UUID prId) {
+        UUID quoteId = insert("""
+                INSERT INTO supplier_quotations (tenant_id, sq_number, pr_id, supplier_id, status, created_by)
+                VALUES (?, ?, ?, ?, 'selected', ?) RETURNING id
+                """, tenantId, "SQ-" + UUID.randomUUID().toString().substring(0, 8),
+                prId, supplierId, BossContextHolder.get().userId());
         return insert("""
-                INSERT INTO spos (tenant_id, spo_number, supplier_id, site_id, status, order_date, created_by)
-                VALUES (?, ?, ?, ?, ?, CURRENT_DATE, ?) RETURNING id
+                INSERT INTO spos (tenant_id, spo_number, sq_id, pr_id, supplier_id, site_id, status, order_date, created_by)
+                VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_DATE, ?) RETURNING id
                 """,
                 tenantId, "SPO-" + UUID.randomUUID().toString().substring(0, 8),
-                supplierId, siteId, status, BossContextHolder.get().userId());
+                quoteId, prId, supplierId, siteId, status, BossContextHolder.get().userId());
     }
 
     private void insertSpoLine(UUID spoId, UUID prLineId, int lineNo, UUID itemId, BigDecimal qty, BigDecimal unitPrice) {
