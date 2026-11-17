@@ -7,9 +7,8 @@ export default defineConfig({
     cors: true,
     proxy: {
       "/admin/api": {
-        target: "https://boss-admin-api-201664309080.asia-south1.run.app",
+        target: "http://127.0.0.1:8080",
         changeOrigin: true,
-        secure: true,
       },
     },
   },
