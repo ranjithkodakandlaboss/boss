@@ -11,6 +11,15 @@ import ConfirmDialog from "../components/shared/ConfirmDialog";
 import { getStatusLabel } from "../components/shared/StatusChip";
 import HomePage from "./HomePage";
 import OnboardingPage from "./OnboardingPage";
+import ProcurementWorkspace from "../workspaces/procurement/ProcurementWorkspace";
+
+const PROCUREMENT_ROUTES = new Set([
+  "procurement",
+  "procurement/pr/new",
+  "procurement/pr/:id",
+  "procurement/quote/:id",
+  "procurement/spo/:id",
+]);
 
 const SALES_TABS: Record<string, { title: string; columns: string[]; placeholder: string; statuses?: string[]; action?: { label: string; to: string } }> = {
   pos: {
@@ -53,6 +62,7 @@ const STOCK_LINKS = [
 export default function ScreenPage({ screen }: { screen: ScreenDef }) {
   if (screen.kind === "home") return <HomePage />;
   if (screen.kind === "onboarding") return <OnboardingPage />;
+  if (PROCUREMENT_ROUTES.has(screen.path)) return <ProcurementWorkspace screenPath={screen.path} />;
   return <Workspace screen={screen} />;
 }
 
