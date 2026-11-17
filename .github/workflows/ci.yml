@@ -33,7 +33,48 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run lint
-      - run: npm run build
+      - name: Build Customer App
+        env:
+          VITE_CUSTOMER_API_URL: ""
+        run: |
+          set -euo pipefail
+          key_file="${GITHUB_WORKSPACE}/src/customer-app/customer-firebase-web-key"
+          rm -f "${key_file}"
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ github.ref }}" == "refs/heads/main" && "${{ inputs.deploy_target }}" == "customer" ]]; then
+            python3 - << 'PY'
+          import re, urllib.request
+          base = "https://known---boss-customer-web-dev-4pu7albm6a-el.a.run.app"
+          html = urllib.request.urlopen(base + "/", timeout=30).read().decode()
+          match = re.search(r'src="([^"]+\.js)"', html)
+          if not match:
+              raise SystemExit("The known Customer App bundle was not found")
+          url = match.group(1)
+          if url.startswith("/"):
+              url = base + url
+          script = urllib.request.urlopen(url, timeout=30).read().decode()
+          key = re.search(r"AIza[0-9A-Za-z_\-]{20,}", script)
+          if not key:
+              raise SystemExit("The known Customer App has no Firebase web key")
+          with open("customer-firebase-web-key", "w", encoding="utf-8") as handle:
+              handle.write(key.group(0))
+          PY
+            VITE_FIREBASE_API_KEY="$(cat "${key_file}")"
+            export VITE_FIREBASE_API_KEY
+            echo "::add-mask::${VITE_FIREBASE_API_KEY}"
+          fi
+          npm run build
+          if [[ -n "${VITE_FIREBASE_API_KEY:-}" ]]; then
+            python3 - << 'PY'
+          from pathlib import Path
+          text = "\n".join(path.read_text() for path in Path("dist/assets").glob("*.js"))
+          if "127.0.0.1" in text or "localhost" in text:
+              raise SystemExit("The Customer App bundle still points at a local API")
+          if "identitytoolkit.googleapis.com" not in text:
+              raise SystemExit("The Customer App bundle has no Firebase sign-in")
+          print("customer_app_bundle_ok")
+          PY
+          fi
+          rm -f "${key_file}"
       - name: Upload Customer App build
         uses: actions/upload-artifact@v4
         with:
