@@ -1,0 +1,51 @@
+openapi: "3.1.0"
+info:
+  title: BOSS Company Workspace API
+  version: "1.0.0"
+  description: |
+    Customer-tenant company details and onboarding progress for Journey 1.
+    Persists only columns that already exist: tenant_registry.name, legal_entities,
+    gst_registrations, physical_sites, stores, company_profiles contact fields,
+    and tenant_onboarding_config completion. Financial year and currency are not
+    stored because no approved column exists. Industry type is read-only after provisioning.
+
+servers:
+  - url: https://api.boss.app/api/v1
+
+security:
+  - firebaseBearer: []
+
+paths:
+  /company:
+    get:
+      operationId: getCompanyDetails
+      summary: Read the provisioned legal entity, GST registration, sites, and stores
+    put:
+      operationId: saveCompanyDetails
+      summary: Update company details. OWNER only.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string }
+  /onboarding:
+    get:
+      operationId: getOnboarding
+      summary: Read industry type, completion, and the saved company draft
+    put:
+      operationId: saveOnboardingProgress
+      summary: Save onboarding progress without completing it
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string }
+  /onboarding/complete:
+    post:
+      operationId: completeOnboarding
+      summary: Save the company draft and set onboarding_completed_at
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string }

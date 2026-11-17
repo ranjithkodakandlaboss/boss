@@ -16,6 +16,8 @@ GRANT UPDATE (status, updated_at) ON tenant_registry TO boss_admin;
 GRANT INSERT ON legal_entities, physical_sites TO boss_admin;
 GRANT SELECT (id) ON legal_entities, physical_sites TO boss_admin;
 
+GRANT EXECUTE ON FUNCTION boss_create_owner_invite(uuid, text, text, timestamptz) TO boss_admin;
+
 GRANT SELECT, INSERT ON tenant_onboarding_config TO boss_admin;
 GRANT UPDATE (industry_type, onboarding_completed_at) ON tenant_onboarding_config TO boss_admin;
 
