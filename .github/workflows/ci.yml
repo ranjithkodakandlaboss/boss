@@ -16,6 +16,25 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  customer-app:
+    name: Customer App
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: src/customer-app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: src/customer-app/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - run: npm run lint
+      - run: npm run build
+
   build-and-test:
     name: Build & Test (Java 21)
     runs-on: ubuntu-latest
@@ -111,6 +130,13 @@ jobs:
           if [ -n "$BAD" ]; then
             echo "Migration naming violation:"
             echo "$BAD"
+            exit 1
+          fi
+          DUPS=$(find backend/src/main/resources/db/migration -name 'V*.sql' -exec basename {} \; \
+                | sed -E 's/^(V[0-9]+(_[0-9]+)?)__.*/\1/' | sort | uniq -d)
+          if [ -n "$DUPS" ]; then
+            echo "Duplicate Flyway version:"
+            echo "$DUPS"
             exit 1
           fi
           echo "All migrations follow naming convention."

@@ -16,6 +16,12 @@ GRANT UPDATE (status, updated_at) ON tenant_registry TO boss_admin;
 GRANT INSERT ON legal_entities, physical_sites TO boss_admin;
 GRANT SELECT (id) ON legal_entities, physical_sites TO boss_admin;
 
+GRANT EXECUTE ON FUNCTION boss_create_owner_invite(uuid, text, text, timestamptz) TO boss_admin;
+GRANT EXECUTE ON FUNCTION boss_validate_invite_token(text) TO boss_admin;
+GRANT EXECUTE ON FUNCTION boss_accept_owner_invite(text, text, text, text) TO boss_admin;
+GRANT EXECUTE ON FUNCTION boss_get_tenant_invitation_summary(uuid) TO boss_admin;
+GRANT EXECUTE ON FUNCTION boss_register_gstin(uuid, uuid, text, text) TO boss_admin;
+
 GRANT SELECT, INSERT ON tenant_onboarding_config TO boss_admin;
 GRANT UPDATE (industry_type, onboarding_completed_at) ON tenant_onboarding_config TO boss_admin;
 

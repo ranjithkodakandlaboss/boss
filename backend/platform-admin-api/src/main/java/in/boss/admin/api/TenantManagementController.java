@@ -44,6 +44,16 @@ public class TenantManagementController {
         return service.list(status, page, size);
     }
 
+    @GetMapping("/tenants/resolve")
+    public TenantSummary resolve(@RequestParam("slug") String slug) {
+        return service.resolveTenantBySlug(slug);
+    }
+
+    @GetMapping("/tenants/by-slug/{slug}")
+    public TenantSummary bySlug(@PathVariable("slug") String slug) {
+        return service.resolveTenantBySlug(slug);
+    }
+
     @PostMapping("/tenants/{tenantId}/activate")
     public Map<String, String> activate(@PathVariable UUID tenantId, Authentication authentication,
                                         HttpServletRequest httpRequest) {

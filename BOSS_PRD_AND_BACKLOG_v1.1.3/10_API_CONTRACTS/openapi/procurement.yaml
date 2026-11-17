@@ -53,12 +53,13 @@ components:
 
     SupplierQuotation:
       type: object
+      required: [id, prId, supplierId, supplierName, status, lines]
       properties:
         id: { type: string, format: uuid }
         prId: { type: string, format: uuid }
         supplierId: { type: string, format: uuid }
         supplierName: { type: string }
-        status: { type: string, enum: [received, compared, selected, rejected] }
+        status: { type: string, enum: [requested, received, under_review, selected, rejected] }
         validUntil: { type: string, format: date, nullable: true }
         lines:
           type: array
@@ -66,22 +67,61 @@ components:
 
     SupplierQuotationLine:
       type: object
+      required: [id, prLineId, itemId, unitPrice, isSelected]
       properties:
         id: { type: string, format: uuid }
         prLineId: { type: string, format: uuid }
         itemId: { type: string, format: uuid }
         unitPrice: { type: number }
         leadTimeDays: { type: integer, nullable: true }
-        isSelected: { type: boolean }
+        isSelected:
+          type: boolean
+          description: True when this quotation line has been included in an SPO.
+
+    SupplierQuotationComparison:
+      type: object
+      required: [prId, lines]
+      properties:
+        prId: { type: string, format: uuid }
+        lines:
+          type: array
+          items:
+            type: object
+            required: [prLineId, itemId, itemCode, itemName, quantity, uomId, uomSymbol, offers]
+            properties:
+              prLineId: { type: string, format: uuid }
+              itemId: { type: string, format: uuid }
+              itemCode: { type: string }
+              itemName: { type: string }
+              quantity: { type: number }
+              uomId: { type: string, format: uuid }
+              uomSymbol: { type: string }
+              offers:
+                type: array
+                items:
+                  type: object
+                  required: [supplierQuotationId, supplierId, supplierName, status, unitPrice, isSelected]
+                  properties:
+                    supplierQuotationId: { type: string, format: uuid }
+                    supplierId: { type: string, format: uuid }
+                    supplierName: { type: string }
+                    status: { type: string, enum: [requested, received, under_review, selected, rejected] }
+                    unitPrice: { type: number }
+                    leadTimeDays: { type: integer, nullable: true }
+                    validUntil: { type: string, format: date, nullable: true }
+                    isSelected: { type: boolean }
 
     SPO:
       type: object
+      required: [id, spoNumber, prId, supplierQuotationId, supplierId, supplierName, status, lines, totalAmount, createdAt]
       properties:
         id: { type: string, format: uuid }
         spoNumber: { type: string }
+        prId: { type: string, format: uuid }
+        supplierQuotationId: { type: string, format: uuid }
         supplierId: { type: string, format: uuid }
         supplierName: { type: string }
-        status: { type: string, enum: [draft, sent, acknowledged, partially_received, received, cancelled] }
+        status: { type: string, enum: [draft, issued, acknowledged, partially_received, fully_received, cancelled] }
         lines:
           type: array
           items: { $ref: '#/components/schemas/SPOLine' }
@@ -90,6 +130,7 @@ components:
 
     SPOLine:
       type: object
+      required: [id, itemId, itemCode, itemName, orderedQty, receivedQty, unitPrice, lineTotal]
       properties:
         id: { type: string, format: uuid }
         itemId: { type: string, format: uuid }
@@ -102,6 +143,197 @@ components:
         expectedDeliveryDate: { type: string, format: date, nullable: true }
 
 paths:
+  /prs/{prId}/supplier-quotations:
+    get:
+      operationId: listSupplierQuotations
+      summary: List supplier quotations for a purchase requisition
+      tags: [Supplier Quotations]
+      parameters:
+        - name: prId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: page
+          in: query
+          schema: { type: integer, default: 0 }
+        - name: size
+          in: query
+          schema: { type: integer, default: 50 }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  content: { type: array, items: { $ref: '#/components/schemas/SupplierQuotation' } }
+                  page: { type: integer }
+                  size: { type: integer }
+                  totalElements: { type: integer }
+
+    post:
+      operationId: createSupplierQuotationRequest
+      summary: Request a supplier quotation for an approved purchase requisition
+      tags: [Supplier Quotations]
+      parameters:
+        - name: prId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [supplierId]
+              properties:
+                supplierId: { type: string, format: uuid }
+      responses:
+        '201':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SupplierQuotation' }
+        '403': { description: PURCHASE_MANAGER or OWNER role required }
+        '404': { description: Purchase requisition or supplier not found }
+        '409': { description: Purchase requisition is not approved }
+
+  /prs/{prId}/supplier-quotations/comparison:
+    get:
+      operationId: compareSupplierQuotations
+      summary: Compare supplier quotation offers by purchase requisition line
+      tags: [Supplier Quotations]
+      parameters:
+        - name: prId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SupplierQuotationComparison' }
+
+  /supplier-quotations/{quotationId}:
+    get:
+      operationId: getSupplierQuotation
+      tags: [Supplier Quotations]
+      parameters:
+        - name: quotationId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SupplierQuotation' }
+        '404': { description: Supplier quotation not found }
+
+  /supplier-quotations/{quotationId}/receive:
+    post:
+      operationId: receiveSupplierQuotation
+      summary: Record supplier quotation details and lines
+      tags: [Supplier Quotations]
+      parameters:
+        - name: quotationId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [lines]
+              properties:
+                validUntil: { type: string, format: date, nullable: true }
+                lines:
+                  type: array
+                  minItems: 1
+                  items:
+                    type: object
+                    required: [prLineId, unitPrice]
+                    properties:
+                      prLineId: { type: string, format: uuid }
+                      unitPrice: { type: number, minimum: 0 }
+                      leadTimeDays: { type: integer, minimum: 0, nullable: true }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SupplierQuotation' }
+        '409': { description: Quotation is not in requested state }
+
+  /supplier-quotations/{quotationId}/review:
+    post:
+      operationId: startSupplierQuotationReview
+      tags: [Supplier Quotations]
+      parameters:
+        - name: quotationId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SupplierQuotation' }
+        '409': { description: Quotation is not in received state }
+
+  /supplier-quotations/{quotationId}/select:
+    post:
+      operationId: selectSupplierQuotation
+      tags: [Supplier Quotations]
+      parameters:
+        - name: quotationId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SupplierQuotation' }
+        '409': { description: Quotation is not in under_review state }
+
+  /supplier-quotations/{quotationId}/reject:
+    post:
+      operationId: rejectSupplierQuotation
+      tags: [Supplier Quotations]
+      parameters:
+        - name: quotationId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SupplierQuotation' }
+        '409': { description: Quotation is not in under_review state }
+
   /prs:
     get:
       operationId: listPRs
@@ -110,7 +342,7 @@ paths:
       parameters:
         - name: status
           in: query
-          schema: { type: string }
+          schema: { type: string, enum: [draft, issued, acknowledged, partially_received, fully_received, cancelled] }
         - name: originType
           in: query
           schema: { type: string }
@@ -215,6 +447,7 @@ paths:
                 properties:
                   content: { type: array, items: { $ref: '#/components/schemas/SPO' } }
                   page: { type: integer }
+                  size: { type: integer }
                   totalElements: { type: integer }
 
     post:
@@ -232,13 +465,17 @@ paths:
           application/json:
             schema:
               type: object
-              required: [supplierId, prId, lines]
+              required: [supplierId, prId, supplierQuotationId, lines]
               properties:
                 supplierId: { type: string, format: uuid }
                 prId: { type: string, format: uuid }
-                supplierQuotationId: { type: string, format: uuid, nullable: true }
+                supplierQuotationId:
+                  type: string
+                  format: uuid
+                  description: Must identify a selected supplier quotation for this PR and supplier.
                 lines:
                   type: array
+                  minItems: 1
                   items:
                     type: object
                     required: [prLineId, itemId, orderedQty, unitPrice, uomId]
@@ -270,6 +507,66 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/SPO' }
         '404': { description: SPO not found }
+
+  /spos/{spoId}/issue:
+    post:
+      operationId: issueSPO
+      tags: [SPO]
+      parameters:
+        - name: spoId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SPO' }
+        '409': { description: SPO is not in draft state }
+
+  /spos/{spoId}/acknowledge:
+    post:
+      operationId: acknowledgeSPO
+      tags: [SPO]
+      parameters:
+        - name: spoId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SPO' }
+        '409': { description: SPO is not in issued state }
+
+  /spos/{spoId}/cancel:
+    post:
+      operationId: cancelSPO
+      tags: [SPO]
+      parameters:
+        - name: spoId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SPO' }
+        '409': { description: SPO cannot be cancelled from its current state }
 
   /suppliers/{supplierId}/invite:
     post:

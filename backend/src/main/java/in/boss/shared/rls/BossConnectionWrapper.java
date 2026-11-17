@@ -9,15 +9,15 @@ import java.sql.PreparedStatement;
 import java.sql.SQLException;
 
 /**
- * Runs SET LOCAL app.current_tenant_id = ? immediately after a connection is
- * borrowed from HikariCP. If BossContext is not set the parameter is set to
- * NULL — PostgreSQL RLS then returns zero rows (secure default).
+ * Sets app.current_tenant_id for the connection as soon as it is borrowed.
+ * The value is session-scoped because many security checks run with autocommit.
+ * The next checkout overwrites it. An empty value hides every tenant row.
  */
 public final class BossConnectionWrapper {
 
     private static final Logger log = LoggerFactory.getLogger(BossConnectionWrapper.class);
     private static final String SET_TENANT =
-            "SELECT set_config('app.current_tenant_id', ?, true)";
+            "SELECT set_config('app.current_tenant_id', ?, false)";
 
     private BossConnectionWrapper() {}
 
