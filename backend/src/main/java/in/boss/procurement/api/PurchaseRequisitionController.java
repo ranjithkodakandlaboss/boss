@@ -38,9 +38,10 @@ public class PurchaseRequisitionController {
     public PageResponse<PurchaseRequisitionResponse> list(
             @RequestParam(required = false) String status,
             @RequestParam(required = false) String originType,
+            @RequestParam(required = false) UUID customerPoId,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "50") int size) {
-        return prService.listPrs(status, originType, page, size);
+        return prService.listPrs(status, originType, customerPoId, page, size);
     }
 
     @PostMapping

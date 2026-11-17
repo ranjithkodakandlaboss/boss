@@ -46,13 +46,16 @@ public class SupplierQuotationService {
     private final SupplierService supplierService;
     private final AuditService auditService;
     private final ObjectMapper objectMapper;
+    private final SupplierQuotationDeliveryService deliveryService;
 
     public SupplierQuotationService(
             JdbcTemplate jdbc,
             SupplierService supplierService,
             AuditService auditService,
-            ObjectMapper objectMapper) {
+            ObjectMapper objectMapper,
+            SupplierQuotationDeliveryService deliveryService) {
         this.jdbc = jdbc;
+        this.deliveryService = deliveryService;
         this.supplierService = supplierService;
         this.auditService = auditService;
         this.objectMapper = objectMapper;
@@ -92,6 +95,14 @@ public class SupplierQuotationService {
             throw conflict("Supplier quotations can only be requested for an approved purchase requisition");
         }
         SupplierDto supplier = requireActiveSupplier(request.supplierId());
+        List<UUID> existing = jdbc.query("""
+                SELECT id FROM supplier_quotations
+                WHERE tenant_id = ? AND pr_id = ? AND supplier_id = ? AND status = 'requested'
+                """, (rs, rowNum) -> rs.getObject("id", UUID.class), tenantId, prId, supplier.getId());
+        if (!existing.isEmpty()) {
+            deliveryService.send(existing.get(0));
+            return getQuotation(existing.get(0));
+        }
 
         UUID id = UUID.randomUUID();
         jdbc.update("""
@@ -102,9 +113,9 @@ public class SupplierQuotationService {
                 id, tenantId, nextDocumentNumber(), prId, supplier.getId(),
                 supplier.getPaymentTerms(), context.userId());
 
-        SupplierQuotationResponse response = getQuotation(id);
-        auditService.record("supplier_quotations", id, "REQUESTED", null, toJson(response));
-        return response;
+        auditService.record("supplier_quotations", id, "REQUESTED", null, null);
+        deliveryService.send(id);
+        return getQuotation(id);
     }
 
     @Transactional(readOnly = true)
@@ -113,7 +124,8 @@ public class SupplierQuotationService {
         UUID tenantId = context.tenantId();
         List<QuotationHeader> headers = jdbc.query("""
                 SELECT q.id, q.pr_id, q.supplier_id, s.name AS supplier_name,
-                       q.status, q.valid_until
+                       q.status, q.valid_until, q.supplier_quote_ref, q.payment_terms,
+                       q.freight_amount, q.discount_amount, q.tax_amount, q.selection_reason
                 FROM supplier_quotations q
                 JOIN suppliers s ON s.id = q.supplier_id AND s.tenant_id = q.tenant_id
                 WHERE q.tenant_id = ? AND q.id = ?
@@ -123,7 +135,13 @@ public class SupplierQuotationService {
                 rs.getObject("supplier_id", UUID.class),
                 rs.getString("supplier_name"),
                 rs.getString("status"),
-                rs.getObject("valid_until", LocalDate.class)),
+                rs.getObject("valid_until", LocalDate.class),
+                rs.getString("supplier_quote_ref"),
+                (Integer) rs.getObject("payment_terms"),
+                rs.getBigDecimal("freight_amount"),
+                rs.getBigDecimal("discount_amount"),
+                rs.getBigDecimal("tax_amount"),
+                rs.getString("selection_reason")),
                 tenantId, quotationId);
         if (headers.isEmpty()) {
             throw notFound("Supplier quotation not found: " + quotationId);
@@ -131,7 +149,7 @@ public class SupplierQuotationService {
 
         QuotationHeader header = headers.get(0);
         List<SupplierQuotationLineResponse> lines = jdbc.query("""
-                SELECT ql.id, ql.pr_line_id, ql.item_id, ql.unit_price, ql.delivery_days,
+                SELECT ql.id, ql.pr_line_id, ql.item_id, ql.unit_price, ql.delivery_days, ql.tax_rate,
                        EXISTS (
                          SELECT 1
                          FROM spo_lines sl
@@ -149,12 +167,17 @@ public class SupplierQuotationService {
                 rs.getObject("item_id", UUID.class),
                 rs.getBigDecimal("unit_price"),
                 (Integer) rs.getObject("delivery_days"),
-                rs.getBoolean("is_selected")),
+                rs.getBoolean("is_selected"),
+                rs.getBigDecimal("tax_rate")),
                 tenantId, quotationId);
 
+        SupplierQuotationDeliveryService.Delivery delivery = deliveryService.latest(header.id());
         return new SupplierQuotationResponse(
                 header.id(), header.prId(), header.supplierId(), header.supplierName(),
-                header.status(), header.validUntil(), lines);
+                header.status(), header.validUntil(), lines,
+                header.supplierQuoteRef(), header.paymentTerms(), header.freightAmount(),
+                header.discountAmount(), header.taxAmount(), header.selectionReason(),
+                delivery.status(), delivery.recipient(), delivery.errorMessage());
     }
 
     @Transactional
@@ -178,19 +201,25 @@ public class SupplierQuotationService {
             jdbc.update("""
                     INSERT INTO supplier_quotation_lines
                       (tenant_id, sq_id, pr_line_id, line_no, item_id, quantity, uom_id,
-                       unit_price, delivery_days)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                       unit_price, delivery_days, tax_rate)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     tenantId, quotationId, prLine.id(), lineNo++, prLine.itemId(),
                     prLine.quantity(), prLine.uomId(), requestedLine.unitPrice(),
-                    requestedLine.leadTimeDays());
+                    requestedLine.leadTimeDays(), requestedLine.taxRate());
         }
+        BigDecimal freight = request.freightAmount() == null ? BigDecimal.ZERO : request.freightAmount();
+        BigDecimal discount = request.discountAmount() == null ? BigDecimal.ZERO : request.discountAmount();
+        BigDecimal tax = request.taxAmount() == null ? BigDecimal.ZERO : request.taxAmount();
 
         jdbc.update("""
                 UPDATE supplier_quotations
-                SET status = 'received', valid_until = ?, updated_at = NOW()
+                SET status = 'received', valid_until = ?, supplier_quote_ref = ?,
+                    payment_terms = COALESCE(?, payment_terms),
+                    freight_amount = ?, discount_amount = ?, tax_amount = ?, updated_at = NOW()
                 WHERE tenant_id = ? AND id = ? AND status = 'requested'
-                """, request.validUntil(), tenantId, quotationId);
+                """, request.validUntil(), blank(request.supplierQuoteRef()), request.paymentTerms(),
+                freight, discount, tax, tenantId, quotationId);
 
         SupplierQuotationResponse response = getQuotation(quotationId);
         auditService.record("supplier_quotations", quotationId, "RECEIVED",
@@ -204,8 +233,17 @@ public class SupplierQuotationService {
     }
 
     @Transactional
-    public SupplierQuotationResponse selectQuotation(UUID quotationId) {
-        return transition(quotationId, "under_review", "selected", "SELECTED");
+    public SupplierQuotationResponse selectQuotation(UUID quotationId, String reason) {
+        SupplierQuotationResponse selected = transition(quotationId, "under_review", "selected", "SELECTED");
+        if (reason != null && !reason.isBlank()) {
+            jdbc.update("""
+                    UPDATE supplier_quotations
+                    SET selection_reason = ?, updated_at = NOW()
+                    WHERE tenant_id = ? AND id = ?
+                    """, reason.trim(), requireContext().tenantId(), quotationId);
+            return getQuotation(quotationId);
+        }
+        return selected;
     }
 
     @Transactional
@@ -299,7 +337,9 @@ public class SupplierQuotationService {
 
     private QuotationHeader lockQuotation(UUID tenantId, UUID quotationId) {
         List<QuotationHeader> headers = jdbc.query("""
-                SELECT q.id, q.pr_id, q.supplier_id, s.name AS supplier_name, q.status, q.valid_until
+                SELECT q.id, q.pr_id, q.supplier_id, s.name AS supplier_name, q.status, q.valid_until,
+                       q.supplier_quote_ref, q.payment_terms, q.freight_amount, q.discount_amount,
+                       q.tax_amount, q.selection_reason
                 FROM supplier_quotations q
                 JOIN suppliers s ON s.id = q.supplier_id AND s.tenant_id = q.tenant_id
                 WHERE q.tenant_id = ? AND q.id = ?
@@ -310,7 +350,13 @@ public class SupplierQuotationService {
                 rs.getObject("supplier_id", UUID.class),
                 rs.getString("supplier_name"),
                 rs.getString("status"),
-                rs.getObject("valid_until", LocalDate.class)),
+                rs.getObject("valid_until", LocalDate.class),
+                rs.getString("supplier_quote_ref"),
+                (Integer) rs.getObject("payment_terms"),
+                rs.getBigDecimal("freight_amount"),
+                rs.getBigDecimal("discount_amount"),
+                rs.getBigDecimal("tax_amount"),
+                rs.getString("selection_reason")),
                 tenantId, quotationId);
         if (headers.isEmpty()) {
             throw notFound("Supplier quotation not found: " + quotationId);
@@ -409,8 +455,14 @@ public class SupplierQuotationService {
 
     private record PrLine(UUID id, UUID itemId, BigDecimal quantity, UUID uomId) {}
 
+    private static String blank(String value) {
+        return value == null || value.isBlank() ? null : value.trim();
+    }
+
     private record QuotationHeader(
-            UUID id, UUID prId, UUID supplierId, String supplierName, String status, LocalDate validUntil) {}
+            UUID id, UUID prId, UUID supplierId, String supplierName, String status, LocalDate validUntil,
+            String supplierQuoteRef, Integer paymentTerms, BigDecimal freightAmount,
+            BigDecimal discountAmount, BigDecimal taxAmount, String selectionReason) {}
 
     private record StatusSnapshot(String status) {}
 

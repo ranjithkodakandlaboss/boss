@@ -23,6 +23,20 @@ import QuotationDetailPage from "./sales/proto/QuotationDetail";
 import PoCreatePage from "./sales/proto/CustomerPOCreate";
 import PoDetailPage from "./sales/proto/PODetail";
 import PoAmendPage from "./sales/proto/POAmend";
+import { ProcurementProvider } from "./procurement/proto/runtime";
+import ProcurementHome from "./procurement/proto/Procurement";
+import SupplierDirectory from "./procurement/proto/Suppliers";
+import SupplierRecord from "./procurement/proto/SupplierDetail";
+import PrCreatePage from "./procurement/proto/PRCreate";
+import PrRecordPage from "./procurement/proto/PRDetail";
+import SupplierRfqPage from "./procurement/proto/SupplierRFQCreate";
+import SupplierQuotePage from "./procurement/proto/SupplierQuotationDetail";
+import SupplierPoPage from "./procurement/proto/SupplierPODetail";
+import SupplierPoAmendPage from "./procurement/proto/SupplierPOAmend";
+import GrnCreatePage from "./procurement/proto/GRNCreate";
+import GrnRecordPage from "./procurement/proto/GRNDetail";
+import IncomingInspectionPage from "./procurement/proto/IncomingInspection";
+import SupplierReturnPage from "./procurement/proto/SupplierReturn";
 
 function Background({ pathname }: { pathname: string }) {
   const screen = findScreen(pathname.split("?")[0]);
@@ -154,6 +168,22 @@ function Guard() {
       <Route path="onboarding" element={<OnboardingPage />} />
       <Route element={<AppShell />}>
         <Route path="sales/*" element={<SalesFrame />} />
+        <Route element={<ProcurementProvider />}>
+          <Route path="suppliers" element={<SupplierDirectory />} />
+          <Route path="suppliers/:id" element={<SupplierRecord />} />
+          <Route path="procurement" element={<ProcurementHome />} />
+          <Route path="procurement/pr/new" element={<PrCreatePage />} />
+          <Route path="procurement/pr/:id/edit" element={<PrCreatePage />} />
+          <Route path="procurement/pr/:id" element={<PrRecordPage />} />
+          <Route path="procurement/supplier-rfq/new" element={<SupplierRfqPage />} />
+          <Route path="procurement/quote/:id" element={<SupplierQuotePage />} />
+          <Route path="procurement/spo/:id/amend" element={<SupplierPoAmendPage />} />
+          <Route path="procurement/spo/:id" element={<SupplierPoPage />} />
+          <Route path="procurement/grn/new" element={<GrnCreatePage />} />
+          <Route path="procurement/grn/:id" element={<GrnRecordPage />} />
+          <Route path="quality/inspection/:id" element={<IncomingInspectionPage />} />
+          <Route path="procurement/supplier-return" element={<SupplierReturnPage />} />
+        </Route>
         <Route path="sales/customers" element={<Navigate to="/sales?tab=customers" replace />} />
         <Route path="settings" element={<Navigate to="/admin" replace />} />
         <Route path="admin/audit" element={<Navigate to="/audit" replace />} />

@@ -103,7 +103,7 @@ class PrCrudTest extends BaseMasterDataIntegrationTest {
                         new CreatePrLineRequest(item1Id, BigDecimal.valueOf(50), null, uomId, BigDecimal.valueOf(10.0), null, null, "First line", null),
                         new CreatePrLineRequest(item2Id, BigDecimal.valueOf(20), null, uomId, BigDecimal.valueOf(25.0), null, null, "Second line", null)
                 )
-        );
+        , null);
 
         PurchaseRequisitionResponse created = prService.createPr(request);
 
@@ -136,7 +136,7 @@ class PrCrudTest extends BaseMasterDataIntegrationTest {
                 "normal",
                 "Initial note",
                 List.of(new CreatePrLineRequest(item1Id, BigDecimal.valueOf(10), null, uomId, null, null, null, "Line 1", null))
-        );
+        , null);
 
         PurchaseRequisitionResponse pr = prService.createPr(createReq);
 
@@ -175,7 +175,7 @@ class PrCrudTest extends BaseMasterDataIntegrationTest {
                 "normal",
                 null,
                 List.of(new CreatePrLineRequest(item1Id, BigDecimal.valueOf(10), null, uomId, null, null, null, null, null))
-        );
+        , null);
 
         PurchaseRequisitionResponse pr = prService.createPr(createReq);
         prService.submitPr(pr.id());
@@ -195,19 +195,19 @@ class PrCrudTest extends BaseMasterDataIntegrationTest {
         prService.createPr(new CreatePrRequest(
                 "manual", null, null, siteId, null, null, null, "normal", null,
                 List.of(new CreatePrLineRequest(item1Id, BigDecimal.valueOf(10), null, uomId, null, null, null, null, null))
-        ));
+        , null));
 
         PurchaseRequisitionResponse pr2 = prService.createPr(new CreatePrRequest(
                 "manual", null, null, siteId, null, null, null, "urgent", null,
                 List.of(new CreatePrLineRequest(item2Id, BigDecimal.valueOf(20), null, uomId, null, null, null, null, null))
-        ));
+        , null));
         prService.submitPr(pr2.id());
 
-        var draftPage = prService.listPrs("draft", "manual", 0, 10);
+        var draftPage = prService.listPrs("draft", "manual", null, 0, 10);
         assertThat(draftPage.content()).isNotEmpty();
         assertThat(draftPage.content()).allMatch(p -> "draft".equals(p.status()));
 
-        var submittedPage = prService.listPrs("submitted", null, 0, 10);
+        var submittedPage = prService.listPrs("submitted", null, null, 0, 10);
         assertThat(submittedPage.content()).isNotEmpty();
         assertThat(submittedPage.content()).allMatch(p -> "submitted".equals(p.status()));
     }
@@ -217,7 +217,7 @@ class PrCrudTest extends BaseMasterDataIntegrationTest {
         PurchaseRequisitionResponse pr = prService.createPr(new CreatePrRequest(
                 "manual", null, null, siteId, null, null, null, "normal", null,
                 List.of(new CreatePrLineRequest(item1Id, BigDecimal.valueOf(10), null, uomId, null, null, null, null, null))
-        ));
+        , null));
 
         PurchaseRequisitionResponse cancelled = prService.cancelPr(pr.id());
         assertThat(cancelled.status()).isEqualTo("cancelled");
@@ -232,7 +232,7 @@ class PrCrudTest extends BaseMasterDataIntegrationTest {
         PurchaseRequisitionResponse pr = prService.createPr(new CreatePrRequest(
                 "manual", null, null, siteId, null, null, null, "normal", null,
                 List.of(new CreatePrLineRequest(item1Id, BigDecimal.valueOf(10), null, uomId, null, null, null, null, null))
-        ));
+        , null));
 
         // Switch to tenant B
         UUID tenantB = provisionTenant("pr-tenant-b");
@@ -242,7 +242,7 @@ class PrCrudTest extends BaseMasterDataIntegrationTest {
                 .isInstanceOf(ResponseStatusException.class)
                 .hasMessageContaining("Purchase requisition not found");
 
-        var listB = prService.listPrs(null, null, 0, 10);
+        var listB = prService.listPrs(null, null, null, 0, 10);
         assertThat(listB.content()).noneMatch(p -> p.id().equals(pr.id()));
     }
 
@@ -251,7 +251,7 @@ class PrCrudTest extends BaseMasterDataIntegrationTest {
         CreatePrRequest request = new CreatePrRequest(
                 "manual", null, null, siteId, null, null, null, "normal", null,
                 List.of(new CreatePrLineRequest(item1Id, BigDecimal.valueOf(10), null, uomId, null, null, null, null, null))
-        );
+        , null);
         String jsonBody = objectMapper.writeValueAsString(request);
 
         setTenantContext(tenantId, "FIELD_WORKER");
@@ -279,7 +279,7 @@ class PrCrudTest extends BaseMasterDataIntegrationTest {
         CreatePrRequest request = new CreatePrRequest(
                 "manual", null, null, siteId, null, null, null, "normal", "Idempotent PR",
                 List.of(new CreatePrLineRequest(item1Id, BigDecimal.valueOf(10), null, uomId, null, null, null, null, null))
-        );
+        , null);
         String jsonBody = objectMapper.writeValueAsString(request);
 
         // First attempt -> 201 Created
@@ -310,7 +310,7 @@ class PrCrudTest extends BaseMasterDataIntegrationTest {
         CreatePrRequest differentRequest = new CreatePrRequest(
                 "manual", null, null, siteId, null, null, null, "urgent", "Different payload",
                 List.of(new CreatePrLineRequest(item2Id, BigDecimal.valueOf(99), null, uomId, null, null, null, null, null))
-        );
+        , null);
         setTenantContext(tenantId, "OWNER");
         mockMvc.perform(post("/api/v1/prs")
                         .with(user("owner-user").roles("OWNER"))
@@ -325,7 +325,7 @@ class PrCrudTest extends BaseMasterDataIntegrationTest {
         CreatePrRequest request = new CreatePrRequest(
                 "manual", null, null, siteId, null, null, null, "normal", "Controller test",
                 List.of(new CreatePrLineRequest(item1Id, BigDecimal.valueOf(10), null, uomId, null, null, null, null, null))
-        );
+        , null);
         String jsonBody = objectMapper.writeValueAsString(request);
 
         // POST /api/v1/prs
@@ -409,6 +409,36 @@ class PrCrudTest extends BaseMasterDataIntegrationTest {
                         .header("Idempotency-Key", UUID.randomUUID().toString()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("cancelled"));
+    }
+
+    @Test
+    void customerPoShortageCreatesOneLinkedRequisition() {
+        UUID customerId = insert("""
+                INSERT INTO customers (tenant_id, code, name)
+                VALUES (?, ?, 'Shortage Customer') RETURNING id
+                """, tenantId, "CUST-" + UUID.randomUUID().toString().substring(0, 8));
+        UUID customerPoId = insert("""
+                INSERT INTO cpos (tenant_id, cpo_number, customer_id, site_id, status, order_date, created_by)
+                VALUES (?, ?, ?, ?, 'open', CURRENT_DATE, ?) RETURNING id
+                """, tenantId, "CPO-" + UUID.randomUUID().toString().substring(0, 8), customerId, siteId, BossContextHolder.get().userId());
+
+        CreatePrLineRequest line = new CreatePrLineRequest(
+                item1Id, BigDecimal.valueOf(4), null, uomId, null, null, null, "Unavailable on Customer PO", null);
+        CreatePrRequest request = new CreatePrRequest(
+                "customer_po", null, null, siteId, null, null, LocalDate.now().plusDays(3),
+                "high", "Shortage cover", List.of(line), customerPoId);
+
+        PurchaseRequisitionResponse first = prService.createPr(request);
+        PurchaseRequisitionResponse second = prService.createPr(request);
+
+        assertThat(first.customerPoId()).isEqualTo(customerPoId);
+        assertThat(first.originType()).isEqualTo("customer_po");
+        assertThat(first.lines()).hasSize(1);
+        assertThat(first.lines().get(0).qty()).isEqualByComparingTo("4");
+        assertThat(second.id()).isEqualTo(first.id());
+        assertThat(prService.listPrs(null, "customer_po", customerPoId, 0, 10).content())
+                .extracting(PurchaseRequisitionResponse::id)
+                .containsExactly(first.id());
     }
 
     private UUID insert(String sql, Object... args) {

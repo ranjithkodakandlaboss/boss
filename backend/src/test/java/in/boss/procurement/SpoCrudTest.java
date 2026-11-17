@@ -76,7 +76,7 @@ class SpoCrudTest extends BaseMasterDataIntegrationTest {
         PurchaseRequisitionResponse pr = prService.createPr(new CreatePrRequest(
                 "manual", null, null, siteId, null, null, null, "normal", null,
                 java.util.List.of(new CreatePrLineRequest(
-                        itemId, BigDecimal.TEN, null, uomId, null, null, null, null, null))));
+                        itemId, BigDecimal.TEN, null, uomId, null, null, null, null, null)), null));
         prService.submitPr(pr.id());
         prService.approvePr(pr.id());
         prId = pr.id();
@@ -95,7 +95,7 @@ class SpoCrudTest extends BaseMasterDataIntegrationTest {
         PurchaseRequisitionResponse otherPr = prService.createPr(new CreatePrRequest(
                 "manual", null, null, siteId, null, null, null, "normal", null,
                 java.util.List.of(new CreatePrLineRequest(
-                        itemId, BigDecimal.valueOf(2), null, uomId, null, null, null, null, null))));
+                        itemId, BigDecimal.valueOf(2), null, uomId, null, null, null, null, null)), null));
         prService.submitPr(otherPr.id());
         prService.approvePr(otherPr.id());
         otherPrQuotationId = insert("""

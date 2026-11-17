@@ -95,7 +95,7 @@ class PrApprovalTest extends BaseMasterDataIntegrationTest {
         PurchaseRequisitionResponse pr = prService.createPr(new CreatePrRequest(
                 "manual", null, null, siteId, null, null, null, "normal", null,
                 List.of(new CreatePrLineRequest(item1Id, BigDecimal.valueOf(10), null, uomId, null, null, null, null, null))
-        ));
+        , null));
         assertThat(pr.status()).isEqualTo("draft");
 
         PurchaseRequisitionResponse submitted = prService.submitPr(pr.id());
@@ -112,7 +112,7 @@ class PrApprovalTest extends BaseMasterDataIntegrationTest {
         PurchaseRequisitionResponse pr = prService.createPr(new CreatePrRequest(
                 "manual", null, null, siteId, null, null, null, "normal", null,
                 List.of(new CreatePrLineRequest(item1Id, BigDecimal.valueOf(10), null, uomId, null, null, null, null, null))
-        ));
+        , null));
         prService.submitPr(pr.id());
 
         // Approved by Purchase Manager role
@@ -129,7 +129,7 @@ class PrApprovalTest extends BaseMasterDataIntegrationTest {
         PurchaseRequisitionResponse pr = prService.createPr(new CreatePrRequest(
                 "manual", null, null, siteId, null, null, null, "normal", null,
                 List.of(new CreatePrLineRequest(item1Id, BigDecimal.valueOf(10), null, uomId, null, null, null, null, null))
-        ));
+        , null));
         prService.submitPr(pr.id());
 
         // STORE_KEEPER cannot approve
@@ -144,7 +144,7 @@ class PrApprovalTest extends BaseMasterDataIntegrationTest {
         PurchaseRequisitionResponse pr = prService.createPr(new CreatePrRequest(
                 "manual", null, null, siteId, null, null, null, "normal", null,
                 List.of(new CreatePrLineRequest(item1Id, BigDecimal.valueOf(10), null, uomId, null, null, null, null, null))
-        ));
+        , null));
 
         assertThatThrownBy(() -> prService.approvePr(pr.id()))
                 .isInstanceOf(ResponseStatusException.class)
@@ -156,7 +156,7 @@ class PrApprovalTest extends BaseMasterDataIntegrationTest {
         PurchaseRequisitionResponse pr = prService.createPr(new CreatePrRequest(
                 "manual", null, null, siteId, null, null, null, "normal", null,
                 List.of(new CreatePrLineRequest(item1Id, BigDecimal.valueOf(10), null, uomId, null, null, null, null, null))
-        ));
+        , null));
         prService.submitPr(pr.id());
 
         PurchaseRequisitionResponse rejected = prService.rejectPr(pr.id(), new RejectPrRequest("Exceeds department budget"));
@@ -172,7 +172,7 @@ class PrApprovalTest extends BaseMasterDataIntegrationTest {
         PurchaseRequisitionResponse pr = prService.createPr(new CreatePrRequest(
                 "manual", null, null, siteId, null, null, null, "normal", null,
                 List.of(new CreatePrLineRequest(item1Id, BigDecimal.valueOf(10), null, uomId, null, null, null, null, null))
-        ));
+        , null));
         prService.submitPr(pr.id());
 
         assertThatThrownBy(() -> prService.rejectPr(pr.id(), new RejectPrRequest("  ")))
@@ -189,7 +189,7 @@ class PrApprovalTest extends BaseMasterDataIntegrationTest {
                         new CreatePrLineRequest(item1Id, BigDecimal.valueOf(10), null, uomId, null, null, null, null, null),
                         new CreatePrLineRequest(item2Id, BigDecimal.valueOf(20), null, uomId, null, null, null, null, null)
                 )
-        ));
+        , null));
         prService.submitPr(pr.id());
         prService.approvePr(pr.id());
 
@@ -242,7 +242,7 @@ class PrApprovalTest extends BaseMasterDataIntegrationTest {
         PurchaseRequisitionResponse pr = prService.createPr(new CreatePrRequest(
                 "manual", null, null, siteId, null, null, null, "normal", null,
                 List.of(new CreatePrLineRequest(item1Id, BigDecimal.valueOf(10), null, uomId, null, null, null, null, null))
-        ));
+        , null));
         prService.submitPr(pr.id());
         prService.approvePr(pr.id());
 

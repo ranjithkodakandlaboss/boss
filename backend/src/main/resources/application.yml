@@ -1,6 +1,10 @@
 spring:
   application:
     name: boss-api
+  servlet:
+    multipart:
+      max-file-size: 5MB
+      max-request-size: 6MB
 
   datasource:
     url: ${DB_URL:jdbc:postgresql://localhost:5432/boss}
@@ -48,6 +52,14 @@ management:
       show-details: when_authorized
 
 boss:
+  email:
+    provider: ${BOSS_EMAIL_PROVIDER:resend}
+    resend-api-key: ${RESEND_API_KEY:}
+    resend-api-key-file: ${RESEND_API_KEY_FILE:/secrets/resend-api-key}
+    from-address: ${RESEND_FROM_EMAIL:BOSS <onboarding@resend.dev>}
+    gmail-username: ${GMAIL_USERNAME:}
+    gmail-app-password: ${GMAIL_APP_PASSWORD:}
+    gmail-app-password-file: ${GMAIL_APP_PASSWORD_FILE:/secrets/gmail-app-password}
   firebase:
     project-id: ${FIREBASE_PROJECT_ID:boss-dev}
     credential-path: ${FIREBASE_CREDENTIAL_PATH:}
