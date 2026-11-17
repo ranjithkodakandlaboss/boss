@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { Outlet, useLocation } from "react-router-dom";
-import { ApiError } from "../../auth/api";
+import { ApiError, safeRandomUUID } from "../../auth/api";
 import { useCustomer } from "../../auth/CustomerState";
 import {
   allPages,
@@ -404,7 +404,7 @@ export function SalesProvider({ children }: { children?: ReactNode }) {
   const [toasts, setToasts] = useState<ToastItem[]>([]);
 
   const showToast = useCallback((toast: Omit<ToastItem, "id">) => {
-    const id = crypto.randomUUID();
+    const id = safeRandomUUID();
     setToasts((current) => [...current, { ...toast, id }]);
     window.setTimeout(() => setToasts((current) => current.filter((item) => item.id !== id)), 4200);
   }, []);

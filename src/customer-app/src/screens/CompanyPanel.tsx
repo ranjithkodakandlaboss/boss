@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, ApiError } from "../auth/api";
+import { api, ApiError, safeRandomUUID } from "../auth/api";
 import { useCustomer } from "../auth/CustomerState";
 import type { CompanyRecord } from "../auth/types";
 import Button from "../components/shared/Button";
@@ -36,7 +36,7 @@ export default function CompanyPanel() {
     try {
       const next = await api<CompanyRecord>("/api/v1/company", {
         method: "PUT",
-        headers: { "Idempotency-Key": crypto.randomUUID() },
+        headers: { "Idempotency-Key": safeRandomUUID() },
         body: JSON.stringify({ ...form, gstNotApplicable: !form.gstin, sites: form.sites, stores: form.stores }),
       });
       setForm(next);

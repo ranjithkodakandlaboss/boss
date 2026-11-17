@@ -1,4 +1,4 @@
-import { api } from "../auth/api";
+import { api, safeRandomUUID } from "../auth/api";
 
 export type Page<T> = { content?: T[]; page?: number; totalElements?: number };
 export type Contact = { id?: string; name: string; role?: string; email?: string; phone?: string; isPrimary?: boolean };
@@ -160,7 +160,7 @@ export async function allPages<T>(path: string): Promise<T[]> {
 }
 
 function key() {
-  return crypto.randomUUID();
+  return safeRandomUUID();
 }
 
 export const salesApi = {

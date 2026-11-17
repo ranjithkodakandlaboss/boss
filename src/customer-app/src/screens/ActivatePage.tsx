@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { api, ApiError, firebaseSignIn } from "../auth/api";
+import { api, ApiError, firebaseSignIn, safeRandomUUID } from "../auth/api";
 import { signIn } from "../auth/session";
 import Button from "../components/shared/Button";
 import { TextField } from "../components/shared/Fields";
@@ -20,7 +20,7 @@ export default function ActivatePage() {
     try {
       const user = await api<{ email: string }>("/api/v1/auth/activate", {
         method: "POST",
-        headers: { "Idempotency-Key": crypto.randomUUID() },
+        headers: { "Idempotency-Key": safeRandomUUID() },
         body: JSON.stringify({ token, password, displayName: String(data.get("displayName") ?? "") }),
       });
       signIn(await firebaseSignIn(user.email, password));

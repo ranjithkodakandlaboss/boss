@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Building2, CheckCircle, Factory, Package, Shield, Store, Users } from "lucide-react";
-import { api, ApiError } from "../auth/api";
+import { api, ApiError, safeRandomUUID } from "../auth/api";
 import { useCustomer } from "../auth/CustomerState";
 import Button from "../components/shared/Button";
 import { SelectField, TextField } from "../components/shared/Fields";
@@ -122,7 +122,7 @@ export default function OnboardingPage() {
     try {
       await api(complete ? "/api/v1/onboarding/complete" : "/api/v1/onboarding", {
         method: complete ? "POST" : "PUT",
-        headers: { "Idempotency-Key": crypto.randomUUID() },
+        headers: { "Idempotency-Key": safeRandomUUID() },
         body: JSON.stringify(payload(draft)),
       });
       setSaved(true);
@@ -141,7 +141,7 @@ export default function OnboardingPage() {
     if (step === 6 && draft.inviteEmail) {
       await api("/api/v1/invites", {
         method: "POST",
-        headers: { "Idempotency-Key": crypto.randomUUID() },
+        headers: { "Idempotency-Key": safeRandomUUID() },
         body: JSON.stringify({ email: draft.inviteEmail, role: draft.inviteRole }),
       });
     }

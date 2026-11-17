@@ -72,7 +72,7 @@ public class CustomerIdentityService {
             return transactions.execute(status -> {
                 String tenantStatus = jdbc.queryForObject(
                         "SELECT status FROM tenant_registry WHERE id = ?", String.class, invite.tenantId());
-                if (!"active".equals(tenantStatus)) {
+                if (!"active".equals(tenantStatus) && !"provisioning".equals(tenantStatus)) {
                     throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Tenant is not active");
                 }
                 return accept(invite, uid, request.displayName());
@@ -188,6 +188,9 @@ public class CustomerIdentityService {
                 "UPDATE invite_tokens SET status = 'accepted' WHERE id = ? AND status = 'pending'",
                 invite.inviteId());
         if (updated != 1) throw new ResponseStatusException(HttpStatus.CONFLICT, "Activation token is no longer pending");
+        jdbc.update(
+                "UPDATE tenant_registry SET status = 'active', updated_at = NOW() WHERE id = ? AND status = 'provisioning'",
+                invite.tenantId());
         BossContextHolder.set(new BossContext(invite.tenantId(), userId, Set.of(invite.role()), null, uid));
         audit.record("app_users", userId, "user.activated", null,
                 "{\"email\":\"" + json(invite.email()) + "\",\"role\":\"" + invite.role() + "\"}");
