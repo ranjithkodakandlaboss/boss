@@ -18,7 +18,9 @@ public class SecurityConfiguration {
     private static final List<String> DEFAULT_ORIGIN_PATTERNS = List.of(
             "http://127.0.0.1:5173",
             "http://localhost:5173",
-            "https://*.run.app"
+            "https://*.run.app",
+            "http://*.nip.io",
+            "https://*.nip.io"
     );
 
     @Value("${boss.admin.cors.allowed-origins:}")
