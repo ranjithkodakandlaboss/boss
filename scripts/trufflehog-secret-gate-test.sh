@@ -14,6 +14,12 @@ LOCAL_ELLIPSIS='jdbc:postgresql://localhost:...'
 PASSWORD_URL="$(printf '%s' 'jdbc:' 'postgresql://localhost:5432/boss?user=boss&' 'password=' 'LocalOnlyValue')"
 REMOTE_URL="$(printf '%s' 'jdbc:' 'postgresql://' 'db.internal.example' ':5432/boss')"
 OTHER_SECRET="$(printf '%s' 'AKIA' 'IOSFODNN7' 'EXAMPLE')"
+CLOUD_SQL_FIXTURE="$(printf '%s' \
+  'jdbc:' \
+  'postgresql:///boss?cloudSqlInstance=project:region:boss-dev-postgres&socketFactory=com.google.cloud.sql.postgres.SocketFactory&ipTypes=PUBLIC')"
+HISTORICAL_CLOUD_SQL_FIXTURE="$(printf '%s' \
+  'jdbc:' \
+  'postgresql:///boss?cloudSqlInstance=boss-dev-514813:asia-south1:boss-dev-postgres&socketFactory=com.google.cloud.sql.postgres.SocketFactory&ipTypes=PUBLIC')"
 
 assert_clean() {
   local output_file="$1"
@@ -40,16 +46,16 @@ run_gate() {
     echo "FAIL expected exit ${expected} but got ${status}" >&2
     exit 1
   fi
-  assert_clean "$output_file" "$LOCAL_BOSS" "$LOCAL_TEST" "$LOCAL_FLYWAY" "$LOCAL_ELLIPSIS" "$PASSWORD_URL" "$REMOTE_URL" "$OTHER_SECRET"
+  assert_clean "$output_file" "$LOCAL_BOSS" "$LOCAL_TEST" "$LOCAL_FLYWAY" "$LOCAL_ELLIPSIS" "$PASSWORD_URL" "$REMOTE_URL" "$OTHER_SECRET" "$CLOUD_SQL_FIXTURE" "$HISTORICAL_CLOUD_SQL_FIXTURE"
 }
 
-python3 - "$TMP" "$LOCAL_BOSS" "$LOCAL_TEST" "$LOCAL_FLYWAY" "$LOCAL_ELLIPSIS" "$PASSWORD_URL" "$REMOTE_URL" "$OTHER_SECRET" <<'PY'
+python3 - "$TMP" "$LOCAL_BOSS" "$LOCAL_TEST" "$LOCAL_FLYWAY" "$LOCAL_ELLIPSIS" "$PASSWORD_URL" "$REMOTE_URL" "$OTHER_SECRET" "$CLOUD_SQL_FIXTURE" "$HISTORICAL_CLOUD_SQL_FIXTURE" <<'PY'
 import json
 import sys
 from pathlib import Path
 
 tmp = Path(sys.argv[1])
-local_boss, local_test, local_flyway, local_ellipsis, password_url, remote_url, other_secret = sys.argv[2:]
+local_boss, local_test, local_flyway, local_ellipsis, password_url, remote_url, other_secret, cloud_sql_fixture, historical_cloud_sql_fixture = sys.argv[2:]
 
 def finding(detector, secret, commit, path=None, verified=False, omit=()):
     git = {"commit": commit}
@@ -84,6 +90,8 @@ known = [
     ("JDBC", local_boss, "710c033ddc01a4109bd4858b0d9acab7417aab5b", "backend/src/main/resources/application-local.yml"),
     ("JDBC", local_test, "710c033ddc01a4109bd4858b0d9acab7417aab5b", ".github/workflows/ci.yml"),
     ("JDBC", local_boss, "710c033ddc01a4109bd4858b0d9acab7417aab5b", "DEVELOPER_SETUP.md"),
+    ("JDBC", cloud_sql_fixture, "a4e8d18a6ed0f0a94f426c6f4f2dc03eaa0ac485", "scripts/check-admin-dev-prerequisites-test.sh"),
+    ("JDBC", historical_cloud_sql_fixture, "a4e8d18a6ed0f0a94f426c6f4f2dc03eaa0ac485", "scripts/check-admin-dev-prerequisites-test.sh"),
 ]
 (tmp / "known.json").write_text("".join(finding(*row) + "\n" for row in known))
 (tmp / "password.json").write_text(finding("JDBC", password_url, "a" * 40, "app.yml") + "\n")
