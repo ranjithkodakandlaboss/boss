@@ -429,6 +429,15 @@ export function QuotationFormPage() {
   );
 }
 
+function isQuotation(result: unknown): result is Quotation {
+  return !!result && typeof result === "object" && "quotationNumber" in result && "revision" in result;
+}
+
+function isCustomerPo(result: unknown): result is Cpo {
+  return !!result && typeof result === "object" && "cpoNumber" in result
+    && typeof (result as Cpo).cpoNumber === "string" && !("revision" in result);
+}
+
 export function QuotationDetailPage() {
   const { id = "" } = useParams();
   const navigate = useNavigate();
@@ -445,8 +454,8 @@ export function QuotationDetailPage() {
     try {
       const result = await action();
       if (next) navigate(next);
-      else if (result && typeof result === "object" && "id" in result && "cpoNumber" in result) navigate(`/sales/po/${(result as Cpo).id}`);
-      else if (result && typeof result === "object" && "id" in result && "quotationNumber" in result) navigate(`/sales/quotation/${(result as Quotation).id}`);
+      else if (isQuotation(result)) navigate(`/sales/quotation/${result.id}`);
+      else if (isCustomerPo(result)) navigate(`/sales/po/${result.id}`);
       else window.location.reload();
     } catch (caught) { setError(message(caught)); }
   }

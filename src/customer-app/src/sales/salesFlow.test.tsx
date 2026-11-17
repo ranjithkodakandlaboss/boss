@@ -51,3 +51,26 @@ it("records owner acceptance against the open revision and creates one Customer 
   const acceptCall = vi.mocked(fetch).mock.calls.find((call) => String(call[0]).endsWith("/accept"));
   expect(acceptCall?.[1]?.method).toBe("POST");
 });
+
+it("keeps submit on the quotation when the status response includes an empty Customer PO number", async () => {
+  quotation.status = "draft";
+  vi.stubGlobal("fetch", vi.fn((input: RequestInfo) => {
+    const url = String(input);
+    if (url.includes("/status")) {
+      return Promise.resolve(new Response(JSON.stringify({ ...quotation, status: "sent", cpoNumber: null }), { status: 200 }));
+    }
+    return Promise.resolve(new Response(JSON.stringify(quotation), { status: 200 }));
+  }));
+  render(
+    <MemoryRouter initialEntries={["/sales/quotation/q1"]}>
+      <Routes>
+        <Route path="/sales/quotation/:id" element={<QuotationDetailPage />} />
+        <Route path="/sales/po/:id" element={<p>PO opened</p>} />
+      </Routes>
+    </MemoryRouter>,
+  );
+  await userEvent.click(await screen.findByRole("button", { name: "Submit to Customer" }));
+  expect(await screen.findByRole("heading", { name: /QT-1/ })).toBeInTheDocument();
+  expect(screen.queryByText("PO opened")).not.toBeInTheDocument();
+  quotation.status = "sent";
+});
