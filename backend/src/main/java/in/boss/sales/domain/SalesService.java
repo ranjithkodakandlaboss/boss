@@ -2,6 +2,7 @@ package in.boss.sales.domain;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import in.boss.masterdata.api.dto.BOMExplosionMaterialDto;
 import in.boss.masterdata.api.dto.CustomerDto;
@@ -13,6 +14,7 @@ import in.boss.masterdata.domain.EntityNotFoundException;
 import in.boss.masterdata.domain.ItemService;
 import in.boss.masterdata.domain.UomService;
 import in.boss.sales.api.SalesApiDtos.AuditEntry;
+import in.boss.sales.api.SalesApiDtos.FieldChange;
 import in.boss.sales.api.SalesApiDtos.CreateQuotationLineRequest;
 import in.boss.sales.api.SalesApiDtos.CreateQuotationRequest;
 import in.boss.sales.api.SalesApiDtos.CreateRfqRequest;
@@ -48,7 +50,10 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
@@ -245,7 +250,9 @@ public class SalesService {
 
     @Transactional(readOnly = true)
     public byte[] quotationPdf(UUID quotationId) {
-        return QuotationPdf.render(readQuotation(requireContext().tenantId(), quotationId));
+        UUID tenantId = requireContext().tenantId();
+        QuotationResponse quotation = readQuotation(tenantId, quotationId);
+        return QuotationPdf.render(quotation, seller(tenantId), buyer(tenantId, quotation.customerId()));
     }
 
     @Transactional(readOnly = true)
@@ -325,15 +332,20 @@ public class SalesService {
             throw notFound("Record not found");
         }
         return jdbc.query("""
-                SELECT id, actor_id, action, created_at
-                  FROM audit_events
-                 WHERE tenant_id = ? AND entity_type = ? AND entity_id = ?
-                 ORDER BY created_at, id
+                SELECT e.id, e.actor_id, COALESCE(u.display_name, u.email) AS actor_name,
+                       e.action, e.created_at, e.old_data::text AS old_data, e.new_data::text AS new_data
+                  FROM audit_events e
+                  LEFT JOIN app_users u ON u.id = e.actor_id AND u.tenant_id = e.tenant_id
+                 WHERE e.tenant_id = ? AND e.entity_type = ? AND e.entity_id = ?
+                 ORDER BY e.created_at DESC, e.id DESC
                 """, (rs, rowNum) -> new AuditEntry(
                 rs.getObject("id", UUID.class),
                 rs.getObject("actor_id", UUID.class),
+                rs.getString("actor_name"),
                 rs.getString("action"),
-                instant(rs, "created_at")), tenantId, entityType, entityId);
+                instant(rs, "created_at"),
+                fieldChanges(rs.getString("old_data"), rs.getString("new_data"))),
+                tenantId, entityType, entityId);
     }
 
     private boolean historySubjectExists(UUID tenantId, String entityType, UUID entityId) {
@@ -890,6 +902,117 @@ public class SalesService {
         if (page < 0 || size < 1 || size > 100) {
             throw badRequest("Page must be non-negative and size must be between 1 and 100");
         }
+    }
+
+    private QuotationPdf.Party seller(UUID tenantId) {
+        List<Map<String, Object>> rows = jdbc.queryForList("""
+                SELECT le.legal_name, le.pan, le.registered_address::text AS address,
+                       (SELECT gstin FROM gst_registrations
+                         WHERE tenant_id = le.tenant_id AND status = 'active'
+                         ORDER BY created_at LIMIT 1) AS gstin,
+                       (SELECT contact_email FROM company_profiles
+                         WHERE tenant_id = le.tenant_id ORDER BY created_at LIMIT 1) AS email,
+                       (SELECT contact_phone FROM company_profiles
+                         WHERE tenant_id = le.tenant_id ORDER BY created_at LIMIT 1) AS phone
+                  FROM legal_entities le
+                 WHERE le.tenant_id = ?
+                 ORDER BY le.created_at
+                 LIMIT 1
+                """, tenantId);
+        if (rows.isEmpty()) return new QuotationPdf.Party("", "", "", "", "", "", "", "", "");
+        Map<String, Object> row = rows.get(0);
+        String[] address = addressParts(stringValue(row.get("address")));
+        return new QuotationPdf.Party(stringValue(row.get("legal_name")), address[0], address[1], address[2],
+                stringValue(row.get("gstin")), stringValue(row.get("pan")),
+                stringValue(row.get("email")), stringValue(row.get("phone")), "");
+    }
+
+    private QuotationPdf.Party buyer(UUID tenantId, UUID customerId) {
+        if (customerId == null) return new QuotationPdf.Party("", "", "", "", "", "", "", "", "");
+        List<Map<String, Object>> rows = jdbc.queryForList("""
+                SELECT c.legal_name, c.name, c.gstin, c.pan, c.billing_address::text AS address,
+                       ct.name AS contact_name, ct.email, ct.phone
+                  FROM customers c
+                  LEFT JOIN LATERAL (
+                    SELECT name, email, phone FROM customer_contacts
+                     WHERE tenant_id = c.tenant_id AND customer_id = c.id
+                     ORDER BY is_primary DESC, created_at LIMIT 1
+                  ) ct ON true
+                 WHERE c.tenant_id = ? AND c.id = ?
+                """, tenantId, customerId);
+        if (rows.isEmpty()) return new QuotationPdf.Party("", "", "", "", "", "", "", "", "");
+        Map<String, Object> row = rows.get(0);
+        String[] address = addressParts(stringValue(row.get("address")));
+        String name = stringValue(row.get("legal_name"));
+        if (name.isBlank()) name = stringValue(row.get("name"));
+        return new QuotationPdf.Party(name, address[0], address[1], address[2],
+                stringValue(row.get("gstin")), stringValue(row.get("pan")),
+                stringValue(row.get("email")), stringValue(row.get("phone")), stringValue(row.get("contact_name")));
+    }
+
+    private String[] addressParts(String json) {
+        if (json == null || json.isBlank()) return new String[] {"", "", ""};
+        try {
+            JsonNode node = objectMapper.readTree(json);
+            return new String[] {node.path("line1").asText(""), node.path("city").asText(""), node.path("state").asText("")};
+        } catch (JsonProcessingException exception) {
+            return new String[] {json, "", ""};
+        }
+    }
+
+    private List<FieldChange> fieldChanges(String oldJson, String newJson) {
+        JsonNode previous = readTree(oldJson);
+        JsonNode next = readTree(newJson);
+        if ((previous == null || !previous.isObject()) && (next == null || !next.isObject())) return List.of();
+        Map<String, JsonNode> keys = new LinkedHashMap<>();
+        if (previous != null && previous.isObject()) previous.fieldNames().forEachRemaining(key -> keys.put(key, previous.get(key)));
+        if (next != null && next.isObject()) next.fieldNames().forEachRemaining(key -> keys.putIfAbsent(key, next.get(key)));
+        List<FieldChange> changes = new ArrayList<>();
+        for (String key : keys.keySet()) {
+            if (changes.size() == 12 || skipHistoryField(key)) continue;
+            JsonNode before = previous == null ? null : previous.get(key);
+            JsonNode after = next == null ? null : next.get(key);
+            if ((before != null && before.isContainerNode()) || (after != null && after.isContainerNode())) {
+                int beforeCount = before != null && before.isArray() ? before.size() : 0;
+                int afterCount = after != null && after.isArray() ? after.size() : 0;
+                if (before != null && before.isArray() && beforeCount != afterCount) {
+                    changes.add(new FieldChange(label(key), beforeCount + " rows", afterCount + " rows"));
+                }
+                continue;
+            }
+            String beforeValue = scalar(before);
+            String afterValue = scalar(after);
+            if (!beforeValue.equals(afterValue)) changes.add(new FieldChange(label(key), beforeValue, afterValue));
+        }
+        return changes;
+    }
+
+    private static boolean skipHistoryField(String key) {
+        return key.endsWith("Id") || "id".equals(key);
+    }
+
+    private JsonNode readTree(String json) {
+        if (json == null || json.isBlank()) return null;
+        try {
+            return objectMapper.readTree(json);
+        } catch (JsonProcessingException exception) {
+            return null;
+        }
+    }
+
+    private static String scalar(JsonNode node) {
+        if (node == null || node.isNull()) return "—";
+        String value = node.asText();
+        return value == null || value.isBlank() ? "—" : value;
+    }
+
+    private static String label(String key) {
+        String spaced = key.replaceAll("([a-z])([A-Z])", "$1 $2").replace('_', ' ');
+        return spaced.substring(0, 1).toUpperCase(Locale.ENGLISH) + spaced.substring(1);
+    }
+
+    private static String stringValue(Object value) {
+        return value == null ? "" : value.toString();
     }
 
     private String toJson(Object value) {

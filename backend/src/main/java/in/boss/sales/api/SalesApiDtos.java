@@ -312,7 +312,20 @@ public final class SalesApiDtos {
     public record CpoStatusRequest(
             @NotNull @Pattern(regexp = "open|on_hold|cancelled") String status) {}
 
-    public record AuditEntry(UUID id, UUID actorId, String action, Instant createdAt) {}
+    public record FieldChange(String field, String previousValue, String newValue) {}
+
+    public record AuditEntry(
+            UUID id,
+            UUID actorId,
+            String actorName,
+            String action,
+            Instant createdAt,
+            List<FieldChange> changes) {
+        @JsonIgnore
+        public AuditEntry(UUID id, UUID actorId, String action, Instant createdAt) {
+            this(id, actorId, null, action, createdAt, List.of());
+        }
+    }
 
     public record PageResponse<T>(
             List<T> content,
