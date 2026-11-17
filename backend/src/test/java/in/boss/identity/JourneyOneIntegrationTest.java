@@ -1,6 +1,7 @@
 package in.boss.identity;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -16,6 +17,9 @@ import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseToken;
 import com.google.firebase.auth.UserRecord;
 import in.boss.identity.domain.CustomerIdentityService;
+import java.sql.Connection;
+import java.sql.ResultSet;
+import java.sql.Statement;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -116,6 +120,58 @@ class JourneyOneIntegrationTest {
         jdbc.update("UPDATE app_users SET status = 'suspended' WHERE tenant_id = ?", tenantB);
         mvc.perform(get("/api/v1/auth/me").header("Authorization", "Bearer session-b"))
                 .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void inviteLookupExecuteIsLimitedToAppAndPlatformAdminRoles() {
+        String function = "public.boss_lookup_invite_by_hash(text)";
+        assertThat(privilege("public", function)).isFalse();
+        assertThat(privilege("boss_app_role", function)).isTrue();
+        assertThat(privilege("boss_platform_admin_role", function)).isTrue();
+
+        jdbc.execute("""
+                DO $$ BEGIN
+                  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'invite_lookup_app') THEN
+                    CREATE ROLE invite_lookup_app NOLOGIN NOSUPERUSER NOBYPASSRLS INHERIT;
+                  END IF;
+                  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'invite_lookup_admin') THEN
+                    CREATE ROLE invite_lookup_admin NOLOGIN NOSUPERUSER NOBYPASSRLS INHERIT;
+                  END IF;
+                  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'invite_lookup_other') THEN
+                    CREATE ROLE invite_lookup_other NOLOGIN NOSUPERUSER NOBYPASSRLS INHERIT;
+                  END IF;
+                END $$
+                """);
+        jdbc.execute("GRANT boss_app_role TO invite_lookup_app");
+        jdbc.execute("GRANT boss_platform_admin_role TO invite_lookup_admin");
+        jdbc.execute("GRANT USAGE ON SCHEMA public TO invite_lookup_other");
+
+        assertThat(countAs("invite_lookup_app")).isZero();
+        assertThat(countAs("invite_lookup_admin")).isZero();
+        assertThatThrownBy(() -> countAs("invite_lookup_other"))
+                .cause()
+                .hasMessageContaining("permission denied for function boss_lookup_invite_by_hash");
+    }
+
+    private boolean privilege(String role, String function) {
+        return Boolean.TRUE.equals(jdbc.queryForObject(
+                "SELECT has_function_privilege(?, ?, 'EXECUTE')", Boolean.class, role, function));
+    }
+
+    private int countAs(String role) {
+        return jdbc.execute((Connection connection) -> {
+            try (Statement statement = connection.createStatement()) {
+                statement.execute("SET ROLE " + role);
+                try (ResultSet rows = statement.executeQuery(
+                        "SELECT count(*) FROM boss_lookup_invite_by_hash("
+                                + "'0000000000000000000000000000000000000000000000000000000000000000')")) {
+                    rows.next();
+                    return rows.getInt(1);
+                } finally {
+                    statement.execute("RESET ROLE");
+                }
+            }
+        });
     }
 
     private JsonNode activate(String token, String password, String name) throws Exception {

@@ -1,6 +1,8 @@
 -- V072: The first tenant owner has no app_users row to record as invited_by.
 -- Later invites still store the inviting user. Lookup by token hash is
 -- SECURITY DEFINER so activation can find the invite before a tenant context exists.
+-- EXECUTE is revoked from PUBLIC and granted only to the customer and
+-- platform-admin database roles.
 
 ALTER TABLE invite_tokens ALTER COLUMN invited_by DROP NOT NULL;
 
@@ -26,6 +28,7 @@ BEGIN
 END;
 $$;
 
+REVOKE ALL ON FUNCTION boss_lookup_invite_by_hash(TEXT) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION boss_lookup_invite_by_hash(TEXT) TO boss_app_role;
 GRANT EXECUTE ON FUNCTION boss_lookup_invite_by_hash(TEXT) TO boss_platform_admin_role;
 
