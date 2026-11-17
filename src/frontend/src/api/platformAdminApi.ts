@@ -88,9 +88,11 @@ export function createPlatformAdminApi(
 
     let apiBase: URL;
     try {
-      apiBase = new URL(baseUrl);
+      apiBase = baseUrl.startsWith("/")
+        ? new URL(baseUrl, typeof window !== "undefined" && window.location?.origin ? window.location.origin : "http://localhost")
+        : new URL(baseUrl);
     } catch {
-      throw new PlatformAdminConfigurationError("VITE_PLATFORM_ADMIN_API_BASE_URL must be a valid absolute URL.");
+      throw new PlatformAdminConfigurationError("VITE_PLATFORM_ADMIN_API_BASE_URL must be a valid URL or path.");
     }
     if (!apiBase.pathname.replace(/\/+$/, "").endsWith("/admin/api/v1") || apiBase.search || apiBase.hash) {
       throw new PlatformAdminConfigurationError(

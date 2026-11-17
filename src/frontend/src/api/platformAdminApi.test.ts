@@ -124,4 +124,17 @@ describe("Platform Admin API client", () => {
     expect(String(url)).toBe(`${apiBase}/tenants/tenant-123/admin-invite`);
     expect(new Headers(init?.headers).get("Idempotency-Key")).toBe("invite-request-key");
   });
+
+  it("supports relative service paths to avoid cross-origin mismatch during local development", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(
+      JSON.stringify({ content: [], page: 0, totalElements: 0 }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    ));
+    const api = createPlatformAdminApi("/admin/api/v1", async () => "token-1", fetcher);
+
+    await api.listTenants({ page: 0, size: 20 });
+
+    const [url] = fetcher.mock.calls[0];
+    expect(String(url)).toContain("/admin/api/v1/tenants");
+  });
 });

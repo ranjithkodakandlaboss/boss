@@ -4,6 +4,7 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   plugins: [react()],
   server: {
+    cors: true,
     proxy: {
       "/admin/api": {
         target: "https://boss-admin-api-201664309080.asia-south1.run.app",
