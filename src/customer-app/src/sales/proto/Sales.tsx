@@ -23,9 +23,22 @@ export default function Sales() {
   const navigate = useNavigate();
   const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
-  const openWithOrigin = (path: string) => navigate(path, { state: { from: `${location.pathname}${location.search}` } });
-  const [tab, setTab] = useState<POTab>((searchParams.get('tab') as POTab) ?? 'pos');
-  const customerFilter = searchParams.get('customer') ?? '';
+  const background = (location.state as { background?: { pathname: string; search: string } } | null)?.background;
+  const listSearch = background?.pathname === '/sales' ? background.search : location.pathname === '/sales' ? location.search : '';
+  const listParams = new URLSearchParams(listSearch.replace(/^\?/, ''));
+  const requestedTab = listParams.get('tab');
+  const tab: POTab = requestedTab === 'rfqs' || requestedTab === 'quotations' || requestedTab === 'customers' || requestedTab === 'pos' ? requestedTab : 'pos';
+  const customerFilter = listParams.get('customer') ?? '';
+  const selectTab = (next: POTab) => {
+    const params = new URLSearchParams(listParams);
+    params.set('tab', next);
+    params.delete('customer');
+    navigate({ pathname: '/sales', search: `?${params.toString()}` });
+  };
+  const openWithOrigin = (path: string) => {
+    const list = background?.pathname === '/sales' ? background : { pathname: '/sales', search: location.pathname === '/sales' ? location.search : `?tab=${tab}` };
+    navigate(path, { state: { background: list, from: `${list.pathname}${list.search}` } });
+  };
   const [search, setSearch] = useState(() => searchParams.get('q') ?? '');
   const [statusFilter, setStatusFilter] = useState(() => searchParams.get('status') ?? 'all');
   const [rfqStatusFilter, setRfqStatusFilter] = useState(() => searchParams.get('rfqStatus') ?? 'all');
@@ -33,19 +46,16 @@ export default function Sales() {
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>(() => (searchParams.get('dir') === 'asc' ? 'asc' : 'desc'));
 
   useEffect(() => {
-    if (location.key === 'bg') return;
-    const next = new URLSearchParams();
+    if (location.pathname !== '/sales' || background) return;
+    const next = new URLSearchParams(searchParams);
     next.set('tab', tab);
-    if (customerFilter) next.set('customer', customerFilter);
-    if (search.trim()) next.set('q', search.trim());
-    if (statusFilter !== 'all') next.set('status', statusFilter);
-    if (rfqStatusFilter !== 'all') next.set('rfqStatus', rfqStatusFilter);
-    if (sortKey !== 'date') next.set('sort', sortKey);
-    if (sortDir !== 'desc') next.set('dir', sortDir);
-    if (next.toString() !== searchParams.toString()) {
-      setSearchParams(next, { replace: true });
-    }
-  }, [tab, customerFilter, search, statusFilter, rfqStatusFilter, sortKey, sortDir, searchParams, setSearchParams, location.key]);
+    if (search.trim()) next.set('q', search.trim()); else next.delete('q');
+    if (statusFilter !== 'all') next.set('status', statusFilter); else next.delete('status');
+    if (rfqStatusFilter !== 'all') next.set('rfqStatus', rfqStatusFilter); else next.delete('rfqStatus');
+    if (sortKey !== 'date') next.set('sort', sortKey); else next.delete('sort');
+    if (sortDir !== 'desc') next.set('dir', sortDir); else next.delete('dir');
+    if (next.toString() !== searchParams.toString()) setSearchParams(next, { replace: true });
+  }, [tab, search, statusFilter, rfqStatusFilter, sortKey, sortDir, searchParams, setSearchParams, location.pathname, background]);
   const [selectedPoId, setSelectedPoId] = useState<string | null>(null);
   const [showNewRFQ, setShowNewRFQ] = useState(false);
   const [showDirectOrder, setShowDirectOrder] = useState(false);
@@ -144,7 +154,7 @@ export default function Sales() {
               <button onClick={() => openWithOrigin('/sales/rfq/new')} className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold text-white" style={{ background: 'var(--brand-fill)' }}><Plus size={15} /> Add RFQ</button>
             </div>
           )}
-          {tab === 'customers' && <button onClick={() => navigate('/sales/customers/new')} className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold text-white" style={{ background: 'var(--brand-fill)' }}><Plus size={15} /> Add New Customer</button>}
+          {tab === 'customers' && <button onClick={() => openWithOrigin('/sales/customers/new')} className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold text-white" style={{ background: 'var(--brand-fill)' }}><Plus size={15} /> Add New Customer</button>}
         </div>}
       </div>
 
@@ -161,7 +171,7 @@ export default function Sales() {
         ] as { id: POTab; label: string }[]).map(t => (
           <button
             key={t.id}
-            onClick={() => { setTab(t.id); if (t.id === 'customers') navigate('/sales?tab=customers'); }}
+            onClick={() => selectTab(t.id)}
             className={clsx(
               'px-4 py-3 text-sm font-medium transition-colors relative whitespace-nowrap',
               tab === t.id
@@ -227,7 +237,7 @@ export default function Sales() {
             <>
             <div className="md:hidden p-3 space-y-2">
               {filteredPos.map(p => (
-                <button key={p.id} type="button" onClick={() => navigate(`/sales/po/${p.id}`)}
+                <button key={p.id} type="button" onClick={() => openWithOrigin(`/sales/po/${p.id}`)}
                   className="w-full text-left rounded-xl border p-3" style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}>
                   <div className="flex items-center justify-between gap-2">
                     <span className="font-mono text-xs font-bold" style={{ color: 'var(--brand)' }}>{p.poNumber}</span>
@@ -296,7 +306,7 @@ export default function Sales() {
                             Open
                           </button>
                           {canCreate && p.status !== 'cancelled' && p.status !== 'complete' && jobs.filter(j => j.customerPoId === p.id).every(j => !['in_progress', 'complete'].includes(j.status)) && (
-                            <button onClick={() => navigate(`/sales/po/${p.id}/amend`)} className="p-1 rounded hover:bg-[var(--surface-2)]" title="Amend Customer PO"><Pencil size={12} style={{ color: 'var(--text-3)' }} /></button>
+                            <button onClick={() => openWithOrigin(`/sales/po/${p.id}/amend`)} className="p-1 rounded hover:bg-[var(--surface-2)]" title="Amend Customer PO"><Pencil size={12} style={{ color: 'var(--text-3)' }} /></button>
                           )}
                           {canCreate && p.status !== 'cancelled' && p.status !== 'complete' && jobs.filter(j => j.customerPoId === p.id).every(j => ['cancelled', 'complete'].includes(j.status)) && (
                             <button onClick={() => handleCancelPo(p.id)} className="p-1 rounded hover:bg-[var(--surface-2)]" title="Cancel Customer PO"><XCircle size={12} style={{ color: 'var(--error,#DC2626)' }} /></button>
@@ -351,7 +361,7 @@ export default function Sales() {
                     <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
                       <div className="flex items-center gap-1">
                         {canCreate && r.status === 'open' && (
-                          <button onClick={e => { e.stopPropagation(); navigate(`/sales/rfq/${r.id}/quotation/new`); }}
+                          <button onClick={e => { e.stopPropagation(); openWithOrigin(`/sales/rfq/${r.id}/quotation/new`); }}
                             className="text-xs px-2 py-1 rounded-lg font-semibold text-white" style={{ background: 'var(--brand-fill)' }}>
                             Quote
                           </button>
@@ -425,7 +435,7 @@ export default function Sales() {
                 <p className="text-sm mt-0.5 font-medium" style={{ color: 'var(--text)' }}>{selectedPo.customerName}</p>
               </div>
               <button
-                onClick={() => navigate(`/sales/po/${selectedPo.id}`)}
+                onClick={() => openWithOrigin(`/sales/po/${selectedPo.id}`)}
                 className="flex items-center gap-1 text-xs font-semibold px-3 py-1.5 rounded-lg border transition-colors hover:opacity-80"
                 style={{ borderColor: 'var(--brand)', color: 'var(--brand)' }}
               >
@@ -477,14 +487,14 @@ export default function Sales() {
 
               <div className="pt-2 flex gap-2">
                 <button
-                  onClick={() => navigate(`/sales/po/${selectedPo.id}`)}
+                  onClick={() => openWithOrigin(`/sales/po/${selectedPo.id}`)}
                   className="flex-1 py-2 rounded-lg text-sm font-semibold text-white transition-opacity hover:opacity-90"
                   style={{ background: 'var(--brand-fill)' }}
                 >
                   Open Full Record
                 </button>
                 <button
-                  onClick={() => navigate(`/sales/po/${selectedPo.id}/amend`)}
+                  onClick={() => openWithOrigin(`/sales/po/${selectedPo.id}/amend`)}
                   className="px-4 py-2 rounded-lg text-sm font-semibold border transition-colors hover:opacity-80"
                   style={{ borderColor: 'var(--border)', color: 'var(--text-2)' }}
                 >
@@ -508,7 +518,7 @@ export default function Sales() {
           }}
         />
       )}
-      {showDirectOrder && <DirectOrderModal onClose={() => setShowDirectOrder(false)} onSave={(po) => { addCustomerPO(po); showToast({ type: 'success', title: 'Direct customer order created', body: `${po.poNumber} is ready for review.` }); setShowDirectOrder(false); navigate(`/sales/po/${po.id}`); }} />}
+      {showDirectOrder && <DirectOrderModal onClose={() => setShowDirectOrder(false)} onSave={(po) => { addCustomerPO(po); showToast({ type: 'success', title: 'Direct customer order created', body: `${po.poNumber} is ready for review.` }); setShowDirectOrder(false); openWithOrigin(`/sales/po/${po.id}`); }} />}
 
       {/* RFQ Detail Drawer */}
       {selectedRfq && (
