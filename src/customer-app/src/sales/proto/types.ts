@@ -277,11 +277,15 @@ export interface CustomerPO {
   creditApprovalId?: ID;
   revision?: number;
   lastAmendedAt?: string;
+  requiredByDate?: string;
 }
 
 export interface POLine {
   id: ID;
   poId: ID;
+  itemId?: ID;
+  itemCode?: string;
+  itemName?: string;
   drawingNumber: string;
   revision: string;
   description: string;

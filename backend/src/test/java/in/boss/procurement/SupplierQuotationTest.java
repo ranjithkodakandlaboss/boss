@@ -80,7 +80,7 @@ class SupplierQuotationTest extends BaseMasterDataIntegrationTest {
         PurchaseRequisitionResponse pr = prService.createPr(new CreatePrRequest(
                 "manual", null, null, siteId, null, null, null, "normal", null,
                 java.util.List.of(new CreatePrLineRequest(
-                        itemId, BigDecimal.TEN, null, uomId, null, null, null, null, null))));
+                        itemId, BigDecimal.TEN, null, uomId, null, null, null, null, null)), null));
         prService.submitPr(pr.id());
         prService.approvePr(pr.id());
         prId = pr.id();

@@ -101,6 +101,12 @@ const STATUS_MAP: Record<string, { label: string; cls: string }> = {
   high: { label: 'High', cls: 'bg-[var(--warning-bg)] text-[var(--warning)]' },
   normal: { label: 'Normal', cls: 'bg-[var(--info-bg)] text-[var(--info)]' },
   low: { label: 'Low', cls: 'bg-[var(--surface-2)] text-[var(--text-2)]' },
+  requested: { label: 'Requested', cls: 'bg-[var(--warning-bg)] text-[var(--warning)]' },
+  acknowledged: { label: 'Acknowledged', cls: 'bg-[var(--success-bg)] text-[var(--success)]' },
+  partially_ordered: { label: 'Partially Ordered', cls: 'bg-[var(--warning-bg)] text-[var(--warning)]' },
+  ordered: { label: 'Ordered', cls: 'bg-[var(--success-bg)] text-[var(--success)]' },
+  partially_received: { label: 'Partially Received', cls: 'bg-[var(--warning-bg)] text-[var(--warning)]' },
+  fully_received: { label: 'Fully Received', cls: 'bg-[var(--success-bg)] text-[var(--success)]' },
 };
 
 export function getStatusLabel(status: string) {

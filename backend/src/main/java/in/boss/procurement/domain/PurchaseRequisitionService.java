@@ -41,7 +41,7 @@ import java.util.UUID;
 @PreAuthorize(BossPermissions.PR_ACCESS)
 public class PurchaseRequisitionService {
 
-    private static final Set<String> VALID_ORIGIN_TYPES = Set.of("manual", "production_job", "stock_driven");
+    private static final Set<String> VALID_ORIGIN_TYPES = Set.of("manual", "production_job", "stock_driven", "customer_po");
     private static final Set<String> VALID_PRIORITIES = Set.of("low", "normal", "high", "urgent");
 
     private final JdbcTemplate jdbc;
@@ -81,6 +81,18 @@ public class PurchaseRequisitionService {
         List<CreatePrLineRequest> lines = request.lines() != null ? new ArrayList<>(request.lines()) : new ArrayList<>();
         UUID jobId = request.jobId();
         UUID replenishmentRequestId = request.replenishmentRequestId();
+
+        UUID customerPoId = request.customerPoId();
+        if ("customer_po".equals(originType)) {
+            if (customerPoId == null) {
+                throw badRequest("customerPoId is required when originType is customer_po");
+            }
+            requireCustomerPo(tenantId, customerPoId);
+            UUID existingId = findOpenCustomerPoPr(tenantId, customerPoId);
+            if (existingId != null) {
+                return getPr(existingId);
+            }
+        }
 
         if ("production_job".equals(originType)) {
             if (jobId == null) {
@@ -128,7 +140,9 @@ public class PurchaseRequisitionService {
 
         UUID prId = UUID.randomUUID();
         String prNumber = nextDocumentNumber("PR");
-        UUID referenceId = jobId != null ? jobId : replenishmentRequestId;
+        UUID referenceId = "customer_po".equals(originType)
+                ? customerPoId
+                : jobId != null ? jobId : replenishmentRequestId;
 
         jdbc.update("""
                 INSERT INTO purchase_requisitions
@@ -173,13 +187,13 @@ public class PurchaseRequisitionService {
     }
 
     @Transactional(readOnly = true)
-    public PageResponse<PurchaseRequisitionResponse> listPrs(String status, String originType, int page, int size) {
+    public PageResponse<PurchaseRequisitionResponse> listPrs(String status, String originType, UUID customerPoId, int page, int size) {
         BossContext context = requireContext();
         UUID tenantId = context.tenantId();
         validatePage(page, size);
 
         StringBuilder sql = new StringBuilder("""
-                SELECT id, pr_number, site_id, origin_type, job_id, status, priority,
+                SELECT id, pr_number, site_id, origin_type, reference_id, job_id, status, priority,
                        pr_type_id, pr_type_label, required_by_date, notes,
                        requested_by, approved_by, approved_at, rejection_reason,
                        rejected_by, rejected_at, created_at, updated_at
@@ -197,6 +211,10 @@ public class PurchaseRequisitionService {
         if (originType != null && !originType.isBlank()) {
             sql.append(" AND LOWER(origin_type) = ?");
             params.add(originType.trim().toLowerCase(Locale.ROOT));
+        }
+        if (customerPoId != null) {
+            sql.append(" AND origin_type = 'customer_po' AND reference_id = ?");
+            params.add(customerPoId);
         }
 
         String countSql = "SELECT COUNT(*) FROM (" + sql + ") AS pr_count";
@@ -508,7 +526,7 @@ public class PurchaseRequisitionService {
 
     private PrHeader fetchPrHeader(UUID tenantId, UUID prId) {
         List<PrHeader> headers = jdbc.query("""
-                SELECT id, pr_number, site_id, origin_type, job_id, status, priority,
+                SELECT id, pr_number, site_id, origin_type, reference_id, job_id, status, priority,
                        pr_type_id, pr_type_label, required_by_date, notes,
                        requested_by, approved_by, approved_at, rejection_reason,
                        rejected_by, rejected_at, created_at, updated_at
@@ -585,7 +603,8 @@ public class PurchaseRequisitionService {
                 totalQty,
                 totalOrderedQty,
                 header.createdAt(),
-                header.updatedAt()
+                header.updatedAt(),
+                header.customerPoId()
         );
     }
 
@@ -609,8 +628,32 @@ public class PurchaseRequisitionService {
                 rs.getObject("rejected_by", UUID.class),
                 instant(rs, "rejected_at"),
                 instant(rs, "created_at"),
-                instant(rs, "updated_at")
+                instant(rs, "updated_at"),
+                "customer_po".equals(rs.getString("origin_type")) ? rs.getObject("reference_id", UUID.class) : null
         );
+    }
+
+    private void requireCustomerPo(UUID tenantId, UUID customerPoId) {
+        Integer count = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM cpos WHERE tenant_id = ? AND id = ?",
+                Integer.class, tenantId, customerPoId);
+        if (count == null || count == 0) {
+            throw badRequest("Customer PO was not found for this tenant");
+        }
+    }
+
+    private UUID findOpenCustomerPoPr(UUID tenantId, UUID customerPoId) {
+        List<UUID> ids = jdbc.query(
+                """
+                SELECT id FROM purchase_requisitions
+                WHERE tenant_id = ? AND origin_type = 'customer_po' AND reference_id = ?
+                  AND status NOT IN ('cancelled', 'rejected')
+                ORDER BY created_at ASC
+                LIMIT 1
+                """,
+                (rs, rowNum) -> rs.getObject("id", UUID.class),
+                tenantId, customerPoId);
+        return ids.isEmpty() ? null : ids.get(0);
     }
 
     private void requireActiveItemAndUom(UUID itemId, UUID uomId) {
@@ -730,7 +773,8 @@ public class PurchaseRequisitionService {
             UUID rejectedBy,
             Instant rejectedAt,
             Instant createdAt,
-            Instant updatedAt) {}
+            Instant updatedAt,
+            UUID customerPoId) {}
 
     private record PrLineRecord(UUID id, int lineNo, BigDecimal quantity) {}
 

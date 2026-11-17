@@ -97,6 +97,7 @@ export type Quotation = {
 };
 export type CpoLine = {
   id: string;
+  itemId?: string;
   itemCode?: string;
   itemName?: string;
   qty: number;

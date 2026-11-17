@@ -29,6 +29,8 @@ export default function PODetail() {
   } = useStore();
   const { goBack, originUrl } = useReturnNavigation('/sales?tab=pos');
   const [allocResultMsg, setAllocResultMsg] = useState<{ status: string; message: string; prId?: string; prNumber?: string } | null>(null);
+  const [lineDecisions, setLineDecisions] = useState<Record<string, { availability: string; shortageQty: string }>>({});
+  const [availabilityOverride, setAvailabilityOverride] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<DetailTab>('overview');
   const [searchParams] = useSearchParams();
 
@@ -416,10 +418,10 @@ export default function PODetail() {
               <h3 className="font-semibold text-sm text-[var(--text)] flex items-center gap-2">
                 <Layers size={15} className="text-[var(--brand)]" />
                 Material Availability Check & Allocation
-                {po.availabilityStatus && <StatusChip status={po.availabilityStatus} size="sm" />}
+                {(availabilityOverride || po.availabilityStatus) && <StatusChip status={availabilityOverride || po.availabilityStatus} size="sm" />}
               </h3>
               <p className="text-xs text-[var(--text-3)] mt-0.5">
-                Checks eligible unreserved inventory at fulfilling site (excluding QC hold, rejected, and reserved stock), reserves available quantity, and raises a Purchase Requisition ONLY for net shortages.
+                Inventory stock is not connected. Confirm whether each required material is available. A Purchase Requisition is created only for quantities you mark unavailable.
               </p>
             </div>
             <div className="flex items-center gap-2">
@@ -448,23 +450,30 @@ export default function PODetail() {
               </AddIfEmpty>
               <button
                 type="button"
-                onClick={() => {
-                  const res = assessAndAllocateCustomerPO(po.id, currentUser.name, { siteId: checkSiteId, jobId: linkedJobs[0]?.id });
+                onClick={async () => {
+                  const sourceLines = actualLines.filter((line) => line.itemId);
+                  const decisions = sourceLines.map((line) => ({
+                    lineId: line.id,
+                    availability: lineDecisions[line.id]?.availability,
+                    shortageQty: Number(lineDecisions[line.id]?.shortageQty),
+                  }));
+                  const res = await assessAndAllocateCustomerPO(po.id, currentUser.name, { siteId: checkSiteId, decisions });
                   if ('error' in res) {
-                    showToast({ type: 'warning', title: 'Material Check Note', body: res.error });
+                    showToast({ type: 'error', title: 'Purchase requisition was not created', body: res.error });
                   } else {
+                    setAvailabilityOverride(res.status);
                     setAllocResultMsg({
                       status: res.status,
                       message: res.message,
                       prId: res.createdPr?.id,
                       prNumber: res.createdPr?.prNumber,
                     });
-                    showToast({ type: 'success', title: 'Material Check Complete', body: res.message });
+                    showToast({ type: 'success', title: 'Material check recorded', body: res.message });
                   }
                 }}
                 className="btn-primary text-xs inline-flex items-center gap-1.5"
               >
-                <Factory size={13} /> Run Availability Check & Reserve
+                <Factory size={13} /> Confirm material availability
               </button>
             </div>
           </div>
@@ -484,9 +493,64 @@ export default function PODetail() {
             </div>
           )}
 
-          {(!po.availabilityStatus || po.availabilityStatus === 'not_assessed') && !allocResultMsg && (
+          {actualLines.some((line) => line.itemId) && (
+            <div className="overflow-x-auto border border-[var(--border)] rounded-lg">
+              <table className="eoss-table">
+                <thead>
+                  <tr>
+                    <th>Required Material</th>
+                    <th className="text-right">Req. Qty</th>
+                    <th>Availability</th>
+                    <th className="text-right">Unavailable Qty</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {actualLines.filter((line) => line.itemId).map((line) => {
+                    const decision = lineDecisions[line.id] ?? { availability: '', shortageQty: '' };
+                    return (
+                      <tr key={line.id}>
+                        <td>
+                          <div className="font-medium text-xs text-[var(--text)]">{line.itemName || line.description}</div>
+                          <div className="text-[11px] font-mono text-[var(--text-3)]">{line.itemCode || line.drawingNumber}</div>
+                        </td>
+                        <td className="text-right font-mono text-xs">{line.orderedQty} {line.uom}</td>
+                        <td>
+                          <select
+                            aria-label={`Availability for ${line.description}`}
+                            className="eoss-input text-xs py-1"
+                            value={decision.availability}
+                            onChange={(event) => setLineDecisions((current) => ({ ...current, [line.id]: { ...decision, availability: event.target.value } }))}
+                          >
+                            <option value="">Select…</option>
+                            <option value="available">Available</option>
+                            <option value="partial">Partial</option>
+                            <option value="unavailable">Unavailable</option>
+                          </select>
+                        </td>
+                        <td className="text-right">
+                          {decision.availability === 'partial' ? (
+                            <input
+                              aria-label={`Unavailable quantity for ${line.description}`}
+                              className="eoss-input w-24 text-xs text-right"
+                              type="number"
+                              min="0"
+                              step="any"
+                              value={decision.shortageQty}
+                              onChange={(event) => setLineDecisions((current) => ({ ...current, [line.id]: { ...decision, shortageQty: event.target.value } }))}
+                            />
+                          ) : decision.availability === 'unavailable' ? <span className="font-mono text-xs">{line.orderedQty}</span> : '—'}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {(!availabilityOverride && (!po.availabilityStatus || po.availabilityStatus === 'not_assessed')) && !allocResultMsg && (
             <div className="p-3 rounded-lg border border-[var(--border)] bg-[var(--surface-2)] text-xs text-[var(--text-2)]">
-              Status: <strong>Not assessed</strong> — click <strong>Run Availability Check &amp; Reserve</strong> to check eligible site stock and raise a PR for any net shortage.
+              Status: <strong>Not assessed</strong> — mark each line and confirm. A purchase requisition is created only for unavailable quantities.
             </div>
           )}
 

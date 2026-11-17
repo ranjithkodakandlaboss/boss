@@ -52,7 +52,8 @@ public final class ProcurementApiDtos {
             LocalDate requiredDate,
             String priority,
             String notes,
-            List<@Valid CreatePrLineRequest> lines) {}
+            List<@Valid CreatePrLineRequest> lines,
+            UUID customerPoId) {}
 
     public record UpdatePrRequest(
             UUID siteId,
@@ -106,7 +107,8 @@ public final class ProcurementApiDtos {
             BigDecimal totalQty,
             BigDecimal totalOrderedQty,
             Instant createdAt,
-            Instant updatedAt) {}
+            Instant updatedAt,
+            UUID customerPoId) {}
 
     public record PageResponse<T>(
             List<T> content,

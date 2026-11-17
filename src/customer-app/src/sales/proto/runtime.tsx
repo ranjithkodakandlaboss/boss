@@ -13,6 +13,7 @@ import {
   type Rfq,
   type UomOption,
 } from "../api";
+import { procurementApi, type PrRecord, type SpoRecord } from "../../procurement/api";
 import type { AuditEvent, CustomerPO, CustomerQuotation, CustomerQuotationLine, CustomerRFQ, Party, POLine } from "./types";
 import Toast from "./workflow/Toast";
 
@@ -73,7 +74,7 @@ type SalesState = {
   addCustomerPO: (po: CustomerPO) => Promise<CustomerPO | null>;
   addPoAmendment: (amendment: any) => Promise<void | null>;
   resolvePoAmendment: (...args: any[]) => void;
-  assessAndAllocateCustomerPO: (...args: any[]) => { status: string; message: string };
+  assessAndAllocateCustomerPO: (...args: any[]) => Promise<{ status?: string; message?: string; error?: string; createdPr?: { id: string; prNumber: string } }>;
   addDocument: (...args: any[]) => void;
   appendAuditEvent: (...args: any[]) => void;
 };
@@ -372,6 +373,9 @@ function mapPoLines(records: Cpo[]): POLine[] {
   return records.flatMap((po) => po.lines.map((line) => ({
     id: line.id,
     poId: po.id,
+    itemId: line.itemId,
+    itemCode: line.itemCode,
+    itemName: line.itemName,
     drawingNumber: line.drawingNumber || line.itemCode || "",
     revision: line.drawingRevision || "",
     description: line.description || line.itemName || "",
@@ -402,6 +406,8 @@ export function SalesProvider({ children }: { children?: ReactNode }) {
   const [catalog, setCatalog] = useState<CatalogItem[]>([]);
   const [uoms, setUoms] = useState<UomOption[]>([]);
   const [sites, setSites] = useState<{ id: string; name: string }[]>([]);
+  const [purchaseReqs, setPurchaseReqs] = useState<any[]>([]);
+  const [supplierPos, setSupplierPos] = useState<any[]>([]);
   const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([]);
   const [toasts, setToasts] = useState<ToastItem[]>([]);
 
@@ -434,6 +440,36 @@ export function SalesProvider({ children }: { children?: ReactNode }) {
       setSites((company.sites ?? []).filter((site) => site.id && site.name).map((site) => ({ id: site.id as string, name: site.name })));
     } catch {
       setSites([]);
+    }
+    try {
+      const [prRows, spoRows] = await Promise.all([
+        procurementApi.prs().catch(() => [] as PrRecord[]),
+        procurementApi.spos().catch(() => [] as SpoRecord[]),
+      ]);
+      const poNumber = new Map(poRows.map((po) => [po.id, po.cpoNumber]));
+      setPurchaseReqs(prRows.map((pr) => ({
+        id: pr.id,
+        prNumber: pr.prNumber,
+        status: pr.status,
+        sourceType: pr.originType === "customer_po" ? "shortage" : pr.originType,
+        originType: pr.originType,
+        sourceRefId: pr.customerPoId,
+        sourceRefLabel: pr.customerPoId ? poNumber.get(pr.customerPoId) : undefined,
+        customerPoId: pr.customerPoId,
+        jobId: pr.jobId,
+      })));
+      setSupplierPos(spoRows.map((spo) => ({
+        id: spo.id,
+        poNumber: spo.spoNumber,
+        spoNumber: spo.spoNumber,
+        prId: spo.prId,
+        supplierQuotationId: spo.supplierQuotationId,
+        status: spo.status,
+        originatingRequirementId: prRows.find((pr) => pr.id === spo.prId)?.customerPoId,
+      })));
+    } catch {
+      setPurchaseReqs([]);
+      setSupplierPos([]);
     }
   }, []);
 
@@ -516,6 +552,8 @@ export function SalesProvider({ children }: { children?: ReactNode }) {
     const quotationLines = quotations.flatMap((quote) => (quote.lines as CustomerQuotationLine[] | undefined) ?? []);
     return {
       ...emptyLists,
+      purchaseReqs,
+      supplierPos,
       ready,
       customers,
       rfqs,
@@ -662,14 +700,54 @@ export function SalesProvider({ children }: { children?: ReactNode }) {
         }), { title: "Customer PO note saved", body: "Commercial prices were not changed." });
       },
       resolvePoAmendment: () => showToast({ type: "error", title: "No pending revision", body: "Accepted prices stay on the Customer PO. There is no separate approval queue." }),
-      assessAndAllocateCustomerPO: () => {
-        showToast({ type: "info", title: "Material check is later", body: "Stock reservation and purchase requisitions are outside Sales & Order." });
-        return { status: "not_assessed", message: "Material availability is not part of this Sales & Order release." };
+      assessAndAllocateCustomerPO: async (poId: string, _actor?: string, options?: { siteId?: string; decisions?: Array<{ lineId: string; availability?: string; shortageQty?: number }> }) => {
+        const po = customerPos.find((item) => item.id === poId);
+        const decisions = options?.decisions ?? [];
+        if (!po || decisions.length === 0 || decisions.some((decision) => !decision.availability)) {
+          return { error: "Mark every material line as available, unavailable, or partial." };
+        }
+        const shortages = decisions.filter((decision) => decision.availability !== "available");
+        if (shortages.length === 0) {
+          return { status: "available", message: "Material was confirmed available. No purchase requisition was created." };
+        }
+        const siteId = options?.siteId || sites[0]?.id;
+        if (!siteId) return { error: "Choose the fulfilling site before creating a purchase requisition." };
+        try {
+          const lines = shortages.map((decision) => {
+            const line = poLines.find((item) => item.id === decision.lineId);
+            const item = catalog.find((entry) => entry.id === line?.itemId);
+            const uom = uoms.find((entry) => entry.id === item?.uomId) || uoms.find((entry) => entry.symbol === line?.uom);
+            const qty = decision.availability === "partial" ? Number(decision.shortageQty) : Number(line?.orderedQty);
+            if (!item || !uom || !(qty > 0)) throw new Error("Each unavailable line needs its catalog item, unit, and a shortage quantity.");
+            if (decision.availability === "partial" && qty >= Number(line?.orderedQty)) {
+              throw new Error("A partial shortage must be less than the ordered quantity.");
+            }
+            return { itemId: item.id, qty, uomId: uom.id, requiredDate: po.requiredByDate || undefined, notes: `Shortage for ${po.poNumber}` };
+          });
+          const signature = lines.map((line) => `${line.itemId}:${line.qty}`).sort().join("|");
+          const saved = await procurementApi.createPr({
+            originType: "customer_po",
+            customerPoId: po.id,
+            siteId,
+            requiredDate: po.requiredByDate || undefined,
+            priority: "high",
+            notes: `Shortage cover for ${po.poNumber}`,
+            lines,
+          }, `cpo-shortage:${po.id}:${signature}`);
+          await reload();
+          return {
+            status: shortages.length === decisions.length ? "awaiting_procurement" : "partially_available",
+            message: `Purchase requisition ${saved.prNumber} is ${saved.status} for the unavailable material.`,
+            createdPr: { id: saved.id, prNumber: saved.prNumber },
+          };
+        } catch (error) {
+          return { error: failure(error) };
+        }
       },
       addDocument: () => showToast({ type: "info", title: "Document file was not stored", body: "Notes typed on the record are saved. File upload is not connected." }),
       appendAuditEvent: () => undefined,
     };
-  }, [auditEvents, catalog, companyConfig, currentUser, customerPos, customers, guard, poLines, quotations, ready, reload, removeToast, rfqs, showToast, sites, toasts, uoms]);
+  }, [auditEvents, catalog, companyConfig, currentUser, customerPos, customers, guard, poLines, purchaseReqs, quotations, ready, reload, removeToast, rfqs, showToast, sites, supplierPos, toasts, uoms]);
 
   return (
     <SalesContext.Provider value={value}>
