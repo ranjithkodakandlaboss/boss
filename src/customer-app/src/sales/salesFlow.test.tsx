@@ -70,7 +70,8 @@ it("keeps submit on the quotation when the status response includes an empty Cus
     </MemoryRouter>,
   );
   await userEvent.click(await screen.findByRole("button", { name: "Submit to Customer" }));
-  expect(await screen.findByRole("heading", { name: /QT-1/ })).toBeInTheDocument();
+  expect(await screen.findByText("Sent")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Submit to Customer" })).not.toBeInTheDocument();
   expect(screen.queryByText("PO opened")).not.toBeInTheDocument();
   quotation.status = "sent";
 });

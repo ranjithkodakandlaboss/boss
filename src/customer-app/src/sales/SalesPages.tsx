@@ -442,19 +442,22 @@ export function QuotationDetailPage() {
   const { id = "" } = useParams();
   const navigate = useNavigate();
   const record = useLoad(() => salesApi.quotation(id), [id]);
+  const [current, setCurrent] = useState<Quotation | null>(null);
   const [error, setError] = useState("");
   const [note, setNote] = useState("");
   const [reference, setReference] = useState("");
   const [reason, setReason] = useState("");
+  useEffect(() => { if (record.data) setCurrent(record.data); }, [record.data]);
   if (record.loading) return <LoadingState label="Loading quotation" />;
-  if (record.error || !record.data) return <ErrorState body={record.error || "Quotation not found"} />;
-  const quote = record.data;
+  if (record.error || !record.data || !current) return <ErrorState body={record.error || "Quotation not found"} />;
+  const quote = current;
   const goods = quote.lines.reduce((sum, line) => sum + (line.lineTotal ?? 0), 0);
   async function run(action: () => Promise<unknown>, next?: string) {
     try {
       const result = await action();
       if (next) navigate(next);
-      else if (isQuotation(result)) navigate(`/sales/quotation/${result.id}`);
+      else if (isQuotation(result) && result.id !== id) navigate(`/sales/quotation/${result.id}`);
+      else if (isQuotation(result)) setCurrent(result);
       else if (isCustomerPo(result)) navigate(`/sales/po/${result.id}`);
       else window.location.reload();
     } catch (caught) { setError(message(caught)); }
