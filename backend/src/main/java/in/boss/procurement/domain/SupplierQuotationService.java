@@ -46,13 +46,16 @@ public class SupplierQuotationService {
     private final SupplierService supplierService;
     private final AuditService auditService;
     private final ObjectMapper objectMapper;
+    private final SupplierQuotationDeliveryService deliveryService;
 
     public SupplierQuotationService(
             JdbcTemplate jdbc,
             SupplierService supplierService,
             AuditService auditService,
-            ObjectMapper objectMapper) {
+            ObjectMapper objectMapper,
+            SupplierQuotationDeliveryService deliveryService) {
         this.jdbc = jdbc;
+        this.deliveryService = deliveryService;
         this.supplierService = supplierService;
         this.auditService = auditService;
         this.objectMapper = objectMapper;
@@ -92,6 +95,14 @@ public class SupplierQuotationService {
             throw conflict("Supplier quotations can only be requested for an approved purchase requisition");
         }
         SupplierDto supplier = requireActiveSupplier(request.supplierId());
+        List<UUID> existing = jdbc.query("""
+                SELECT id FROM supplier_quotations
+                WHERE tenant_id = ? AND pr_id = ? AND supplier_id = ? AND status = 'requested'
+                """, (rs, rowNum) -> rs.getObject("id", UUID.class), tenantId, prId, supplier.getId());
+        if (!existing.isEmpty()) {
+            deliveryService.send(existing.get(0));
+            return getQuotation(existing.get(0));
+        }
 
         UUID id = UUID.randomUUID();
         jdbc.update("""
@@ -102,9 +113,9 @@ public class SupplierQuotationService {
                 id, tenantId, nextDocumentNumber(), prId, supplier.getId(),
                 supplier.getPaymentTerms(), context.userId());
 
-        SupplierQuotationResponse response = getQuotation(id);
-        auditService.record("supplier_quotations", id, "REQUESTED", null, toJson(response));
-        return response;
+        auditService.record("supplier_quotations", id, "REQUESTED", null, null);
+        deliveryService.send(id);
+        return getQuotation(id);
     }
 
     @Transactional(readOnly = true)
@@ -160,11 +171,13 @@ public class SupplierQuotationService {
                 rs.getBigDecimal("tax_rate")),
                 tenantId, quotationId);
 
+        SupplierQuotationDeliveryService.Delivery delivery = deliveryService.latest(header.id());
         return new SupplierQuotationResponse(
                 header.id(), header.prId(), header.supplierId(), header.supplierName(),
                 header.status(), header.validUntil(), lines,
                 header.supplierQuoteRef(), header.paymentTerms(), header.freightAmount(),
-                header.discountAmount(), header.taxAmount(), header.selectionReason());
+                header.discountAmount(), header.taxAmount(), header.selectionReason(),
+                delivery.status(), delivery.recipient(), delivery.errorMessage());
     }
 
     @Transactional

@@ -35,6 +35,7 @@ import SupplierPoPage from "./procurement/proto/SupplierPODetail";
 import SupplierPoAmendPage from "./procurement/proto/SupplierPOAmend";
 import GrnCreatePage from "./procurement/proto/GRNCreate";
 import GrnRecordPage from "./procurement/proto/GRNDetail";
+import IncomingInspectionPage from "./procurement/proto/IncomingInspection";
 import SupplierReturnPage from "./procurement/proto/SupplierReturn";
 
 function Background({ pathname }: { pathname: string }) {
@@ -180,6 +181,7 @@ function Guard() {
           <Route path="procurement/spo/:id" element={<SupplierPoPage />} />
           <Route path="procurement/grn/new" element={<GrnCreatePage />} />
           <Route path="procurement/grn/:id" element={<GrnRecordPage />} />
+          <Route path="quality/inspection/:id" element={<IncomingInspectionPage />} />
           <Route path="procurement/supplier-return" element={<SupplierReturnPage />} />
         </Route>
         <Route path="sales/customers" element={<Navigate to="/sales?tab=customers" replace />} />

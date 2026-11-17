@@ -14,6 +14,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
+import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
@@ -26,6 +27,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -101,10 +103,12 @@ class ProcurementReceiptFlowTest extends BaseMasterDataIntegrationTest {
 
         MvcResult created = postJson("/api/v1/grns", key, body).andExpect(status().isCreated()).andReturn();
         JsonNode grn = objectMapper.readTree(created.getResponse().getContentAsString());
-        assertThat(grn.path("status").asText()).isEqualTo("accepted");
-        assertThat(grn.path("lines").get(0).path("acceptedQty").decimalValue()).isEqualByComparingTo("4.000");
+        assertThat(grn.path("status").asText()).isEqualTo("draft");
+        assertThat(grn.path("lines").get(0).path("acceptedQty").decimalValue()).isEqualByComparingTo("0");
+        assertThat(grn.path("lines").get(0).path("lotStatuses").get(0).asText()).isEqualTo("quarantine");
         UUID lotId = UUID.fromString(grn.path("lines").get(0).path("lotIds").get(0).asText());
         assertThat(lotQuantity(lotId)).isEqualByComparingTo("4.000");
+        assertThat(availableQuantity()).isEqualByComparingTo("0");
         assertThat(movementCount(lotId, "receipt")).isEqualTo(1);
 
         setContext(tenantId, siteId, actorId);
@@ -120,11 +124,37 @@ class ProcurementReceiptFlowTest extends BaseMasterDataIntegrationTest {
         postJson("/api/v1/grns", UUID.randomUUID().toString(), grnBody(spoId, spoLineId, "7.000", "0", "7.000"))
                 .andExpect(status().isConflict());
 
-        setContext(tenantId, siteId, actorId);
-        postJson("/api/v1/grns", UUID.randomUUID().toString(), grnBody(spoId, spoLineId, "6.000", "1.000", "5.000"))
-                .andExpect(status().isCreated());
+        UUID inspectionId = startInspection(grn.path("id").asText(), lotId);
+        assertThat(startInspection(grn.path("id").asText(), lotId)).isEqualTo(inspectionId);
+        postJson("/api/v1/quality-inspections/" + inspectionId + "/complete", UUID.randomUUID().toString(),
+                "{\"acceptedQty\":0,\"rejectedQty\":0,\"hold\":true,\"notes\":\"Waiting for the mill certificate\"}")
+                .andExpect(status().isOk());
+        assertThat(lotStatus(lotId)).isEqualTo("quarantine");
+        assertThat(availableQuantity()).isEqualByComparingTo("0");
+        postJson("/api/v1/quality-inspections/" + inspectionId + "/complete", UUID.randomUUID().toString(),
+                "{\"acceptedQty\":4.000,\"rejectedQty\":0,\"hold\":false}")
+                .andExpect(status().isOk());
+        assertThat(lotStatus(lotId)).isEqualTo("available");
+        assertThat(availableQuantity()).isEqualByComparingTo("4.000");
         assertThat(readSpo(spoId).path("status").asText()).isEqualTo("partially_received");
+        postJson("/api/v1/quality-inspections/" + inspectionId + "/complete", UUID.randomUUID().toString(),
+                "{\"acceptedQty\":4.000,\"rejectedQty\":0,\"hold\":false}")
+                .andExpect(status().isOk());
         assertThat(lotQuantity(lotId)).isEqualByComparingTo("4.000");
+
+        setContext(tenantId, siteId, actorId);
+        MvcResult second = postJson("/api/v1/grns", UUID.randomUUID().toString(),
+                grnBody(spoId, spoLineId, "6.000", "0", "6.000")).andExpect(status().isCreated()).andReturn();
+        JsonNode secondGrn = objectMapper.readTree(second.getResponse().getContentAsString());
+        UUID secondLot = UUID.fromString(secondGrn.path("lines").get(0).path("lotIds").get(0).asText());
+        UUID secondInspection = startInspection(secondGrn.path("id").asText(), secondLot);
+        postJson("/api/v1/quality-inspections/" + secondInspection + "/complete", UUID.randomUUID().toString(),
+                "{\"acceptedQty\":5.000,\"rejectedQty\":1.000,\"hold\":false,\"notes\":\"Accepted under concession\"}")
+                .andExpect(status().isOk());
+        assertThat(lotQuantity(lotId)).isEqualByComparingTo("4.000");
+        assertThat(lotQuantity(secondLot)).isEqualByComparingTo("1.000");
+        assertThat(lotStatus(secondLot)).isEqualTo("quarantine");
+        assertThat(availableQuantity()).isEqualByComparingTo("9.000");
 
         String returnBody = """
                 {"grnId":"%s","reason":"Damaged in transit","lines":[{"grnLineId":"%s","lotId":"%s","quantity":1.500}]}
@@ -167,6 +197,30 @@ class ProcurementReceiptFlowTest extends BaseMasterDataIntegrationTest {
                 """.formatted(secondLine)).andExpect(status().isCreated()).andReturn();
         String amendmentId = objectMapper.readTree(amendment.getResponse().getContentAsString()).path("id").asText();
         assertThat(readSpo(second).path("lines").get(0).path("orderedQty").decimalValue()).isEqualByComparingTo("8.000");
+        setContext(tenantId, siteId, actorId);
+        MvcResult uploaded = mockMvc.perform(multipart("/api/v1/spos/" + second + "/amendments/" + amendmentId + "/files")
+                        .file(new MockMultipartFile("file", "concession.pdf", "application/pdf", "evidence".getBytes()))
+                        .with(user("owner").roles("OWNER"))
+                        .header("Idempotency-Key", UUID.randomUUID().toString()))
+                .andExpect(status().isCreated()).andReturn();
+        String fileId = objectMapper.readTree(uploaded.getResponse().getContentAsString()).path("id").asText();
+        setContext(tenantId, siteId, actorId);
+        mockMvc.perform(multipart("/api/v1/spos/" + second + "/amendments/" + amendmentId + "/files")
+                        .file(new MockMultipartFile("file", "notes.exe", "application/octet-stream", "no".getBytes()))
+                        .with(user("owner").roles("OWNER"))
+                        .header("Idempotency-Key", UUID.randomUUID().toString()))
+                .andExpect(status().isBadRequest());
+        setContext(tenantId, siteId, actorId);
+        mockMvc.perform(get("/api/v1/spos/" + second + "/amendments/" + amendmentId + "/files/" + fileId)
+                        .with(user("owner").roles("OWNER")))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Content-Type", "application/pdf"));
+        assertThat(auditCount("spo_amendment_files", UUID.fromString(fileId))).isEqualTo(1);
+        UUID otherTenant = provisionTenant("amendment-file-other");
+        setContext(otherTenant, null, UUID.randomUUID());
+        mockMvc.perform(get("/api/v1/spos/" + second + "/amendments/" + amendmentId + "/files/" + fileId)
+                        .with(user("owner").roles("OWNER")))
+                .andExpect(status().isNotFound());
 
         BossContextHolder.set(new BossContext(tenantId, actorId, Set.of("PURCHASE_MANAGER"), siteId, null));
         mockMvc.perform(post("/api/v1/spos/" + second + "/amendments/" + amendmentId + "/approve")
@@ -263,10 +317,37 @@ class ProcurementReceiptFlowTest extends BaseMasterDataIntegrationTest {
         return objectMapper.readTree(result.getResponse().getContentAsString());
     }
 
+    private UUID startInspection(String grnId, UUID lotId) throws Exception {
+        setContext(tenantId, siteId, actorId);
+        MvcResult result = postJson("/api/v1/grns/" + grnId + "/inspections?lotId=" + lotId,
+                UUID.randomUUID().toString(), "{}").andExpect(status().isOk()).andReturn();
+        return UUID.fromString(objectMapper.readTree(result.getResponse().getContentAsString()).path("id").asText());
+    }
+
     private BigDecimal lotQuantity(UUID lotId) {
         return jdbc.queryForObject(
                 "SELECT quantity FROM material_lots WHERE tenant_id = ? AND id = ?",
                 BigDecimal.class, tenantId, lotId);
+    }
+
+    private String lotStatus(UUID lotId) {
+        return jdbc.queryForObject(
+                "SELECT status FROM material_lots WHERE tenant_id = ? AND id = ?",
+                String.class, tenantId, lotId);
+    }
+
+    private BigDecimal availableQuantity() {
+        return jdbc.queryForObject("""
+                SELECT COALESCE(SUM(quantity), 0) FROM material_lots
+                WHERE tenant_id = ? AND item_id = ? AND status IN ('available', 'reserved')
+                """, BigDecimal.class, tenantId, itemId);
+    }
+
+    private long auditCount(String entityType, UUID entityId) {
+        Long count = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM audit_events WHERE entity_type = ? AND entity_id = ?",
+                Long.class, entityType, entityId);
+        return count == null ? 0 : count;
     }
 
     private int movementCount(UUID lotId, String type) {

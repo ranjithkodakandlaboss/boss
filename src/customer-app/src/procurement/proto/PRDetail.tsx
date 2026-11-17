@@ -27,12 +27,18 @@ function quoteTotal(q: SupplierQuotation) {
   }, 0) + (q.taxAmount ?? 0) + (q.deliveryCharges ?? 0) - (q.discountAmount ?? 0);
 }
 
+function deliveryLabel(status?: string) {
+  if (status === 'sent') return 'Sent';
+  if (status === 'failed') return 'Failed';
+  return 'Not sent';
+}
+
 export default function PRDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const {
     purchaseReqs, supplierQuotations, supplierInvitations, supplierPos, grns, suppliers, currentUser,
-    updatePurchaseReq, updateSupplierInvitation, selectQuotation,
+    updatePurchaseReq, updateSupplierInvitation, retryQuotationDelivery, selectQuotation,
     approveFinalizeQuotation, rejectQuotationApproval, generateSPOFromQuotation, showToast,
   } = useStore();
   const { goBack, originUrl } = useReturnNavigation('/procurement?tab=pr');
@@ -386,8 +392,17 @@ export default function PRDetail() {
                       <td className="text-xs text-[var(--text-2)]">
                         {inv.sentDate ?? inv.createdAt} {inv.responseDueDate ? `· Due ${inv.responseDueDate}` : ''}
                       </td>
-                      <td><StatusChip status={inv.status} /></td>
+                      <td>
+                        <StatusChip status={inv.status} />
+                        <div className="text-[11px] text-[var(--text-3)] mt-1">Email: {deliveryLabel(inv.deliveryStatus)}</div>
+                        {inv.deliveryError && <div className="text-[11px] text-[var(--danger)]">{inv.deliveryError}</div>}
+                      </td>
                       <td className="text-right space-x-1.5">
+                        {inv.deliveryStatus === 'failed' && (
+                          <button type="button" onClick={() => retryQuotationDelivery(inv.id)} className="text-xs px-2 py-1 rounded-lg border border-[var(--border)]">
+                            Retry email
+                          </button>
+                        )}
                         {!isPrBlocked && ['sent', 'awaiting_quotation'].includes(inv.status) && (
                           <>
                             <button

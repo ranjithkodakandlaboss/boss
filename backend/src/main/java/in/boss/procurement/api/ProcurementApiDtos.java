@@ -159,7 +159,10 @@ public final class ProcurementApiDtos {
             BigDecimal freightAmount,
             BigDecimal discountAmount,
             BigDecimal taxAmount,
-            String selectionReason) {}
+            String selectionReason,
+            String deliveryStatus,
+            String deliveryRecipient,
+            String deliveryError) {}
 
     public record SupplierQuotationComparisonOffer(
             UUID supplierQuotationId,
@@ -277,7 +280,9 @@ public final class ProcurementApiDtos {
             BigDecimal rejectedQty,
             String uomSymbol,
             List<UUID> lotIds,
-            List<String> lotNumbers) {}
+            List<String> lotNumbers,
+            List<String> lotStatuses,
+            List<BigDecimal> lotQuantities) {}
 
     public record GrnResponse(
             UUID id,
@@ -320,4 +325,30 @@ public final class ProcurementApiDtos {
             BigDecimal onTimeDeliveryPct,
             BigDecimal qualityRejectionPct,
             BigDecimal avgLeadTimeDays) {}
+
+    public record InspectionResponse(
+            UUID id,
+            String inspectionNumber,
+            UUID grnId,
+            UUID lotId,
+            UUID itemId,
+            BigDecimal quantityInspected,
+            BigDecimal quantityAccepted,
+            BigDecimal quantityRejected,
+            String result,
+            String status,
+            String notes) {}
+
+    public record CompleteInspectionRequest(
+            @NotNull @DecimalMin("0.000") BigDecimal acceptedQty,
+            @NotNull @DecimalMin("0.000") BigDecimal rejectedQty,
+            boolean hold,
+            @Size(max = 2000) String notes) {}
+
+    public record AmendmentFileResponse(
+            UUID id,
+            UUID amendmentId,
+            String fileName,
+            String contentType,
+            int sizeBytes) {}
 }

@@ -10,6 +10,7 @@ import {
   procurementApi,
   type AmendmentRecord,
   type GrnRecord,
+  type InspectionRecord,
   type PrRecord,
   type QuoteRecord,
   type SpoRecord,
@@ -196,6 +197,9 @@ function mapQuote(record: QuoteRecord, pr?: ReturnType<typeof mapPr>) {
     discountAmount: money(record.discountAmount),
     taxAmount: money(record.taxAmount),
     selectionReason: record.selectionReason,
+    deliveryStatus: record.deliveryStatus || "not_sent",
+    deliveryRecipient: record.deliveryRecipient,
+    deliveryError: record.deliveryError,
     lines,
     status: record.status,
     landedTotal: landed,
@@ -257,13 +261,19 @@ function mapGrn(record: GrnRecord, spo?: ReturnType<typeof mapSpo>) {
     orderedQty: spo?.lines?.find((item: { id: string }) => item.id === line.spoLineId)?.orderedQty,
     previouslyReceivedQty: 0,
     uom: line.uomSymbol || "",
-    lots: (line.lotNumbers ?? []).map((lotNumber, index) => ({
-      id: line.lotIds?.[index],
-      lotNumber,
-      qty: money(line.acceptedQty),
-      status: "available",
-      grnId: record.id,
-    })),
+    lots: (line.lotNumbers ?? []).map((lotNumber, index) => {
+      const quantity = money(line.lotQuantities?.[index] ?? line.receivedQty);
+      const stored = line.lotStatuses?.[index] || "quarantine";
+      return {
+        id: line.lotIds?.[index],
+        lotNumber,
+        qty: quantity,
+        primaryQty: quantity,
+        primaryUom: line.uomSymbol || "",
+        status: stored === "quarantine" ? "qc_hold" : stored,
+        grnId: record.id,
+      };
+    }),
     lotIds: line.lotIds ?? [],
   }));
   return {
@@ -274,12 +284,38 @@ function mapGrn(record: GrnRecord, spo?: ReturnType<typeof mapSpo>) {
     supplierId: record.supplierId,
     supplierName: record.supplierName || spo?.supplierName,
     siteId: record.siteId,
-    status: record.status === "partially_accepted" ? "partial" : record.status,
+    status: grnStatus(record),
     receivedDate: record.receivedDate || "",
     deliveryChallan: record.supplierDcRef,
     vehicleNumber: record.vehicleNumber,
     lineCount: lines.length,
     lines,
+  };
+}
+
+function grnStatus(record: GrnRecord) {
+  if (record.status === "draft") return "pending_qc";
+  if (record.status !== "closed") return record.status === "partially_accepted" ? "partial" : record.status;
+  const accepted = (record.lines ?? []).reduce((sum, line) => sum + money(line.acceptedQty), 0);
+  const rejected = (record.lines ?? []).reduce((sum, line) => sum + money(line.rejectedQty), 0);
+  if (rejected === 0) return "accepted";
+  if (accepted === 0) return "rejected";
+  return "partial";
+}
+
+function mapInspection(record: InspectionRecord) {
+  return {
+    id: record.id,
+    inspectionNumber: record.inspectionNumber,
+    grnId: record.grnId,
+    lotId: record.lotId,
+    itemId: record.itemId,
+    quantityInspected: money(record.quantityInspected),
+    quantityAccepted: money(record.quantityAccepted),
+    quantityRejected: money(record.quantityRejected),
+    result: record.result || "",
+    status: record.status,
+    notes: record.notes || "",
   };
 }
 
@@ -316,6 +352,7 @@ export function ProcurementProvider({ children }: { children?: ReactNode }) {
   const [storeLocations, setStoreLocations] = useState<any[]>([]);
   const [grns, setGrns] = useState<any[]>([]);
   const [lots, setLots] = useState<any[]>([]);
+  const [inspections, setInspections] = useState<any[]>([]);
   const [poAmendments, setPoAmendments] = useState<any[]>([]);
   const [toasts, setToasts] = useState<ToastItem[]>([]);
   const dataRef = useRef<any>({});
@@ -371,12 +408,19 @@ export function ProcurementProvider({ children }: { children?: ReactNode }) {
       })),
     ]);
     const mappedGrns = grnRows.map((row) => mapGrn(row, mappedSpos.find((spo) => spo.id === row.spoId)));
+    const inspectionGroups = await Promise.all(grnRows.map(async (grn) => {
+      try {
+        const rows = await procurementApi.inspections(grn.id);
+        return Array.isArray(rows) ? rows : [];
+      } catch { return [] as InspectionRecord[]; }
+    }));
     setSuppliers(supplierRows.map((row, index) => mapSupplier(row, performanceRows[index])));
     setPurchaseReqs(mappedPrs);
     setSupplierQuotations(quotes.filter((quote) => quote.status !== "requested"));
     setSupplierPos(mappedSpos);
     setSupplierPoLines(mappedSpos.flatMap((spo) => spo.lines.map((line: any) => ({ ...line, poId: spo.id }))));
     setGrns(mappedGrns);
+    setInspections(inspectionGroups.flat().map(mapInspection));
     setLots(mappedGrns.flatMap((grn) => grn.lines.flatMap((line) => line.lots.map((lot) => ({
       ...lot,
       materialName: line.materialName,
@@ -451,13 +495,17 @@ export function ProcurementProvider({ children }: { children?: ReactNode }) {
       prNumber: quote.prNumber,
       supplierId: quote.supplierId,
       supplierName: quote.supplierName,
-      channel: "portal",
+      channel: "email",
       requestedLineIds: (quote.lines ?? []).map((line: any) => line.prLineId),
       createdAt: "",
-      sentDate: "",
+      sentDate: quote.deliveryStatus === "sent" ? "Sent" : "",
       responseDueDate: quote.validUntil,
       status: "awaiting_quotation",
       quotationId: quote.id,
+      deliveryStatus: quote.deliveryStatus,
+      deliveryRecipient: quote.deliveryRecipient,
+      deliveryError: quote.deliveryError,
+      contactEmail: quote.deliveryRecipient,
     }));
     const approvalRequests = purchaseReqs
       .filter((pr) => pr.apiStatus === "submitted" || pr.status === "pending")
@@ -482,7 +530,7 @@ export function ProcurementProvider({ children }: { children?: ReactNode }) {
       supplierPoLines,
       grns,
       lots,
-      inspections: [],
+      inspections,
       materials,
       sites,
       storeLocations,
@@ -832,11 +880,53 @@ export function ProcurementProvider({ children }: { children?: ReactNode }) {
           return { error: failure(error) };
         }
       },
-      rejectGRN: () => showToast({ type: "info", title: "Receipt stays posted", body: "Record damaged quantity on the receipt, or raise a supplier return for accepted stock." }),
-      startInspectionForGRN: () => showToast({ type: "info", title: "Inspection is not connected", body: "Quality inspections are outside procurement." }),
-      releaseLotFromHold: () => showToast({ type: "info", title: "Inventory is not connected", body: "Lot release is not part of this procurement release." }),
+      rejectGRN: () => showToast({ type: "info", title: "Reject the lot from inspection", body: "Open the incoming inspection and record the rejected quantity. Rejected stock stays in quarantine." }),
+      retryQuotationDelivery: (id: string) => enqueue(id, async () => {
+        const saved = await procurementApi.deliverQuotation(id);
+        await reload();
+        showToast(saved.deliveryStatus === "sent"
+          ? { type: "success", title: "Quotation request sent", body: saved.deliveryRecipient }
+          : { type: "error", title: "Quotation request was not sent", body: saved.deliveryError || "The email provider did not accept the message." });
+      }).catch((error) => showToast({ type: "error", title: "Quotation request was not sent", body: failure(error) })),
+      startInspectionForGRN: async (grnId: string, lotId: string) => {
+        try {
+          const saved = await procurementApi.startInspection(grnId, lotId);
+          await reload();
+          return mapInspection(saved);
+        } catch (error) {
+          showToast({ type: "error", title: "Inspection was not started", body: failure(error) });
+          return null;
+        }
+      },
+      completeInspection: async (id: string, body: { acceptedQty: number; rejectedQty: number; hold: boolean; notes?: string }) => {
+        try {
+          const saved = await procurementApi.completeInspection(id, body);
+          await reload();
+          showToast({ type: "success", title: body.hold ? "Lot kept on hold" : "Inspection recorded" });
+          return mapInspection(saved);
+        } catch (error) {
+          showToast({ type: "error", title: "Inspection was not recorded", body: failure(error) });
+          return null;
+        }
+      },
+      releaseLotFromHold: async (lotId: string) => {
+        const lot = lots.find((item) => item.id === lotId);
+        const inspection = inspections.find((item) => item.lotId === lotId && item.status !== "completed");
+        try {
+          const current = inspection ?? await procurementApi.startInspection(lot.grnId, lotId);
+          await procurementApi.completeInspection(current.id, {
+            acceptedQty: Number(lot.primaryQty || lot.qty),
+            rejectedQty: 0,
+            hold: false,
+          });
+          await reload();
+          showToast({ type: "success", title: "Lot released", body: "The inspected quantity is now available." });
+        } catch (error) {
+          showToast({ type: "error", title: "Lot was not released", body: failure(error) });
+        }
+      },
     };
-  }, [approvalSafe(purchaseReqs), currentUser, customer.tenant?.name, grns, guard, lots, materials, poAmendments, purchaseReqs, ready, reload, removeToast, showToast, sites, storeLocations, supplierPoLines, supplierPos, supplierQuotations, suppliers, toasts, uoms, enqueue]);
+  }, [approvalSafe(purchaseReqs), currentUser, customer.tenant?.name, grns, guard, inspections, lots, materials, poAmendments, purchaseReqs, ready, reload, removeToast, showToast, sites, storeLocations, supplierPoLines, supplierPos, supplierQuotations, suppliers, toasts, uoms, enqueue]);
 
   return (
     <ProcurementContext.Provider value={value}>

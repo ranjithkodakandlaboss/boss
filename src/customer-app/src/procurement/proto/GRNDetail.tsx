@@ -35,13 +35,14 @@ export default function GRNDetail() {
   const canInspectOrApprove = ['owner', 'storekeeper', 'buyer', 'qc'].includes(currentUser.role);
   const hasHoldLots = grnLots.some(l => l.status === 'qc_hold');
 
-  const handleStartInspection = (lotId?: string) => {
-    const ins = startInspectionForGRN(grn.id, lotId);
-    if (!ins) {
-      showToast({ type: 'error', title: 'Could not start inspection', body: 'No lot or line item available to inspect.' });
+  const handleStartInspection = async (lotId?: string) => {
+    const target = lotId || grnLots.find(lot => lot.status === 'qc_hold')?.id;
+    if (!target) {
+      showToast({ type: 'error', title: 'Could not start inspection', body: 'No lot is waiting for inspection.' });
       return;
     }
-    navigate(`/quality/inspection/${ins.id}`);
+    const ins = await startInspectionForGRN(grn.id, target);
+    if (ins?.id) navigate(`/quality/inspection/${ins.id}`);
   };
 
   return (

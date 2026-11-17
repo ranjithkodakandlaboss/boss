@@ -15,11 +15,17 @@ import { sortRows } from '../../sales/proto/tableSort';
 type ProcTab = 'spo' | 'pr' | 'grn' | 'approvals' | 'quotes';
 type ProcurementSortKey = 'number' | 'supplier' | 'date' | 'committedDate' | 'value' | 'lines' | 'dept' | 'source' | 'status' | 'raisedBy' | 'requiredBy' | 'priority' | 'poRef' | 'receivedBy' | 'challan' | 'validUntil' | 'leadTime' | 'terms';
 
+function deliveryLabel(status?: string) {
+  if (status === 'sent') return 'Sent';
+  if (status === 'failed') return 'Failed';
+  return 'Not sent';
+}
+
 export default function Procurement() {
   const {
     supplierPos, grns, approvalRequests, supplierQuotations, supplierInvitations,
     purchaseReqs, suppliers, sites, currentUser, showToast,
-    addSupplierPO, resolveApproval, updateSupplierPo, updateSupplierInvitation,
+    addSupplierPO, resolveApproval, updateSupplierPo, updateSupplierInvitation, retryQuotationDelivery,
     selectQuotation, approveFinalizeQuotation, rejectQuotationApproval, generateSPOFromQuotation,
   } = useStore();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -583,8 +589,18 @@ export default function Procurement() {
                           <td className="text-xs uppercase text-[var(--text-2)]">{inv.channel}</td>
                           <td className="text-xs text-[var(--text-2)]">{inv.sentDate ?? inv.createdAt}</td>
                           <td className="text-xs text-[var(--text-2)]">{inv.responseDueDate ?? '—'}</td>
-                          <td><StatusChip status={inv.status} /></td>
+                          <td>
+                            <StatusChip status={inv.status} />
+                            <div className="text-[11px] text-[var(--text-3)] mt-1">Email: {deliveryLabel(inv.deliveryStatus)}</div>
+                            {inv.deliveryRecipient && <div className="text-[11px] text-[var(--text-3)]">{inv.deliveryRecipient}</div>}
+                            {inv.deliveryError && <div className="text-[11px] text-[var(--danger)]">{inv.deliveryError}</div>}
+                          </td>
                           <td className="text-right space-x-1.5">
+                            {inv.deliveryStatus === 'failed' && (
+                              <button type="button" onClick={() => retryQuotationDelivery(inv.id)} className="text-xs px-2 py-1 rounded-lg border border-[var(--border)] text-[var(--text)]">
+                                Retry email
+                              </button>
+                            )}
                             {['sent', 'awaiting_quotation'].includes(inv.status) && (
                               <>
                                 <button

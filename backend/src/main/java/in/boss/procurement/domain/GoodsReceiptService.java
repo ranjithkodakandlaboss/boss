@@ -35,16 +35,13 @@ public class GoodsReceiptService {
 
     private final JdbcTemplate jdbc;
     private final InventoryService inventoryService;
-    private final PurchaseRequisitionService prService;
     private final AuditService auditService;
 
     public GoodsReceiptService(JdbcTemplate jdbc,
                                InventoryService inventoryService,
-                               PurchaseRequisitionService prService,
                                AuditService auditService) {
         this.jdbc = jdbc;
         this.inventoryService = inventoryService;
-        this.prService = prService;
         this.auditService = auditService;
     }
 
@@ -109,8 +106,10 @@ public class GoodsReceiptService {
             UUID lineId = rs.getObject("id", UUID.class);
             List<UUID> lots = new ArrayList<>();
             List<String> lotNumbers = new ArrayList<>();
+            List<String> lotStatuses = new ArrayList<>();
+            List<BigDecimal> lotQuantities = new ArrayList<>();
             jdbc.query("""
-                    SELECT DISTINCT m.lot_id, l.lot_number
+                    SELECT DISTINCT m.lot_id, l.lot_number, l.status, l.quantity
                     FROM stock_movements m
                     JOIN material_lots l ON l.id = m.lot_id AND l.tenant_id = m.tenant_id
                     WHERE m.tenant_id = ? AND m.reference_type = 'GRN' AND m.reference_id = ?
@@ -118,6 +117,8 @@ public class GoodsReceiptService {
                     """, rsLot -> {
                 lots.add(rsLot.getObject("lot_id", UUID.class));
                 lotNumbers.add(rsLot.getString("lot_number"));
+                lotStatuses.add(rsLot.getString("status"));
+                lotQuantities.add(rsLot.getBigDecimal("quantity"));
             }, context.tenantId(), lineId);
             return new GrnLineResponse(
                     lineId,
@@ -130,7 +131,9 @@ public class GoodsReceiptService {
                     rs.getBigDecimal("rejected_qty"),
                     rs.getString("symbol"),
                     lots,
-                    lotNumbers);
+                    lotNumbers,
+                    lotStatuses,
+                    lotQuantities);
         }, context.tenantId(), grnId);
         return new GrnResponse(header.id(), header.grnNumber(), header.spoId(), header.spoNumber(),
                 header.supplierId(), header.supplierName(), header.siteId(), header.status(),
@@ -164,73 +167,47 @@ public class GoodsReceiptService {
                 blank(request.vehicleNumber()), blank(request.notes()), context.userId());
 
         int lineNo = 1;
-        BigDecimal ordered = BigDecimal.ZERO;
-        BigDecimal acceptedTotal = BigDecimal.ZERO;
-        BigDecimal rejectedTotal = BigDecimal.ZERO;
         for (CreateGrnLineRequest line : request.lines()) {
             SpoLineRow spoLine = lockLine(tenantId, spo.id(), line.spoLineId());
             BigDecimal rejected = line.rejectedQty() == null ? BigDecimal.ZERO : line.rejectedQty();
             if (rejected.compareTo(line.receivedQty()) > 0) {
                 throw badRequest("Rejected quantity cannot exceed the quantity received");
             }
-            BigDecimal accepted = line.receivedQty().subtract(rejected);
-            BigDecimal already = spoLine.receivedQty();
-            if (already.add(accepted).compareTo(spoLine.orderedQty()) > 0) {
+            BigDecimal toInspect = line.receivedQty().subtract(rejected);
+            BigDecimal already = jdbc.queryForObject("""
+                    SELECT COALESCE(SUM(received_qty), 0) FROM grn_lines
+                    WHERE tenant_id = ? AND spo_line_id = ?
+                    """, BigDecimal.class, tenantId, spoLine.id());
+            if (already.add(line.receivedQty()).compareTo(spoLine.orderedQty()) > 0) {
                 throw conflict("Receipt exceeds the quantity still open on the supplier order. No over-receipt tolerance is configured.");
             }
             BigDecimal lotQty = line.lots().stream().map(CreateGrnLotRequest::qty).reduce(BigDecimal.ZERO, BigDecimal::add);
-            if (lotQty.compareTo(accepted) != 0) {
-                throw badRequest("Lot quantities must equal the accepted quantity");
+            if (lotQty.compareTo(toInspect) != 0) {
+                throw badRequest("Lot quantities must equal the quantity waiting for inspection");
             }
             UUID grnLineId = UUID.randomUUID();
             jdbc.update("""
                     INSERT INTO grn_lines
                       (id, tenant_id, grn_id, spo_line_id, line_no, item_id, received_qty,
                        accepted_qty, rejected_qty, uom_id, unit_price, store_id, lot_number, notes)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)
                     """, grnLineId, tenantId, grnId, spoLine.id(), lineNo++, spoLine.itemId(),
-                    line.receivedQty(), accepted, rejected, spoLine.uomId(), spoLine.unitPrice(),
+                    line.receivedQty(), rejected, spoLine.uomId(), spoLine.unitPrice(),
                     request.storeId(), line.lots().get(0).lotNumber(), blank(line.notes()));
             for (CreateGrnLotRequest lot : line.lots()) {
                 inventoryService.createLot(new CreateLotRequest(
                         spoLine.itemId(), request.storeId(), lot.qty(), spoLine.unitPrice(),
                         lot.supplierLotRef() == null ? lot.lotNumber() : lot.supplierLotRef(),
-                        lot.expiryDate(), "available", grnLineId));
+                        lot.expiryDate(), "quarantine", grnLineId));
             }
             jdbc.update("""
-                    UPDATE spo_lines SET received_qty = received_qty + ?, store_id = ?
+                    UPDATE spo_lines SET store_id = ?
                     WHERE tenant_id = ? AND id = ?
-                    """, accepted, request.storeId(), tenantId, spoLine.id());
-            ordered = ordered.add(spoLine.orderedQty());
-            acceptedTotal = acceptedTotal.add(accepted);
-            rejectedTotal = rejectedTotal.add(rejected);
+                    """, request.storeId(), tenantId, spoLine.id());
         }
 
-        boolean complete = jdbc.queryForObject("""
-                SELECT COUNT(*) = 0 FROM spo_lines
-                WHERE tenant_id = ? AND spo_id = ? AND received_qty < quantity
-                """, Boolean.class, tenantId, spo.id());
-        String spoStatus = Boolean.TRUE.equals(complete) ? "fully_received" : "partially_received";
-        jdbc.update("""
-                UPDATE spos SET status = ?, updated_at = NOW()
-                WHERE tenant_id = ? AND id = ? AND status = ?
-                """, spoStatus, tenantId, spo.id(), spo.status());
-        String grnStatus = rejectedTotal.signum() == 0 ? "accepted" : "partially_accepted";
-        jdbc.update("UPDATE grns SET status = ?, updated_at = NOW() WHERE tenant_id = ? AND id = ?",
-                grnStatus, tenantId, grnId);
-        jdbc.update("""
-                INSERT INTO supplier_performance_records
-                  (tenant_id, supplier_id, spo_id, grn_id, promised_date, actual_date,
-                   quantity_ordered, quantity_received, quantity_rejected, quality_pass)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, tenantId, spo.supplierId(), spo.id(), grnId, spo.expectedDelivery(),
-                request.receivedDate(), ordered, acceptedTotal, rejectedTotal, rejectedTotal.signum() == 0);
-        if (spo.prId() != null) {
-            prService.recalculateCoverage(spo.prId());
-        }
         GrnResponse response = get(grnId);
-        auditService.record("grns", grnId, "RECEIVED", null,
-                "{\"status\":\"" + grnStatus + "\",\"stockStatus\":\"closed\"}");
+        auditService.record("grns", grnId, "RECEIVED", null, "{\"status\":\"draft\"}");
         return response;
     }
 

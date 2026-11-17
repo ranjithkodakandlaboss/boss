@@ -1,9 +1,14 @@
 package in.boss.procurement.api;
 
+import in.boss.procurement.domain.SpoAmendmentFileService;
 import in.boss.procurement.domain.SpoService;
 import in.boss.shared.security.BossPermissions;
 import jakarta.validation.Valid;
+import org.springframework.http.ContentDisposition;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -13,11 +18,13 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
 import java.util.UUID;
 
 import static in.boss.procurement.api.ProcurementApiDtos.AmendSpoRequest;
+import static in.boss.procurement.api.ProcurementApiDtos.AmendmentFileResponse;
 import static in.boss.procurement.api.ProcurementApiDtos.CreateSpoRequest;
 import static in.boss.procurement.api.ProcurementApiDtos.DeclineSpoRequest;
 import static in.boss.procurement.api.ProcurementApiDtos.PageResponse;
@@ -30,9 +37,11 @@ import static in.boss.procurement.api.ProcurementApiDtos.SpoResponse;
 public class SpoController {
 
     private final SpoService spoService;
+    private final SpoAmendmentFileService amendmentFileService;
 
-    public SpoController(SpoService spoService) {
+    public SpoController(SpoService spoService, SpoAmendmentFileService amendmentFileService) {
         this.spoService = spoService;
+        this.amendmentFileService = amendmentFileService;
     }
 
     @GetMapping
@@ -94,5 +103,30 @@ public class SpoController {
     @PostMapping("/{spoId}/amendments/{amendmentId}/reject")
     public SpoResponse rejectAmendment(@PathVariable UUID spoId, @PathVariable UUID amendmentId) {
         return spoService.decideAmendment(spoId, amendmentId, false);
+    }
+
+    @GetMapping("/{spoId}/amendments/{amendmentId}/files")
+    public List<AmendmentFileResponse> files(@PathVariable UUID spoId, @PathVariable UUID amendmentId) {
+        return amendmentFileService.list(spoId, amendmentId);
+    }
+
+    @PostMapping(value = "/{spoId}/amendments/{amendmentId}/files", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @ResponseStatus(HttpStatus.CREATED)
+    public AmendmentFileResponse upload(@PathVariable UUID spoId,
+                                        @PathVariable UUID amendmentId,
+                                        @RequestParam("file") MultipartFile file) {
+        return amendmentFileService.upload(spoId, amendmentId, file);
+    }
+
+    @GetMapping("/{spoId}/amendments/{amendmentId}/files/{fileId}")
+    public ResponseEntity<byte[]> download(@PathVariable UUID spoId,
+                                           @PathVariable UUID amendmentId,
+                                           @PathVariable UUID fileId) {
+        SpoAmendmentFileService.StoredFile stored = amendmentFileService.download(spoId, amendmentId, fileId);
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, ContentDisposition.attachment()
+                        .filename(stored.fileName()).build().toString())
+                .contentType(MediaType.parseMediaType(stored.contentType()))
+                .body(stored.content());
     }
 }

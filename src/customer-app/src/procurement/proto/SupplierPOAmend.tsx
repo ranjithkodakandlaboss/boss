@@ -2,6 +2,7 @@
 import React, { useMemo, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, AlertTriangle, FileEdit, Save } from 'lucide-react';
+import { procurementApi } from '../api';
 import { useStore } from './runtime';
 
 export default function SupplierPOAmend() {
@@ -18,7 +19,7 @@ export default function SupplierPOAmend() {
   const [committedDate, setCommittedDate] = useState('');
   const [materialName, setMaterialName] = useState('');
   const [paymentTerms, setPaymentTerms] = useState('');
-  const [attachmentName, setAttachmentName] = useState('');
+  const [attachment, setAttachment] = useState<File | null>(null);
   const [submitted, setSubmitted] = useState(false);
   const selectedLine = lines.find(line => line.id === lineId);
   const nextRevision = useMemo(() => Math.max(po?.revision ?? 1, ...poAmendments.filter(a => a.entityType === 'supplier_po' && a.poId === id).map(a => a.revision), 1) + 1, [po, poAmendments, id]);
@@ -36,7 +37,15 @@ export default function SupplierPOAmend() {
       lineChanges: selectedLine ? { quantity: quantity ? Number(quantity) : undefined, rate: rate ? Number(rate) : undefined, requiredDate: committedDate || undefined } : undefined,
       headerChanges: { paymentTerms: paymentTerms || undefined, committedDate: committedDate || undefined },
     });
-    if (amendment?.error) return;
+    if (!amendment || amendment.error || !amendment.id) return;
+    if (attachment) {
+      try {
+        await procurementApi.uploadAmendmentFile(po.id, amendment.id, attachment);
+      } catch (error) {
+        showToast({ type: 'error', title: 'Evidence was not stored', body: error instanceof Error ? error.message : 'Upload failed' });
+        return;
+      }
+    }
     setSubmitted(true);
   };
 
@@ -48,7 +57,7 @@ export default function SupplierPOAmend() {
       {lines.length > 0 && <div className="space-y-3"><h3 className="text-sm font-semibold text-[var(--text)]">Line changes</h3><select value={lineId} onChange={e => setLineId(e.target.value)} className="eoss-input w-full"><option value="">No line selected</option>{lines.map(line => <option key={line.id} value={line.id}>{line.materialName}</option>)}</select>{selectedLine && <div className="grid md:grid-cols-2 gap-3 p-3 rounded-lg" style={{ background: 'var(--surface-2)' }}><Field label={`Material (current ${selectedLine.materialName})`} value={materialName} onChange={setMaterialName} /><Field label={`Quantity (current ${selectedLine.orderedQty})`} value={quantity} onChange={setQuantity} type="number" /><Field label={`Rate (current ₹${selectedLine.rate.toLocaleString('en-IN')})`} value={rate} onChange={setRate} type="number" /><Field label={`Committed date (current ${selectedLine.committedDate})`} value={committedDate} onChange={setCommittedDate} type="date" /></div>}</div>}
       <div><Field label={`Payment terms (current ${po.paymentTerms})`} value={paymentTerms} onChange={setPaymentTerms} placeholder="Leave blank to keep current" /></div>
       <div><label className="block text-xs font-semibold text-[var(--text-2)] mb-1.5">Change description *</label><textarea required value={changeNote} onChange={e => setChangeNote(e.target.value)} rows={4} placeholder="State the reason and exact old value → new value." className="eoss-input w-full resize-none" /></div>
-      <div><label className="block text-xs font-semibold text-[var(--text-2)] mb-1.5">Supplier evidence (optional)</label><input type="file" accept=".pdf,.jpg,.jpeg,.png,.msg,.eml" onChange={e => setAttachmentName(e.target.files?.[0]?.name ?? '')} className="eoss-input w-full text-xs" /></div>
+      <div><label className="block text-xs font-semibold text-[var(--text-2)] mb-1.5">Supplier evidence (optional)</label><input type="file" accept=".pdf,.jpg,.jpeg,.png,.msg,.eml" onChange={e => setAttachment(e.target.files?.[0] ?? null)} className="eoss-input w-full text-xs" />{attachment && <p className="text-[11px] text-[var(--text-3)] mt-1">{attachment.name} will be stored with this amendment.</p>}</div>
       <div className="flex justify-end gap-3"><button type="button" onClick={() => navigate(`/procurement/spo/${id}`)} className="px-4 py-2 rounded-lg text-sm font-semibold border" style={{ borderColor: 'var(--border)', color: 'var(--text-2)' }}>Cancel</button><button type="submit" disabled={submitted || !changeNote.trim()} className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold text-white disabled:opacity-40" style={{ background: 'var(--brand)' }}><Save size={14} />{submitted ? 'Submitted…' : 'Submit for Approval'}</button></div>
     </form>
   </div>;

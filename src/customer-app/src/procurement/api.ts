@@ -80,6 +80,9 @@ export type QuoteRecord = {
   discountAmount?: number;
   taxAmount?: number;
   selectionReason?: string;
+  deliveryStatus?: string;
+  deliveryRecipient?: string;
+  deliveryError?: string;
 };
 export type ComparisonOffer = {
   supplierQuotationId: string;
@@ -137,6 +140,8 @@ export type GrnLineRecord = {
   uomSymbol?: string;
   lotIds?: string[];
   lotNumbers?: string[];
+  lotStatuses?: string[];
+  lotQuantities?: number[];
 };
 export type GrnRecord = {
   id: string;
@@ -168,6 +173,26 @@ export type SupplierReturnRecord = {
   supplierId: string;
   status: string;
   reason: string;
+};
+export type InspectionRecord = {
+  id: string;
+  inspectionNumber: string;
+  grnId: string;
+  lotId: string;
+  itemId: string;
+  quantityInspected: number;
+  quantityAccepted?: number | null;
+  quantityRejected?: number | null;
+  result?: string | null;
+  status: string;
+  notes?: string | null;
+};
+export type AmendmentFileRecord = {
+  id: string;
+  amendmentId: string;
+  fileName: string;
+  contentType: string;
+  sizeBytes: number;
 };
 export type SupplierPerformanceRecord = {
   supplierId: string;
@@ -225,6 +250,7 @@ export const procurementApi = {
     reason ? `sq-select:${id}:${reason}` : `sq-select:${id}`,
   ),
   rejectQuotation: (id: string) => write<QuoteRecord>(`/api/v1/supplier-quotations/${id}/reject`, "POST", undefined, `sq-reject:${id}`),
+  deliverQuotation: (id: string) => write<QuoteRecord>(`/api/v1/supplier-quotations/${id}/deliver`, "POST", undefined, `sq-deliver:${id}:${safeRandomUUID()}`),
   comparison: (prId: string) => api<{ prId: string; lines: ComparisonLine[] }>(`/api/v1/prs/${prId}/supplier-quotations/comparison`),
   spos: () => allPages<SpoRecord>("/api/v1/spos"),
   spo: (id: string) => api<SpoRecord>(`/api/v1/spos/${id}`),
@@ -241,8 +267,30 @@ export const procurementApi = {
     undefined,
     `spo-amend:${amendmentId}:${approve ? "approve" : "reject"}`,
   ),
+  uploadAmendmentFile: (spoId: string, amendmentId: string, file: File) => {
+    const body = new FormData();
+    body.append("file", file);
+    return api<AmendmentFileRecord>(`/api/v1/spos/${spoId}/amendments/${amendmentId}/files`, {
+      method: "POST",
+      body,
+      headers: { "Idempotency-Key": safeRandomUUID() },
+    });
+  },
   grns: (spoId?: string) => allPages<GrnRecord>(spoId ? `/api/v1/grns?spoId=${spoId}` : "/api/v1/grns"),
   createGrn: (body: unknown, idempotencyKey: string) => write<GrnRecord>("/api/v1/grns", "POST", body, idempotencyKey),
+  inspections: (grnId: string) => api<InspectionRecord[]>(`/api/v1/grns/${grnId}/inspections`),
+  startInspection: (grnId: string, lotId: string) => write<InspectionRecord>(
+    `/api/v1/grns/${grnId}/inspections?lotId=${lotId}`,
+    "POST",
+    undefined,
+    `insp-start:${grnId}:${lotId}`,
+  ),
+  completeInspection: (id: string, body: { acceptedQty: number; rejectedQty: number; hold: boolean; notes?: string }) => write<InspectionRecord>(
+    `/api/v1/quality-inspections/${id}/complete`,
+    "POST",
+    body,
+    `insp-complete:${id}:${body.hold}:${body.acceptedQty}:${body.rejectedQty}:${body.notes || ""}`,
+  ),
   createSupplierReturn: (body: unknown, idempotencyKey: string) => write<SupplierReturnRecord>("/api/v1/supplier-returns", "POST", body, idempotencyKey),
   performance: (supplierId: string) => api<SupplierPerformanceRecord>(`/api/v1/supplier-performance?supplierId=${supplierId}`),
 };

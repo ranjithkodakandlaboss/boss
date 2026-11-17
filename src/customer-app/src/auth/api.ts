@@ -26,7 +26,9 @@ export function safeRandomUUID(): string {
 
 export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers);
-  if (init.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
+  if (init.body && !(init.body instanceof FormData) && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
   const token = currentToken();
   if (token && path !== "/api/v1/auth/activate") headers.set("Authorization", `Bearer ${token}`);
   const response = await fetch(`${base}${path}`, { ...init, headers });
