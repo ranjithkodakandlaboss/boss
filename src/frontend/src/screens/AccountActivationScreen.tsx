@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { Check, CircleAlert, LoaderCircle, ShieldCheck } from "lucide-react";
 import {
   activateCustomerAccount,
+  platformAdminApiBaseUrl,
   validateInviteToken,
   type ValidateInviteResponse,
 } from "../api/platformAdminApi";
@@ -41,7 +42,7 @@ export function AccountActivationScreen({ token: initialToken, onBackToLogin }: 
     setLoading(true);
     setValidateError("");
 
-    validateInviteToken(import.meta.env.VITE_PLATFORM_ADMIN_API_BASE_URL, token)
+    validateInviteToken(platformAdminApiBaseUrl(), token)
       .then((res) => {
         if (!active) return;
         setValidation(res);
@@ -78,7 +79,7 @@ export function AccountActivationScreen({ token: initialToken, onBackToLogin }: 
     try {
       const firebaseUid = "cust_" + crypto.randomUUID().replace(/-/g, "").slice(0, 20);
 
-      const res = await activateCustomerAccount(import.meta.env.VITE_PLATFORM_ADMIN_API_BASE_URL, {
+      const res = await activateCustomerAccount(platformAdminApiBaseUrl(), {
         token,
         firebaseUid,
         displayName: displayName.trim() || undefined,

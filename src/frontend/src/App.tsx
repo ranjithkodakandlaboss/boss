@@ -8,7 +8,7 @@ import {
   signInWithGoogle,
   signOutAdmin,
 } from "./auth/adminAuth";
-import { createPlatformAdminApi } from "./api/platformAdminApi";
+import { createPlatformAdminApi, platformAdminApiBaseUrl } from "./api/platformAdminApi";
 import { CustomerConsole } from "./components/CustomerConsole";
 import { AccountActivationScreen } from "./screens/AccountActivationScreen";
 import type { Auth, User } from "@firebase/auth";
@@ -46,7 +46,7 @@ export default function App() {
   const api = useMemo(() => {
     if (session.status !== "signed-in") return undefined;
     return createPlatformAdminApi(
-      import.meta.env.VITE_PLATFORM_ADMIN_API_BASE_URL,
+      platformAdminApiBaseUrl(),
       () => session.user.getIdToken(),
     );
   }, [session]);

@@ -3,6 +3,7 @@ import {
   PlatformAdminApiError,
   PlatformAdminConfigurationError,
   createPlatformAdminApi,
+  platformAdminApiBaseUrl,
 } from "./platformAdminApi";
 import {
   TenantProvisionRequestEntityType,
@@ -12,6 +13,12 @@ import {
 const apiBase = "https://admin-api-dev.boss.app/admin/api/v1";
 
 describe("Platform Admin API client", () => {
+  it("uses the same-origin admin API when no base URL is configured", () => {
+    expect(platformAdminApiBaseUrl()).toBe(
+      import.meta.env.VITE_PLATFORM_ADMIN_API_BASE_URL?.trim() || "/admin/api/v1",
+    );
+  });
+
   it("uses the dedicated API path, admin bearer token, and required idempotency key", async () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(
       JSON.stringify({

@@ -119,6 +119,12 @@ export class PlatformAdminConfigurationError extends Error {
   }
 }
 
+/** The admin UI is served by boss-admin-api, so the API is on the same origin. */
+export function platformAdminApiBaseUrl(): string {
+  const configured = import.meta.env.VITE_PLATFORM_ADMIN_API_BASE_URL?.trim();
+  return configured || "/admin/api/v1";
+}
+
 export function createPlatformAdminApi(
   baseUrl: string | undefined,
   getIdToken: () => Promise<string>,
