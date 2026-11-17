@@ -434,7 +434,7 @@ public class PurchaseRequisitionService {
             // Cancelled orders retain coverage only for quantities already received.
             BigDecimal activeOrderedQty = jdbc.queryForObject("""
                     SELECT COALESCE(SUM(
-                      CASE WHEN s.status = 'cancelled' THEN sl.received_qty ELSE sl.quantity END
+                      CASE WHEN s.status IN ('cancelled', 'declined') THEN sl.received_qty ELSE sl.quantity END
                     ), 0)
                     FROM spo_lines sl
                     JOIN spos s ON s.id = sl.spo_id AND s.tenant_id = sl.tenant_id

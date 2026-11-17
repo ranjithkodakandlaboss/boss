@@ -70,10 +70,10 @@ export default function Suppliers() {
                   </td>
                   <td className="text-sm text-[var(--text-2)]">{s.category}</td>
                   <td>
-                    {s.rating != null ? (
+                    {s.receiptCount > 0 && s.onTimeDeliveryPct != null ? (
                       <div className="flex items-center gap-1">
-                        <span className="text-sm font-semibold text-[var(--text)]">{s.rating.toFixed(1)}</span>
-                        <span className="text-xs text-[var(--text-3)]">/ 5</span>
+                        <span className="text-sm font-semibold text-[var(--text)]">{Number(s.onTimeDeliveryPct).toFixed(0)}%</span>
+                        <span className="text-xs text-[var(--text-3)]">on time</span>
                       </div>
                     ) : '—'}
                   </td>

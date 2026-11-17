@@ -122,11 +122,20 @@ public final class ProcurementApiDtos {
     public record SupplierQuotationLineRequest(
             @NotNull UUID prLineId,
             @NotNull @DecimalMin("0.00") BigDecimal unitPrice,
-            @Min(0) Integer leadTimeDays) {}
+            @Min(0) Integer leadTimeDays,
+            @DecimalMin("0.00") BigDecimal taxRate) {}
 
     public record ReceiveSupplierQuotationRequest(
             LocalDate validUntil,
-            @NotEmpty List<@Valid SupplierQuotationLineRequest> lines) {}
+            @NotEmpty List<@Valid SupplierQuotationLineRequest> lines,
+            @Size(max = 80) String supplierQuoteRef,
+            @Min(0) Integer paymentTerms,
+            @DecimalMin("0.00") BigDecimal freightAmount,
+            @DecimalMin("0.00") BigDecimal discountAmount,
+            @DecimalMin("0.00") BigDecimal taxAmount) {}
+
+    public record SelectSupplierQuotationRequest(
+            @Size(max = 1000) String reason) {}
 
     public record SupplierQuotationLineResponse(
             UUID id,
@@ -134,7 +143,8 @@ public final class ProcurementApiDtos {
             UUID itemId,
             BigDecimal unitPrice,
             Integer leadTimeDays,
-            boolean isSelected) {}
+            boolean isSelected,
+            BigDecimal taxRate) {}
 
     public record SupplierQuotationResponse(
             UUID id,
@@ -143,7 +153,13 @@ public final class ProcurementApiDtos {
             String supplierName,
             String status,
             LocalDate validUntil,
-            List<SupplierQuotationLineResponse> lines) {}
+            List<SupplierQuotationLineResponse> lines,
+            String supplierQuoteRef,
+            Integer paymentTerms,
+            BigDecimal freightAmount,
+            BigDecimal discountAmount,
+            BigDecimal taxAmount,
+            String selectionReason) {}
 
     public record SupplierQuotationComparisonOffer(
             UUID supplierQuotationId,
@@ -204,5 +220,104 @@ public final class ProcurementApiDtos {
             String status,
             List<SpoLineResponse> lines,
             BigDecimal totalAmount,
-            Instant createdAt) {}
+            Instant createdAt,
+            Integer revision,
+            String declineReason) {}
+
+    public record DeclineSpoRequest(
+            @NotBlank @Size(max = 1000) String reason) {}
+
+    public record AmendSpoRequest(
+            @NotBlank @Size(max = 80) String reason,
+            @NotBlank @Size(max = 2000) String changeNote,
+            UUID lineId,
+            @DecimalMin("0.001") BigDecimal quantity,
+            @DecimalMin("0.00") BigDecimal unitPrice,
+            LocalDate expectedDate,
+            @Min(0) Integer paymentTerms) {}
+
+    public record SpoAmendmentResponse(
+            UUID id,
+            UUID spoId,
+            int revision,
+            String reason,
+            String changeNote,
+            String status) {}
+
+    public record CreateGrnLotRequest(
+            @NotBlank @Size(max = 80) String lotNumber,
+            @NotNull @DecimalMin("0.001") BigDecimal qty,
+            LocalDate expiryDate,
+            @Size(max = 80) String supplierLotRef) {}
+
+    public record CreateGrnLineRequest(
+            @NotNull UUID spoLineId,
+            @NotNull @DecimalMin("0.001") BigDecimal receivedQty,
+            @DecimalMin("0.00") BigDecimal rejectedQty,
+            @NotEmpty List<@Valid CreateGrnLotRequest> lots,
+            String notes) {}
+
+    public record CreateGrnRequest(
+            @NotNull UUID spoId,
+            @NotNull LocalDate receivedDate,
+            @NotBlank @Size(max = 80) String deliveryChallan,
+            @Size(max = 40) String vehicleNumber,
+            @NotNull UUID storeId,
+            String notes,
+            @NotEmpty List<@Valid CreateGrnLineRequest> lines) {}
+
+    public record GrnLineResponse(
+            UUID id,
+            UUID spoLineId,
+            UUID itemId,
+            String itemCode,
+            String itemName,
+            BigDecimal receivedQty,
+            BigDecimal acceptedQty,
+            BigDecimal rejectedQty,
+            String uomSymbol,
+            List<UUID> lotIds,
+            List<String> lotNumbers) {}
+
+    public record GrnResponse(
+            UUID id,
+            String grnNumber,
+            UUID spoId,
+            String spoNumber,
+            UUID supplierId,
+            String supplierName,
+            UUID siteId,
+            String status,
+            LocalDate receivedDate,
+            String supplierDcRef,
+            String vehicleNumber,
+            List<GrnLineResponse> lines) {}
+
+    public record CreateSupplierReturnLineRequest(
+            @NotNull UUID grnLineId,
+            @NotNull UUID lotId,
+            @NotNull @DecimalMin("0.001") BigDecimal quantity,
+            @Size(max = 500) String reason) {}
+
+    public record CreateSupplierReturnRequest(
+            @NotNull UUID grnId,
+            @NotBlank @Size(max = 1000) String reason,
+            @NotEmpty List<@Valid CreateSupplierReturnLineRequest> lines) {}
+
+    public record SupplierReturnResponse(
+            UUID id,
+            String returnNumber,
+            UUID grnId,
+            UUID spoId,
+            UUID supplierId,
+            String status,
+            String reason) {}
+
+    public record SupplierPerformanceResponse(
+            UUID supplierId,
+            String supplierName,
+            int totalReceipts,
+            BigDecimal onTimeDeliveryPct,
+            BigDecimal qualityRejectionPct,
+            BigDecimal avgLeadTimeDays) {}
 }

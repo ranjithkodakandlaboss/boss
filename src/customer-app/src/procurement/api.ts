@@ -64,6 +64,7 @@ export type QuoteLineRecord = {
   unitPrice: number;
   leadTimeDays?: number;
   isSelected?: boolean;
+  taxRate?: number;
 };
 export type QuoteRecord = {
   id: string;
@@ -73,6 +74,12 @@ export type QuoteRecord = {
   status: string;
   validUntil?: string;
   lines?: QuoteLineRecord[];
+  supplierQuoteRef?: string;
+  paymentTerms?: number;
+  freightAmount?: number;
+  discountAmount?: number;
+  taxAmount?: number;
+  selectionReason?: string;
 };
 export type ComparisonOffer = {
   supplierQuotationId: string;
@@ -115,6 +122,60 @@ export type SpoRecord = {
   lines?: SpoLineRecord[];
   totalAmount?: number;
   createdAt?: string;
+  revision?: number;
+  declineReason?: string;
+};
+export type GrnLineRecord = {
+  id: string;
+  spoLineId?: string;
+  itemId: string;
+  itemCode?: string;
+  itemName?: string;
+  receivedQty: number;
+  acceptedQty?: number;
+  rejectedQty?: number;
+  uomSymbol?: string;
+  lotIds?: string[];
+  lotNumbers?: string[];
+};
+export type GrnRecord = {
+  id: string;
+  grnNumber: string;
+  spoId?: string;
+  spoNumber?: string;
+  supplierId: string;
+  supplierName?: string;
+  siteId?: string;
+  status: string;
+  receivedDate?: string;
+  supplierDcRef?: string;
+  vehicleNumber?: string;
+  lines?: GrnLineRecord[];
+};
+export type AmendmentRecord = {
+  id: string;
+  spoId: string;
+  revision: number;
+  reason: string;
+  changeNote: string;
+  status: string;
+};
+export type SupplierReturnRecord = {
+  id: string;
+  returnNumber: string;
+  grnId: string;
+  spoId?: string;
+  supplierId: string;
+  status: string;
+  reason: string;
+};
+export type SupplierPerformanceRecord = {
+  supplierId: string;
+  supplierName?: string;
+  totalReceipts: number;
+  onTimeDeliveryPct?: number | null;
+  qualityRejectionPct?: number | null;
+  avgLeadTimeDays?: number | null;
 };
 
 function key(value?: string) {
@@ -157,7 +218,12 @@ export const procurementApi = {
   quotation: (id: string) => api<QuoteRecord>(`/api/v1/supplier-quotations/${id}`),
   receiveQuotation: (id: string, body: unknown) => write<QuoteRecord>(`/api/v1/supplier-quotations/${id}/receive`, "POST", body, `sq-receive:${id}`),
   reviewQuotation: (id: string) => write<QuoteRecord>(`/api/v1/supplier-quotations/${id}/review`, "POST", undefined, `sq-review:${id}`),
-  selectQuotation: (id: string) => write<QuoteRecord>(`/api/v1/supplier-quotations/${id}/select`, "POST", undefined, `sq-select:${id}`),
+  selectQuotation: (id: string, reason?: string) => write<QuoteRecord>(
+    `/api/v1/supplier-quotations/${id}/select`,
+    "POST",
+    reason ? { reason } : {},
+    reason ? `sq-select:${id}:${reason}` : `sq-select:${id}`,
+  ),
   rejectQuotation: (id: string) => write<QuoteRecord>(`/api/v1/supplier-quotations/${id}/reject`, "POST", undefined, `sq-reject:${id}`),
   comparison: (prId: string) => api<{ prId: string; lines: ComparisonLine[] }>(`/api/v1/prs/${prId}/supplier-quotations/comparison`),
   spos: () => allPages<SpoRecord>("/api/v1/spos"),
@@ -166,4 +232,17 @@ export const procurementApi = {
   issueSpo: (id: string) => write<SpoRecord>(`/api/v1/spos/${id}/issue`, "POST", undefined, `spo-issue:${id}`),
   acknowledgeSpo: (id: string) => write<SpoRecord>(`/api/v1/spos/${id}/acknowledge`, "POST", undefined, `spo-ack:${id}`),
   cancelSpo: (id: string) => write<SpoRecord>(`/api/v1/spos/${id}/cancel`, "POST", undefined, `spo-cancel:${id}`),
+  declineSpo: (id: string, reason: string) => write<SpoRecord>(`/api/v1/spos/${id}/decline`, "POST", { reason }, `spo-decline:${id}`),
+  amendments: (id: string) => api<AmendmentRecord[]>(`/api/v1/spos/${id}/amendments`),
+  submitAmendment: (id: string, body: unknown) => write<AmendmentRecord>(`/api/v1/spos/${id}/amendments`, "POST", body),
+  decideAmendment: (spoId: string, amendmentId: string, approve: boolean) => write<SpoRecord>(
+    `/api/v1/spos/${spoId}/amendments/${amendmentId}/${approve ? "approve" : "reject"}`,
+    "POST",
+    undefined,
+    `spo-amend:${amendmentId}:${approve ? "approve" : "reject"}`,
+  ),
+  grns: (spoId?: string) => allPages<GrnRecord>(spoId ? `/api/v1/grns?spoId=${spoId}` : "/api/v1/grns"),
+  createGrn: (body: unknown, idempotencyKey: string) => write<GrnRecord>("/api/v1/grns", "POST", body, idempotencyKey),
+  createSupplierReturn: (body: unknown, idempotencyKey: string) => write<SupplierReturnRecord>("/api/v1/supplier-returns", "POST", body, idempotencyKey),
+  performance: (supplierId: string) => api<SupplierPerformanceRecord>(`/api/v1/supplier-performance?supplierId=${supplierId}`),
 };

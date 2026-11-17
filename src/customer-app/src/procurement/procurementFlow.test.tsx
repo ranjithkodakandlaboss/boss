@@ -197,6 +197,10 @@ it("does not create a purchase requisition when material is available", async ()
   await userEvent.click(screen.getByRole("button", { name: "Confirm material availability" }));
   expect((await screen.findAllByText(/No purchase requisition was created/)).length).toBeGreaterThan(0);
   expect(vi.mocked(fetch).mock.calls.some((call) => String(call[0]).includes("/prs") && call[1]?.method === "POST")).toBe(false);
+  const availability = vi.mocked(fetch).mock.calls.find((call) => String(call[0]).includes("/availability"));
+  expect(JSON.parse(String(availability?.[1]?.body)).lines).toEqual([
+    expect.objectContaining({ lineId: poLineId, availability: "available" }),
+  ]);
 });
 
 it("creates one linked purchase requisition for unavailable material and retries with the same key", async () => {

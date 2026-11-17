@@ -109,6 +109,8 @@ export type CpoLine = {
   description?: string;
   drawingNumber?: string;
   drawingRevision?: string;
+  availability?: string;
+  shortageQty?: number;
 };
 export type Cpo = {
   id: string;
@@ -248,6 +250,11 @@ export const salesApi = {
     method: "PUT",
     headers: { "Idempotency-Key": key() },
     body: JSON.stringify(body),
+  }),
+  recordAvailability: (id: string, lines: Array<{ lineId: string; availability: string; shortageQty?: number }>) => api<Cpo>(`/api/v1/cpos/${id}/availability`, {
+    method: "POST",
+    headers: { "Idempotency-Key": key() },
+    body: JSON.stringify({ lines }),
   }),
   cpoStatus: (id: string, status: string) => api<Cpo>(`/api/v1/cpos/${id}/status`, {
     method: "PATCH",

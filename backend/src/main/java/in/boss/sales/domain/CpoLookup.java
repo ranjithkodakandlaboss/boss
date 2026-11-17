@@ -133,7 +133,8 @@ public class CpoLookup {
         CustomerDto customer = customerService.getCustomer(header.customerId());
         List<CpoLineResponse> lines = jdbc.query("""
                 SELECT l.id, l.quotation_line_id, l.item_id, l.quantity, l.unit_price, l.gst_rate,
-                       l.discount_pct, u.symbol, ql.drawing_number, ql.drawing_revision, ql.description
+                       l.discount_pct, l.availability, l.shortage_qty, u.symbol,
+                       ql.drawing_number, ql.drawing_revision, ql.description
                   FROM cpo_lines l
                   JOIN units_of_measure u ON u.tenant_id = l.tenant_id AND u.id = l.uom_id
                   LEFT JOIN quotation_lines ql ON ql.tenant_id = l.tenant_id AND ql.id = l.quotation_line_id
@@ -168,7 +169,9 @@ public class CpoLookup {
                 SalesService.commercialLineTotal(qty, price, discount),
                 rs.getString("description"),
                 rs.getString("drawing_number"),
-                rs.getString("drawing_revision"));
+                rs.getString("drawing_revision"),
+                rs.getString("availability"),
+                rs.getBigDecimal("shortage_qty"));
     }
 
     private BossContext requireContext() {

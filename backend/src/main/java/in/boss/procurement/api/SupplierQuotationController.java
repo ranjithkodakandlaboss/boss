@@ -19,6 +19,7 @@ import java.util.UUID;
 import static in.boss.procurement.api.ProcurementApiDtos.CreateSupplierQuotationRequest;
 import static in.boss.procurement.api.ProcurementApiDtos.PageResponse;
 import static in.boss.procurement.api.ProcurementApiDtos.ReceiveSupplierQuotationRequest;
+import static in.boss.procurement.api.ProcurementApiDtos.SelectSupplierQuotationRequest;
 import static in.boss.procurement.api.ProcurementApiDtos.SupplierQuotationComparisonResponse;
 import static in.boss.procurement.api.ProcurementApiDtos.SupplierQuotationResponse;
 
@@ -72,8 +73,10 @@ public class SupplierQuotationController {
     }
 
     @PostMapping("/supplier-quotations/{quotationId}/select")
-    public SupplierQuotationResponse select(@PathVariable UUID quotationId) {
-        return quotationService.selectQuotation(quotationId);
+    public SupplierQuotationResponse select(
+            @PathVariable UUID quotationId,
+            @RequestBody(required = false) SelectSupplierQuotationRequest request) {
+        return quotationService.selectQuotation(quotationId, request == null ? null : request.reason());
     }
 
     @PostMapping("/supplier-quotations/{quotationId}/reject")

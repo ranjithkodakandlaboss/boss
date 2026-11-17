@@ -235,7 +235,7 @@ export default function GRNCreate() {
     return { valid: true, message: '' };
   }, [spo, spoLines, lineDrafts, deliveryChallan, lots]);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!validation.valid || !spo) {
       setError(validation.message);
@@ -263,7 +263,7 @@ export default function GRNCreate() {
       })
       .filter((x): x is NonNullable<typeof x> => x !== null);
 
-    const res = recordGRNReceipt({
+    const res = await recordGRNReceipt({
       spoId: spo.id,
       receivedDate,
       deliveryChallan: deliveryChallan.trim(),
@@ -296,7 +296,6 @@ export default function GRNCreate() {
         </button>
         <div className="flex-1">
           <h1 className="text-lg font-bold text-[var(--text)]">Record Goods Receipt Note (GRN)</h1>
-          <p className="text-xs text-amber-800">Pending — the goods receipt API is not implemented, so this screen cannot save a receipt or update inventory.</p>
           <p className="text-xs text-[var(--text-2)]">
             {spo ? `Receiving against ${spo.poNumber} · ${spo.supplierName}` : 'Receive Supplier PO line items and allocate incoming lots'}
           </p>

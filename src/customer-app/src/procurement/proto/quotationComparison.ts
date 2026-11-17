@@ -342,10 +342,10 @@ export function compareAndRecommendQuotations(
     if ((supplier?.rating ?? 0) >= 4.2) advantages.push(`High supplier reliability (${supplier?.rating?.toFixed(1)}/5.0)`);
     const fulfilledCount = historicalSpos.filter(spo => spo.supplierId === q.supplierId && ['confirmed', 'received', 'closed', 'partial'].includes(spo.status)).length;
     if (fulfilledCount > 0) advantages.push(`${fulfilledCount} prior fulfilled order(s)`);
-    if (q.paymentTerms.toLowerCase().includes('45') || q.paymentTerms.toLowerCase().includes('60')) {
+    if (q.paymentTerms && (q.paymentTerms.toLowerCase().includes('45') || q.paymentTerms.toLowerCase().includes('60'))) {
       advantages.push(`Favorable credit terms (${q.paymentTerms})`);
     }
-    if (q.paymentTerms.toLowerCase().includes('advance')) {
+    if (q.paymentTerms && q.paymentTerms.toLowerCase().includes('advance')) {
       disadvantages.push(`Requires advance payment (${q.paymentTerms})`);
     }
     if (deliveryCharges > 0) disadvantages.push(`Additional freight/delivery charges: ₹${deliveryCharges.toLocaleString('en-IN')}`);
@@ -425,8 +425,10 @@ export function compareAndRecommendQuotations(
     prNumber: pr.prNumber,
     rows,
     evaluations,
-    recommendedQuoteId: undefined,
-    recommendationSummary: 'No supplier is recommended automatically. Compare the quoted prices and lead times, then select a quotation.',
+    recommendedQuoteId: best?.quote.id,
+    recommendationSummary: best
+      ? `Recommended: ${best.quote.supplierName} (${best.quote.quoteNumber}) — landed cost ₹${best.landedTotal.toLocaleString('en-IN')}, ${best.quote.deliveryDays} days delivery, ${best.coveragePct}% PR line coverage.`
+      : 'No recommendation available.',
     advantages: best?.advantages ?? [],
     disadvantages: best?.disadvantages ?? [],
     missingInfo: best?.missingInfo ?? [],

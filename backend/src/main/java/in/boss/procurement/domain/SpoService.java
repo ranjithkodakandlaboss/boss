@@ -5,7 +5,10 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import in.boss.masterdata.api.dto.SupplierDto;
 import in.boss.masterdata.domain.EntityNotFoundException;
 import in.boss.masterdata.domain.SupplierService;
+import in.boss.procurement.api.ProcurementApiDtos.AmendSpoRequest;
 import in.boss.procurement.api.ProcurementApiDtos.CreateSpoLineRequest;
+import in.boss.procurement.api.ProcurementApiDtos.DeclineSpoRequest;
+import in.boss.procurement.api.ProcurementApiDtos.SpoAmendmentResponse;
 import in.boss.procurement.api.ProcurementApiDtos.CreateSpoRequest;
 import in.boss.procurement.api.ProcurementApiDtos.PageResponse;
 import in.boss.procurement.api.ProcurementApiDtos.SpoLineResponse;
@@ -39,7 +42,7 @@ import java.util.UUID;
 public class SpoService {
 
     private static final Set<String> VALID_STATUSES =
-            Set.of("draft", "issued", "acknowledged", "partially_received", "fully_received", "cancelled");
+            Set.of("draft", "issued", "acknowledged", "declined", "partially_received", "fully_received", "cancelled");
     private static final Set<String> PR_STATUSES_ACCEPTING_ORDERS = Set.of("approved", "partially_ordered");
 
     private final JdbcTemplate jdbc;
@@ -165,19 +168,11 @@ public class SpoService {
         UUID tenantId = context.tenantId();
         List<SpoHeader> headers = jdbc.query("""
                 SELECT o.id, o.spo_number, o.pr_id, o.sq_id, o.supplier_id,
-                       s.name AS supplier_name, o.status, o.created_at
+                       s.name AS supplier_name, o.status, o.created_at, o.revision, o.decline_reason
                 FROM spos o
                 JOIN suppliers s ON s.id = o.supplier_id AND s.tenant_id = o.tenant_id
                 WHERE o.tenant_id = ? AND o.id = ?
-                """, (rs, rowNum) -> new SpoHeader(
-                rs.getObject("id", UUID.class),
-                rs.getString("spo_number"),
-                rs.getObject("pr_id", UUID.class),
-                rs.getObject("sq_id", UUID.class),
-                rs.getObject("supplier_id", UUID.class),
-                rs.getString("supplier_name"),
-                rs.getString("status"),
-                rs.getTimestamp("created_at").toInstant()),
+                """, (rs, rowNum) -> mapHeader(rs),
                 tenantId, spoId);
         if (headers.isEmpty()) {
             throw notFound("SPO not found: " + spoId);
@@ -198,7 +193,7 @@ public class SpoService {
         return new SpoResponse(
                 header.id(), header.spoNumber(), header.prId(), header.quotationId(),
                 header.supplierId(), header.supplierName(), header.status(), lines,
-                total, header.createdAt());
+                total, header.createdAt(), header.revision(), header.declineReason());
     }
 
     @Transactional
@@ -224,6 +219,137 @@ public class SpoService {
         auditService.record("spos", spoId, "CANCELLED",
                 toJson(new StatusSnapshot(existing.status())), toJson(response));
         prService.recalculateCoverage(existing.prId());
+        return response;
+    }
+
+    @Transactional
+    public SpoResponse declineSpo(UUID spoId, DeclineSpoRequest request) {
+        BossContext context = requireContext();
+        SpoHeader existing = lockSpo(context.tenantId(), spoId);
+        if (!"issued".equals(existing.status())) {
+            throw conflict("A supplier can decline only an issued purchase order");
+        }
+        jdbc.update("""
+                UPDATE spos
+                SET status = 'declined', decline_reason = ?, updated_at = NOW()
+                WHERE tenant_id = ? AND id = ? AND status = 'issued'
+                """, request.reason().trim(), context.tenantId(), spoId);
+        SpoResponse response = getSpo(spoId);
+        auditService.record("spos", spoId, "DECLINED",
+                toJson(new StatusSnapshot(existing.status())), toJson(response));
+        prService.recalculateCoverage(existing.prId());
+        return response;
+    }
+
+    @Transactional(readOnly = true)
+    public List<SpoAmendmentResponse> listAmendments(UUID spoId) {
+        BossContext context = requireContext();
+        Integer found = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM spos WHERE tenant_id = ? AND id = ?",
+                Integer.class, context.tenantId(), spoId);
+        if (found == null || found == 0) {
+            throw notFound("SPO not found: " + spoId);
+        }
+        return jdbc.query("""
+                SELECT id, spo_id, revision, reason, change_note, status
+                FROM spo_amendments
+                WHERE tenant_id = ? AND spo_id = ?
+                ORDER BY revision
+                """, (rs, rowNum) -> new SpoAmendmentResponse(
+                rs.getObject("id", UUID.class),
+                rs.getObject("spo_id", UUID.class),
+                rs.getInt("revision"),
+                rs.getString("reason"),
+                rs.getString("change_note"),
+                rs.getString("status")), context.tenantId(), spoId);
+    }
+
+    @Transactional
+    public SpoAmendmentResponse submitAmendment(UUID spoId, AmendSpoRequest request) {
+        BossContext context = requireContext();
+        SpoHeader existing = lockSpo(context.tenantId(), spoId);
+        if (!Set.of("draft", "issued", "acknowledged").contains(existing.status())) {
+            throw conflict("This supplier purchase order can no longer be amended");
+        }
+        Integer pending = jdbc.queryForObject("""
+                SELECT COUNT(*) FROM spo_amendments
+                WHERE tenant_id = ? AND spo_id = ? AND status = 'pending_approval'
+                """, Integer.class, context.tenantId(), spoId);
+        if (pending != null && pending > 0) {
+            throw conflict("An amendment is already waiting for approval");
+        }
+        int revision = existing.revision() + 1;
+        UUID id = UUID.randomUUID();
+        jdbc.update("""
+                INSERT INTO spo_amendments
+                  (id, tenant_id, spo_id, revision, reason, change_note, line_id,
+                   quantity, unit_price, expected_date, payment_terms, status, created_by)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending_approval', ?)
+                """, id, context.tenantId(), spoId, revision, request.reason().trim(),
+                request.changeNote().trim(), request.lineId(), request.quantity(), request.unitPrice(),
+                request.expectedDate(), request.paymentTerms(), context.userId());
+        auditService.record("spo_amendments", id, "SUBMITTED", null, toJson(request));
+        return new SpoAmendmentResponse(id, spoId, revision, request.reason(), request.changeNote(), "pending_approval");
+    }
+
+    @Transactional
+    public SpoResponse decideAmendment(UUID spoId, UUID amendmentId, boolean approve) {
+        BossContext context = requireContext();
+        if (!context.hasRole("OWNER")) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Only the owner can decide a supplier PO amendment");
+        }
+        SpoHeader existing = lockSpo(context.tenantId(), spoId);
+        List<AmendSpoRequest> rows = jdbc.query("""
+                SELECT reason, change_note, line_id, quantity, unit_price, expected_date, payment_terms
+                FROM spo_amendments
+                WHERE tenant_id = ? AND spo_id = ? AND id = ? AND status = 'pending_approval'
+                FOR UPDATE
+                """, (rs, rowNum) -> new AmendSpoRequest(
+                rs.getString("reason"), rs.getString("change_note"),
+                rs.getObject("line_id", UUID.class), rs.getBigDecimal("quantity"),
+                rs.getBigDecimal("unit_price"), rs.getObject("expected_date", LocalDate.class),
+                (Integer) rs.getObject("payment_terms")), context.tenantId(), spoId, amendmentId);
+        if (rows.isEmpty()) {
+            throw notFound("Pending amendment not found");
+        }
+        if (!approve) {
+            jdbc.update("""
+                    UPDATE spo_amendments SET status = 'rejected'
+                    WHERE tenant_id = ? AND id = ?
+                    """, context.tenantId(), amendmentId);
+            auditService.record("spo_amendments", amendmentId, "REJECTED", null, null);
+            return getSpo(spoId);
+        }
+        AmendSpoRequest change = rows.get(0);
+        if (change.lineId() != null && (change.quantity() != null || change.unitPrice() != null || change.expectedDate() != null)) {
+            int updated = jdbc.update("""
+                    UPDATE spo_lines
+                    SET quantity = COALESCE(?, quantity),
+                        unit_price = COALESCE(?, unit_price),
+                        expected_date = COALESCE(?, expected_date)
+                    WHERE tenant_id = ? AND spo_id = ? AND id = ?
+                      AND COALESCE(?, quantity) >= received_qty
+                    """, change.quantity(), change.unitPrice(), change.expectedDate(),
+                    context.tenantId(), spoId, change.lineId(), change.quantity());
+            if (updated == 0) {
+                throw conflict("The amended quantity cannot be below the quantity already received");
+            }
+        }
+        jdbc.update("""
+                UPDATE spos
+                SET revision = revision + 1,
+                    payment_terms = COALESCE(?, payment_terms),
+                    expected_delivery = COALESCE(?, expected_delivery),
+                    updated_at = NOW()
+                WHERE tenant_id = ? AND id = ?
+                """, change.paymentTerms(), change.expectedDate(), context.tenantId(), spoId);
+        jdbc.update("""
+                UPDATE spo_amendments SET status = 'applied'
+                WHERE tenant_id = ? AND id = ?
+                """, context.tenantId(), amendmentId);
+        SpoResponse response = getSpo(spoId);
+        auditService.record("spos", spoId, "AMENDED",
+                toJson(new StatusSnapshot(existing.status())), toJson(response));
         return response;
     }
 
@@ -327,7 +453,7 @@ public class SpoService {
                 FROM spo_lines sl
                 JOIN spos o ON o.id = sl.spo_id AND o.tenant_id = sl.tenant_id
                 WHERE sl.tenant_id = ? AND o.pr_id = ? AND sl.pr_line_id = ?
-                  AND o.status <> 'cancelled'
+                  AND o.status NOT IN ('cancelled', 'declined')
                 """, BigDecimal.class, tenantId, prId, prLineId);
         return quantity != null ? quantity : BigDecimal.ZERO;
     }
@@ -345,20 +471,12 @@ public class SpoService {
     private SpoHeader lockSpo(UUID tenantId, UUID spoId) {
         List<SpoHeader> headers = jdbc.query("""
                 SELECT o.id, o.spo_number, o.pr_id, o.sq_id, o.supplier_id,
-                       s.name AS supplier_name, o.status, o.created_at
+                       s.name AS supplier_name, o.status, o.created_at, o.revision, o.decline_reason
                 FROM spos o
                 JOIN suppliers s ON s.id = o.supplier_id AND s.tenant_id = o.tenant_id
                 WHERE o.tenant_id = ? AND o.id = ?
                 FOR UPDATE OF o
-                """, (rs, rowNum) -> new SpoHeader(
-                rs.getObject("id", UUID.class),
-                rs.getString("spo_number"),
-                rs.getObject("pr_id", UUID.class),
-                rs.getObject("sq_id", UUID.class),
-                rs.getObject("supplier_id", UUID.class),
-                rs.getString("supplier_name"),
-                rs.getString("status"),
-                rs.getTimestamp("created_at").toInstant()),
+                """, (rs, rowNum) -> mapHeader(rs),
                 tenantId, spoId);
         if (headers.isEmpty()) {
             throw notFound("SPO not found: " + spoId);
@@ -475,9 +593,24 @@ public class SpoService {
         }
     }
 
+    private SpoHeader mapHeader(java.sql.ResultSet rs) throws java.sql.SQLException {
+        return new SpoHeader(
+                rs.getObject("id", UUID.class),
+                rs.getString("spo_number"),
+                rs.getObject("pr_id", UUID.class),
+                rs.getObject("sq_id", UUID.class),
+                rs.getObject("supplier_id", UUID.class),
+                rs.getString("supplier_name"),
+                rs.getString("status"),
+                rs.getTimestamp("created_at").toInstant(),
+                rs.getInt("revision"),
+                rs.getString("decline_reason"));
+    }
+
     private record SpoHeader(
             UUID id, String spoNumber, UUID prId, UUID quotationId, UUID supplierId,
-            String supplierName, String status, java.time.Instant createdAt) {}
+            String supplierName, String status, java.time.Instant createdAt,
+            int revision, String declineReason) {}
 
     private record StatusSnapshot(String status) {}
 }

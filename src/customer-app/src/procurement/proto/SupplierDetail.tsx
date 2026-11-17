@@ -124,9 +124,13 @@ export default function SupplierDetail() {
               {supplier.gstin && <Field label="GSTIN" value={supplier.gstin} mono />}
               {supplier.panNumber && <Field label="PAN" value={supplier.panNumber} mono />}
               <Field label="Payment Terms" value={supplier.paymentTerms} />
-              {supplier.rating != null
-                ? <Field label="Rating" value={`${supplier.rating.toFixed(1)} / 5.0`} />
-                : <Field label="Performance" value="Pending — delivery and quality history is not calculated yet" />}
+              {supplier.receiptCount > 0 ? (
+                <>
+                  <Field label="On-time delivery" value={supplier.onTimeDeliveryPct == null ? '—' : `${Number(supplier.onTimeDeliveryPct).toFixed(1)}%`} />
+                  <Field label="Quality rejection" value={supplier.qualityRejectionPct == null ? '—' : `${Number(supplier.qualityRejectionPct).toFixed(1)}%`} />
+                  <Field label="Average lead time" value={supplier.avgLeadTimeDays == null ? '—' : `${Number(supplier.avgLeadTimeDays).toFixed(1)} days`} />
+                </>
+              ) : <Field label="Performance" value="No goods receipts yet" />}
               {supplier.since && <Field label="Partner Since" value={supplier.since} />}
             </dl>
           </div>

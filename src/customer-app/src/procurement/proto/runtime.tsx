@@ -8,9 +8,12 @@ import { allPages } from "../../sales/api";
 import Toast from "./workflow/Toast";
 import {
   procurementApi,
+  type AmendmentRecord,
+  type GrnRecord,
   type PrRecord,
   type QuoteRecord,
   type SpoRecord,
+  type SupplierPerformanceRecord,
   type SupplierRecord,
 } from "../api";
 
@@ -81,7 +84,7 @@ function supplierBody(form: Record<string, unknown>, existing?: { code?: string 
   };
 }
 
-function mapSupplier(record: SupplierRecord) {
+function mapSupplier(record: SupplierRecord, performance?: SupplierPerformanceRecord | null) {
   const contact = record.contacts?.find((item) => item.isPrimary) ?? record.contacts?.[0];
   const address = record.address ?? {};
   return {
@@ -97,8 +100,12 @@ function mapSupplier(record: SupplierRecord) {
     paymentTerms: termsLabel(record.paymentTerms),
     currency: "INR",
     category: address.category || record.supplierCategoryLabel || "",
-    rating: record.performanceScore == null ? undefined : Number(record.performanceScore),
-    performancePending: record.performanceScore == null,
+    rating: undefined,
+    onTimeDeliveryPct: performance?.onTimeDeliveryPct ?? null,
+    qualityRejectionPct: performance?.qualityRejectionPct ?? null,
+    avgLeadTimeDays: performance?.avgLeadTimeDays ?? null,
+    receiptCount: performance?.totalReceipts ?? 0,
+    performancePending: (performance?.totalReceipts ?? 0) === 0,
     status: record.status === "inactive" ? "inactive" : "active",
     contactPerson: contact?.name || "",
     phone: contact?.phone || "",
@@ -166,6 +173,7 @@ function mapQuote(record: QuoteRecord, pr?: ReturnType<typeof mapPr>) {
       uom: prLine?.uom || "",
       uomId: prLine?.uomId,
       unitPrice: money(line.unitPrice),
+      taxPct: money(line.taxRate),
       lineTotal: money(line.unitPrice) * money(prLine?.requiredQty),
       leadTimeDays: line.leadTimeDays,
       isSelected: line.isSelected,
@@ -174,7 +182,7 @@ function mapQuote(record: QuoteRecord, pr?: ReturnType<typeof mapPr>) {
   const landed = lines.reduce((sum, line) => sum + line.lineTotal, 0);
   return {
     id: record.id,
-    quoteNumber: quoteNumber(record.id),
+    quoteNumber: record.supplierQuoteRef || quoteNumber(record.id),
     prId: record.prId,
     prNumber: pr?.prNumber,
     supplierId: record.supplierId,
@@ -183,7 +191,11 @@ function mapQuote(record: QuoteRecord, pr?: ReturnType<typeof mapPr>) {
     validUntil: record.validUntil || "",
     currency: "INR",
     deliveryDays: lines.find((line) => line.leadTimeDays != null)?.leadTimeDays ?? 0,
-    paymentTerms: "",
+    paymentTerms: termsLabel(record.paymentTerms),
+    deliveryCharges: money(record.freightAmount),
+    discountAmount: money(record.discountAmount),
+    taxAmount: money(record.taxAmount),
+    selectionReason: record.selectionReason,
     lines,
     status: record.status,
     landedTotal: landed,
@@ -219,14 +231,68 @@ function mapSpo(record: SpoRecord, pr?: ReturnType<typeof mapPr>) {
     supplierQuotationId: record.supplierQuotationId,
     raisedDate: (record.createdAt || "").slice(0, 10),
     committedDate: lines.find((line) => line.expectedDeliveryDate)?.expectedDeliveryDate || "",
-    status: record.status,
+    status: record.status === "declined" ? "supplier_declined" : record.status,
     apiStatus: record.status,
+    revision: record.revision ?? 1,
+    declineReason: record.declineReason,
     totalValue: money(record.totalAmount),
     currency: "INR",
     lineCount: lines.length,
     paymentTerms: "",
     originatingRequirementId: pr?.customerPoId,
     lines,
+  };
+}
+
+function mapGrn(record: GrnRecord, spo?: ReturnType<typeof mapSpo>) {
+  const lines = (record.lines ?? []).map((line) => ({
+    id: line.id,
+    spoLineId: line.spoLineId,
+    materialItemId: line.itemId,
+    materialCode: line.itemCode,
+    materialName: line.itemName,
+    receivedQty: money(line.receivedQty),
+    acceptedQty: money(line.acceptedQty),
+    rejectedQty: money(line.rejectedQty),
+    orderedQty: spo?.lines?.find((item: { id: string }) => item.id === line.spoLineId)?.orderedQty,
+    previouslyReceivedQty: 0,
+    uom: line.uomSymbol || "",
+    lots: (line.lotNumbers ?? []).map((lotNumber, index) => ({
+      id: line.lotIds?.[index],
+      lotNumber,
+      qty: money(line.acceptedQty),
+      status: "available",
+      grnId: record.id,
+    })),
+    lotIds: line.lotIds ?? [],
+  }));
+  return {
+    id: record.id,
+    grnNumber: record.grnNumber,
+    spoId: record.spoId,
+    spoNumber: record.spoNumber || spo?.poNumber,
+    supplierId: record.supplierId,
+    supplierName: record.supplierName || spo?.supplierName,
+    siteId: record.siteId,
+    status: record.status === "partially_accepted" ? "partial" : record.status,
+    receivedDate: record.receivedDate || "",
+    deliveryChallan: record.supplierDcRef,
+    vehicleNumber: record.vehicleNumber,
+    lineCount: lines.length,
+    lines,
+  };
+}
+
+function mapAmendment(record: AmendmentRecord, spo?: ReturnType<typeof mapSpo>) {
+  return {
+    id: record.id,
+    entityType: "supplier_po",
+    poId: record.spoId,
+    poNumber: spo?.poNumber,
+    revision: record.revision,
+    reason: record.reason,
+    changeNote: record.changeNote,
+    status: record.status,
   };
 }
 
@@ -248,6 +314,9 @@ export function ProcurementProvider({ children }: { children?: ReactNode }) {
   const [uoms, setUoms] = useState<{ id: string; symbol: string }[]>([]);
   const [sites, setSites] = useState<any[]>([]);
   const [storeLocations, setStoreLocations] = useState<any[]>([]);
+  const [grns, setGrns] = useState<any[]>([]);
+  const [lots, setLots] = useState<any[]>([]);
+  const [poAmendments, setPoAmendments] = useState<any[]>([]);
   const [toasts, setToasts] = useState<ToastItem[]>([]);
   const dataRef = useRef<any>({});
   const chains = useRef(new Map<string, Promise<void>>());
@@ -292,11 +361,28 @@ export function ProcurementProvider({ children }: { children?: ReactNode }) {
     }));
     const quotes = quoteGroups.flat();
     const mappedSpos = spoRows.map((row) => mapSpo(row, mappedPrs.find((pr) => pr.id === row.prId)));
-    setSuppliers(supplierRows.map(mapSupplier));
+    const [grnRows, amendmentGroups, performanceRows] = await Promise.all([
+      procurementApi.grns().catch(() => [] as GrnRecord[]),
+      Promise.all(spoRows.map(async (spo) => {
+        try { return await procurementApi.amendments(spo.id); } catch { return [] as AmendmentRecord[]; }
+      })),
+      Promise.all(supplierRows.map(async (supplier) => {
+        try { return await procurementApi.performance(supplier.id); } catch { return null; }
+      })),
+    ]);
+    const mappedGrns = grnRows.map((row) => mapGrn(row, mappedSpos.find((spo) => spo.id === row.spoId)));
+    setSuppliers(supplierRows.map((row, index) => mapSupplier(row, performanceRows[index])));
     setPurchaseReqs(mappedPrs);
     setSupplierQuotations(quotes.filter((quote) => quote.status !== "requested"));
     setSupplierPos(mappedSpos);
     setSupplierPoLines(mappedSpos.flatMap((spo) => spo.lines.map((line: any) => ({ ...line, poId: spo.id }))));
+    setGrns(mappedGrns);
+    setLots(mappedGrns.flatMap((grn) => grn.lines.flatMap((line) => line.lots.map((lot) => ({
+      ...lot,
+      materialName: line.materialName,
+      supplierLotRef: lot.lotNumber,
+    })))));
+    setPoAmendments(amendmentGroups.flat().map((row) => mapAmendment(row, mappedSpos.find((spo) => spo.id === row.spoId))));
     setMaterials(itemRows.map((item) => ({
       id: item.id,
       itemCode: item.code,
@@ -394,8 +480,8 @@ export function ProcurementProvider({ children }: { children?: ReactNode }) {
       supplierInvitations,
       supplierPos,
       supplierPoLines,
-      grns: [],
-      lots: [],
+      grns,
+      lots,
       inspections: [],
       materials,
       sites,
@@ -405,7 +491,7 @@ export function ProcurementProvider({ children }: { children?: ReactNode }) {
       supplierBills: [],
       supplierPayments: [],
       supplierCatalog: [],
-      poAmendments: [],
+      poAmendments,
       approvalRequests,
       quotations: [],
       companyConfig: {
@@ -532,9 +618,22 @@ export function ProcurementProvider({ children }: { children?: ReactNode }) {
         const lines = (quote.lines ?? []).map((line: any) => {
           const prLine = pr?.lines?.find((item: any) => item.id === line.prLineId || item.materialItemId === line.materialItemId);
           if (!prLine) throw new Error("Each quoted line must match a purchase requisition line.");
-          return { prLineId: prLine.id, unitPrice: Number(line.unitPrice), leadTimeDays: Number(line.leadTimeDays || quote.deliveryDays || 0) };
+          return {
+            prLineId: prLine.id,
+            unitPrice: Number(line.unitPrice),
+            leadTimeDays: Number(line.leadTimeDays || quote.deliveryDays || 0),
+            taxRate: line.taxPct == null ? undefined : Number(line.taxPct),
+          };
         });
-        const saved = await procurementApi.receiveQuotation(created.id, { validUntil: quote.validUntil || undefined, lines });
+        const saved = await procurementApi.receiveQuotation(created.id, {
+          validUntil: quote.validUntil || undefined,
+          supplierQuoteRef: quote.quoteNumber || undefined,
+          paymentTerms: termsDays(quote.paymentTerms),
+          freightAmount: Number(quote.deliveryCharges || 0),
+          discountAmount: Number(quote.discountAmount || 0),
+          taxAmount: Number(quote.taxAmount || 0),
+          lines,
+        });
         showToast({ type: "success", title: "Supplier quotation recorded", body: `${quote.supplierName} prices are saved.` });
         return mapQuote(saved, pr);
       }),
@@ -542,10 +641,10 @@ export function ProcurementProvider({ children }: { children?: ReactNode }) {
         const current = await procurementApi.quotation(id);
         if (current.status === "received") await procurementApi.reviewQuotation(id);
       }).catch((error) => showToast({ type: "error", title: "Quotation was not updated", body: failure(error) })),
-      approveFinalizeQuotation: (id: string) => enqueue(id, async () => {
+      approveFinalizeQuotation: (id: string, _name?: string, reason?: string) => enqueue(id, async () => {
         const current = await procurementApi.quotation(id);
         const status = current.status === "received" ? (await procurementApi.reviewQuotation(id)).status : current.status;
-        if (status === "under_review") await procurementApi.selectQuotation(id);
+        if (status === "under_review") await procurementApi.selectQuotation(id, reason);
         await reload();
         showToast({ type: "success", title: "Quotation selected", body: "The supplier was selected. A purchase order is not created until you draft one." });
       }).catch((error) => showToast({ type: "error", title: "Quotation was not selected", body: failure(error) })),
@@ -624,12 +723,13 @@ export function ProcurementProvider({ children }: { children?: ReactNode }) {
           return { error: failure(error), nonSelectedInvitations: [] };
         }
       },
-      recordSupplierPOConfirmation: async (id: string, decision: string) => {
-        if (decision === "declined") {
-          return { error: "The supplier purchase order API can record acknowledgement. It does not record a supplier decline." };
-        }
+      recordSupplierPOConfirmation: async (id: string, decision: string, detail?: { declineReason?: string }) => {
         try {
-          await procurementApi.acknowledgeSpo(id);
+          if (decision === "declined") {
+            await procurementApi.declineSpo(id, detail?.declineReason || "Supplier declined the purchase order");
+          } else {
+            await procurementApi.acknowledgeSpo(id);
+          }
           await reload();
           return {};
         } catch (error) {
@@ -641,22 +741,102 @@ export function ProcurementProvider({ children }: { children?: ReactNode }) {
         title: "Suppliers are not notified from BOSS",
         body: "Tell the other suppliers outside BOSS. No message was sent.",
       }),
-      addPoAmendment: () => {
-        showToast({ type: "error", title: "Amendment was not saved", body: "Supplier PO amendments are not supported by the API." });
-        return { error: "Supplier PO amendments are not supported by the API." };
+      addPoAmendment: async (draft: {
+        poId: string; reason: string; changeNote: string; lineId?: string;
+        lineChanges?: { quantity?: number; rate?: number; requiredDate?: string };
+        headerChanges?: { paymentTerms?: string; committedDate?: string };
+      }) => {
+        try {
+          const saved = await procurementApi.submitAmendment(draft.poId, {
+            reason: draft.reason,
+            changeNote: draft.changeNote,
+            lineId: draft.lineId || null,
+            quantity: draft.lineChanges?.quantity || null,
+            unitPrice: draft.lineChanges?.rate || null,
+            expectedDate: draft.lineChanges?.requiredDate || draft.headerChanges?.committedDate || null,
+            paymentTerms: draft.headerChanges?.paymentTerms ? termsDays(draft.headerChanges.paymentTerms) : null,
+          });
+          await reload();
+          showToast({ type: "success", title: "Amendment submitted", body: "The current purchase order stays binding until the owner approves it." });
+          return saved;
+        } catch (error) {
+          const message = failure(error);
+          showToast({ type: "error", title: "Amendment was not saved", body: message });
+          return { error: message };
+        }
       },
-      resolvePoAmendment: () => showToast({ type: "info", title: "No amendment is waiting", body: "Supplier PO amendments are not supported by the API." }),
+      resolvePoAmendment: async (id: string, decision: string) => {
+        const amendment = poAmendments.find((item) => item.id === id);
+        if (!amendment) {
+          showToast({ type: "error", title: "Amendment was not found" });
+          return;
+        }
+        try {
+          await procurementApi.decideAmendment(amendment.poId, id, decision === "approved");
+          await reload();
+          showToast({ type: "success", title: decision === "approved" ? "Amendment approved" : "Amendment rejected" });
+        } catch (error) {
+          showToast({ type: "error", title: "Amendment was not decided", body: failure(error) });
+        }
+      },
       resolveApproval: async (id: string, decision: string, _actor?: string, note?: string) => guard(async () => {
         if (decision === "rejected") await procurementApi.rejectPr(id, note || "Rejected");
         else await procurementApi.approvePr(id);
         showToast({ type: "success", title: decision === "rejected" ? "PR rejected" : "PR approved" });
       }),
-      recordGRNReceipt: () => ({ error: "Goods receipt recording is not available. The GRN API has not been implemented." }),
-      rejectGRN: () => showToast({ type: "error", title: "GRN was not rejected", body: "The GRN API has not been implemented." }),
+      recordGRNReceipt: async (input: {
+        spoId: string; receivedDate: string; deliveryChallan: string; vehicleNumber?: string;
+        storeLocationId?: string; notes?: string;
+        lines: Array<{ spoLineId: string; receivedQty: number; notes?: string; lots: Array<{ lotNumber: string; qty: number; expiryDate?: string; supplierLotRef?: string }> }>;
+      }) => {
+        if (!input.storeLocationId) return { error: "Choose the receiving store." };
+        try {
+          const signature = input.lines.map((line) => `${line.spoLineId}:${line.receivedQty}`).join("|");
+          const saved = await procurementApi.createGrn({
+            spoId: input.spoId,
+            receivedDate: input.receivedDate,
+            deliveryChallan: input.deliveryChallan,
+            vehicleNumber: input.vehicleNumber,
+            storeId: input.storeLocationId,
+            notes: input.notes,
+            lines: input.lines.map((line) => ({
+              spoLineId: line.spoLineId,
+              receivedQty: line.receivedQty,
+              rejectedQty: 0,
+              notes: line.notes,
+              lots: line.lots.map((lot) => ({
+                lotNumber: lot.lotNumber,
+                qty: lot.qty,
+                expiryDate: lot.expiryDate || null,
+                supplierLotRef: lot.supplierLotRef || null,
+              })),
+            })),
+          }, `grn:${input.spoId}:${input.deliveryChallan}:${signature}`);
+          await reload();
+          return { grn: { id: saved.id, grnNumber: saved.grnNumber } };
+        } catch (error) {
+          return { error: failure(error) };
+        }
+      },
+      recordSupplierReturn: async (input: { grnId: string; reason: string; lines: Array<{ grnLineId: string; lotId: string; quantity: number }> }) => {
+        try {
+          const signature = input.lines.map((line) => `${line.lotId}:${line.quantity}`).join("|");
+          const saved = await procurementApi.createSupplierReturn({
+            grnId: input.grnId,
+            reason: input.reason,
+            lines: input.lines,
+          }, `return:${input.grnId}:${signature}`);
+          await reload();
+          return saved;
+        } catch (error) {
+          return { error: failure(error) };
+        }
+      },
+      rejectGRN: () => showToast({ type: "info", title: "Receipt stays posted", body: "Record damaged quantity on the receipt, or raise a supplier return for accepted stock." }),
       startInspectionForGRN: () => showToast({ type: "info", title: "Inspection is not connected", body: "Quality inspections are outside procurement." }),
       releaseLotFromHold: () => showToast({ type: "info", title: "Inventory is not connected", body: "Lot release is not part of this procurement release." }),
     };
-  }, [approvalSafe(purchaseReqs), currentUser, customer.tenant?.name, guard, materials, purchaseReqs, ready, reload, removeToast, showToast, sites, storeLocations, supplierPoLines, supplierPos, supplierQuotations, suppliers, toasts, uoms, enqueue]);
+  }, [approvalSafe(purchaseReqs), currentUser, customer.tenant?.name, grns, guard, lots, materials, poAmendments, purchaseReqs, ready, reload, removeToast, showToast, sites, storeLocations, supplierPoLines, supplierPos, supplierQuotations, suppliers, toasts, uoms, enqueue]);
 
   return (
     <ProcurementContext.Provider value={value}>

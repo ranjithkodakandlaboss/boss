@@ -7,10 +7,11 @@ import StatusChip from '../../components/shared/StatusChip';
 
 export default function SupplierReturn() {
   const navigate = useNavigate();
-  const { grns, supplierPos, showToast } = useStore();
+  const { grns, recordSupplierReturn, showToast } = useStore();
 
   const [selectedGrn, setSelectedGrn] = useState('');
   const [returnReason, setReturnReason] = useState('');
+  const [quantities, setQuantities] = useState<Record<string, string>>({});
   const [disposition, setDisposition] = useState<'return_to_supplier' | 'replace' | 'credit_note'>('return_to_supplier');
   const [notes, setNotes] = useState('');
   const [submitted, setSubmitted] = useState(false);
@@ -18,12 +19,31 @@ export default function SupplierReturn() {
   const acceptedGrns = grns.filter(g => g.status === 'accepted' || g.status === 'partial');
   const selectedGrnObj = grns.find(g => g.id === selectedGrn);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedGrn || !returnReason) return;
+    if (!selectedGrn || !returnReason || !selectedGrnObj) return;
+    const lines = (selectedGrnObj.lines ?? []).flatMap((line) => {
+      const quantity = Number(quantities[line.id] ?? line.acceptedQty ?? 0);
+      const lotId = line.lotIds?.[0];
+      if (!(quantity > 0) || !lotId) return [];
+      return [{ grnLineId: line.id, lotId, quantity }];
+    });
+    if (lines.length === 0) {
+      showToast({ type: 'error', title: 'Return was not saved', body: 'Enter a return quantity for a received lot.' });
+      return;
+    }
     setSubmitted(true);
-    showToast({ type: 'error', title: 'Return was not saved', body: 'Supplier returns are not supported until goods receipt APIs exist.' });
-    setTimeout(() => navigate('/procurement'), 1500);
+    const saved = await recordSupplierReturn({
+      grnId: selectedGrn,
+      reason: `${returnReason.replaceAll('_', ' ')} (${disposition.replaceAll('_', ' ')})${notes.trim() ? `: ${notes.trim()}` : ''}`,
+      lines,
+    });
+    if (saved?.error) {
+      setSubmitted(false);
+      return;
+    }
+    showToast({ type: 'success', title: 'Supplier return posted', body: `${saved.returnNumber} reduced the accepted stock.` });
+    navigate('/procurement');
   };
 
   return (
@@ -99,6 +119,20 @@ export default function SupplierReturn() {
               <span className="text-xs text-[var(--text-2)]">Status</span>
               <StatusChip status={selectedGrnObj.status} />
             </div>
+            {(selectedGrnObj.lines ?? []).map((line) => (
+              <label key={line.id} className="flex items-center justify-between gap-3 pt-1">
+                <span className="text-xs text-[var(--text)]">{line.materialName} · accepted {line.acceptedQty} {line.uom}</span>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.001"
+                  value={quantities[line.id] ?? String(line.acceptedQty ?? '')}
+                  onChange={(event) => setQuantities((current) => ({ ...current, [line.id]: event.target.value }))}
+                  className="w-24 px-2 py-1 rounded border text-xs"
+                  style={{ borderColor: 'var(--border)' }}
+                />
+              </label>
+            ))}
           </div>
         )}
 

@@ -430,7 +430,7 @@ export default function SupplierRFQCreate() {
                             )}
                             {priorInv && <StatusChip status={priorInv.status} />}
                             <span className="text-[11px] text-[var(--text-3)] ml-auto font-mono">
-                              ★ {(m.supplier.rating ?? 4.0).toFixed(1)} · {m.supplier.paymentTerms} · {m.historicalPoCount} PO(s)
+                              {m.supplier.receiptCount > 0 && m.supplier.onTimeDeliveryPct != null ? `${Number(m.supplier.onTimeDeliveryPct).toFixed(0)}% on time` : 'No receipts'} · {m.supplier.paymentTerms} · {m.historicalPoCount} PO(s)
                             </span>
                           </div>
                           <div className="text-xs text-[var(--text-2)] mt-1">

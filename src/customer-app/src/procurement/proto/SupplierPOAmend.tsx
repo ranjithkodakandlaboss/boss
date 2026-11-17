@@ -25,17 +25,16 @@ export default function SupplierPOAmend() {
 
   if (!po) return <div className="p-8 text-center text-[var(--text-2)]">Supplier PO not found.</div>;
 
-  const submit = (e: React.FormEvent) => {
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!changeNote.trim()) return;
-    const now = new Date().toISOString();
-    const amendment = addPoAmendment({
-      id: `amend-spo-${Date.now()}`, entityType: 'supplier_po', poId: po.id, poNumber: po.poNumber,
-      revision: nextRevision, reason, changeNote: changeNote.trim(), status: 'pending_approval', requestedBy: currentUser.name, requestedAt: now,
-      attachmentName: attachmentName || undefined, lineId: selectedLine?.id,
-      lineChanges: selectedLine ? { materialName: materialName || undefined, quantity: quantity ? Number(quantity) : undefined, rate: rate ? Number(rate) : undefined, requiredDate: committedDate || undefined } : undefined,
+    const amendment = await addPoAmendment({
+      poId: po.id,
+      reason,
+      changeNote: changeNote.trim(),
+      lineId: selectedLine?.id,
+      lineChanges: selectedLine ? { quantity: quantity ? Number(quantity) : undefined, rate: rate ? Number(rate) : undefined, requiredDate: committedDate || undefined } : undefined,
       headerChanges: { paymentTerms: paymentTerms || undefined, committedDate: committedDate || undefined },
-      beforeSnapshot: { poStatus: po.status, totalValue: po.totalValue, paymentTerms: po.paymentTerms, committedDate: po.committedDate, line: selectedLine ?? null },
     });
     if (amendment?.error) return;
     setSubmitted(true);

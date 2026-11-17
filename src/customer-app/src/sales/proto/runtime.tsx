@@ -366,7 +366,15 @@ function mapPo(po: Cpo): CustomerPO {
     customerPoRef: po.customerPoRef,
     requiredByDate: po.requiredByDate,
     decisionNote: po.decisionNote,
+    availabilityStatus: availabilityOf(po.lines),
   } as CustomerPO;
+}
+
+function availabilityOf(lines: Cpo["lines"]): CustomerPO["availabilityStatus"] {
+  if (!lines?.length || lines.some((line) => !line.availability)) return "not_assessed";
+  if (lines.every((line) => line.availability === "available")) return "allocated";
+  if (lines.every((line) => line.availability === "unavailable")) return "shortage";
+  return "partial";
 }
 
 function mapPoLines(records: Cpo[]): POLine[] {
@@ -380,6 +388,8 @@ function mapPoLines(records: Cpo[]): POLine[] {
     revision: line.drawingRevision || "",
     description: line.description || line.itemName || "",
     orderedQty: Number(line.qty),
+    availability: line.availability,
+    shortageQty: line.shortageQty == null ? undefined : Number(line.shortageQty),
     uom: line.uomSymbol || "",
     requiredDate: po.requiredByDate || "",
     rate: money(line.unitPrice),
@@ -707,7 +717,17 @@ export function SalesProvider({ children }: { children?: ReactNode }) {
           return { error: "Mark every material line as available, unavailable, or partial." };
         }
         const shortages = decisions.filter((decision) => decision.availability !== "available");
+        try {
+          await salesApi.recordAvailability(po.id, decisions.map((decision) => ({
+            lineId: decision.lineId,
+            availability: decision.availability || "available",
+            shortageQty: decision.availability === "partial" ? Number(decision.shortageQty) : undefined,
+          })));
+        } catch (error) {
+          return { error: failure(error) };
+        }
         if (shortages.length === 0) {
+          await reload();
           return { status: "available", message: "Material was confirmed available. No purchase requisition was created." };
         }
         const siteId = options?.siteId || sites[0]?.id;
