@@ -9,7 +9,7 @@ import EmptyState from "../components/shared/EmptyState";
 import ErrorState from "../components/shared/ErrorState";
 import LoadingState from "../components/shared/LoadingState";
 import {
-  Cpo, ItemOption, Quotation, QuoteLine, RfqLine, UomOption,
+  AuditEntry, Cpo, ItemOption, Quotation, QuoteLine, RfqLine, UomOption,
   inr, salesApi, when,
 } from "./api";
 import { useLoad } from "./load";
@@ -137,9 +137,54 @@ function LinkedList<T extends { id: string }>({ rows, href, label }: { rows: T[]
   return <ul className="space-y-2">{rows.map((row) => <li key={row.id}><Link className="text-[var(--brand)] font-semibold" to={href(row)}>{label(row)}</Link></li>)}</ul>;
 }
 
-function History({ entries }: { entries: { id: string; action: string; createdAt: string; actorId?: string }[] }) {
-  if (!entries.length) return <EmptyState title="No history" body="Lifecycle actions will appear here." />;
-  return <ul className="space-y-1 text-sm">{entries.map((entry) => <li key={entry.id}>{when(entry.createdAt)} · {entry.action}{entry.actorId ? ` · ${entry.actorId}` : ""}</li>)}</ul>;
+function actionLabel(action: string) {
+  return action.toLowerCase().replaceAll("_", " ").replace(/^\w/, (letter) => letter.toUpperCase());
+}
+
+function History({ entries }: { entries: AuditEntry[] }) {
+  const [query, setQuery] = useState("");
+  const [newestFirst, setNewestFirst] = useState(true);
+  const [open, setOpen] = useState<string | null>(null);
+  const list = Array.isArray(entries) ? entries : [];
+  const filtered = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    const rows = list.filter((entry) => !needle || `${entry.action} ${entry.actorName || ""} ${(entry.changes ?? []).map((change) => `${change.field} ${change.previousValue} ${change.newValue}`).join(" ")}`.toLowerCase().includes(needle));
+    return newestFirst ? rows : [...rows].reverse();
+  }, [list, query, newestFirst]);
+  if (!list.length) return <EmptyState title="No history" body="Lifecycle actions will appear here." />;
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-sm font-semibold">Activity &amp; Audit History <span className="text-[var(--text-3)] font-normal">({filtered.length})</span></p>
+        <div className="flex gap-2">
+          <input className="eoss-input text-sm" placeholder="Filter history" value={query} onChange={(event) => setQuery(event.target.value)} />
+          <Button variant="ghost" onClick={() => setNewestFirst((value) => !value)}>{newestFirst ? "Newest first" : "Oldest first"}</Button>
+        </div>
+      </div>
+      {filtered.map((entry) => (
+        <div key={entry.id} className="rounded-lg border border-[var(--border)]">
+          <button type="button" className="w-full text-left px-3 py-2" onClick={() => setOpen(open === entry.id ? null : entry.id)}>
+            <div className="flex flex-wrap items-center gap-2 text-sm">
+              <StatusChip status={entry.action.toLowerCase()} label={actionLabel(entry.action)} size="sm" />
+              <span className="font-semibold">{actionLabel(entry.action)}</span>
+              <span className="text-[var(--text-3)]">{when(entry.createdAt)}</span>
+              <span>{entry.actorName || "System"}</span>
+            </div>
+          </button>
+          {open === entry.id && (
+            <table className="eoss-table">
+              <thead><tr><th>Field</th><th>Previous value</th><th>New value</th></tr></thead>
+              <tbody>
+                {(entry.changes ?? []).length === 0
+                  ? <tr><td colSpan={3}>No field-level change was stored for this action.</td></tr>
+                  : entry.changes?.map((change) => <tr key={change.field}><td>{change.field}</td><td>{change.previousValue}</td><td>{change.newValue}</td></tr>)}
+              </tbody>
+            </table>
+          )}
+        </div>
+      ))}
+    </div>
+  );
 }
 
 function blankLine(item?: ItemOption, uom?: UomOption): RfqLine {
@@ -343,6 +388,7 @@ export function QuotationDetailPage() {
   const { id = "" } = useParams();
   const navigate = useNavigate();
   const record = useLoad(() => salesApi.quotation(id), [id]);
+  const history = useLoad(() => salesApi.history("QUOTATION", id), [id]);
   const [current, setCurrent] = useState<Quotation | null>(null);
   const [error, setError] = useState("");
   const [note, setNote] = useState("");
@@ -374,7 +420,7 @@ export function QuotationDetailPage() {
         {["sent", "negotiating"].includes(quote.status) && <Button onClick={() => run(() => salesApi.accept(id, { customerPoRef: reference, confirmationNote: note }))}>Mark Accepted</Button>}
         {["sent", "negotiating"].includes(quote.status) && <Button variant="danger" onClick={() => run(() => salesApi.quotationStatus(id, "rejected", note))}>Record decline</Button>}
         {!["accepted", "superseded", "expired"].includes(quote.status) && <Button variant="ghost" onClick={() => run(() => salesApi.revise(id, { changeReason: reason || "Customer requested changes", lines: quote.lines.map((line) => ({ itemId: line.itemId, qty: line.qty, uomId: line.uomId, unitPrice: line.unitPrice, deliveryWeeks: line.deliveryWeeks, gstRate: line.gstRate, discountPct: line.discountPct, drawingNumber: line.drawingNumber, drawingRevision: line.drawingRevision, description: line.description })) }))}>Revise Quotation</Button>}
-        <Button variant="ghost" onClick={() => salesApi.quotationPdf(id).catch((caught) => setError(message(caught)))}>Download PDF</Button>
+        <Button variant="ghost" onClick={() => salesApi.quotationPdf(id).catch((caught) => setError(message(caught)))}>PDF / Print</Button>
       </div>
       {["sent", "negotiating"].includes(quote.status) && <p className="text-xs text-[var(--text-3)]">No response leaves this quotation awaiting a decision. Nothing is accepted and no Customer PO is created. Submit to Customer marks the quotation sent inside BOSS. It does not send email or WhatsApp.</p>}
       <div className="grid md:grid-cols-2 gap-3">
@@ -392,6 +438,7 @@ export function QuotationDetailPage() {
         {quote.rfqId && <Link className="block" to={`/sales/rfq/${quote.rfqId}`}>RFQ {quote.rfqNumber}</Link>}
         {quote.cpoId && <Link className="block" to={`/sales/po/${quote.cpoId}`}>Customer PO {quote.cpoNumber}</Link>}
       </Card>
+      <Card title="Activity & Audit History"><History entries={history.data ?? []} /></Card>
       <Card title="Negotiation history">
         {(quote.negotiationHistory ?? []).length === 0 ? <p>No counter-offers recorded.</p> : (quote.negotiationHistory ?? []).map((entry) => <p key={entry.id}>Round {entry.round} · {entry.partyType} · {entry.note || "No note"} · {when(entry.createdAt)}</p>)}
       </Card>

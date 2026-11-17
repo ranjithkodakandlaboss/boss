@@ -133,7 +133,8 @@ export type Cpo = {
 };
 export type ItemOption = { id: string; code: string; name: string; uomId: string; uomSymbol?: string; gstRate?: number };
 export type UomOption = { id: string; symbol: string; name: string };
-export type AuditEntry = { id: string; actorId?: string; action: string; createdAt: string };
+export type FieldChange = { field: string; previousValue: string; newValue: string };
+export type AuditEntry = { id: string; actorId?: string; actorName?: string; action: string; createdAt: string; changes?: FieldChange[] };
 
 function rows<T>(page: Page<T> | T[] | undefined): T[] {
   if (Array.isArray(page)) return page;
@@ -199,9 +200,11 @@ export const salesApi = {
     const blob = await response.blob();
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement("a");
+    const named = /filename="([^"]+)"/.exec(response.headers.get("Content-Disposition") || "");
     anchor.href = url;
-    anchor.download = `quotation-${id}.pdf`;
+    anchor.download = named?.[1] || `quotation-${id}.pdf`;
     anchor.click();
+    window.open(url, "_blank", "noopener");
     URL.revokeObjectURL(url);
   },
   cpos: (q = "", customerId = "") => api<Page<Cpo>>(`/api/v1/cpos?size=100${q ? `&q=${encodeURIComponent(q)}` : ""}${customerId ? `&customerId=${customerId}` : ""}`).then(rows),

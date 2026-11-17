@@ -76,9 +76,11 @@ public class SalesQuotationController {
 
     @GetMapping(value = "/{quotationId}/document", produces = MediaType.APPLICATION_PDF_VALUE)
     public ResponseEntity<byte[]> document(@PathVariable UUID quotationId) {
+        var quotation = salesService.getQuotation(quotationId);
         byte[] pdf = salesService.quotationPdf(quotationId);
+        String filename = quotation.quotationNumber() + "-rev" + quotation.revision() + ".pdf";
         return ResponseEntity.ok()
-                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"quotation-" + quotationId + ".pdf\"")
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + filename + "\"")
                 .contentType(MediaType.APPLICATION_PDF)
                 .body(pdf);
     }
