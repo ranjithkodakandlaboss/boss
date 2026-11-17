@@ -1,6 +1,6 @@
 // @ts-nocheck
 import React from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { ArrowRight, Link2 } from 'lucide-react';
 import StatusChip from '../../../components/shared/StatusChip';
 
@@ -27,6 +27,9 @@ export default function RelatedRecordsPanel({
   records,
   emptyMessage = 'Standalone record — no upstream or downstream documents linked yet.',
 }: Props) {
+  const location = useLocation();
+  const background = (location.state as { background?: { pathname: string; search: string } } | null)?.background
+    ?? (location.pathname === '/sales' ? { pathname: location.pathname, search: location.search } : undefined);
   return (
     <div className="rounded-xl border overflow-hidden mb-4" style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}>
       <div className="px-4 py-3 border-b flex items-center justify-between gap-2 flex-wrap" style={{ borderColor: 'var(--border)', background: 'var(--surface-2)' }}>
@@ -54,7 +57,7 @@ export default function RelatedRecordsPanel({
                 {rec.to ? (
                   <Link
                     to={rec.to}
-                    state={rec.state}
+                    state={{ ...rec.state, ...(background ? { background } : {}) }}
                     className="font-mono text-xs font-bold text-[var(--brand)] hover:underline inline-flex items-center gap-1"
                   >
                     {rec.reference}
