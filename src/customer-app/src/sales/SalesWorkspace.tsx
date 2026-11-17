@@ -215,7 +215,7 @@ function RfqTable({ rows, loading, error, quoteByRfq, sortKey, sortDir, onSort, 
       return quote ? <button type="button" className="font-mono font-semibold text-xs text-[var(--brand)]" onClick={(event) => { event.stopPropagation(); onOpenQuote(quote.id); }}>{quote.quotationNumber}</button> : <span className="text-xs text-[var(--text-3)]">Pending</span>;
     } },
     { key: "status", label: "Status", value: (rfq) => rfqChip(rfq, quoteByRfq.has(rfq.id)), render: (rfq) => <StatusChip status={rfqChip(rfq, quoteByRfq.has(rfq.id))} /> },
-    { key: "owner", label: "Owner", value: () => "", render: () => <span className="text-xs text-[var(--text-2)]">—</span> },
+    { key: "owner", label: "Owner", value: (rfq) => rfq.ownerName ?? "", render: (rfq) => <span className="text-xs text-[var(--text-2)]">{rfq.ownerName || "—"}</span> },
   ];
   return (
     <RecordTable rows={rows} columns={columns} sortKey={sortKey} sortDir={sortDir} onSort={onSort} loading={loading} error={error} empty="No RFQs found" onRow={(rfq) => onOpen(rfq.id)} trailing={(rfq) => {

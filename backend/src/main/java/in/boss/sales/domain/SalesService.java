@@ -103,12 +103,13 @@ public class SalesService {
                 INSERT INTO rfqs
                   (id, tenant_id, rfq_number, customer_id, site_id, status, received_date,
                    required_by_date, rfq_type_id, rfq_type_label, customer_ref, notes,
-                   delivery_terms, payment_terms, received_via, created_by)
-                VALUES (?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   delivery_terms, payment_terms, received_via, created_by, technical_requirements)
+                VALUES (?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb)
                 """,
                 rfqId, tenantId, rfqNumber, request.customerId(), siteId, received, request.requiredDate(),
                 request.rfqTypeId(), request.rfqTypeLabel(), request.customerRef(), request.notes(),
-                request.deliveryTerms(), request.paymentTerms(), request.receivedVia(), context.userId());
+                request.deliveryTerms(), request.paymentTerms(), request.receivedVia(), context.userId(),
+                jsonOrNull(request.technicalRequirements()));
         replaceRfqLines(tenantId, rfqId, request.lines());
 
         RfqResponse result = readRfq(tenantId, rfqId);
@@ -175,12 +176,13 @@ public class SalesService {
                 UPDATE rfqs
                    SET required_by_date = ?, rfq_type_id = ?, rfq_type_label = ?,
                        customer_ref = ?, notes = ?, delivery_terms = ?, payment_terms = ?,
-                       received_via = ?, received_date = COALESCE(?, received_date), updated_at = NOW()
+                       received_via = ?, received_date = COALESCE(?, received_date),
+                       technical_requirements = ?::jsonb, updated_at = NOW()
                  WHERE tenant_id = ? AND id = ?
                 """,
                 request.requiredDate(), request.rfqTypeId(), request.rfqTypeLabel(),
                 request.customerRef(), request.notes(), request.deliveryTerms(), request.paymentTerms(),
-                request.receivedVia(), request.receivedDate(), tenantId, rfqId);
+                request.receivedVia(), request.receivedDate(), jsonOrNull(request.technicalRequirements()), tenantId, rfqId);
         jdbc.update("DELETE FROM rfq_lines WHERE tenant_id = ? AND rfq_id = ?", tenantId, rfqId);
         replaceRfqLines(tenantId, rfqId, request.lines());
 
@@ -561,11 +563,14 @@ public class SalesService {
 
     private RfqResponse readRfq(UUID tenantId, UUID rfqId) {
         List<RfqHeader> headers = jdbc.query("""
-                SELECT id, rfq_number, customer_id, rfq_type_id, rfq_type_label,
-                       status, required_by_date, created_at, customer_ref, notes,
-                       delivery_terms, payment_terms, received_via, received_date
-                  FROM rfqs
-                 WHERE tenant_id = ? AND id = ?
+                SELECT r.id, r.rfq_number, r.customer_id, r.rfq_type_id, r.rfq_type_label,
+                       r.status, r.required_by_date, r.created_at, r.customer_ref, r.notes,
+                       r.delivery_terms, r.payment_terms, r.received_via, r.received_date,
+                       r.technical_requirements::text AS technical_requirements,
+                       COALESCE(u.display_name, u.email) AS owner_name
+                  FROM rfqs r
+                  LEFT JOIN app_users u ON u.id = r.created_by AND u.tenant_id = r.tenant_id
+                 WHERE r.tenant_id = ? AND r.id = ?
                 """, (rs, rowNum) -> new RfqHeader(
                 rs.getObject("id", UUID.class),
                 rs.getString("rfq_number"),
@@ -580,7 +585,9 @@ public class SalesService {
                 rs.getString("delivery_terms"),
                 (Integer) rs.getObject("payment_terms"),
                 rs.getString("received_via"),
-                localDate(rs, "received_date")), tenantId, rfqId);
+                localDate(rs, "received_date"),
+                rs.getString("owner_name"),
+                rs.getString("technical_requirements")), tenantId, rfqId);
         if (headers.isEmpty()) {
             throw notFound("RFQ not found");
         }
@@ -618,7 +625,8 @@ public class SalesService {
         return new RfqResponse(header.id(), header.rfqNumber(), header.customerId(), customer.getName(),
                 header.rfqTypeId(), header.rfqTypeLabel(), header.status(), header.requiredDate(),
                 lines, header.createdAt(), header.customerRef(), header.notes(), header.deliveryTerms(),
-                header.paymentTerms(), header.receivedVia(), header.receivedDate());
+                header.paymentTerms(), header.receivedVia(), header.receivedDate(), header.ownerName(),
+                readMap(header.technicalRequirements()));
     }
 
     private QuotationResponse readQuotation(UUID tenantId, UUID quotationId) {
@@ -1021,6 +1029,19 @@ public class SalesService {
         return value == null ? "" : value.toString();
     }
 
+    private String jsonOrNull(Object value) {
+        return value == null ? null : toJson(value);
+    }
+
+    private Map<String, Object> readMap(String json) {
+        if (json == null || json.isBlank()) return Map.of();
+        try {
+            return objectMapper.readValue(json, new TypeReference<>() {});
+        } catch (JsonProcessingException exception) {
+            return Map.of();
+        }
+    }
+
     private String toJson(Object value) {
         try {
             return objectMapper.writeValueAsString(value);
@@ -1050,7 +1071,7 @@ public class SalesService {
     private record RfqHeader(UUID id, String rfqNumber, UUID customerId, UUID rfqTypeId,
                              String rfqTypeLabel, String status, LocalDate requiredDate, Instant createdAt,
                              String customerRef, String notes, String deliveryTerms, Integer paymentTerms,
-                             String receivedVia, LocalDate receivedDate) {}
+                             String receivedVia, LocalDate receivedDate, String ownerName, String technicalRequirements) {}
 
     private record RfqLineData(UUID id, int lineNo, UUID itemId, BigDecimal quantity, UUID uomId,
                                String specifications, String drawingNumber, String drawingRevision,
