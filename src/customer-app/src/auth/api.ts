@@ -16,8 +16,8 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   const response = await fetch(`${base}${path}`, { ...init, headers });
   if (response.status === 204) return undefined as T;
   const text = await response.text();
-  const body = text ? JSON.parse(text) as { detail?: string; message?: string } : {};
-  if (!response.ok) throw new ApiError(response.status, body.detail || body.message || response.statusText);
+  const body = text ? JSON.parse(text) as { detail?: string; message?: string; error?: string } : {};
+  if (!response.ok) throw new ApiError(response.status, body.detail || body.message || body.error || response.statusText || "The request was rejected");
   return body as T;
 }
 
