@@ -592,6 +592,64 @@ p {
   color: var(--text-3);
 }
 
+.customer-detail-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin: 18px 0;
+}
+
+.customer-detail-list div {
+  min-width: 0;
+}
+
+.customer-detail-list dt {
+  color: var(--text-3);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.customer-detail-list dd {
+  margin: 4px 0 0;
+  overflow-wrap: anywhere;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.details-record {
+  margin-top: 20px;
+  padding-top: 4px;
+  border-top: 1px solid var(--border);
+}
+
+.details-record h3,
+.details-edit-group legend {
+  color: var(--text-2);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.details-edit-group {
+  min-width: 0;
+  margin: 18px 0;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+}
+
+.details-edit-group legend {
+  padding: 0 6px;
+}
+
+.details-edit-group .dialog-field {
+  margin: 10px 0;
+}
+
+.details-edit-group textarea {
+  min-height: 72px;
+  resize: vertical;
+}
+
 /* Tenant Directory Table */
 .tenant-table {
   width: 100%;
@@ -1470,6 +1528,10 @@ p {
 
   .filter-control {
     flex: 1;
+  }
+
+  .customer-detail-list {
+    grid-template-columns: 1fr;
   }
 
   .select-wrap select {

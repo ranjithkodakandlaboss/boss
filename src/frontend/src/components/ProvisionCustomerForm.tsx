@@ -10,13 +10,13 @@ import type {
   TenantProvisionRequest,
 } from "../api/platformAdminApi";
 
-type ProvisionResponse = ApiResponse<ProvisionResult | undefined>;
+type ProvisionResponse = ApiResponse<ProvisionResult>;
 type FieldErrors = Partial<Record<keyof TenantProvisionRequest, string>>;
 
 interface ProvisionCustomerFormProps {
   onCancel: () => void;
   onSubmit: (request: TenantProvisionRequest) => Promise<ProvisionResponse>;
-  onCreated: (response: ProvisionResponse, initialAdminEmail: string, tenantName: string, tenantSlug: string) => void;
+  onCreated: (response: ProvisionResponse, tenantName: string, tenantSlug: string) => void;
 }
 
 export function generateSlug(name: string): string {
@@ -180,7 +180,7 @@ export function ProvisionCustomerForm({
     setSubmitError("");
     try {
       const response = await onSubmit(values);
-      onCreated(response, values.adminEmail ?? "", values.tenantName, values.tenantSlug);
+      onCreated(response, values.tenantName, values.tenantSlug);
     } catch (error) {
       if (error instanceof PlatformAdminApiError) {
         setSubmitError(error.status === 0 ? error.message : `${error.message} (HTTP ${error.status})`);

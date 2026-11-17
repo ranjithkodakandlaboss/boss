@@ -1,6 +1,7 @@
 package in.boss.admin.api;
 
 import in.boss.admin.domain.AdminHttpResult;
+import in.boss.admin.domain.TenantDetailsService;
 import in.boss.admin.domain.TenantManagementService;
 import in.boss.admin.security.AdminPrincipal;
 import jakarta.servlet.http.HttpServletRequest;
@@ -12,6 +13,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -25,9 +27,11 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/admin/api/v1")
 public class TenantManagementController {
     private final TenantManagementService service;
+    private final TenantDetailsService detailsService;
 
-    public TenantManagementController(TenantManagementService service) {
+    public TenantManagementController(TenantManagementService service, TenantDetailsService detailsService) {
         this.service = service;
+        this.detailsService = detailsService;
     }
 
     @PostMapping("/tenants")
@@ -44,6 +48,22 @@ public class TenantManagementController {
         return service.list(status, page, size);
     }
 
+    @GetMapping("/tenants/{tenantId}")
+    public TenantDetails details(@PathVariable UUID tenantId) {
+        return detailsService.details(tenantId);
+    }
+
+    @PatchMapping("/tenants/{tenantId}/details")
+    public ResponseEntity<Object> updateDetails(
+            @PathVariable UUID tenantId,
+            @Valid @RequestBody TenantDetailsUpdateRequest request,
+            @RequestHeader("Idempotency-Key") @NotBlank String idempotencyKey,
+            Authentication authentication,
+            HttpServletRequest httpRequest) {
+        return respond(detailsService.updateDetails(tenantId, request, idempotencyKey,
+                principal(authentication), clientIp(httpRequest)));
+    }
+
     @GetMapping("/tenants/resolve")
     public TenantSummary resolve(@RequestParam("slug") String slug) {
         return service.resolveTenantBySlug(slug);
@@ -55,10 +75,9 @@ public class TenantManagementController {
     }
 
     @PostMapping("/tenants/{tenantId}/activate")
-    public Map<String, String> activate(@PathVariable UUID tenantId, Authentication authentication,
-                                        HttpServletRequest httpRequest) {
-        service.activate(tenantId, principal(authentication), clientIp(httpRequest));
-        return Map.of("status", "active");
+    public TenantActivationResult activate(@PathVariable UUID tenantId, Authentication authentication,
+                                           HttpServletRequest httpRequest) {
+        return service.activate(tenantId, principal(authentication), clientIp(httpRequest));
     }
 
     @PostMapping("/tenants/{tenantId}/suspend")

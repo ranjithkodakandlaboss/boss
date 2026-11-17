@@ -10,13 +10,20 @@ export type TenantProvisionRequest = components["schemas"]["TenantProvisionReque
 export type ProvisionResult = components["schemas"]["ProvisionResult"];
 export type AdminInviteResult =
   paths["/tenants/{tenantId}/admin-invite"]["post"]["responses"][201]["content"]["application/json"];
+export type TenantActivationResult = components["schemas"]["TenantActivationResult"];
+export type TenantDetails = components["schemas"]["TenantDetails"];
+export type TenantDetailsUpdateRequest = components["schemas"]["TenantDetailsUpdateRequest"];
+export type TenantDetailsUpdateResult = components["schemas"]["TenantDetailsUpdateResult"];
 type ContractTenantPage = paths["/tenants"]["get"]["responses"][200]["content"]["application/json"];
-type ContractTenant = NonNullable<ContractTenantPage["content"]>[number];
 export type TenantSummary = {
-  [K in keyof ContractTenant]-?: NonNullable<ContractTenant[K]>;
-} & {
-  inviteStatus?: string;
-  inviteEmail?: string;
+  id: string;
+  name: string;
+  slug: string;
+  status: string;
+  planTier: string;
+  industryType?: string;
+  invitationStatus?: string;
+  adminEmail?: string;
   workspaceUrl?: string;
 };
 export interface TenantPage {
@@ -75,11 +82,17 @@ export interface PlatformAdminApi {
     page: number;
     size: number;
   }): Promise<TenantPage>;
+  getTenantDetails(tenantId: string): Promise<TenantDetails>;
+  updateTenantDetails(
+    tenantId: string,
+    request: TenantDetailsUpdateRequest,
+    idempotencyKey: string,
+  ): Promise<TenantDetailsUpdateResult>;
   provisionTenant(
     request: TenantProvisionRequest,
     idempotencyKey: string,
-  ): Promise<ApiResponse<ProvisionResult | undefined>>;
-  activateTenant(tenantId: string): Promise<void>;
+  ): Promise<ApiResponse<ProvisionResult>>;
+  activateTenant(tenantId: string): Promise<TenantActivationResult>;
   suspendTenant(tenantId: string, reason: string): Promise<void>;
   reactivateTenant(tenantId: string): Promise<void>;
   retryInitialAdminInvite(
@@ -114,9 +127,7 @@ export function createPlatformAdminApi(
   async function request<T>(
     path: string,
     init: RequestInit = {},
-    acceptedStatuses: number[] = [],
     requireBody = true,
-    ignoredBodyStatuses: number[] = [],
   ): Promise<ApiResponse<T>> {
     if (!baseUrl?.trim()) {
       throw new PlatformAdminConfigurationError(
@@ -150,7 +161,7 @@ export function createPlatformAdminApi(
     if (init.body) headers.set("Content-Type", "application/json");
 
     const response = await fetcher(url, { ...init, headers });
-    const text = ignoredBodyStatuses.includes(response.status) ? "" : await response.text();
+    const text = await response.text();
     let body: unknown;
     if (text) {
       try {
@@ -160,7 +171,7 @@ export function createPlatformAdminApi(
       }
     }
 
-    if (!response.ok && !acceptedStatuses.includes(response.status)) {
+    if (!response.ok) {
       throw new PlatformAdminApiError(
         response.status,
         errorMessage(body, response.statusText),
@@ -184,38 +195,42 @@ export function createPlatformAdminApi(
       const response = await request<ContractTenantPage>(`/tenants?${params.toString()}`);
       return normalizeTenantPage(response.body);
     },
+    async getTenantDetails(tenantId) {
+      const response = await request<TenantDetails>(`/tenants/${encodeURIComponent(tenantId)}`);
+      return response.body;
+    },
+    async updateTenantDetails(tenantId, requestBody, idempotencyKey) {
+      const response = await request<TenantDetailsUpdateResult>(
+        `/tenants/${encodeURIComponent(tenantId)}/details`,
+        {
+          method: "PATCH",
+          headers: { "Idempotency-Key": idempotencyKey },
+          body: JSON.stringify(requestBody),
+        },
+      );
+      return response.body;
+    },
     provisionTenant(requestBody, idempotencyKey) {
-      return request<ProvisionResult | undefined>(
+      return request<ProvisionResult>(
         "/tenants",
         {
           method: "POST",
           headers: { "Idempotency-Key": idempotencyKey },
           body: JSON.stringify(requestBody),
         },
-        [424],
-        false,
-        [424],
-      ).then((response) => {
-        if (response.status === 201 && !response.body) {
-          throw new PlatformAdminApiError(201, "The Platform Admin API returned an empty provisioning result.");
-        }
-        if (response.status === 424) return { status: 424, body: undefined };
-        return response;
-      });
+      );
     },
     async activateTenant(tenantId) {
-      await request<unknown>(
+      const response = await request<TenantActivationResult>(
         `/tenants/${encodeURIComponent(tenantId)}/activate`,
         { method: "POST" },
-        [],
-        false,
       );
+      return response.body;
     },
     async suspendTenant(tenantId, reason) {
       await request<unknown>(
         `/tenants/${encodeURIComponent(tenantId)}/suspend`,
         { method: "POST", body: JSON.stringify({ reason } satisfies SuspendRequest) },
-        [],
         false,
       );
     },
@@ -223,7 +238,6 @@ export function createPlatformAdminApi(
       await request<unknown>(
         `/tenants/${encodeURIComponent(tenantId)}/reactivate`,
         { method: "POST" },
-        [],
         false,
       );
     },
@@ -283,9 +297,13 @@ function normalizeTenantPage(body: ContractTenantPage | undefined): TenantPage {
       slug,
       status,
       planTier,
-      industryType: typeof industryType === "string" ? industryType : "",
-      inviteStatus: typeof raw.inviteStatus === "string" ? raw.inviteStatus : undefined,
-      inviteEmail: typeof raw.inviteEmail === "string" ? raw.inviteEmail : undefined,
+      industryType: typeof industryType === "string" ? industryType : undefined,
+      invitationStatus: typeof raw.invitationStatus === "string"
+        ? raw.invitationStatus
+        : typeof raw.inviteStatus === "string" ? raw.inviteStatus : undefined,
+      adminEmail: typeof raw.adminEmail === "string"
+        ? raw.adminEmail
+        : typeof raw.inviteEmail === "string" ? raw.inviteEmail : undefined,
       workspaceUrl: typeof raw.workspaceUrl === "string" ? raw.workspaceUrl : undefined,
     };
   });

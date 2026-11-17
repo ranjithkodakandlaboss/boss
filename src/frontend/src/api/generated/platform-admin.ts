@@ -22,6 +22,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/tenants/{tenantId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** View a tenant and its associated company and site details */
+        get: operations["getTenantDetails"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tenants/{tenantId}/details": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Update permitted tenant, legal-entity, and site display details
+         * @description Updates tenant and company display names and addresses only. Tenant/entity/site
+         *     identifiers, legal identifiers, entity/site types, lifecycle, plan, and industry
+         *     are not editable through this endpoint. Entity and site writes are scoped by
+         *     tenant context and row-level security.
+         */
+        patch: operations["updateTenantDetails"];
+        trace?: never;
+    };
     "/tenants/{tenantId}/activate": {
         parameters: {
             query?: never;
@@ -31,7 +71,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Activate a provisioning tenant after seeding and any requested invitation have succeeded */
+        /** Activate a provisioning tenant after seeding; send an administrator invitation when an email was configured */
         post: operations["activateTenant"];
         delete?: never;
         options?: never;
@@ -134,7 +174,10 @@ export interface components {
             entityType: TenantProvisionRequestEntityType;
             siteCode: string;
             siteName: string;
-            /** Format: email */
+            /**
+             * Format: email
+             * @description Stored as the intended administrator contact. Invitation delivery occurs only on explicit tenant activation.
+             */
             adminEmail?: string;
             /** @enum {string} */
             industryType: TenantProvisionRequestIndustryType;
@@ -148,11 +191,93 @@ export interface components {
             legalEntityId?: string;
             /** Format: uuid */
             siteId?: string;
-            /** @description Returned only on the response that created the invitation. It is not stored or replayed. */
-            adminInviteToken?: string;
             seedingApplied?: boolean;
             /** @enum {string} */
             invitationStatus?: ProvisionResultInvitationStatus;
+        };
+        TenantActivationResult: {
+            /** Format: uuid */
+            tenantId: string;
+            /** @enum {string} */
+            tenantStatus: TenantActivationResultTenantStatus;
+            /** @enum {string} */
+            invitationStatus: TenantActivationResultInvitationStatus;
+        };
+        TenantDetails: {
+            /** Format: uuid */
+            tenantId: string;
+            /** Format: uuid */
+            customerGroupId: string;
+            customerGroupName: string;
+            customerGroupSlug: string;
+            tenantName: string;
+            tenantSlug: string;
+            /** @enum {string} */
+            tenantStatus: TenantDetailsTenantStatus;
+            planTier: string;
+            industryType: string | null;
+            invitationStatus: string;
+            /** Format: email */
+            adminEmail: string | null;
+            /** Format: uri */
+            workspaceUrl: string | null;
+            legalEntities: {
+                /** Format: uuid */
+                id: string;
+                name: string;
+                legalName: string;
+                pan: string | null;
+                entityType: string;
+                registeredAddress: string | null;
+                status: string;
+                gstRegistrations: {
+                    /** Format: uuid */
+                    id: string;
+                    gstin: string;
+                    tradeName: string | null;
+                    registrationType: string;
+                    stateCode: string;
+                    status: string;
+                    /** Format: date */
+                    effectiveFrom: string;
+                    /** Format: date */
+                    effectiveTo: string | null;
+                }[];
+            }[];
+            sites: {
+                /** Format: uuid */
+                id: string;
+                /** Format: uuid */
+                legalEntityId: string;
+                /** Format: uuid */
+                gstRegistrationId: string | null;
+                name: string;
+                code: string;
+                siteType: string;
+                address: string | null;
+                status: string;
+            }[];
+        };
+        TenantDetailsUpdateRequest: {
+            tenantName?: string;
+            legalEntities?: {
+                /** Format: uuid */
+                id: string;
+                name?: string;
+                legalName?: string;
+                registeredAddress?: string;
+            }[];
+            sites?: {
+                /** Format: uuid */
+                id: string;
+                name?: string;
+                address?: string;
+            }[];
+        };
+        TenantDetailsUpdateResult: {
+            /** Format: uuid */
+            tenantId: string;
+            updatedFields: string[];
         };
         OpeningBalanceImportRequest: {
             /** Format: uuid */
@@ -213,6 +338,11 @@ export interface operations {
                             status?: string;
                             planTier?: string;
                             industryType?: string;
+                            invitationStatus?: string;
+                            /** Format: email */
+                            adminEmail?: string;
+                            /** Format: uri */
+                            workspaceUrl?: string;
                         }[];
                         page?: number;
                         totalElements?: number;
@@ -236,7 +366,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Tenant created. Status remains provisioning until activate. adminInviteToken is present only when the invitation was created by this response. */
+            /** @description Tenant created in provisioning status. An administrator email is stored as the intended contact; invitation delivery occurs only after explicit activation. */
             201: {
                 headers: {
                     [name: string]: unknown;
@@ -259,8 +389,78 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Tenant was created and seeded, but the initial administrator invitation was not created. Retry the admin-invite operation. No invite token is returned. */
-            424: {
+        };
+    };
+    getTenantDetails: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tenantId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TenantDetails"];
+                };
+            };
+            /** @description Tenant was not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    updateTenantDetails: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+            };
+            path: {
+                tenantId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TenantDetailsUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description Customer details updated. The result contains no company/contact data. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TenantDetailsUpdateResult"];
+                };
+            };
+            /** @description No editable detail or invalid value was supplied */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Tenant or tenant-associated entity/site was not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Archived tenant details cannot be edited */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -279,14 +479,16 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Tenant activated */
+            /** @description Tenant activated. Invitation delivery, when requested, is reported separately and does not roll back activation. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["TenantActivationResult"];
+                };
             };
-            /** @description Tenant is not provisioning */
+            /** @description Tenant is not provisioning or industry seeding is incomplete */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -478,8 +680,23 @@ export enum TenantProvisionRequestIndustryType {
 }
 export enum ProvisionResultInvitationStatus {
     NOT_REQUESTED = "NOT_REQUESTED",
+    PENDING_ACTIVATION = "PENDING_ACTIVATION",
     CREATED = "CREATED",
     RETRY_REQUIRED = "RETRY_REQUIRED"
+}
+export enum TenantActivationResultTenantStatus {
+    active = "active"
+}
+export enum TenantActivationResultInvitationStatus {
+    NOT_REQUESTED = "NOT_REQUESTED",
+    CREATED = "CREATED",
+    RETRY_REQUIRED = "RETRY_REQUIRED"
+}
+export enum TenantDetailsTenantStatus {
+    provisioning = "provisioning",
+    active = "active",
+    suspended = "suspended",
+    archived = "archived"
 }
 export enum OpeningBalanceImportRequestImportType {
     INVENTORY = "INVENTORY",

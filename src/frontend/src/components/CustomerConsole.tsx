@@ -22,6 +22,8 @@ import {
   type ProvisionResult,
   type ApiResponse,
   type TenantProvisionRequest,
+  type TenantDetails,
+  type TenantDetailsUpdateRequest,
   type TenantStatusFilter,
   type TenantSummary,
 } from "../api/platformAdminApi";
@@ -33,8 +35,7 @@ type ConsolePage = "list" | "create" | "result";
 
 interface ProvisionOutcome {
   status: number;
-  body?: ProvisionResult;
-  initialAdminEmail: string;
+  body: ProvisionResult;
   tenantName: string;
   tenantSlug: string;
 }
@@ -76,6 +77,7 @@ export function CustomerConsole({ api, adminEmail, onSignOut }: CustomerConsoleP
   const [notice, setNotice] = useState("");
   const [provisionOutcome, setProvisionOutcome] = useState<ProvisionOutcome | null>(null);
   const [action, setAction] = useState<TenantAction | null>(null);
+  const [detailTenant, setDetailTenant] = useState<TenantSummary | null>(null);
   const [actionBusy, setActionBusy] = useState(false);
   const [actionError, setActionError] = useState("");
   const [suspendReason, setSuspendReason] = useState("");
@@ -121,12 +123,11 @@ export function CustomerConsole({ api, adminEmail, onSignOut }: CustomerConsoleP
   }
 
   function showProvisionResult(
-    response: ApiResponse<ProvisionResult | undefined>,
-    initialAdminEmail: string,
+    response: ApiResponse<ProvisionResult>,
     tenantName: string,
     tenantSlug: string,
   ) {
-    setProvisionOutcome({ ...response, initialAdminEmail, tenantName, tenantSlug });
+    setProvisionOutcome({ ...response, tenantName, tenantSlug });
     setPage("result");
     setReloadId((current) => current + 1);
   }
@@ -185,17 +186,21 @@ export function CustomerConsole({ api, adminEmail, onSignOut }: CustomerConsoleP
     setActionBusy(true);
     setActionError("");
     try {
-      await (action.kind === "activate"
-        ? api.activateTenant(action.tenant.id)
-        : action.kind === "suspend"
-          ? api.suspendTenant(action.tenant.id, suspendReason.trim())
-          : api.reactivateTenant(action.tenant.id));
-      const actionLabel = action.kind === "activate"
-        ? "Activation"
-        : action.kind === "suspend"
-          ? "Suspension"
-          : "Reactivation";
-      setNotice(`${actionLabel} request succeeded. The directory is reloading the current status from the API.`);
+      if (action.kind === "activate") {
+        const result = await api.activateTenant(action.tenant.id);
+        const invitationMessage = result.invitationStatus === "CREATED"
+          ? ` The administrator invitation was sent${action.tenant.adminEmail ? ` to ${action.tenant.adminEmail}` : ""}.`
+          : result.invitationStatus === "RETRY_REQUIRED"
+            ? " The tenant is active, but invitation delivery failed. Retry the invitation from the customer row."
+            : " No administrator invitation was requested.";
+        setNotice(`Tenant status confirmed as ${formatStatus(result.tenantStatus)}.${invitationMessage}`);
+      } else if (action.kind === "suspend") {
+        await api.suspendTenant(action.tenant.id, suspendReason.trim());
+        setNotice("Suspension request succeeded. The directory is reloading the current status from the API.");
+      } else {
+        await api.reactivateTenant(action.tenant.id);
+        setNotice("Reactivation request succeeded. The directory is reloading the current status from the API.");
+      }
       setAction(null);
       setSuspendReason("");
       setReloadId((current) => current + 1);
@@ -245,27 +250,7 @@ export function CustomerConsole({ api, adminEmail, onSignOut }: CustomerConsoleP
           outcome={provisionOutcome}
           tenantStatus={resultTenant?.status}
           onBack={leaveProvisionResult}
-          onRetryInvite={() => {
-            if (!provisionOutcome.body?.tenantId) return;
-            setInviteTarget({
-              id: provisionOutcome.body.tenantId,
-              name: provisionOutcome.tenantName,
-            });
-            setInviteEmail(provisionOutcome.initialAdminEmail);
-            setInviteError("");
-          }}
         />
-        {inviteTarget && (
-          <InviteDialog
-            email={inviteEmail}
-            error={inviteError}
-            busy={inviteBusy}
-            tenantName={inviteTarget.name}
-            onClose={() => setInviteTarget(null)}
-            onEmailChange={setInviteEmail}
-            onSubmit={sendInvite}
-          />
-        )}
         {inviteHandoff && (
           <InviteHandoffDialog
             handoff={inviteHandoff}
@@ -429,8 +414,8 @@ export function CustomerConsole({ api, adminEmail, onSignOut }: CustomerConsoleP
                         <td><StatusBadge status={tenant.status} /></td>
                         <td>{formatStatus(tenant.industryType || "") || "—"}</td>
                         <td>
-                          <div className="tenant-admin-email">{tenant.inviteEmail || "—"}</div>
-                          <div style={{ marginTop: "4px" }}><InviteStatusBadge status={tenant.inviteStatus} /></div>
+                          <div className="tenant-admin-email">{tenant.adminEmail || "—"}</div>
+                          <div style={{ marginTop: "4px" }}><InviteStatusBadge status={tenant.invitationStatus} /></div>
                         </td>
                         <td>
                           <div className="row-actions">
@@ -452,11 +437,15 @@ export function CustomerConsole({ api, adminEmail, onSignOut }: CustomerConsoleP
                                 Reactivate
                               </button>
                             )}
-                            {tenant.status !== "archived" && tenant.inviteStatus !== "accepted" && (
-                              <button className="text-button text-muted" onClick={() => openInvite(tenant, tenant.inviteEmail)}>
-                                {tenant.inviteStatus ? "Resend invite" : "Invite admin"}
+                            {tenant.status === "active"
+                              && ["NOT_REQUESTED", "RETRY_REQUIRED"].includes(tenant.invitationStatus ?? "") && (
+                              <button className="text-button text-muted" onClick={() => openInvite(tenant, tenant.adminEmail)}>
+                                {tenant.adminEmail ? "Retry invite" : "Invite admin"}
                               </button>
                             )}
+                            <button className="text-button" onClick={() => setDetailTenant(tenant)}>
+                              Details
+                            </button>
                           </div>
                         </td>
                       </tr>
@@ -503,6 +492,24 @@ export function CustomerConsole({ api, adminEmail, onSignOut }: CustomerConsoleP
             setActionError("");
           }}
           onSubmit={performAction}
+        />
+      )}
+
+      {detailTenant && (
+        <CustomerDetailsDialog
+          api={api}
+          tenant={detailTenant}
+          onClose={() => setDetailTenant(null)}
+          onSaved={(details) => {
+            setTenants((current) => current.map((tenant) => tenant.id === details.tenantId
+              ? { ...tenant, name: details.tenantName }
+              : tenant));
+            setReloadId((current) => current + 1);
+          }}
+          onEditAdminEmail={() => {
+            setDetailTenant(null);
+            openInvite(detailTenant, detailTenant.adminEmail);
+          }}
         />
       )}
 
@@ -596,40 +603,40 @@ function InviteStatusBadge({ status }: { status?: string }) {
   if (s === "accepted" || s === "sent") badgeClass = "status-active";
   else if (s === "pending" || s === "created") badgeClass = "status-provisioning";
   else if (s === "failed" || s === "retry_required" || s === "expired") badgeClass = "status-suspended";
-  return <span className={`status-badge ${badgeClass}`}>{formatStatus(status)}</span>;
+  const label = s === "created" ? "Invitation sent"
+    : s === "retry_required" ? "Delivery failed"
+      : s === "pending_activation" ? "Pending activation"
+        : formatStatus(status);
+  return <span className={`status-badge ${badgeClass}`}>{label}</span>;
 }
 
 function ProvisioningResult({
   outcome,
   tenantStatus,
   onBack,
-  onRetryInvite,
 }: {
   outcome: ProvisionOutcome;
   tenantStatus?: string;
   onBack: () => void;
-  onRetryInvite: () => void;
 }) {
-  const { body, status, initialAdminEmail } = outcome;
-  const contractFailure = status === 424;
-  const invitationStatus = body?.invitationStatus;
-  const token = body?.adminInviteToken;
+  const { body, status } = outcome;
+  const invitationStatus = body.invitationStatus;
   const identifiers = [
-    ["Tenant ID", body?.tenantId],
-    ["Customer group ID", body?.customerGroupId],
-    ["Legal entity ID", body?.legalEntityId],
-    ["Site ID", body?.siteId],
+    ["Tenant ID", body.tenantId],
+    ["Customer group ID", body.customerGroupId],
+    ["Legal entity ID", body.legalEntityId],
+    ["Site ID", body.siteId],
   ] as const;
 
   return (
     <main className="result-page">
       <button className="back-link" onClick={onBack}><ArrowLeft size={15} aria-hidden="true" /> Customer directory</button>
-      <div className={`result-hero ${contractFailure ? "result-warning" : ""}`}>
-        <span className="result-icon">{contractFailure ? <CircleAlert size={24} /> : <Check size={24} />}</span>
+      <div className="result-hero">
+        <span className="result-icon"><Check size={24} /></span>
         <div>
-          <p className="eyebrow">{contractFailure ? "PROVISIONING NEEDS ATTENTION" : "PROVISIONING RESPONSE"}</p>
-          <h1>{contractFailure ? "Customer created; invitation was not created" : "Customer provisioning accepted"}</h1>
-          <p>HTTP {status}{body && ` · Seeding ${body.seedingApplied === true ? "applied" : body.seedingApplied === false ? "not applied" : "not reported"}.`}</p>
+          <p className="eyebrow">PROVISIONING RESPONSE</p>
+          <h1>Customer provisioning accepted</h1>
+          <p>HTTP {status} · Seeding {body.seedingApplied ? "applied" : "not applied"}.</p>
         </div>
       </div>
 
@@ -661,7 +668,7 @@ function ProvisioningResult({
         <div className="result-status-row">
           <div>
             <span className="metric-label">Invitation status</span>
-            <strong>{invitationStatus || (contractFailure ? "Not specified in the 424 response schema" : "Not returned")}</strong>
+            <strong>{invitationStatus || "Not reported"}</strong>
           </div>
           <div>
             <span className="metric-label">Tenant status</span>
@@ -673,34 +680,14 @@ function ProvisioningResult({
             The create response does not contain a tenant status. Refresh the directory to read the current value from the list API.
           </p>
         )}
-        {contractFailure && (
-          <div className="banner banner-warning" role="status">
-            The API contract says the tenant was created and seeded, but the initial administrator invitation was not created. It does not define a 424 response body, so this page cannot show identifiers or retry against the tenant. Return to the directory, refresh, and retry the invitation from the tenant row.
-          </div>
-        )}
-        {token && (
-          <div className="token-handoff">
-            <div>
-              <strong>One-time invitation token</strong>
-              <p>Copy it now to complete the administrator handoff. It is held only in this page’s memory.</p>
-            </div>
-            <code>{token}</code>
-            <p className="token-email">For {initialAdminEmail || "the initial administrator"}</p>
-          </div>
-        )}
-        <div className="result-actions">
-          {invitationStatus === "RETRY_REQUIRED" && body?.tenantId && (
-            <button className="button button-primary" onClick={onRetryInvite}>
-              Retry administrator invitation
-            </button>
-          )}
-          <button className="button button-secondary" onClick={onBack}>Return to customers</button>
-        </div>
-        {invitationStatus === "CREATED" && !token && (
+        {invitationStatus === "PENDING_ACTIVATION" && (
           <p className="subtle-note">
-            The API confirms an invitation exists but did not return its one-time token in this response.
+            The administrator email is saved. No invitation has been created or sent; use Activate from the customer list when ready.
           </p>
         )}
+        <div className="result-actions">
+          <button className="button button-secondary" onClick={onBack}>Return to customers</button>
+        </div>
       </section>
     </main>
   );
@@ -725,7 +712,9 @@ function ActionDialog({
 }) {
   const label = action.kind === "activate" ? "Activate" : action.kind === "suspend" ? "Suspend" : "Reactivate";
   const description = action.kind === "activate"
-    ? "The API will activate this tenant if seeding is complete and no requested invitation is outstanding."
+    ? action.tenant.adminEmail
+      ? `This enables the customer and sends an administrator invitation to ${action.tenant.adminEmail} after the API confirms activation.`
+      : "This enables the customer after the API confirms provisioning and industry seeding are complete. No administrator email is configured."
     : action.kind === "suspend"
       ? "Suspending this tenant will immediately block its customer API requests."
       : "This will restore the tenant to active status.";
@@ -759,6 +748,300 @@ function ActionDialog({
           </button>
         </div>
       </form>
+    </Modal>
+  );
+}
+
+function CustomerDetailsDialog({
+  api,
+  tenant,
+  onClose,
+  onSaved,
+  onEditAdminEmail,
+}: {
+  api: PlatformAdminApi;
+  tenant: TenantSummary;
+  onClose: () => void;
+  onSaved: (details: TenantDetails) => void;
+  onEditAdminEmail: () => void;
+}) {
+  const [details, setDetails] = useState<TenantDetails | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
+  const [reloadId, setReloadId] = useState(0);
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState("");
+  const [saved, setSaved] = useState(false);
+  const [tenantName, setTenantName] = useState("");
+  const [entities, setEntities] = useState<TenantDetails["legalEntities"]>([]);
+  const [sites, setSites] = useState<TenantDetails["sites"]>([]);
+
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    setLoadError("");
+    void api.getTenantDetails(tenant.id).then((result) => {
+      if (!active) return;
+      setDetails(result);
+      setTenantName(result.tenantName);
+      setEntities(result.legalEntities);
+      setSites(result.sites);
+    }).catch((error: unknown) => {
+      if (active) setLoadError(errorMessage(error));
+    }).finally(() => {
+      if (active) setLoading(false);
+    });
+    return () => {
+      active = false;
+    };
+  }, [api, tenant.id, reloadId]);
+
+  const canEditAdminEmail = tenant.status === "active"
+    && ["NOT_REQUESTED", "RETRY_REQUIRED"].includes(tenant.invitationStatus ?? "");
+  const canEditDetails = details?.tenantStatus !== "archived";
+
+  function startEditing() {
+    if (!details) return;
+    setTenantName(details.tenantName);
+    setEntities(details.legalEntities);
+    setSites(details.sites);
+    setEditing(true);
+    setSaveError("");
+    setSaved(false);
+  }
+
+  function buildUpdate(): TenantDetailsUpdateRequest {
+    if (!details) return {};
+    const changedEntities = entities.flatMap((entity, index) => {
+      const current = details.legalEntities[index];
+      if (!current) return [];
+      const update: NonNullable<TenantDetailsUpdateRequest["legalEntities"]>[number] = {
+        id: entity.id,
+        ...(entity.name !== current.name ? { name: entity.name } : {}),
+        ...(entity.legalName !== current.legalName ? { legalName: entity.legalName } : {}),
+        ...(entity.registeredAddress !== current.registeredAddress
+          ? { registeredAddress: entity.registeredAddress ?? "" }
+          : {}),
+      };
+      return Object.keys(update).length > 1 ? [update] : [];
+    });
+    const changedSites = sites.flatMap((site, index) => {
+      const current = details.sites[index];
+      if (!current) return [];
+      const update: NonNullable<TenantDetailsUpdateRequest["sites"]>[number] = {
+        id: site.id,
+        ...(site.name !== current.name ? { name: site.name } : {}),
+        ...(site.address !== current.address ? { address: site.address ?? "" } : {}),
+      };
+      return Object.keys(update).length > 1 ? [update] : [];
+    });
+    return {
+      ...(tenantName !== details.tenantName ? { tenantName } : {}),
+      ...(changedEntities.length ? { legalEntities: changedEntities } : {}),
+      ...(changedSites.length ? { sites: changedSites } : {}),
+    };
+  }
+
+  async function saveDetails(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!details) return;
+    const update = buildUpdate();
+    if (!Object.keys(update).length) {
+      setEditing(false);
+      return;
+    }
+    setSaving(true);
+    setSaveError("");
+    setSaved(false);
+    try {
+      await api.updateTenantDetails(tenant.id, update, crypto.randomUUID());
+      const result: TenantDetails = {
+        ...details,
+        tenantName: update.tenantName ?? details.tenantName,
+        legalEntities: details.legalEntities.map((entity) => ({
+          ...entity,
+          ...update.legalEntities?.find((item) => item.id === entity.id),
+        })),
+        sites: details.sites.map((site) => ({
+          ...site,
+          ...update.sites?.find((item) => item.id === site.id),
+        })),
+      };
+      setDetails(result);
+      setTenantName(result.tenantName);
+      setEntities(result.legalEntities);
+      setSites(result.sites);
+      setEditing(false);
+      setSaved(true);
+      onSaved(result);
+    } catch (error) {
+      setSaveError(errorMessage(error));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Modal title="Customer details" onClose={onClose}>
+      {loading ? (
+        <div className="state-panel" role="status">
+          <LoaderCircle className="spinner" size={22} aria-hidden="true" />
+          <strong>Loading customer details</strong>
+        </div>
+      ) : loadError ? (
+        <div className="state-panel state-error" role="alert">
+          <CircleAlert size={22} aria-hidden="true" />
+          <strong>Could not load customer details</strong>
+          <span>{loadError}</span>
+          <button className="button button-secondary" onClick={() => setReloadId((current) => current + 1)}>
+            Try again
+          </button>
+        </div>
+      ) : details && editing ? (
+        <form onSubmit={saveDetails}>
+          <p className="dialog-copy">Edit customer-facing names and addresses. Legal identifiers, types, status, plan, and industry are read-only.</p>
+          <div className="field dialog-field">
+            <label htmlFor="detail-tenant-name">Tenant name</label>
+            <input id="detail-tenant-name" required maxLength={120} value={tenantName}
+              onChange={(event) => setTenantName(event.currentTarget.value)} />
+          </div>
+          {entities.map((entity, index) => (
+            <fieldset className="details-edit-group" key={entity.id}>
+              <legend>Legal entity {index + 1}</legend>
+              <div className="field dialog-field">
+                <label htmlFor={`entity-name-${entity.id}`}>Display name</label>
+                <input id={`entity-name-${entity.id}`} required maxLength={160} value={entity.name}
+                  onChange={(event) => {
+                    const value = event.currentTarget.value;
+                    setEntities((current) => current.map((item) => item.id === entity.id ? { ...item, name: value } : item));
+                  }} />
+              </div>
+              <div className="field dialog-field">
+                <label htmlFor={`entity-legal-name-${entity.id}`}>Legal name</label>
+                <input id={`entity-legal-name-${entity.id}`} required maxLength={200} value={entity.legalName}
+                  onChange={(event) => {
+                    const value = event.currentTarget.value;
+                    setEntities((current) => current.map((item) => item.id === entity.id ? { ...item, legalName: value } : item));
+                  }} />
+              </div>
+              <div className="field dialog-field">
+                <label htmlFor={`entity-address-${entity.id}`}>Registered address</label>
+                <textarea id={`entity-address-${entity.id}`} maxLength={1000} value={entity.registeredAddress ?? ""}
+                  onChange={(event) => {
+                    const value = event.currentTarget.value;
+                    setEntities((current) => current.map((item) => item.id === entity.id ? { ...item, registeredAddress: value } : item));
+                  }} />
+              </div>
+            </fieldset>
+          ))}
+          {sites.map((site, index) => (
+            <fieldset className="details-edit-group" key={site.id}>
+              <legend>Site {index + 1}</legend>
+              <div className="field dialog-field">
+                <label htmlFor={`site-name-${site.id}`}>Site name</label>
+                <input id={`site-name-${site.id}`} required maxLength={120} value={site.name}
+                  onChange={(event) => {
+                    const value = event.currentTarget.value;
+                    setSites((current) => current.map((item) => item.id === site.id ? { ...item, name: value } : item));
+                  }} />
+              </div>
+              <div className="field dialog-field">
+                <label htmlFor={`site-address-${site.id}`}>Site address</label>
+                <textarea id={`site-address-${site.id}`} maxLength={1000} value={site.address ?? ""}
+                  onChange={(event) => {
+                    const value = event.currentTarget.value;
+                    setSites((current) => current.map((item) => item.id === site.id ? { ...item, address: value } : item));
+                  }} />
+              </div>
+            </fieldset>
+          ))}
+          {saveError && <div className="banner banner-error" role="alert">{saveError}</div>}
+          <div className="dialog-actions">
+            <button type="button" className="button button-quiet" onClick={() => setEditing(false)} disabled={saving}>Cancel</button>
+            <button type="submit" className="button button-primary" disabled={saving}>
+              {saving ? "Saving…" : "Save details"}
+            </button>
+          </div>
+        </form>
+      ) : details ? (
+        <>
+          <p className="dialog-copy">Tenant, company, and site information from the Platform Admin API.</p>
+          {saved && <div className="banner banner-success" role="status">Customer details saved.</div>}
+          <dl className="customer-detail-list">
+            <div><dt>Customer group</dt><dd>{details.customerGroupName || "—"}</dd></div>
+            <div><dt>Customer group ID</dt><dd><code>{details.customerGroupId}</code></dd></div>
+            <div><dt>Group slug</dt><dd><code>{details.customerGroupSlug || "—"}</code></dd></div>
+            <div><dt>Customer / tenant</dt><dd>{details.tenantName}</dd></div>
+            <div><dt>Tenant ID</dt><dd><code>{details.tenantId}</code></dd></div>
+            <div><dt>Tenant slug</dt><dd><code>{details.tenantSlug}</code></dd></div>
+            <div><dt>Status</dt><dd>{formatStatus(details.tenantStatus)}</dd></div>
+            <div><dt>Plan tier</dt><dd>{details.planTier || "—"}</dd></div>
+            <div><dt>Industry</dt><dd>{formatStatus(details.industryType ?? "") || "—"}</dd></div>
+            <div><dt>Administrator email</dt><dd>{details.adminEmail || "—"}</dd></div>
+            <div><dt>Invitation status</dt><dd>{formatStatus(details.invitationStatus ?? "NOT_REQUESTED")}</dd></div>
+            <div><dt>Workspace URL</dt><dd>{details.workspaceUrl || "—"}</dd></div>
+          </dl>
+          {details.legalEntities.map((entity) => (
+            <section className="details-record" key={entity.id}>
+              <h3>Legal entity</h3>
+              <dl className="customer-detail-list">
+                <div><dt>Name</dt><dd>{entity.name}</dd></div>
+                <div><dt>Legal name</dt><dd>{entity.legalName}</dd></div>
+                <div><dt>PAN</dt><dd><code>{entity.pan || "—"}</code></dd></div>
+                <div><dt>Entity type</dt><dd>{formatStatus(entity.entityType)}</dd></div>
+                <div><dt>Status</dt><dd>{formatStatus(entity.status)}</dd></div>
+                <div><dt>Registered address</dt><dd>{entity.registeredAddress || "—"}</dd></div>
+              </dl>
+              {entity.gstRegistrations.map((registration) => (
+                <dl className="customer-detail-list" key={registration.id}>
+                  <div><dt>GSTIN</dt><dd><code>{registration.gstin}</code></dd></div>
+                  <div><dt>Trade name</dt><dd>{registration.tradeName || "—"}</dd></div>
+                  <div><dt>Registration type</dt><dd>{formatStatus(registration.registrationType)}</dd></div>
+                  <div><dt>State code</dt><dd>{registration.stateCode}</dd></div>
+                  <div><dt>Registration status</dt><dd>{formatStatus(registration.status)}</dd></div>
+                  <div><dt>Effective from</dt><dd>{registration.effectiveFrom}</dd></div>
+                  <div><dt>Effective to</dt><dd>{registration.effectiveTo || "—"}</dd></div>
+                </dl>
+              ))}
+            </section>
+          ))}
+          {details.sites.map((site) => (
+            <section className="details-record" key={site.id}>
+              <h3>Site</h3>
+              <dl className="customer-detail-list">
+                <div><dt>Name</dt><dd>{site.name}</dd></div>
+                <div><dt>Code</dt><dd><code>{site.code}</code></dd></div>
+                <div><dt>Type</dt><dd>{formatStatus(site.siteType)}</dd></div>
+                <div><dt>Status</dt><dd>{formatStatus(site.status)}</dd></div>
+                <div><dt>GST registration</dt><dd><code>{site.gstRegistrationId || "—"}</code></dd></div>
+                <div><dt>Address</dt><dd>{site.address || "—"}</dd></div>
+              </dl>
+            </section>
+          ))}
+          {canEditAdminEmail && (
+            <p className="subtle-note">
+              Changing the administrator email uses the existing invitation API and sends an invitation as an explicit action.
+            </p>
+          )}
+          {details.tenantStatus === "archived" && (
+            <p className="subtle-note">Archived customer details are read-only.</p>
+          )}
+          <div className="dialog-actions">
+            {canEditDetails && (
+              <button type="button" className="button button-primary" onClick={startEditing}>Edit details</button>
+            )}
+            {canEditAdminEmail && (
+              <button type="button" className="button button-secondary" onClick={onEditAdminEmail}>
+                Change email &amp; send invite
+              </button>
+            )}
+          </div>
+        </>
+      ) : null}
+      <div className="dialog-actions">
+        <button type="button" className="button button-secondary" onClick={onClose}>Close</button>
+      </div>
     </Modal>
   );
 }

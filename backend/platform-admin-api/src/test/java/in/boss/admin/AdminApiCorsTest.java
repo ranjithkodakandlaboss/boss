@@ -7,6 +7,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import in.boss.admin.domain.TenantManagementService;
+import in.boss.admin.domain.TenantDetailsService;
 import in.boss.admin.security.AdminAuthenticationFilter;
 import in.boss.admin.security.AdminTokenVerifier;
 import in.boss.admin.security.SecurityConfiguration;
@@ -30,6 +31,7 @@ class AdminApiCorsTest {
     @MockitoBean AdminTokenVerifier verifier;
     @MockitoBean JdbcTemplate jdbcTemplate;
     @MockitoBean TenantManagementService tenantManagementService;
+    @MockitoBean TenantDetailsService tenantDetailsService;
 
     @ParameterizedTest
     @ValueSource(strings = {"http://127.0.0.1:5173", "http://localhost:5173"})

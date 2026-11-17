@@ -90,14 +90,48 @@ public class DatabasePrivilegeGuard {
                     """, String.class);
             if (!jdbc.queryForObject("SELECT has_column_privilege(current_user, 'public.tenant_registry', 'status', 'UPDATE') " +
                     "AND has_column_privilege(current_user, 'public.tenant_registry', 'updated_at', 'UPDATE') " +
+                    "AND has_column_privilege(current_user, 'public.tenant_registry', 'initial_admin_email', 'UPDATE') " +
+                    "AND has_column_privilege(current_user, 'public.tenant_registry', 'name', 'UPDATE') " +
                     "AND has_column_privilege(current_user, 'public.customer_groups', 'id', 'SELECT') " +
+                    "AND has_column_privilege(current_user, 'public.customer_groups', 'name', 'SELECT') " +
+                    "AND has_column_privilege(current_user, 'public.customer_groups', 'slug', 'SELECT') " +
                     "AND has_column_privilege(current_user, 'public.tenant_registry', 'id', 'SELECT') " +
                     "AND has_column_privilege(current_user, 'public.legal_entities', 'id', 'SELECT') " +
+                    "AND has_column_privilege(current_user, 'public.legal_entities', 'tenant_id', 'SELECT') " +
+                    "AND has_column_privilege(current_user, 'public.legal_entities', 'name', 'SELECT') " +
+                    "AND has_column_privilege(current_user, 'public.legal_entities', 'legal_name', 'SELECT') " +
+                    "AND has_column_privilege(current_user, 'public.legal_entities', 'pan', 'SELECT') " +
+                    "AND has_column_privilege(current_user, 'public.legal_entities', 'entity_type', 'SELECT') " +
+                    "AND has_column_privilege(current_user, 'public.legal_entities', 'registered_address', 'SELECT') " +
+                    "AND has_column_privilege(current_user, 'public.legal_entities', 'status', 'SELECT') " +
+                    "AND has_column_privilege(current_user, 'public.legal_entities', 'name', 'UPDATE') " +
+                    "AND has_column_privilege(current_user, 'public.legal_entities', 'legal_name', 'UPDATE') " +
+                    "AND has_column_privilege(current_user, 'public.legal_entities', 'registered_address', 'UPDATE') " +
+                    "AND has_column_privilege(current_user, 'public.gst_registrations', 'id', 'SELECT') " +
+                    "AND has_column_privilege(current_user, 'public.gst_registrations', 'tenant_id', 'SELECT') " +
+                    "AND has_column_privilege(current_user, 'public.gst_registrations', 'legal_entity_id', 'SELECT') " +
+                    "AND has_column_privilege(current_user, 'public.gst_registrations', 'gstin', 'SELECT') " +
+                    "AND has_column_privilege(current_user, 'public.gst_registrations', 'trade_name', 'SELECT') " +
+                    "AND has_column_privilege(current_user, 'public.gst_registrations', 'registration_type', 'SELECT') " +
+                    "AND has_column_privilege(current_user, 'public.gst_registrations', 'state_code', 'SELECT') " +
+                    "AND has_column_privilege(current_user, 'public.gst_registrations', 'status', 'SELECT') " +
+                    "AND has_column_privilege(current_user, 'public.gst_registrations', 'effective_from', 'SELECT') " +
+                    "AND has_column_privilege(current_user, 'public.gst_registrations', 'effective_to', 'SELECT') " +
                     "AND has_column_privilege(current_user, 'public.physical_sites', 'id', 'SELECT') " +
+                    "AND has_column_privilege(current_user, 'public.physical_sites', 'tenant_id', 'SELECT') " +
+                    "AND has_column_privilege(current_user, 'public.physical_sites', 'legal_entity_id', 'SELECT') " +
+                    "AND has_column_privilege(current_user, 'public.physical_sites', 'gst_reg_id', 'SELECT') " +
+                    "AND has_column_privilege(current_user, 'public.physical_sites', 'name', 'SELECT') " +
+                    "AND has_column_privilege(current_user, 'public.physical_sites', 'code', 'SELECT') " +
+                    "AND has_column_privilege(current_user, 'public.physical_sites', 'site_type', 'SELECT') " +
+                    "AND has_column_privilege(current_user, 'public.physical_sites', 'address', 'SELECT') " +
+                    "AND has_column_privilege(current_user, 'public.physical_sites', 'status', 'SELECT') " +
+                    "AND has_column_privilege(current_user, 'public.physical_sites', 'name', 'UPDATE') " +
+                    "AND has_column_privilege(current_user, 'public.physical_sites', 'address', 'UPDATE') " +
                     "AND has_column_privilege(current_user, 'public.tenant_onboarding_config', 'industry_type', 'UPDATE') " +
                     "AND has_column_privilege(current_user, 'public.tenant_onboarding_config', 'onboarding_completed_at', 'UPDATE')",
                     Boolean.class)) {
-                missing.add("required ID SELECT, tenant status, or onboarding column privileges");
+                missing.add("required customer-detail read/write column privileges");
             }
             if (!missing.isEmpty()) {
                 throw new IllegalStateException("Platform Admin database role is missing required control-plane privileges: " + missing);
@@ -135,6 +169,24 @@ public class DatabasePrivilegeGuard {
             if (listPolicies == null || listPolicies != 2) {
                 throw new IllegalStateException(
                         "Platform Admin list policies are missing. Apply db/boss-admin-grants.sql before starting.");
+            }
+            Integer detailPolicies = jdbc.queryForObject("""
+                    SELECT count(*)
+                    FROM pg_class c
+                    JOIN pg_namespace n ON n.oid = c.relnamespace
+                    JOIN pg_policy pol ON pol.polrelid = c.oid
+                    WHERE n.nspname = 'public'
+                      AND c.relrowsecurity
+                      AND c.relforcerowsecurity
+                      AND (
+                        (c.relname = 'legal_entities' AND pol.polname = 'legal_entities_isolation')
+                        OR (c.relname = 'gst_registrations' AND pol.polname = 'gst_registrations_isolation')
+                        OR (c.relname = 'physical_sites' AND pol.polname = 'physical_sites_isolation')
+                      )
+                    """, Integer.class);
+            if (detailPolicies == null || detailPolicies != 3) {
+                throw new IllegalStateException(
+                        "Tenant RLS policies are required for company and site details");
             }
         };
     }

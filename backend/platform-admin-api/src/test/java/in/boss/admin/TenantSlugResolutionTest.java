@@ -70,7 +70,7 @@ class TenantSlugResolutionTest extends PlatformAdminIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(requestBody))
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.invitationStatus").value("CREATED"));
+                .andExpect(jsonPath("$.invitationStatus").value("PENDING_ACTIVATION"));
 
         // 2. Resolve tenant by slug without authentication (public access for routing)
         mvc.perform(get("/admin/api/v1/tenants/resolve").param("slug", tenantSlug))
