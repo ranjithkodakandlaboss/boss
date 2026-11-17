@@ -57,10 +57,25 @@ These are operator/DBA actions, not workflow actions; this repository does not c
 Before Stage 2, build and push the Admin image to the repository created in Stage 1:
 
 ```sh
+cd src/frontend
+npm ci
+npm test
+npm run build
+cd ../..
+mvn -f backend/platform-admin-api/pom.xml clean package -DskipTests
+
 gcloud builds submit --project boss-dev-514813 --config cloudbuild-admin.yaml .
 ```
 
-This Admin-only Cloud Build config builds and pushes `asia-south1-docker.pkg.dev/boss-dev-514813/boss/boss-admin-api:bootstrap-v1`. The same explicit `bootstrap-v1` tag is the OpenTofu `admin_image_tag` default and the `_ADMIN_IMAGE` tag in `cloudbuild.yaml`; it is not an implicit `latest` tag. The initial service cannot be created until this image exists.
+The frontend build writes the Platform Admin UI into
+`backend/platform-admin-api/src/main/resources/static`, which is packaged into the
+API JAR and Docker image. Build the frontend before packaging the backend; otherwise
+the image can contain stale or missing UI assets. This Admin-only Cloud Build config
+builds and pushes
+`asia-south1-docker.pkg.dev/boss-dev-514813/boss/boss-admin-api:bootstrap-v1`.
+The same explicit `bootstrap-v1` tag is the OpenTofu `admin_image_tag` default and
+the `_ADMIN_IMAGE` tag in `cloudbuild.yaml`; it is not an implicit `latest` tag.
+The initial service cannot be created until this image exists.
 
 ### Stage 2 — create the Terraform-owned Cloud Run service
 

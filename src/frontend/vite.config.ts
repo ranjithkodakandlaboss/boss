@@ -12,6 +12,10 @@ export default defineConfig({
       },
     },
   },
+  build: {
+    outDir: "../../backend/platform-admin-api/src/main/resources/static",
+    emptyOutDir: true,
+  },
   test: {
     environment: "jsdom",
     environmentOptions: {
