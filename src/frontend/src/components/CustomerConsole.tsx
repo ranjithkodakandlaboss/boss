@@ -135,9 +135,9 @@ export function CustomerConsole({ api, adminEmail, onSignOut }: CustomerConsoleP
     setReloadId((current) => current + 1);
   }
 
-  function openInvite(tenant: InviteTarget) {
+  function openInvite(tenant: InviteTarget, defaultEmail?: string) {
     setInviteTarget(tenant);
-    setInviteEmail("");
+    setInviteEmail(defaultEmail || "");
     setInviteError("");
   }
 
@@ -396,8 +396,8 @@ export function CustomerConsole({ api, adminEmail, onSignOut }: CustomerConsoleP
                       <th scope="col">Customer / tenant</th>
                       <th scope="col">Tenant slug</th>
                       <th scope="col">Status</th>
-                      <th scope="col">Plan tier</th>
                       <th scope="col">Industry</th>
+                      <th scope="col">Admin / Invitation</th>
                       <th scope="col"><span className="visually-hidden">Actions</span></th>
                     </tr>
                   </thead>
@@ -410,8 +410,11 @@ export function CustomerConsole({ api, adminEmail, onSignOut }: CustomerConsoleP
                         </td>
                         <td><code>{tenant.slug}</code></td>
                         <td><StatusBadge status={tenant.status} /></td>
-                        <td>{tenant.planTier || "—"}</td>
                         <td>{formatStatus(tenant.industryType || "") || "—"}</td>
+                        <td>
+                          <div className="tenant-admin-email">{tenant.inviteEmail || "—"}</div>
+                          <div style={{ marginTop: "4px" }}><InviteStatusBadge status={tenant.inviteStatus} /></div>
+                        </td>
                         <td>
                           <div className="row-actions">
                             {tenant.status === "provisioning" && (
@@ -432,9 +435,9 @@ export function CustomerConsole({ api, adminEmail, onSignOut }: CustomerConsoleP
                                 Reactivate
                               </button>
                             )}
-                            {tenant.status !== "archived" && (
-                              <button className="text-button text-muted" onClick={() => openInvite(tenant)}>
-                                Invite admin
+                            {tenant.status !== "archived" && tenant.inviteStatus !== "accepted" && (
+                              <button className="text-button text-muted" onClick={() => openInvite(tenant, tenant.inviteEmail)}>
+                                {tenant.inviteStatus ? "Resend invite" : "Invite admin"}
                               </button>
                             )}
                           </div>
@@ -567,6 +570,16 @@ function AppShell({
 
 function StatusBadge({ status }: { status: string }) {
   return <span className={`status-badge status-${status.toLowerCase()}`}>{formatStatus(status)}</span>;
+}
+
+function InviteStatusBadge({ status }: { status?: string }) {
+  if (!status) return <span className="status-badge status-secondary">Not requested</span>;
+  const s = status.toLowerCase();
+  let badgeClass = "status-secondary";
+  if (s === "accepted" || s === "sent") badgeClass = "status-active";
+  else if (s === "pending" || s === "created") badgeClass = "status-provisioning";
+  else if (s === "failed" || s === "retry_required" || s === "expired") badgeClass = "status-suspended";
+  return <span className={`status-badge ${badgeClass}`}>{formatStatus(status)}</span>;
 }
 
 function ProvisioningResult({

@@ -104,14 +104,17 @@ public class TenantManagementService {
                 "SELECT count(*) FROM tenant_registry WHERE (?::text IS NULL OR status = ?)",
                 Integer.class, status, status);
         List<TenantSummary> content = jdbc.query(
-                "SELECT t.id, t.name, t.slug, t.status, t.plan_tier, c.industry_type " +
+                "SELECT t.id, t.name, t.slug, t.status, t.plan_tier, c.industry_type, " +
+                        "inv.out_status AS invite_status, inv.out_email AS invite_email " +
                         "FROM tenant_registry t " +
                         "LEFT JOIN tenant_onboarding_config c ON c.tenant_id = t.id " +
+                        "LEFT JOIN LATERAL boss_get_tenant_invitation_summary(t.id) inv ON true " +
                         "WHERE (?::text IS NULL OR t.status = ?) " +
-                        "ORDER BY t.created_at, t.id LIMIT ? OFFSET ?",
+                        "ORDER BY t.created_at DESC, t.id LIMIT ? OFFSET ?",
                 (rs, row) -> new TenantSummary(
                         rs.getObject("id", UUID.class), rs.getString("name"), rs.getString("slug"),
-                        rs.getString("status"), rs.getString("plan_tier"), rs.getString("industry_type")),
+                        rs.getString("status"), rs.getString("plan_tier"), rs.getString("industry_type"),
+                        rs.getString("invite_status"), rs.getString("invite_email")),
                 status, status, size, page * size);
         return new TenantPage(content, page, total == null ? 0 : total);
     }
@@ -197,9 +200,9 @@ public class TenantManagementService {
         } catch (IdentityInviteUnavailableException exception) {
             idempotency.expire(lockId);
             transactions.executeWithoutResult(status -> audit(actor, "tenant.admin_invite_retry_required", tenantId,
-                    null, Map.of("invitationStatus", RETRY_REQUIRED), ipAddress));
+                    null, Map.of("invitationStatus", RETRY_REQUIRED, "error", exception.getMessage()), ipAddress));
             meters.counter("boss.admin.tenant.invite", "result", "unavailable").increment();
-            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "IDENTITY_INVITE_UNAVAILABLE");
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "IDENTITY_INVITE_UNAVAILABLE: " + exception.getMessage());
         } catch (RuntimeException exception) {
             idempotency.expire(lockId);
             throw exception;
@@ -225,12 +228,13 @@ public class TenantManagementService {
             meters.counter("boss.admin.tenant.provision", "result", "created").increment();
             return stored(lockId, HttpStatus.CREATED.value(), body);
         } catch (IdentityInviteUnavailableException exception) {
+            String errorReason = exception.getMessage() != null ? exception.getMessage() : "Email delivery unconfigured";
             transactions.executeWithoutResult(status -> audit(actor, "tenant.admin_invite_retry_required",
-                    created.tenantId(), null, Map.of("invitationStatus", RETRY_REQUIRED), ipAddress));
+                    created.tenantId(), null, Map.of("invitationStatus", RETRY_REQUIRED, "error", errorReason), ipAddress));
             ProvisionDependencyFailure body = new ProvisionDependencyFailure(
                     "ADMIN_INVITE_RETRY_REQUIRED",
-                    "The tenant was created, but the initial administrator invitation was not created. " +
-                            "Retry POST /admin/api/v1/tenants/{tenantId}/admin-invite.",
+                    "The tenant was created, but the initial administrator invitation was not delivered: " + errorReason +
+                            ". Retry POST /admin/api/v1/tenants/{tenantId}/admin-invite.",
                     created.tenantId(), created.customerGroupId(), created.legalEntityId(), created.siteId(),
                     true, RETRY_REQUIRED);
             log.info("Tenant provisioned tenantId={} invitationStatus={}", created.tenantId(), RETRY_REQUIRED);
@@ -249,15 +253,35 @@ public class TenantManagementService {
         jdbc.update("INSERT INTO tenant_registry(id, customer_group_id, name, slug, status, plan_tier) " +
                         "VALUES (?, ?, ?, ?, 'provisioning', ?)",
                 tenantId, groupId, request.tenantName(), request.tenantSlug(), request.planTier());
+
+        String regAddrJson = null;
+        if (request.registeredAddress() != null && !request.registeredAddress().isBlank()) {
+            try {
+                regAddrJson = mapper.writeValueAsString(Map.of("address", request.registeredAddress().trim()));
+            } catch (JsonProcessingException ignored) {}
+        }
         UUID legalEntityId = Objects.requireNonNull(jdbc.queryForObject(
-                "INSERT INTO legal_entities(tenant_id, name, legal_name, pan, entity_type) " +
-                        "VALUES (?, ?, ?, ?, ?) RETURNING id",
+                "INSERT INTO legal_entities(tenant_id, name, legal_name, pan, entity_type, registered_address) " +
+                        "VALUES (?, ?, ?, ?, ?, ?::jsonb) RETURNING id",
                 UUID.class, tenantId, request.legalEntityName(), request.legalEntityName(),
-                request.pan(), request.entityType()));
+                request.pan(), request.entityType(), regAddrJson));
+
+        if (request.gstin() != null && !request.gstin().isBlank()) {
+            jdbc.queryForObject(
+                    "SELECT boss_register_gstin(?, ?, ?, ?)",
+                    UUID.class, tenantId, legalEntityId, request.gstin().trim().toUpperCase(), request.legalEntityName());
+        }
+
+        String siteAddrJson = null;
+        if (request.siteAddress() != null && !request.siteAddress().isBlank()) {
+            try {
+                siteAddrJson = mapper.writeValueAsString(Map.of("address", request.siteAddress().trim()));
+            } catch (JsonProcessingException ignored) {}
+        }
         UUID siteId = Objects.requireNonNull(jdbc.queryForObject(
-                "INSERT INTO physical_sites(tenant_id, legal_entity_id, name, code, site_type) " +
-                        "VALUES (?, ?, ?, ?, 'factory') RETURNING id",
-                UUID.class, tenantId, legalEntityId, request.siteName(), request.siteCode()));
+                "INSERT INTO physical_sites(tenant_id, legal_entity_id, name, code, site_type, address) " +
+                        "VALUES (?, ?, ?, ?, 'factory', ?::jsonb) RETURNING id",
+                UUID.class, tenantId, legalEntityId, request.siteName(), request.siteCode(), siteAddrJson));
         seeds.apply(tenantId, request.industryType());
         boolean emailPresent = request.adminEmail() != null && !request.adminEmail().isBlank();
         audit(actor, "tenant.provisioned", tenantId, null, Map.of(

@@ -39,6 +39,9 @@ export function validateProvisionRequest(values: TenantProvisionRequest): FieldE
   if (values.pan && !/^[A-Z]{5}[0-9]{4}[A-Z]$/.test(values.pan)) {
     errors.pan = "Enter a valid 10-character PAN in uppercase (for example, ABCDE1234F).";
   }
+  if (values.gstin && !/^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/.test(values.gstin.trim())) {
+    errors.gstin = "Enter a valid 15-character GSTIN (for example, 29ABCDE1234F1Z5).";
+  }
   if (
     values.entityType &&
     !Object.values(TenantProvisionRequestEntityType).includes(values.entityType)
@@ -71,9 +74,14 @@ export function ProvisionCustomerForm({
     legalEntityName: "",
     pan: "",
     entityType: TenantProvisionRequestEntityType.PRIVATE_LIMITED,
+    gstin: "",
+    registeredAddress: "",
     siteCode: "",
     siteName: "",
+    siteAddress: "",
+    adminFullName: "",
     adminEmail: "",
+    adminPhone: "",
     industryType: TenantProvisionRequestIndustryType.FABRICATION_STEEL,
   });
   const [errors, setErrors] = useState<FieldErrors>({});
@@ -104,6 +112,11 @@ export function ProvisionCustomerForm({
       tenantSlug: values.tenantSlug.trim(),
       planTier: values.planTier.trim() || "pilot",
       pan: values.pan.trim(),
+      gstin: values.gstin?.trim() || undefined,
+      registeredAddress: values.registeredAddress?.trim() || undefined,
+      siteAddress: values.siteAddress?.trim() || undefined,
+      adminFullName: values.adminFullName?.trim() || undefined,
+      adminPhone: values.adminPhone?.trim() || undefined,
       adminEmail: initialAdminEmail || undefined,
     };
 
@@ -234,6 +247,23 @@ export function ProvisionCustomerForm({
               if (selected) updateField("entityType", selected);
             }}
           />
+          <TextField
+            name="gstin"
+            label="GSTIN"
+            hint="Optional. 15-character GST identification number."
+            value={values.gstin ?? ""}
+            error={errors.gstin}
+            onChange={(value) => updateField("gstin", value.toUpperCase())}
+            maxLength={15}
+          />
+          <TextField
+            name="registeredAddress"
+            label="Registered address"
+            hint="Registered office address of the legal entity."
+            value={values.registeredAddress ?? ""}
+            error={errors.registeredAddress}
+            onChange={(value) => updateField("registeredAddress", value)}
+          />
         </div>
       </section>
 
@@ -262,6 +292,14 @@ export function ProvisionCustomerForm({
             onChange={(value) => updateField("siteName", value)}
             required
           />
+          <TextField
+            name="siteAddress"
+            label="Site address"
+            hint="Physical site location address."
+            value={values.siteAddress ?? ""}
+            error={errors.siteAddress}
+            onChange={(value) => updateField("siteAddress", value)}
+          />
           <SelectField
             name="industryType"
             label="Industry type"
@@ -281,10 +319,17 @@ export function ProvisionCustomerForm({
           <span className="section-number">05</span>
           <div>
             <h2 id="invite-heading">Initial administrator</h2>
-            <p>Optional. If provided, the API attempts to create an administrator invitation.</p>
+            <p>Provide initial administrator details for invitation and workspace activation.</p>
           </div>
         </div>
         <div className="field-grid">
+          <TextField
+            name="adminFullName"
+            label="Administrator full name"
+            value={values.adminFullName ?? ""}
+            error={errors.adminFullName}
+            onChange={(value) => updateField("adminFullName", value)}
+          />
           <TextField
             name="adminEmail"
             label="Administrator email"
@@ -292,6 +337,15 @@ export function ProvisionCustomerForm({
             value={values.adminEmail ?? ""}
             error={errors.adminEmail}
             onChange={(value) => updateField("adminEmail", value)}
+          />
+          <TextField
+            name="adminPhone"
+            label="Administrator phone"
+            type="tel"
+            hint="Contact number with country code, e.g. +91 9876543210."
+            value={values.adminPhone ?? ""}
+            error={errors.adminPhone}
+            onChange={(value) => updateField("adminPhone", value)}
           />
         </div>
       </section>

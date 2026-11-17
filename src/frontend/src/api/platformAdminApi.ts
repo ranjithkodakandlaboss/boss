@@ -1,6 +1,12 @@
 import type { components, paths } from "./generated/platform-admin";
 
-export type TenantProvisionRequest = components["schemas"]["TenantProvisionRequest"];
+export type TenantProvisionRequest = components["schemas"]["TenantProvisionRequest"] & {
+  gstin?: string;
+  registeredAddress?: string;
+  siteAddress?: string;
+  adminFullName?: string;
+  adminPhone?: string;
+};
 export type ProvisionResult = components["schemas"]["ProvisionResult"];
 export type AdminInviteResult =
   paths["/tenants/{tenantId}/admin-invite"]["post"]["responses"][201]["content"]["application/json"];
@@ -8,6 +14,9 @@ type ContractTenantPage = paths["/tenants"]["get"]["responses"][200]["content"][
 type ContractTenant = NonNullable<ContractTenantPage["content"]>[number];
 export type TenantSummary = {
   [K in keyof ContractTenant]-?: NonNullable<ContractTenant[K]>;
+} & {
+  inviteStatus?: string;
+  inviteEmail?: string;
 };
 export interface TenantPage {
   content: TenantSummary[];
@@ -17,6 +26,34 @@ export interface TenantPage {
 export type TenantStatusFilter = NonNullable<
   NonNullable<paths["/tenants"]["get"]["parameters"]["query"]>["status"]
 >;
+
+export interface ValidateInviteResponse {
+  valid: boolean;
+  inviteId: string;
+  tenantId: string;
+  tenantName: string;
+  tenantSlug: string;
+  email: string;
+  role: string;
+  status: string;
+  expiresAt: string;
+  isExpired: boolean;
+}
+
+export interface CustomerActivationRequest {
+  token: string;
+  firebaseUid: string;
+  displayName?: string;
+  phone?: string;
+}
+
+export interface CustomerActivationResponse {
+  activated: boolean;
+  userId: string;
+  tenantId: string;
+  tenantSlug: string;
+  status: string;
+}
 
 export interface AdminInviteRequest {
   email: string;
@@ -229,6 +266,7 @@ function normalizeTenantPage(body: ContractTenantPage | undefined): TenantPage {
       throw new PlatformAdminApiError(200, "The Platform Admin API returned an invalid tenant record.");
     }
     const { id, name, slug, status, planTier, industryType } = tenant;
+    const raw = tenant as Record<string, unknown>;
     if (
       typeof id !== "string" ||
       typeof name !== "string" ||
@@ -245,7 +283,50 @@ function normalizeTenantPage(body: ContractTenantPage | undefined): TenantPage {
       status,
       planTier,
       industryType: typeof industryType === "string" ? industryType : "",
+      inviteStatus: typeof raw.inviteStatus === "string" ? raw.inviteStatus : undefined,
+      inviteEmail: typeof raw.inviteEmail === "string" ? raw.inviteEmail : undefined,
     };
   });
   return { content, page: body.page, totalElements: body.totalElements };
+}
+
+export async function validateInviteToken(baseUrl: string | undefined, token: string): Promise<ValidateInviteResponse> {
+  const root = (baseUrl || "").replace(/\/+$/, "");
+  const endpoint = root ? `${root}/invites/validate?token=${encodeURIComponent(token)}` : `/admin/api/v1/invites/validate?token=${encodeURIComponent(token)}`;
+  const response = await fetch(endpoint, {
+    method: "GET",
+    headers: { Accept: "application/json" },
+  });
+  const text = await response.text();
+  let json: Record<string, unknown> | null = null;
+  try {
+    json = JSON.parse(text);
+  } catch {}
+
+  if (!response.ok) {
+    const msg = (json && (json.message || json.detail || json.error)) ? String(json.message || json.detail || json.error) : `Validation failed (${response.status})`;
+    throw new PlatformAdminApiError(response.status, msg);
+  }
+  return json as unknown as ValidateInviteResponse;
+}
+
+export async function activateCustomerAccount(baseUrl: string | undefined, req: CustomerActivationRequest): Promise<CustomerActivationResponse> {
+  const root = (baseUrl || "").replace(/\/+$/, "");
+  const endpoint = root ? `${root}/invites/activate` : `/admin/api/v1/invites/activate`;
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify(req),
+  });
+  const text = await response.text();
+  let json: Record<string, unknown> | null = null;
+  try {
+    json = JSON.parse(text);
+  } catch {}
+
+  if (!response.ok) {
+    const msg = (json && (json.message || json.detail || json.error)) ? String(json.message || json.detail || json.error) : `Activation failed (${response.status})`;
+    throw new PlatformAdminApiError(response.status, msg);
+  }
+  return json as unknown as CustomerActivationResponse;
 }

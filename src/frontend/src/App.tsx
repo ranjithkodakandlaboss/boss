@@ -10,6 +10,7 @@ import {
 } from "./auth/adminAuth";
 import { createPlatformAdminApi } from "./api/platformAdminApi";
 import { CustomerConsole } from "./components/CustomerConsole";
+import { AccountActivationScreen } from "./screens/AccountActivationScreen";
 import type { Auth, User } from "@firebase/auth";
 
 type SessionState =
@@ -86,6 +87,15 @@ export default function App() {
         message: "Sign-out could not be completed. Reload the page to end this session.",
       });
     }
+  }
+
+  const isActivationRoute =
+    typeof window !== "undefined" &&
+    (window.location.pathname.startsWith("/activate") ||
+      Boolean(new URLSearchParams(window.location.search).get("token")));
+
+  if (isActivationRoute) {
+    return <AccountActivationScreen onBackToLogin={() => { window.location.assign("/"); }} />;
   }
 
   if (session.status === "loading") {

@@ -29,8 +29,11 @@ public class AdminAuthenticationFilter extends OncePerRequestFilter {
 
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
-        return request.getRequestURI().equals("/actuator/health")
-                || request.getRequestURI().startsWith("/actuator/health/");
+        String uri = request.getRequestURI();
+        return uri.equals("/actuator/health")
+                || uri.startsWith("/actuator/health/")
+                || uri.startsWith("/admin/api/v1/invites/")
+                || uri.equals("/error");
     }
 
     @Override
