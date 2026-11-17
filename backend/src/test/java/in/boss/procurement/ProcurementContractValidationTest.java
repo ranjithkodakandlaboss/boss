@@ -10,6 +10,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -39,6 +40,40 @@ class ProcurementContractValidationTest {
 
         assertThat(required).contains("supplierId", "prId", "supplierQuotationId", "lines");
         assertThat(quoteReference.containsKey("nullable")).isFalse();
+
+        Map<?, ?> paths = map(contract.get("paths"));
+        assertThat(paths.keySet().stream().map(String.class::cast).toList()).containsAll(Set.of(
+                "/prs/{prId}/supplier-quotations",
+                "/prs/{prId}/supplier-quotations/comparison",
+                "/supplier-quotations/{quotationId}",
+                "/supplier-quotations/{quotationId}/receive",
+                "/supplier-quotations/{quotationId}/review",
+                "/supplier-quotations/{quotationId}/select",
+                "/supplier-quotations/{quotationId}/reject",
+                "/spos/{spoId}/issue",
+                "/spos/{spoId}/acknowledge",
+                "/spos/{spoId}/cancel"));
+
+        assertMutationRequiresIdempotencyKey(paths, "/prs/{prId}/supplier-quotations");
+        assertMutationRequiresIdempotencyKey(paths, "/supplier-quotations/{quotationId}/receive");
+        assertMutationRequiresIdempotencyKey(paths, "/supplier-quotations/{quotationId}/review");
+        assertMutationRequiresIdempotencyKey(paths, "/supplier-quotations/{quotationId}/select");
+        assertMutationRequiresIdempotencyKey(paths, "/supplier-quotations/{quotationId}/reject");
+        assertMutationRequiresIdempotencyKey(paths, "/spos");
+        assertMutationRequiresIdempotencyKey(paths, "/spos/{spoId}/issue");
+        assertMutationRequiresIdempotencyKey(paths, "/spos/{spoId}/acknowledge");
+        assertMutationRequiresIdempotencyKey(paths, "/spos/{spoId}/cancel");
+    }
+
+    private static void assertMutationRequiresIdempotencyKey(Map<?, ?> paths, String path) {
+        Map<?, ?> pathItem = map(paths.get(path));
+        Map<?, ?> operation = map(pathItem.get("post"));
+        List<?> parameters = (List<?>) operation.get("parameters");
+        boolean required = parameters.stream()
+                .map(ProcurementContractValidationTest::map)
+                .anyMatch(parameter -> "Idempotency-Key".equals(parameter.get("name"))
+                        && Boolean.TRUE.equals(parameter.get("required")));
+        assertThat(required).isTrue();
     }
 
     private static List<String> enumValues(Map<?, ?> schema, String propertyName) {

@@ -413,15 +413,17 @@ public class PurchaseRequisitionService {
         boolean allFullyCovered = true;
 
         for (PrLineRecord line : lines) {
-            // Rule 10: Draft and cancelled SPOs do not count towards procurement coverage.
+            // Cancelled orders retain coverage only for quantities already received.
             BigDecimal activeOrderedQty = jdbc.queryForObject("""
-                    SELECT COALESCE(SUM(sl.quantity), 0)
+                    SELECT COALESCE(SUM(
+                      CASE WHEN s.status = 'cancelled' THEN sl.received_qty ELSE sl.quantity END
+                    ), 0)
                     FROM spo_lines sl
-                    JOIN spos s ON s.id = sl.spo_id
-                    WHERE sl.pr_line_id = ?
+                    JOIN spos s ON s.id = sl.spo_id AND s.tenant_id = sl.tenant_id
+                    WHERE sl.tenant_id = ? AND sl.pr_line_id = ?
                       AND s.tenant_id = ?
-                      AND s.status NOT IN ('draft', 'cancelled')
-                    """, BigDecimal.class, line.id(), tenantId);
+                      AND s.status <> 'draft'
+                    """, BigDecimal.class, tenantId, line.id(), tenantId);
 
             if (activeOrderedQty == null) {
                 activeOrderedQty = BigDecimal.ZERO;
