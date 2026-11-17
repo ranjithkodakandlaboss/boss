@@ -39,6 +39,12 @@ jobs:
     name: Platform Admin Frontend
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      PLATFORM_ADMIN_FIREBASE_PROJECT_ID: ${{ vars.PLATFORM_ADMIN_FIREBASE_PROJECT_ID }}
+      VITE_PLATFORM_ADMIN_FIREBASE_API_KEY: ${{ vars.PLATFORM_ADMIN_FIREBASE_API_KEY }}
+      VITE_PLATFORM_ADMIN_FIREBASE_AUTH_DOMAIN: ${{ vars.PLATFORM_ADMIN_FIREBASE_AUTH_DOMAIN }}
+      VITE_PLATFORM_ADMIN_FIREBASE_PROJECT_ID: ${{ vars.PLATFORM_ADMIN_FIREBASE_PROJECT_ID }}
+      VITE_PLATFORM_ADMIN_FIREBASE_APP_ID: ${{ vars.PLATFORM_ADMIN_FIREBASE_APP_ID }}
     defaults:
       run:
         working-directory: src/frontend
@@ -50,6 +56,25 @@ jobs:
           cache: npm
           cache-dependency-path: src/frontend/package-lock.json
       - run: npm ci
+      - name: Validate Platform Admin Firebase config for deployment
+        if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.deploy_target == 'admin'
+        run: |
+          set -euo pipefail
+          for variable in \
+            PLATFORM_ADMIN_FIREBASE_PROJECT_ID \
+            VITE_PLATFORM_ADMIN_FIREBASE_API_KEY \
+            VITE_PLATFORM_ADMIN_FIREBASE_AUTH_DOMAIN \
+            VITE_PLATFORM_ADMIN_FIREBASE_PROJECT_ID \
+            VITE_PLATFORM_ADMIN_FIREBASE_APP_ID; do
+            if [[ -z "${!variable:-}" ]]; then
+              echo "::error::Set the ${variable} repository Actions variable before deploying Platform Admin."
+              exit 1
+            fi
+          done
+          if [[ "${VITE_PLATFORM_ADMIN_FIREBASE_PROJECT_ID}" != "${PLATFORM_ADMIN_FIREBASE_PROJECT_ID}" ]]; then
+            echo "::error::The Platform Admin web app Firebase project must match PLATFORM_ADMIN_FIREBASE_PROJECT_ID."
+            exit 1
+          fi
       - run: npm test
       - run: npm run build
       - name: Upload Platform Admin static assets
@@ -82,6 +107,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Test Platform Admin deployment prerequisite guard
+        run: bash scripts/check-admin-dev-prerequisites-test.sh
 
       - name: Validate deployment target policy
         run: ruby scripts/test-deployment-target-policy.rb
@@ -352,6 +380,7 @@ jobs:
       IMAGE_NAME: boss-admin-api
       CLOUD_RUN_SERVICE: boss-admin-api
       ADMIN_DB_SECRET_NAME: boss-admin-db-password-dev
+      PLATFORM_ADMIN_FIREBASE_PROJECT_ID: ${{ vars.PLATFORM_ADMIN_FIREBASE_PROJECT_ID }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
