@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import EmptyState from "./EmptyState";
 import LoadingState from "./LoadingState";
 import ErrorState from "./ErrorState";
+import SortableHeader from "./SortableHeader";
 import type { RemoteList } from "../../api/records";
 
 export default function DataTable({
@@ -19,11 +20,7 @@ export default function DataTable({
         <thead>
           <tr>
             {columns.map((column) => (
-              <th key={column}>
-                <button type="button" className="eoss-table-sort-button" title={`Sort by ${column}`}>
-                  {column} <span aria-hidden="true">↕</span>
-                </button>
-              </th>
+              <SortableHeader key={column} label={column} />
             ))}
           </tr>
         </thead>
