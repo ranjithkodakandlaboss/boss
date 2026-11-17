@@ -1,6 +1,7 @@
 package in.boss.admin.api;
 
 import in.boss.admin.domain.AdminHttpResult;
+import in.boss.admin.domain.TenantDetailsService;
 import in.boss.admin.domain.TenantManagementService;
 import in.boss.admin.security.AdminPrincipal;
 import jakarta.servlet.http.HttpServletRequest;
@@ -26,9 +27,11 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/admin/api/v1")
 public class TenantManagementController {
     private final TenantManagementService service;
+    private final TenantDetailsService detailsService;
 
-    public TenantManagementController(TenantManagementService service) {
+    public TenantManagementController(TenantManagementService service, TenantDetailsService detailsService) {
         this.service = service;
+        this.detailsService = detailsService;
     }
 
     @PostMapping("/tenants")
@@ -47,7 +50,7 @@ public class TenantManagementController {
 
     @GetMapping("/tenants/{tenantId}")
     public TenantDetails details(@PathVariable UUID tenantId) {
-        return service.details(tenantId);
+        return detailsService.details(tenantId);
     }
 
     @PatchMapping("/tenants/{tenantId}/details")
@@ -57,7 +60,7 @@ public class TenantManagementController {
             @RequestHeader("Idempotency-Key") @NotBlank String idempotencyKey,
             Authentication authentication,
             HttpServletRequest httpRequest) {
-        return respond(service.updateDetails(tenantId, request, idempotencyKey,
+        return respond(detailsService.updateDetails(tenantId, request, idempotencyKey,
                 principal(authentication), clientIp(httpRequest)));
     }
 
