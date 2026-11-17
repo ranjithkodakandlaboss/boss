@@ -513,10 +513,14 @@ export function ProcurementProvider({ children }: { children?: ReactNode }) {
       .map((pr) => ({
         id: pr.id,
         entityType: "purchase_requisition",
+        requestType: "Purchase Requisition",
         entityRef: pr.prNumber,
         entityId: pr.id,
         status: "pending",
         requestedBy: pr.raisedBy,
+        requestedAt: pr.raisedDate,
+        siteName: pr.deliverToSiteName,
+        description: pr.notes || "Purchase requisition submitted for approval",
         summary: pr.notes || "Purchase requisition submitted for approval",
       }));
 

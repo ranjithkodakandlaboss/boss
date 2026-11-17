@@ -6,11 +6,16 @@ import { signIn, signOut } from "../auth/session";
 import GRNCreate from "./proto/GRNCreate";
 import GRNDetail from "./proto/GRNDetail";
 import IncomingInspection from "./proto/IncomingInspection";
+import PRCreate from "./proto/PRCreate";
 import PRDetail from "./proto/PRDetail";
+import ProcurementHome from "./proto/Procurement";
+import SupplierDetail from "./proto/SupplierDetail";
+import SupplierPOAmend from "./proto/SupplierPOAmend";
 import SupplierRFQCreate from "./proto/SupplierRFQCreate";
 import SupplierQuotationDetail from "./proto/SupplierQuotationDetail";
 import SupplierPODetail from "./proto/SupplierPODetail";
 import SupplierReturn from "./proto/SupplierReturn";
+import Suppliers from "./proto/Suppliers";
 import { ProcurementProvider } from "./proto/runtime";
 
 const supplierId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
@@ -43,6 +48,7 @@ const pr = {
   createdAt: "2026-11-17T00:00:00Z",
   lines: [{ id: lineId, itemId, itemCode: "SHAFT", itemName: "Shaft", qty: 4, uomId, uomSymbol: "EA" }],
 };
+const pendingPr = { ...pr, id: "abababab-abab-4aba-8aba-abababababab", prNumber: "PR-200", status: "submitted" };
 const requested = { id: requestId, prId, supplierId, supplierName: "Steel House", status: "requested", lines: [] };
 const received = {
   id: quoteId, prId, supplierId, supplierName: "Steel House", status: "received", supplierQuoteRef: "QT-9",
@@ -78,7 +84,7 @@ function installFetch() {
     if (url.includes("/inspections")) return Promise.resolve(json([{ id: inspectionId, inspectionNumber: "IN-1", grnId, lotId, itemId, quantityInspected: 4, status: "pending" }]));
     if (url.includes("/grns")) return Promise.resolve(json(JSON.parse(page([grn]))));
     if (url.includes("/spos")) return Promise.resolve(json(JSON.parse(page([spo]))));
-    if (url.includes("/prs")) return Promise.resolve(json(JSON.parse(page([pr]))));
+    if (url.includes("/prs")) return Promise.resolve(json(JSON.parse(page([pr, pendingPr]))));
     if (url.includes("/supplier-performance")) return Promise.resolve(json({ supplierId, totalReceipts: 0 }));
     return Promise.resolve(json({}));
   }));
@@ -105,7 +111,7 @@ function show(path: string, element: JSX.Element) {
 
 it("keeps an unanswered invitation on the record-quote form instead of an empty quotation page", async () => {
   show(`/procurement/pr/${prId}`, <PRDetail />);
-  expect(await screen.findByRole("button", { name: "Record Quote" })).toBeInTheDocument();
+  expect((await screen.findAllByRole("button", { name: "Record Quote" })).length).toBeGreaterThan(0);
   expect(screen.queryByRole("link", { name: "View Quote" })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "View Quote" })).not.toBeInTheDocument();
 });
@@ -142,10 +148,30 @@ it("opens the quotation, supplier order, receipt, inspection, and return screens
     [`/procurement/grn/${grnId}`, <GRNDetail />, "GRN-1"],
     [`/quality/inspection/${inspectionId}`, <IncomingInspection />, "IN-1"],
     ["/procurement/supplier-return", <SupplierReturn />, "Supplier Return"],
+    ["/procurement/pr/new", <PRCreate />, "New Purchase Requisition"],
+    [`/procurement/pr/${prId}/edit`, <PRCreate />, "Edit PR-100"],
+    [`/procurement/spo/${spoId}/amend`, <SupplierPOAmend />, "Amend Supplier PO"],
+    ["/suppliers", <Suppliers />, "Steel House"],
+    [`/suppliers/${supplierId}`, <SupplierDetail />, "Steel House"],
   ];
   for (const [path, element, text] of pages) {
     const view = show(path, element);
     expect((await screen.findAllByText(text)).length, path).toBeGreaterThan(0);
     view.unmount();
   }
+});
+
+it("opens every procurement list, including a purchase requisition waiting for approval", async () => {
+  show("/procurement?tab=pr", <ProcurementHome />);
+  expect(await screen.findByRole("button", { name: /Purchase Requisitions/ })).toBeInTheDocument();
+  expect(screen.getByText("PR-100")).toBeInTheDocument();
+  await userEvent.click(screen.getByRole("button", { name: /Supplier Quotations/ }));
+  expect(screen.getAllByText("QT-9").length).toBeGreaterThan(0);
+  await userEvent.click(screen.getByRole("button", { name: /Supplier POs/ }));
+  expect(screen.getAllByText("SPO-1").length).toBeGreaterThan(0);
+  await userEvent.click(screen.getByRole("button", { name: /Receiving & Inventory/ }));
+  expect(screen.getByText("GRN-1")).toBeInTheDocument();
+  await userEvent.click(screen.getByRole("button", { name: /Approvals/ }));
+  expect(screen.getByRole("button", { name: "PR-200" })).toBeInTheDocument();
+  expect(screen.getByText("Purchase Requisition")).toBeInTheDocument();
 });

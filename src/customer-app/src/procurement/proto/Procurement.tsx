@@ -76,7 +76,8 @@ export default function Procurement() {
   const canCreate = ['owner', 'buyer'].includes(currentUser.role);
   const canApprove = currentUser.role === 'owner';
 
-  const q = search.toLowerCase();
+  const text = (value?: unknown) => String(value ?? "").toLowerCase();
+  const q = text(search);
   const matchSite = (siteId?: string) => siteFilter === 'all' || siteId === siteFilter;
   const statusOptions = tab === 'pr'
     ? ['draft', 'pending', 'approved', 'rejected', 'converted', 'cancelled']
@@ -88,7 +89,7 @@ export default function Procurement() {
   const matchStatus = (status: string) => statusFilter === 'all' || status === statusFilter;
   const filteredSpoBase = supplierPos.filter(p =>
     matchSite(p.deliverToSiteId) && matchStatus(p.status) && (!overdueOnly || p.status === 'overdue') &&
-    (!q || p.poNumber.toLowerCase().includes(q) || p.supplierName.toLowerCase().includes(q) || (p.prNumber ?? '').toLowerCase().includes(q))
+    (!q || text(p.poNumber).includes(q) || text(p.supplierName).includes(q) || text(p.prNumber).includes(q))
   );
   const filteredSpo = sortRows(filteredSpoBase, sortKey, sortDir, (p, key) => {
     const values: Record<string, unknown> = { number: p.poNumber, supplier: p.supplierName, date: p.raisedDate, committedDate: p.committedDate, value: p.totalValue, lines: p.lineCount, source: p.prNumber || p.supplierQuotationRef || '', status: p.status };
@@ -96,7 +97,7 @@ export default function Procurement() {
   });
   const filteredPrsBase = purchaseReqs.filter(pr =>
     matchSite(pr.deliverToSiteId) && matchStatus(pr.status) &&
-    (!q || pr.prNumber.toLowerCase().includes(q) || pr.raisedBy.toLowerCase().includes(q) || (pr.department ?? '').toLowerCase().includes(q) || (pr.purpose ?? '').toLowerCase().includes(q))
+    (!q || text(pr.prNumber).includes(q) || text(pr.raisedBy).includes(q) || text(pr.department).includes(q) || text(pr.purpose).includes(q))
   );
   const filteredPrs = sortRows(filteredPrsBase, sortKey, sortDir, (pr, key) => {
     const values: Record<string, unknown> = { number: pr.prNumber, raisedBy: pr.raisedBy, date: pr.raisedDate, requiredBy: pr.requiredBy, dept: pr.department ?? 'Production', lines: pr.lineCount, priority: pr.priority, status: pr.status };
@@ -104,20 +105,20 @@ export default function Procurement() {
   });
   const filteredGrnsBase = grns.filter(g =>
     matchSite(g.siteId) && matchStatus(g.status) &&
-    (!q || g.grnNumber.toLowerCase().includes(q) || g.supplierName.toLowerCase().includes(q) || g.spoNumber.toLowerCase().includes(q))
+    (!q || text(g.grnNumber).includes(q) || text(g.supplierName).includes(q) || text(g.spoNumber).includes(q))
   );
   const filteredGrns = sortRows(filteredGrnsBase, sortKey, sortDir, (g, key) => {
     const values: Record<string, unknown> = { number: g.grnNumber, supplier: g.supplierName, poRef: g.spoNumber, date: g.receivedDate, receivedBy: g.receivedBy, challan: g.deliveryChallan, status: g.status };
     return values[key] ?? g.receivedDate;
   });
   const filteredQuotesBase = supplierQuotations.filter(qt =>
-    matchStatus(qt.status) && (!q || qt.quoteNumber.toLowerCase().includes(q) || qt.supplierName.toLowerCase().includes(q) || (qt.prNumber ?? '').toLowerCase().includes(q))
+    matchStatus(qt.status) && (!q || text(qt.quoteNumber).includes(q) || text(qt.supplierName).includes(q) || text(qt.prNumber).includes(q))
   );
   const filteredQuotes = sortRows(filteredQuotesBase, sortKey, sortDir, (qt, key) => {
     const values: Record<string, unknown> = { number: qt.quoteNumber, supplier: qt.supplierName, date: qt.quoteDate, validUntil: qt.validUntil, leadTime: qt.deliveryDays, terms: qt.paymentTerms, value: (qt.lines ?? []).reduce((s, l) => s + l.lineTotal, 0), status: qt.status };
     return values[key] ?? qt.quoteDate;
   });
-  const overduePOs = supplierPos.filter(p => p.status === 'overdue' && matchSite(p.deliverToSiteId) && (!q || p.poNumber.toLowerCase().includes(q) || p.supplierName.toLowerCase().includes(q))).length;
+  const overduePOs = supplierPos.filter(p => p.status === 'overdue' && matchSite(p.deliverToSiteId) && (!q || text(p.poNumber).includes(q) || text(p.supplierName).includes(q))).length;
   const approvalSiteId = (id: string) => supplierPos.find(p => p.id === id)?.deliverToSiteId ?? purchaseReqs.find(p => p.id === id)?.deliverToSiteId ?? grns.find(g => g.id === id)?.siteId;
   const visibleApprovals = approvalRequests.filter(a => (approvalView === 'all' || a.status === approvalView) && matchSite(approvalSiteId(a.entityId)));
 
@@ -395,9 +396,9 @@ export default function Procurement() {
             if (!search.trim()) return true;
             const s = search.toLowerCase();
             return (
-              inv.supplierName.toLowerCase().includes(s) ||
-              inv.prNumber.toLowerCase().includes(s) ||
-              inv.status.toLowerCase().includes(s)
+              text(inv.supplierName).includes(s) ||
+              text(inv.prNumber).includes(s) ||
+              text(inv.status).includes(s)
             );
           });
 
@@ -652,8 +653,10 @@ export default function Procurement() {
             ) : (
               <div className="space-y-3 max-w-3xl">
                 {visibleApprovals.map(a => {
-                  const isPr = a.requestType.toLowerCase().includes('requisition') || a.entityRef.startsWith('PR-');
-                  const isSpo = a.requestType.toLowerCase().includes('supplier po') || a.entityRef.startsWith('SPO-');
+                  const kind = text(a.requestType);
+                  const ref = String(a.entityRef ?? '');
+                  const isPr = kind.includes('requisition') || ref.startsWith('PR-');
+                  const isSpo = kind.includes('supplier po') || ref.startsWith('SPO-');
                   const linkedPr = isPr ? purchaseReqs.find(p => p.id === a.entityId || p.prNumber === a.entityRef) : undefined;
                   const rejectionText = a.status === 'rejected'
                     ? (a.notes || linkedPr?.rejectionReason || linkedPr?.reason)
