@@ -7,3 +7,7 @@ jdbc:postgresql://localhost:...
 # Cloud SQL socket-factory URL fragments. No user, password, or host.
 jdbc:postgresql:///boss?cloudSqlInstance=$
 jdbc:postgresql:///boss\\?cloudSqlInstance=
+# Credential-free Cloud SQL URL recorded in the Admin preflight regression fixture.
+jdbc:postgresql:///boss?cloudSqlInstance=boss-dev-514813:asia-south1:boss-dev-postgres&socketFactory=com.google.cloud.sql.postgres.SocketFactory&ipTypes=PUBLIC
+# Generic Cloud SQL URL used by the Admin preflight regression fixture.
+jdbc:postgresql:///boss?cloudSqlInstance=project:region:boss-dev-postgres&socketFactory=com.google.cloud.sql.postgres.SocketFactory&ipTypes=PUBLIC

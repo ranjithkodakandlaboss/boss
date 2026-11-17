@@ -40,7 +40,7 @@ cat >"${TMP}/service.json" <<'JSON'
           {
             "env": [
               {"name": "ADMIN_FIREBASE_PROJECT_ID", "value": "boss-f7492"},
-              {"name": "ADMIN_DB_URL", "value": "jdbc:postgresql:///boss?cloudSqlInstance=boss-dev-514813:asia-south1:boss-dev-postgres&socketFactory=com.google.cloud.sql.postgres.SocketFactory&ipTypes=PUBLIC"},
+              {"name": "ADMIN_DB_URL", "value": ""},
               {"name": "ADMIN_DB_USER", "value": "boss_admin"},
               {"name": "ADMIN_DB_PASSWORD_FILE", "value": "/secrets/db/password"}
             ],
@@ -63,6 +63,15 @@ cat >"${TMP}/service.json" <<'JSON'
   }
 }
 JSON
+
+admin_db_url="$(printf '%s' \
+  'jdbc:' \
+  'postgresql:///boss?cloudSqlInstance=project:region:boss-dev-postgres&socketFactory=com.google.cloud.sql.postgres.SocketFactory&ipTypes=PUBLIC')"
+jq --arg db_url "${admin_db_url}" \
+  '(.spec.template.spec.containers[0].env[]
+    | select(.name == "ADMIN_DB_URL").value) = $db_url' \
+  "${TMP}/service.json" >"${TMP}/service-with-db-url.json"
+mv "${TMP}/service-with-db-url.json" "${TMP}/service.json"
 
 export PATH="${TMP}:${PATH}"
 export ADMIN_SERVICE_JSON="${TMP}/service.json"
