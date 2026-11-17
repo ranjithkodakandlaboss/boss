@@ -37,7 +37,7 @@ public class ResendEmailSenderImpl implements ResendEmailSender {
             ObjectMapper mapper,
             @Value("${boss.email.resend-api-key:${RESEND_API_KEY:}}") String explicitApiKey,
             @Value("${boss.email.resend-api-key-file:${RESEND_API_KEY_FILE:/secrets/resend-api-key}}") String apiKeyFilePath,
-            @Value("${boss.email.from-address:${RESEND_FROM_EMAIL:BOSS Onboarding <onboarding@boss.app>}}") String fromAddress) {
+            @Value("${boss.email.from-address:${RESEND_FROM_EMAIL:BOSS Onboarding <onboarding@resend.dev>}}") String fromAddress) {
         this.mapper = mapper;
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(10))
@@ -77,6 +77,7 @@ public class ResendEmailSenderImpl implements ResendEmailSender {
                     .timeout(Duration.ofSeconds(15))
                     .header("Authorization", "Bearer " + apiKey)
                     .header("Content-Type", "application/json")
+                    .header("User-Agent", "BOSS-Platform-Admin/1.0")
                     .POST(HttpRequest.BodyPublishers.ofString(requestJson, StandardCharsets.UTF_8))
                     .build();
 
