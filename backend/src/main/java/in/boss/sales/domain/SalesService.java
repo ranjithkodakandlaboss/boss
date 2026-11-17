@@ -170,6 +170,7 @@ public class SalesService {
         if (!"draft".equals(status)) {
             throw conflict("RFQ lines can only be edited while the RFQ is draft");
         }
+        RfqResponse before = readRfq(tenantId, rfqId);
         jdbc.update("""
                 UPDATE rfqs
                    SET required_by_date = ?, rfq_type_id = ?, rfq_type_label = ?,
@@ -184,7 +185,7 @@ public class SalesService {
         replaceRfqLines(tenantId, rfqId, request.lines());
 
         RfqResponse result = readRfq(tenantId, rfqId);
-        auditService.record("RFQ", rfqId, "UPDATE", null, toJson(result));
+        auditService.record("RFQ", rfqId, "UPDATE", toJson(before), toJson(result));
         return result;
     }
 
@@ -197,10 +198,11 @@ public class SalesService {
         if (!validTransition) {
             throw conflict("Invalid RFQ status transition: " + current + " -> " + nextStatus);
         }
+        RfqResponse before = readRfq(tenantId, rfqId);
         jdbc.update("UPDATE rfqs SET status = ?, updated_at = NOW() WHERE tenant_id = ? AND id = ?",
                 nextStatus, tenantId, rfqId);
         RfqResponse result = readRfq(tenantId, rfqId);
-        auditService.record("RFQ", rfqId, "STATUS_" + nextStatus.toUpperCase(), null, toJson(result));
+        auditService.record("RFQ", rfqId, "STATUS_" + nextStatus.toUpperCase(), toJson(before), toJson(result));
         return result;
     }
 
@@ -304,6 +306,7 @@ public class SalesService {
         if (!"draft".equals(status)) {
             throw conflict("Only a draft quotation can be edited. Revise a sent quotation instead.");
         }
+        QuotationResponse before = readQuotation(tenantId, quotationId);
         jdbc.update("""
                 UPDATE quotations
                    SET valid_until = ?, payment_terms = COALESCE(?, payment_terms),
@@ -318,7 +321,7 @@ public class SalesService {
         jdbc.update("UPDATE quotations SET estimated_material_cost = ? WHERE tenant_id = ? AND id = ?",
                 estimatedTotal, tenantId, quotationId);
         QuotationResponse result = readQuotation(tenantId, quotationId);
-        auditService.record("QUOTATION", quotationId, "UPDATE", null, toJson(result));
+        auditService.record("QUOTATION", quotationId, "UPDATE", toJson(before), toJson(result));
         return result;
     }
 
@@ -375,6 +378,7 @@ public class SalesService {
         if (!validTransition) {
             throw conflict("Invalid quotation status transition: " + current + " -> " + nextStatus);
         }
+        QuotationResponse before = readQuotation(tenantId, quotationId);
         if ("rejected".equals(nextStatus)) {
             jdbc.update("""
                     UPDATE quotations
@@ -388,7 +392,7 @@ public class SalesService {
                     nextStatus, tenantId, quotationId);
         }
         QuotationResponse result = readQuotation(tenantId, quotationId);
-        auditService.record("QUOTATION", quotationId, "STATUS_" + nextStatus.toUpperCase(), null, toJson(result));
+        auditService.record("QUOTATION", quotationId, "STATUS_" + nextStatus.toUpperCase(), toJson(before), toJson(result));
         return result;
     }
 
@@ -988,7 +992,9 @@ public class SalesService {
     }
 
     private static boolean skipHistoryField(String key) {
-        return key.endsWith("Id") || "id".equals(key);
+        String lower = key.toLowerCase(Locale.ENGLISH);
+        return lower.equals("id") || lower.endsWith("id") || lower.endsWith("by")
+                || lower.equals("createdat") || lower.equals("updatedat");
     }
 
     private JsonNode readTree(String json) {
