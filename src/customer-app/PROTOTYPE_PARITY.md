@@ -14,6 +14,8 @@ A screen is complete only when its layout, copy, and interactions match the prot
 - "Submit to Customer" sets the quotation to `sent`. BOSS does not send email or WhatsApp for quotations. The PDF download is the document the owner sends outside BOSS.
 - Direct Customer PO entry without an accepted quotation, PO amendment after execution, RFQ document upload, and the downstream order-journey stages are outside this release.
 
+DEV validation on 17 Nov 2026 used Customer App revision `boss-customer-web-dev-00006-82t` and API revision `boss-api-dev-00027-299` at schema v075. An owner of Cursor Journey One Manufacturing created and edited North Works, created RFQ-20261117-F423026D, edited its note, and marked it received. Quotation QT-20261117-B4857772 rev 1 was sent and downloaded as a PDF, then revised. Rev 1 stayed superseded. Rev 2 was accepted with owner identity, timestamp, confirmation note, and customer reference NW-PO-441, creating CPO-20261117-D97F131E. Repeating acceptance returned that same PO. A declined quotation and an unanswered sent quotation created no PO. The PO note was edited, the accepted unit price stayed ₹1,250, and hold/release worked. A separate customer was deactivated and remained readable. The records were still present after logout and login. Layout gaps below stay Partial.
+
 ## Foundation
 
 | Area | Prototype | Implementation | Status |
