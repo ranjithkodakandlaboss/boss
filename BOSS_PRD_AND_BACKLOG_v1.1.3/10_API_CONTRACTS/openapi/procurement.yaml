@@ -58,7 +58,7 @@ components:
         prId: { type: string, format: uuid }
         supplierId: { type: string, format: uuid }
         supplierName: { type: string }
-        status: { type: string, enum: [received, compared, selected, rejected] }
+        status: { type: string, enum: [requested, received, under_review, selected, rejected] }
         validUntil: { type: string, format: date, nullable: true }
         lines:
           type: array
@@ -79,9 +79,11 @@ components:
       properties:
         id: { type: string, format: uuid }
         spoNumber: { type: string }
+        prId: { type: string, format: uuid }
+        supplierQuotationId: { type: string, format: uuid }
         supplierId: { type: string, format: uuid }
         supplierName: { type: string }
-        status: { type: string, enum: [draft, sent, acknowledged, partially_received, received, cancelled] }
+        status: { type: string, enum: [draft, issued, acknowledged, partially_received, fully_received, cancelled] }
         lines:
           type: array
           items: { $ref: '#/components/schemas/SPOLine' }
@@ -232,11 +234,14 @@ paths:
           application/json:
             schema:
               type: object
-              required: [supplierId, prId, lines]
+              required: [supplierId, prId, supplierQuotationId, lines]
               properties:
                 supplierId: { type: string, format: uuid }
                 prId: { type: string, format: uuid }
-                supplierQuotationId: { type: string, format: uuid, nullable: true }
+                supplierQuotationId:
+                  type: string
+                  format: uuid
+                  description: Must identify a selected supplier quotation for this PR and supplier.
                 lines:
                   type: array
                   items:
