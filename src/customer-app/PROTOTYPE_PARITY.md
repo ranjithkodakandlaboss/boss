@@ -4,7 +4,7 @@ Prototype: `github.com/ranjithkodakandla/EOSS` branch `visual-experience-transfo
 
 Base: `claude/affectionate-cori-xt092x`.
 
-A screen is complete only when its layout, copy, and interactions match the prototype and its records come from the customer API. Sales & Order screens below are backed by the customer API. Other screens in this checklist are not complete.
+A screen is complete only when its layout, copy, and interactions match the prototype and its records come from the customer API. Sales & Order screens now render the approved prototype components from `src/sales/proto` and read and write the customer API. They are not marked complete until the running DEV application has been compared with the prototype in the browser. Other screens in this checklist are not complete.
 
 ## Sales decisions recorded against the approved contracts
 
