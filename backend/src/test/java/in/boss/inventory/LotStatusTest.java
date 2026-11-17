@@ -80,7 +80,71 @@ class LotStatusTest extends InventoryIntegrationTest {
                 .isInstanceOf(InvalidLotTransitionException.class);
         assertThatThrownBy(() -> inventoryService.transitionLotStatus(lot.id(), "disposed"))
                 .isInstanceOf(InvalidLotTransitionException.class);
+        assertThatThrownBy(() -> inventoryService.createLot(lot(new BigDecimal("1"), "1", null, "depleted")))
+                .isInstanceOf(InventoryValidationException.class);
         assertThat(inventoryService.getLot(lot.id()).status()).isEqualTo("available");
+    }
+
+    @Test
+    void fullyReservedLot_remainsInPositionWithoutDoubleCounting() {
+        inventoryService.createLot(lot(new BigDecimal("10"), "2.00", null, null));
+        MaterialLotResponse reservedLot = inventoryService.createLot(lot(new BigDecimal("5"), "2.00", null, null));
+        jdbc.update("UPDATE material_lots SET reserved_qty = quantity WHERE id = ?", reservedLot.id());
+        inventoryService.transitionLotStatus(reservedLot.id(), "reserved");
+
+        InventoryPositionResponse position = inventoryService
+                .getPosition(seed.storeId(), seed.itemId(), null, false, 0, 20)
+                .content().get(0);
+        assertThat(position.totalQty()).isEqualByComparingTo("15.000");
+        assertThat(position.reservedQty()).isEqualByComparingTo("5.000");
+        assertThat(position.availableQty()).isEqualByComparingTo("10.000");
+        assertThat(position.valuationAmt()).isEqualByComparingTo("30.0000");
+        assertThat(position.lastMovedAt()).isNotNull();
+    }
+
+    @Test
+    void grnLine_mustExistInTenantAndMatchItemAndStore() {
+        assertThatThrownBy(() -> inventoryService.createLot(
+                lotWithGrn(seed.itemId(), seed.storeId(), UUID.randomUUID())))
+                .isInstanceOf(InventoryValidationException.class)
+                .hasMessageContaining("GRN line not found");
+
+        UUID otherItem = insert("""
+                INSERT INTO items (tenant_id, code, name, item_type, base_uom_id)
+                VALUES (?, ?, 'Other Item', 'raw_material', ?) RETURNING id
+                """, seed.tenantId(), "ITM-" + UUID.randomUUID().toString().substring(0, 8), seed.uomId());
+        UUID mismatchedItemLine = insertGrnLine(seed, otherItem, seed.storeId());
+        assertThatThrownBy(() -> inventoryService.createLot(
+                lotWithGrn(seed.itemId(), seed.storeId(), mismatchedItemLine)))
+                .isInstanceOf(InventoryValidationException.class)
+                .hasMessageContaining("does not match");
+
+        UUID otherStore = insert("""
+                INSERT INTO stores (tenant_id, site_id, name, code, store_type)
+                VALUES (?, ?, 'Other Store', ?, 'raw_material') RETURNING id
+                """, seed.tenantId(), seed.siteId(), "OS-" + UUID.randomUUID().toString().substring(0, 8));
+        UUID mismatchedStoreLine = insertGrnLine(seed, seed.itemId(), otherStore);
+        assertThatThrownBy(() -> inventoryService.createLot(
+                lotWithGrn(seed.itemId(), seed.storeId(), mismatchedStoreLine)))
+                .isInstanceOf(InventoryValidationException.class)
+                .hasMessageContaining("does not match");
+
+        UUID matchingLine = insertGrnLine(seed, seed.itemId(), seed.storeId());
+        MaterialLotResponse created = inventoryService.createLot(
+                lotWithGrn(seed.itemId(), seed.storeId(), matchingLine));
+        assertThat(created.grnLineId()).isEqualTo(matchingLine);
+        assertThat(inventoryService.getLotMovements(created.id(), null, null, 0, 5).content())
+                .singleElement()
+                .extracting(movement -> movement.movementType())
+                .isEqualTo("receipt");
+
+        Seed otherTenant = seed("grn-other");
+        setTenantContext(otherTenant.tenantId(), "STORE_KEEPER");
+        assertThatThrownBy(() -> inventoryService.createLot(new CreateLotRequest(
+                otherTenant.itemId(), otherTenant.storeId(), new BigDecimal("1"), new BigDecimal("1"),
+                null, null, null, matchingLine)))
+                .isInstanceOf(InventoryValidationException.class)
+                .hasMessageContaining("GRN line not found");
     }
 
     @Test
@@ -226,4 +290,10 @@ class LotStatusTest extends InventoryIntegrationTest {
     private static AddMovementRequest movement(String type, String qty) {
         return new AddMovementRequest(type, new BigDecimal(qty), null, null, null);
     }
+
+    private CreateLotRequest lotWithGrn(UUID itemId, UUID storeId, UUID grnLineId) {
+        return new CreateLotRequest(
+                itemId, storeId, new BigDecimal("2"), new BigDecimal("1"), null, null, "available", grnLineId);
+    }
+
 }

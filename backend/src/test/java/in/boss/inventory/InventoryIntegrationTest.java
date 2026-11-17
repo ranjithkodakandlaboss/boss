@@ -37,5 +37,22 @@ abstract class InventoryIntegrationTest extends BaseMasterDataIntegrationTest {
         return jdbc.queryForObject(sql, UUID.class, args);
     }
 
+    protected UUID insertGrnLine(Seed owner, UUID itemId, UUID storeId) {
+        String suffix = UUID.randomUUID().toString().substring(0, 8);
+        UUID supplierId = insert("""
+                INSERT INTO suppliers (tenant_id, code, name)
+                VALUES (?, ?, 'Receipt Supplier') RETURNING id
+                """, owner.tenantId(), "SUP-" + suffix);
+        UUID grnId = insert("""
+                INSERT INTO grns (tenant_id, grn_number, supplier_id, site_id, received_date, received_by)
+                VALUES (?, ?, ?, ?, CURRENT_DATE, ?) RETURNING id
+                """, owner.tenantId(), "GRN-" + suffix, supplierId, owner.siteId(), UUID.randomUUID());
+        return insert("""
+                INSERT INTO grn_lines
+                  (tenant_id, grn_id, line_no, item_id, received_qty, uom_id, store_id)
+                VALUES (?, ?, 1, ?, 2, ?, ?) RETURNING id
+                """, owner.tenantId(), grnId, itemId, owner.uomId(), storeId);
+    }
+
     protected record Seed(UUID tenantId, UUID siteId, UUID storeId, UUID itemId, UUID uomId) {}
 }

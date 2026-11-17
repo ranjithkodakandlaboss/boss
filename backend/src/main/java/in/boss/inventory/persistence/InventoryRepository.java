@@ -44,6 +44,19 @@ public class InventoryRepository {
         this.jdbc = jdbc;
     }
 
+    public Optional<GrnLineRef> findGrnLine(UUID tenantId, UUID grnLineId) {
+        List<GrnLineRef> rows = jdbc.query("""
+                SELECT item_id, store_id
+                  FROM grn_lines
+                 WHERE tenant_id = ? AND id = ?
+                """,
+                (rs, rowNum) -> new GrnLineRef(
+                        rs.getObject("item_id", UUID.class),
+                        rs.getObject("store_id", UUID.class)),
+                tenantId, grnLineId);
+        return rows.stream().findFirst();
+    }
+
     public boolean itemExists(UUID tenantId, UUID itemId) {
         Integer count = jdbc.queryForObject(
                 "SELECT COUNT(*) FROM items WHERE tenant_id = ? AND id = ?",
@@ -190,10 +203,10 @@ public class InventoryRepository {
                     SELECT lot.item_id, lot.store_id, MAX(sm.created_at) AS last_moved_at
                       FROM stock_movements sm
                       JOIN material_lots lot ON lot.id = sm.lot_id AND lot.tenant_id = sm.tenant_id
-                     WHERE lot.tenant_id = ? AND lot.status = 'available'
+                     WHERE lot.tenant_id = ? AND lot.status IN ('available', 'reserved')
                      GROUP BY lot.item_id, lot.store_id
                   ) moved ON moved.item_id = ml.item_id AND moved.store_id = ml.store_id
-                 WHERE ml.tenant_id = ? AND ml.status = 'available'
+                 WHERE ml.tenant_id = ? AND ml.status IN ('available', 'reserved')
                 """);
         List<Object> args = new ArrayList<>();
         args.add(tenantId);

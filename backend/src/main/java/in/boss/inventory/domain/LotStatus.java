@@ -3,11 +3,8 @@ package in.boss.inventory.domain;
 /**
  * Lot statuses persisted by V016.
  *
- * {@code inventory.yaml} names the exhausted status {@code depleted}. The migrated
- * check constraint stores that state as {@code consumed} and also allows {@code disposed},
- * which the OpenAPI enum does not list. API input accepts {@code depleted} as
- * {@code consumed}. API output returns {@code depleted} for {@code consumed} and returns
- * {@code disposed} unchanged.
+ * The API name for stored {@code consumed} is {@code depleted}. {@code disposed} is stored
+ * and returned unchanged. Creation allows only {@code available} and {@code quarantine}.
  */
 public final class LotStatus {
 

@@ -47,7 +47,20 @@ components:
         uomSymbol: { type: string }
         status:
           type: string
-          enum: [available, quarantine, reserved, depleted]
+          description: |
+            API statuses are `available`, `quarantine`, `reserved`, `depleted`, and `disposed`.
+            V016 stores the exhausted status as `consumed`. This API accepts `depleted` on input
+            and returns `depleted` for a stored `consumed` row. `disposed` is stored and returned
+            as `disposed`.
+            Lot creation accepts only `available` (default) or `quarantine`.
+            Later explicit transitions:
+            `available` → `quarantine`; `available` → `reserved` only when reservedQty equals qty and qty > 0;
+            `available` or `quarantine` or `reserved` → `depleted` or `disposed` only when qty is 0;
+            `quarantine` → `available` when qty > 0;
+            `reserved` → `available` only when reservedQty is 0 and qty > 0.
+            `depleted` has no explicit transition back; an inbound movement restores `available`.
+            `disposed` is terminal.
+          enum: [available, quarantine, reserved, depleted, disposed]
         expiryDate: { type: string, format: date, nullable: true }
         createdAt: { type: string, format: date-time }
 
@@ -59,8 +72,25 @@ components:
         lotId: { type: string, format: uuid }
         movementType:
           type: string
-          enum: [RECEIPT, ISSUE, RETURN, TRANSFER_OUT, TRANSFER_IN, ADJUSTMENT, OPENING_BALANCE]
-        qty: { type: number, description: "Positive = in; negative = out" }
+          description: |
+            V016 movement token. A generic ADJUSTMENT value is not accepted;
+            use adjustment_add or adjustment_reduce.
+          enum:
+            - receipt
+            - issue
+            - return
+            - transfer_out
+            - transfer_in
+            - adjustment_add
+            - adjustment_reduce
+            - opening_balance
+            - scrap
+            - consume
+        qty:
+          type: number
+          description: |
+            Signed on responses: positive inbound, negative outbound.
+            Create and append requests send an absolute quantity; the movement type sets the direction.
         referenceType: { type: string, nullable: true, description: "GRN | JOB | TRANSFER | ADJUSTMENT" }
         referenceId: { type: string, format: uuid, nullable: true }
         performedBy: { type: string, format: uuid }
@@ -75,10 +105,20 @@ components:
         itemName: { type: string }
         storeId: { type: string, format: uuid }
         storeName: { type: string }
-        totalQty: { type: number }
-        reservedQty: { type: number }
-        availableQty: { type: number }
-        valuationAmt: { type: number, description: "Sum of qty * unit_cost" }
+        totalQty:
+          type: number
+          description: |
+            Physical quantity of available and reserved lots. Quarantine, depleted, and disposed lots are excluded.
+        reservedQty:
+          type: number
+          description: |
+            Sum of material_lots.reserved_qty for the included lots. Active stock_reservation_records are not added again.
+        availableQty:
+          type: number
+          description: "totalQty minus reservedQty"
+        valuationAmt:
+          type: number
+          description: "Sum of physical qty * unit_cost for the included lots"
         uomSymbol: { type: string }
         lastMovedAt: { type: string, format: date-time, nullable: true }
 
@@ -143,6 +183,57 @@ components:
         detail: { type: string }
         traceId: { type: string }
 
+    CreateLotRequest:
+      type: object
+      required: [itemId, storeId, qty]
+      properties:
+        itemId: { type: string, format: uuid }
+        storeId: { type: string, format: uuid }
+        qty: { type: number, minimum: 0.001, description: "Opening physical quantity" }
+        unitCost: { type: number, minimum: 0, nullable: true }
+        batchRef: { type: string, nullable: true }
+        expiryDate: { type: string, format: date, nullable: true }
+        status:
+          type: string
+          enum: [available, quarantine]
+          default: available
+          description: "Initial status only. reserved, depleted, and disposed are not valid on create."
+        grnLineId:
+          type: string
+          format: uuid
+          nullable: true
+          description: |
+            When set, the opening movement is receipt with referenceType GRN.
+            The line must already exist in this tenant and its item_id and store_id must match this request.
+            When omitted, the opening movement is opening_balance.
+            GRN inspection outcome and GRN status changes are not applied here.
+
+    AddMovementRequest:
+      type: object
+      required: [movementType, qty]
+      properties:
+        movementType:
+          type: string
+          description: "Absolute-quantity movement. ADJUSTMENT is not a valid token."
+          enum:
+            - receipt
+            - issue
+            - return
+            - transfer_out
+            - transfer_in
+            - adjustment_add
+            - adjustment_reduce
+            - opening_balance
+            - scrap
+            - consume
+        qty:
+          type: number
+          minimum: 0.001
+          description: "Absolute quantity. The response qty is signed."
+        referenceType: { type: string, nullable: true, description: "GRN | JOB | TRANSFER | ADJUSTMENT" }
+        referenceId: { type: string, format: uuid, nullable: true }
+        note: { type: string, nullable: true }
+
     InterSiteTransfer:
       type: object
       properties:
@@ -173,6 +264,11 @@ paths:
     get:
       operationId: getInventoryPositions
       summary: Get current inventory positions (lot balances by item and store)
+      description: |
+        Aggregates available and fully reserved lots. A reserved lot still contributes its physical
+        quantity to totalQty and its reserved_qty to reservedQty, so availableQty is zero for that lot.
+        Quarantine, depleted, and disposed lots are omitted. Reservation rows are not summed on top of
+        material_lots.reserved_qty.
       tags: [Inventory Position]
       parameters:
         - name: storeId
@@ -221,7 +317,7 @@ paths:
           schema: { type: string, format: uuid }
         - name: status
           in: query
-          schema: { type: string, enum: [available, quarantine, reserved, depleted] }
+          schema: { type: string, enum: [available, quarantine, reserved, depleted, disposed] }
         - name: page
           in: query
           schema: { type: integer, default: 0 }
@@ -240,6 +336,42 @@ paths:
                     items: { $ref: '#/components/schemas/MaterialLot' }
                   page: { type: integer }
                   totalElements: { type: integer }
+    post:
+      operationId: createLot
+      summary: Create a material lot and its opening stock movement
+      description: |
+        Inserts one material lot and one append-only movement for the opening quantity.
+        Initial status is available or quarantine. A repeat Idempotency-Key with the same body
+        returns the original lot and does not insert a second row.
+      tags: [Lots]
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateLotRequest' }
+      responses:
+        '201':
+          description: Lot created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MaterialLot' }
+        '400':
+          description: Invalid item, store, quantity, initial status, or GRN line reference
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProblemDetail' }
+        '401': { description: Authentication required }
+        '403': { description: STORE_KEEPER, OPS_MANAGER, or OWNER role required }
+        '409':
+          description: Idempotency-Key reused with a different request body
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProblemDetail' }
 
   /inventory/lots/{lotId}:
     get:
@@ -292,6 +424,53 @@ paths:
                     items: { $ref: '#/components/schemas/StockMovement' }
                   page: { type: integer }
                   totalElements: { type: integer }
+    post:
+      operationId: addMovement
+      summary: Append one stock movement to a lot
+      description: |
+        Inserts a stock_movements row and updates the lot quantity. The row is never updated or deleted.
+        Request qty is absolute. The response qty is signed: positive inbound, negative outbound.
+        A movement that would take quantity below the reserved quantity is rejected.
+        Scrap of the remaining quantity sets disposed. Any other outbound that reaches zero sets depleted
+        (stored as consumed). Disposed lots reject further movements.
+      tags: [Movements]
+      parameters:
+        - name: lotId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AddMovementRequest' }
+      responses:
+        '201':
+          description: Movement appended
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StockMovement' }
+        '400':
+          description: Unknown movement type, or quantity exceeds the unreserved balance
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProblemDetail' }
+        '401': { description: Authentication required }
+        '403': { description: STORE_KEEPER, OPS_MANAGER, or OWNER role required }
+        '404':
+          description: Lot not found in this tenant
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProblemDetail' }
+        '409':
+          description: Invalid lot status transition, or Idempotency-Key reused with a different body
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProblemDetail' }
 
   /inventory/reservations:
     post:
@@ -393,8 +572,9 @@ paths:
       operationId: adjustStock
       summary: Manual stock adjustment (STORE_KEEPER or OWNER role)
       description: |
-        Creates a stock movement with type ADJUSTMENT. Requires a reason from
-        GET /api/v1/config/options/STOCK_ADJUSTMENT_REASON.
+        Not the lots movement API. POST /inventory/lots/{lotId}/movements does not accept
+        a generic ADJUSTMENT token; persisted adjustments are adjustment_add or adjustment_reduce.
+        This reason-coded adjustment endpoint is outside the lots-and-movements implementation.
       tags: [Adjustments]
       parameters:
         - name: Idempotency-Key

@@ -15,6 +15,7 @@ import in.boss.inventory.domain.LotStatus;
 import in.boss.inventory.domain.LotStatusMachine;
 import in.boss.inventory.domain.MovementType;
 import in.boss.inventory.events.InventoryEventPublisher;
+import in.boss.inventory.persistence.GrnLineRef;
 import in.boss.inventory.persistence.InventoryRepository;
 import in.boss.inventory.persistence.LotRow;
 import in.boss.inventory.persistence.MovementRow;
@@ -62,7 +63,8 @@ public class InventoryServiceImpl implements InventoryService {
         BigDecimal qty = quantity(request.qty());
         BigDecimal unitCost = unitCost(request.unitCost());
         requireItem(ctx.tenantId(), request.itemId());
-        UUID siteId = requireStore(ctx, request.storeId());
+        requireStore(ctx, request.storeId());
+        requireGrnLine(ctx.tenantId(), request.grnLineId(), request.itemId(), request.storeId());
 
         UUID lotId = UUID.randomUUID();
         String lotNumber = "LOT-" + lotId.toString().substring(0, 8).toUpperCase();
@@ -218,6 +220,19 @@ public class InventoryServiceImpl implements InventoryService {
             throw new LotNotFoundException(lotId);
         }
         return lot;
+    }
+
+    private void requireGrnLine(UUID tenantId, UUID grnLineId, UUID itemId, UUID storeId) {
+        if (grnLineId == null) {
+            return;
+        }
+        GrnLineRef line = repository.findGrnLine(tenantId, grnLineId)
+                .orElseThrow(() -> new InventoryValidationException(
+                        "GRN line not found for this tenant: " + grnLineId));
+        if (!itemId.equals(line.itemId()) || !storeId.equals(line.storeId())) {
+            throw new InventoryValidationException(
+                    "GRN line does not match the lot item and store");
+        }
     }
 
     private void requireItem(UUID tenantId, UUID itemId) {

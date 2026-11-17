@@ -135,9 +135,10 @@ class InventoryLotsApiTest extends InventoryIntegrationTest {
     @Test
     void reads_honorRoleAndTenantBoundaries() throws Exception {
         asKeeper();
+        UUID grnLineId = insertGrnLine(seed, seed.itemId(), seed.storeId());
         var lot = inventoryService.createLot(new CreateLotRequest(
                 seed.itemId(), seed.storeId(), new BigDecimal("3"), new BigDecimal("4"),
-                null, null, "quarantine", UUID.randomUUID()));
+                null, null, "quarantine", grnLineId));
 
         mockMvc.perform(get("/api/v1/inventory/positions"))
                 .andExpect(status().isUnauthorized());
