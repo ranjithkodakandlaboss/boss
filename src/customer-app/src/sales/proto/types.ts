@@ -268,7 +268,7 @@ export interface CustomerPO {
   isDirectOrder?: boolean;
   originType?: 'from_quotation' | 'direct_order';
   directOrderReason?: string;
-  availabilityStatus?: 'not_assessed' | 'available' | 'partially_available' | 'awaiting_procurement';
+  availabilityStatus?: 'not_assessed' | 'available' | 'allocated' | 'partial' | 'partially_available' | 'shortage' | 'awaiting_procurement';
   deliverToSiteId?: ID;
   deliverToSiteName?: string;
   hasAmendment?: boolean;
@@ -277,11 +277,15 @@ export interface CustomerPO {
   creditApprovalId?: ID;
   revision?: number;
   lastAmendedAt?: string;
+  requiredByDate?: string;
 }
 
 export interface POLine {
   id: ID;
   poId: ID;
+  itemId?: ID;
+  itemCode?: string;
+  itemName?: string;
   drawingNumber: string;
   revision: string;
   description: string;
@@ -293,6 +297,8 @@ export interface POLine {
   jobId?: ID;
   jobNumber?: string;
   status: 'pending' | 'in_progress' | 'complete' | 'cancelled';
+  availability?: string;
+  shortageQty?: number;
 }
 
 // ── Supplier Orders ──

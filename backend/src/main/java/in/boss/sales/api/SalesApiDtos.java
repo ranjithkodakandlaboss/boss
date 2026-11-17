@@ -6,6 +6,7 @@ import jakarta.validation.constraints.DecimalMax;
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
@@ -282,7 +283,9 @@ public final class SalesApiDtos {
             BigDecimal lineTotal,
             String description,
             String drawingNumber,
-            String drawingRevision) {}
+            String drawingRevision,
+            String availability,
+            BigDecimal shortageQty) {}
 
     public record CpoResponse(
             UUID id,
@@ -316,6 +319,14 @@ public final class SalesApiDtos {
 
     public record CpoStatusRequest(
             @NotNull @Pattern(regexp = "open|on_hold|cancelled") String status) {}
+
+    public record RecordMaterialAvailabilityRequest(
+            @NotEmpty List<@Valid AvailabilityLine> lines) {
+        public record AvailabilityLine(
+                @NotNull UUID lineId,
+                @NotBlank @Pattern(regexp = "available|partial|unavailable") String availability,
+                @DecimalMin("0.000") BigDecimal shortageQty) {}
+    }
 
     public record FieldChange(String field, String previousValue, String newValue) {}
 

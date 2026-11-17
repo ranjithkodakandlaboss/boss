@@ -99,7 +99,7 @@ class PrFromReplenishmentTest extends BaseMasterDataIntegrationTest {
                 "normal",
                 "Triggered by reorder point breach",
                 null
-        );
+        , null);
 
         PurchaseRequisitionResponse pr = prService.createPr(request);
 
@@ -146,7 +146,7 @@ class PrFromReplenishmentTest extends BaseMasterDataIntegrationTest {
                 "urgent",
                 "Shortage for job execution",
                 null
-        );
+        , null);
 
         PurchaseRequisitionResponse pr = prService.createPr(request);
 
@@ -184,7 +184,7 @@ class PrFromReplenishmentTest extends BaseMasterDataIntegrationTest {
                 "normal",
                 null,
                 null
-        );
+        , null);
 
         assertThatThrownBy(() -> prService.createPr(request))
                 .isInstanceOf(ResponseStatusException.class)

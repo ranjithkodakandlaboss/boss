@@ -7,6 +7,7 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -18,6 +19,7 @@ import java.util.UUID;
 import static in.boss.sales.api.SalesApiDtos.CpoResponse;
 import static in.boss.sales.api.SalesApiDtos.CpoStatusRequest;
 import static in.boss.sales.api.SalesApiDtos.PageResponse;
+import static in.boss.sales.api.SalesApiDtos.RecordMaterialAvailabilityRequest;
 import static in.boss.sales.api.SalesApiDtos.UpdateCpoRequest;
 
 @RestController
@@ -50,6 +52,12 @@ public class SalesCpoController {
     @PutMapping("/{cpoId}")
     public CpoResponse update(@PathVariable UUID cpoId, @Valid @RequestBody UpdateCpoRequest request) {
         return customerPoService.update(cpoId, request);
+    }
+
+    @PostMapping("/{cpoId}/availability")
+    public CpoResponse recordAvailability(
+            @PathVariable UUID cpoId, @Valid @RequestBody RecordMaterialAvailabilityRequest request) {
+        return customerPoService.recordAvailability(cpoId, request);
     }
 
     @PatchMapping("/{cpoId}/status")

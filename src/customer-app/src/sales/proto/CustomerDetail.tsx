@@ -7,12 +7,14 @@ import StatusChip from '../../components/shared/StatusChip';
 import RecordHistoryPanel from './workflow/RecordHistoryPanel';
 import LinkedDocumentsSection from './workflow/LinkedDocumentsSection';
 import { isRecordOverdue } from './finance';
+import { useReturnNavigation } from './useReturnNavigation';
 
 type Tab = 'overview' | 'orders' | 'rfqs' | 'quotations' | 'invoices' | 'payments' | 'contacts' | 'documents' | 'history';
 
 export default function CustomerDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const { openRecord } = useReturnNavigation('/sales?tab=customers');
   const { customers, customerPos, rfqs, quotations, documents, invoices, payments, addDocument, currentUser, showToast, deactivateCustomer } = useStore();
   const [tab, setTab] = useState<Tab>('overview');
 
@@ -194,7 +196,7 @@ export default function CustomerDetail() {
                     <tr key={po.id} className="cursor-pointer" style={{ borderBottom: '1px solid var(--border)' }}
                       onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'var(--surface-2)'; }}
                       onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = ''; }}
-                      onClick={() => navigate(`/sales/po/${po.id}`)}>
+                      onClick={() => openRecord(`/sales/po/${po.id}`)}>
                       <td className="px-4 py-3 font-mono text-xs font-bold" style={{ color: 'var(--brand)' }}>{po.poNumber}</td>
                       <td className="px-4 py-3 text-xs" style={{ color: 'var(--text-2)' }}>{new Date(po.acceptedDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}</td>
                       <td className="px-4 py-3 font-mono text-sm font-semibold" style={{ color: 'var(--text)' }}>₹{(po.totalValue / 100000).toFixed(2)}L</td>
@@ -224,7 +226,7 @@ export default function CustomerDetail() {
                   {customerRfqs.length === 0 ? (
                     <tr><td colSpan={5} className="px-4 py-10 text-center text-sm" style={{ color: 'var(--text-3)' }}>No RFQs on record.</td></tr>
                   ) : customerRfqs.map(rfq => (
-                    <tr key={rfq.id} className="cursor-pointer" style={{ borderBottom: '1px solid var(--border)' }} onClick={() => navigate(`/sales/rfq/${rfq.id}?from=${encodeURIComponent(`/sales?tab=customers&customer=${customer.id}`)}`)}>
+                    <tr key={rfq.id} className="cursor-pointer" style={{ borderBottom: '1px solid var(--border)' }} onClick={() => openRecord(`/sales/rfq/${rfq.id}`)}>
                       <td className="px-4 py-3 font-mono text-xs font-bold" style={{ color: 'var(--brand)' }}>{rfq.rfqNumber}</td>
                       <td className="px-4 py-3 text-xs" style={{ color: 'var(--text-2)' }}>{new Date(rfq.receivedDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}</td>
                       <td className="px-4 py-3 text-xs" style={{ color: 'var(--text-2)' }}>{new Date(rfq.requiredBy).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}</td>
@@ -253,7 +255,7 @@ export default function CustomerDetail() {
                   {quotations.filter(q => q.customerId === id).length === 0 ? (
                     <tr><td colSpan={4} className="px-4 py-10 text-center text-sm" style={{ color: 'var(--text-3)' }}>No quotations on record.</td></tr>
                   ) : quotations.filter(q => q.customerId === id).map(quote => (
-                    <tr key={quote.id} className="cursor-pointer" style={{ borderBottom: '1px solid var(--border)' }} onClick={() => navigate(`/sales/quotation/${quote.id}`)}>
+                    <tr key={quote.id} className="cursor-pointer" style={{ borderBottom: '1px solid var(--border)' }} onClick={() => openRecord(`/sales/quotation/${quote.id}`)}>
                       <td className="px-4 py-3 font-mono text-xs font-bold" style={{ color: 'var(--brand)' }}>{quote.quotationNumber}</td>
                       <td className="px-4 py-3 text-xs" style={{ color: 'var(--text-2)' }}>Rev {quote.revision ?? 1}</td>
                       <td className="px-4 py-3 text-xs font-mono" style={{ color: 'var(--text-2)' }}>₹{quote.totalValue.toLocaleString('en-IN')}</td>

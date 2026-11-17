@@ -1,5 +1,6 @@
 package in.boss.procurement.api;
 
+import in.boss.procurement.domain.SupplierQuotationDeliveryService;
 import in.boss.procurement.domain.SupplierQuotationService;
 import in.boss.shared.security.BossPermissions;
 import jakarta.validation.Valid;
@@ -19,6 +20,7 @@ import java.util.UUID;
 import static in.boss.procurement.api.ProcurementApiDtos.CreateSupplierQuotationRequest;
 import static in.boss.procurement.api.ProcurementApiDtos.PageResponse;
 import static in.boss.procurement.api.ProcurementApiDtos.ReceiveSupplierQuotationRequest;
+import static in.boss.procurement.api.ProcurementApiDtos.SelectSupplierQuotationRequest;
 import static in.boss.procurement.api.ProcurementApiDtos.SupplierQuotationComparisonResponse;
 import static in.boss.procurement.api.ProcurementApiDtos.SupplierQuotationResponse;
 
@@ -28,9 +30,12 @@ import static in.boss.procurement.api.ProcurementApiDtos.SupplierQuotationRespon
 public class SupplierQuotationController {
 
     private final SupplierQuotationService quotationService;
+    private final SupplierQuotationDeliveryService deliveryService;
 
-    public SupplierQuotationController(SupplierQuotationService quotationService) {
+    public SupplierQuotationController(SupplierQuotationService quotationService,
+                                       SupplierQuotationDeliveryService deliveryService) {
         this.quotationService = quotationService;
+        this.deliveryService = deliveryService;
     }
 
     @GetMapping("/prs/{prId}/supplier-quotations")
@@ -72,8 +77,16 @@ public class SupplierQuotationController {
     }
 
     @PostMapping("/supplier-quotations/{quotationId}/select")
-    public SupplierQuotationResponse select(@PathVariable UUID quotationId) {
-        return quotationService.selectQuotation(quotationId);
+    public SupplierQuotationResponse select(
+            @PathVariable UUID quotationId,
+            @RequestBody(required = false) SelectSupplierQuotationRequest request) {
+        return quotationService.selectQuotation(quotationId, request == null ? null : request.reason());
+    }
+
+    @PostMapping("/supplier-quotations/{quotationId}/deliver")
+    public SupplierQuotationResponse deliver(@PathVariable UUID quotationId) {
+        deliveryService.send(quotationId);
+        return quotationService.getQuotation(quotationId);
     }
 
     @PostMapping("/supplier-quotations/{quotationId}/reject")

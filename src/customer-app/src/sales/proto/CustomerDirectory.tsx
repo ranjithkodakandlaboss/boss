@@ -1,6 +1,6 @@
 // @ts-nocheck
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { Search, Building2, Phone, Mail, ChevronRight, Star, X, Pencil } from 'lucide-react';
 import { useStore } from './runtime';
 import StatusChip, { getStatusLabel } from '../../components/shared/StatusChip';
@@ -9,11 +9,20 @@ import type { Party } from './types';
 import SortableHeader from '../../components/shared/SortableHeader';
 import { sortRows } from './tableSort';
 
-type CustomerSortKey = 'customer' | 'gstin' | 'contact' | 'terms' | 'pos' | 'rfqs' | 'rating' | 'status';
+type CustomerSortKey = 'customer' | 'gstin' | 'contact' | 'terms' | 'rfqs' | 'quotes' | 'pos' | 'rating' | 'status';
+
+function countLabel(count: number, singular: string, plural: string) {
+  return `${count} ${count === 1 ? singular : plural}`;
+}
 
 export default function CustomerDirectory() {
   const navigate = useNavigate();
-  const { customers, customerPos, rfqs, showToast, updateCustomer, addCustomer } = useStore();
+  const location = useLocation();
+  const { customers, customerPos, rfqs, quotations, showToast, updateCustomer, addCustomer } = useStore();
+  const openCustomer = (id: string) => navigate(`/sales/customers/${id}`, { state: { background: location, from: `${location.pathname}${location.search}` } });
+  const openRelated = (tab: 'rfqs' | 'quotations' | 'pos', customerId: string) => {
+    navigate(`/sales?tab=${tab}&customer=${encodeURIComponent(customerId)}`);
+  };
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('all');
   const [sortKey, setSortKey] = useState<CustomerSortKey>('customer');
@@ -30,7 +39,8 @@ export default function CustomerDirectory() {
   const sortedCustomers = sortRows(filtered, sortKey, sortDir, (customer, key) => {
     const poCount = customerPos.filter(po => po.customerId === customer.id).length;
     const rfqCount = rfqs.filter(rfq => rfq.customerId === customer.id).length;
-    const values: Record<string, unknown> = { customer: customer.tradingName, gstin: customer.gstin, contact: customer.contactPerson, terms: customer.paymentTerms, pos: poCount, rfqs: rfqCount, rating: customer.rating ?? 0, status: customer.status };
+    const quoteCount = quotations.filter(quote => quote.customerId === customer.id).length;
+    const values: Record<string, unknown> = { customer: customer.tradingName, gstin: customer.gstin, contact: customer.contactPerson, terms: customer.paymentTerms, rfqs: rfqCount, quotes: quoteCount, pos: poCount, rating: customer.rating ?? 0, status: customer.status };
     return values[key] ?? customer.tradingName;
   });
   const handleSort = (key: CustomerSortKey) => {
@@ -67,7 +77,7 @@ export default function CustomerDirectory() {
           <table className="eoss-table">
             <thead>
               <tr style={{ borderBottom: '1px solid var(--border)', background: 'var(--surface-2)' }}>
-                {([['Customer', 'customer'], ['GSTIN / State', 'gstin'], ['Contact', 'contact'], ['Terms', 'terms'], ['Customer POs', 'pos'], ['RFQs', 'rfqs'], ['Rating', 'rating'], ['Status', 'status']] as [string, CustomerSortKey][]).map(([label, key]) => (
+                {([['Customer', 'customer'], ['GSTIN / State', 'gstin'], ['Contact', 'contact'], ['Terms', 'terms'], ['RFQs', 'rfqs'], ['Quotes', 'quotes'], ['Customer POs', 'pos'], ['Rating', 'rating'], ['Status', 'status']] as [string, CustomerSortKey][]).map(([label, key]) => (
                   <SortableHeader key={label} label={label} active={sortKey === key} direction={sortDir} onSort={() => handleSort(key)} className="text-left px-4 py-2.5" />
                 ))}
                 <th />
@@ -79,7 +89,7 @@ export default function CustomerDirectory() {
                   key={c.id}
                   className="hover:bg-[var(--surface-2)] cursor-pointer transition-colors"
                   style={{ borderBottom: i < filtered.length - 1 ? '1px solid var(--border)' : 'none' }}
-                  onClick={() => navigate(`/sales/customers/${c.id}`)}
+                  onClick={() => openCustomer(c.id)}
                 >
                   <td className="px-4 py-3">
                     <div className="font-semibold text-[var(--text)]">{c.tradingName}</div>
@@ -99,21 +109,18 @@ export default function CustomerDirectory() {
                   </td>
                   <td className="px-4 py-3 text-xs text-[var(--text-2)]">{c.paymentTerms}</td>
                   <td className="px-4 py-3">
-                    <button
-                      type="button"
-                      onClick={e => { e.stopPropagation(); navigate(`/sales?tab=pos&customer=${encodeURIComponent(c.id)}`); }}
-                      className="text-xs font-semibold text-[var(--brand)] hover:underline"
-                    >
-                      {customerPos.filter(po => po.customerId === c.id).length} PO{customerPos.filter(po => po.customerId === c.id).length !== 1 ? 's' : ''}
+                    <button type="button" onClick={e => { e.stopPropagation(); openRelated('rfqs', c.id); }} className="text-xs font-semibold text-[var(--brand)] hover:underline">
+                      {countLabel(rfqs.filter(rfq => rfq.customerId === c.id).length, 'RFQ', 'RFQs')}
                     </button>
                   </td>
                   <td className="px-4 py-3">
-                    <button
-                      type="button"
-                      onClick={e => { e.stopPropagation(); navigate(`/sales?tab=rfqs&customer=${encodeURIComponent(c.id)}`); }}
-                      className="text-xs font-semibold text-[var(--brand)] hover:underline"
-                    >
-                      {rfqs.filter(rfq => rfq.customerId === c.id).length} RFQ{rfqs.filter(rfq => rfq.customerId === c.id).length !== 1 ? 's' : ''}
+                    <button type="button" onClick={e => { e.stopPropagation(); openRelated('quotations', c.id); }} className="text-xs font-semibold text-[var(--brand)] hover:underline">
+                      {countLabel(quotations.filter(quote => quote.customerId === c.id).length, 'Quote', 'Quotes')}
+                    </button>
+                  </td>
+                  <td className="px-4 py-3">
+                    <button type="button" onClick={e => { e.stopPropagation(); openRelated('pos', c.id); }} className="text-xs font-semibold text-[var(--brand)] hover:underline">
+                      {countLabel(customerPos.filter(po => po.customerId === c.id).length, 'PO', 'POs')}
                     </button>
                   </td>
                   <td className="px-4 py-3">
@@ -128,7 +135,7 @@ export default function CustomerDirectory() {
                     <StatusChip status={c.status as 'active' | 'archived'} />
                   </td>
                   <td className="px-4 py-3 text-right flex items-center justify-end gap-1">
-                    <button onClick={e => { e.stopPropagation(); navigate(`/sales/customers/${c.id}/edit`); }} className="p-1 rounded hover:bg-[var(--surface-2)]" title="Edit customer">
+                    <button onClick={e => { e.stopPropagation(); navigate(`/sales/customers/${c.id}/edit`, { state: { background: location, from: `${location.pathname}${location.search}` } }); }} className="p-1 rounded hover:bg-[var(--surface-2)]" title="Edit customer">
                       <Pencil size={13} className="text-[var(--text-3)]" />
                     </button>
                     <ChevronRight size={15} className="text-[var(--text-2)]" />

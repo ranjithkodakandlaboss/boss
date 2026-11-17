@@ -3,6 +3,7 @@ package in.boss.sales.domain;
 import in.boss.sales.api.SalesApiDtos.AcceptQuotationRequest;
 import in.boss.sales.api.SalesApiDtos.CpoResponse;
 import in.boss.sales.api.SalesApiDtos.PageResponse;
+import in.boss.sales.api.SalesApiDtos.RecordMaterialAvailabilityRequest;
 import in.boss.sales.api.SalesApiDtos.UpdateCpoRequest;
 import in.boss.shared.audit.AuditService;
 import in.boss.shared.context.BossContext;
@@ -211,6 +212,45 @@ public class CustomerPoService {
             throw notFound("Customer PO not found");
         }
         return statuses.get(0);
+    }
+
+    @Transactional
+    public CpoResponse recordAvailability(UUID cpoId, RecordMaterialAvailabilityRequest request) {
+        BossContext context = requireContext();
+        UUID tenantId = context.tenantId();
+        String status = lockStatus(tenantId, cpoId);
+        if (!EDITABLE.contains(status)) {
+            throw conflict("Material availability can be recorded only while the Customer PO is open or on hold");
+        }
+        for (RecordMaterialAvailabilityRequest.AvailabilityLine decision : request.lines()) {
+            BigDecimal ordered = jdbc.query("""
+                    SELECT quantity FROM cpo_lines
+                    WHERE tenant_id = ? AND cpo_id = ? AND id = ?
+                    FOR UPDATE
+                    """, rs -> rs.next() ? rs.getBigDecimal("quantity") : null,
+                    tenantId, cpoId, decision.lineId());
+            if (ordered == null) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Availability line is not on this Customer PO");
+            }
+            BigDecimal shortage = switch (decision.availability()) {
+                case "available" -> BigDecimal.ZERO;
+                case "unavailable" -> ordered;
+                default -> decision.shortageQty();
+            };
+            if (shortage == null || shortage.signum() < 0 || shortage.compareTo(ordered) > 0
+                    || ("partial".equals(decision.availability())
+                    && (shortage.signum() == 0 || shortage.compareTo(ordered) >= 0))) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "Partial availability needs a shortage greater than zero and less than the ordered quantity");
+            }
+            jdbc.update("""
+                    UPDATE cpo_lines
+                    SET availability = ?, shortage_qty = ?
+                    WHERE tenant_id = ? AND cpo_id = ? AND id = ?
+                    """, decision.availability(), shortage, tenantId, cpoId, decision.lineId());
+        }
+        auditService.record("cpos", cpoId, "AVAILABILITY", null, toJson(request));
+        return cpoLookup.get(cpoId);
     }
 
     private BossContext requireContext() {

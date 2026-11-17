@@ -3,6 +3,7 @@ package in.boss.procurement;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import in.boss.masterdata.BaseMasterDataIntegrationTest;
+import in.boss.procurement.email.ProcurementMailSender;
 import in.boss.procurement.api.ProcurementApiDtos.CreatePrLineRequest;
 import in.boss.procurement.api.ProcurementApiDtos.CreatePrRequest;
 import in.boss.procurement.api.ProcurementApiDtos.PurchaseRequisitionResponse;
@@ -12,6 +13,7 @@ import in.boss.shared.context.BossContextHolder;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
 import org.springframework.security.test.context.support.WithMockUser;
@@ -23,6 +25,11 @@ import java.util.Set;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -36,6 +43,7 @@ class SupplierQuotationTest extends BaseMasterDataIntegrationTest {
     @Autowired private MockMvc mockMvc;
     @Autowired private ObjectMapper objectMapper;
     @Autowired private PurchaseRequisitionService prService;
+    @MockitoBean private ProcurementMailSender mailSender;
 
     private UUID tenantId;
     private UUID actorId;
@@ -49,6 +57,8 @@ class SupplierQuotationTest extends BaseMasterDataIntegrationTest {
 
     @BeforeEach
     void setUp() {
+        lenient().when(mailSender.send(any(), any(), any()))
+                .thenReturn(new ProcurementMailSender.SendResult(true, "msg-1", null));
         tenantId = provisionTenant("supplier-quotation-test");
         actorId = UUID.randomUUID();
         UUID legalEntityId = insert("""
@@ -80,7 +90,7 @@ class SupplierQuotationTest extends BaseMasterDataIntegrationTest {
         PurchaseRequisitionResponse pr = prService.createPr(new CreatePrRequest(
                 "manual", null, null, siteId, null, null, null, "normal", null,
                 java.util.List.of(new CreatePrLineRequest(
-                        itemId, BigDecimal.TEN, null, uomId, null, null, null, null, null))));
+                        itemId, BigDecimal.TEN, null, uomId, null, null, null, null, null)), null));
         prService.submitPr(pr.id());
         prService.approvePr(pr.id());
         prId = pr.id();
@@ -114,7 +124,7 @@ class SupplierQuotationTest extends BaseMasterDataIntegrationTest {
         assertThat(selected.path("status").asText()).isEqualTo("selected");
         assertThat(selected.path("lines").get(0).path("unitPrice").decimalValue())
                 .isEqualByComparingTo("12.50");
-        assertThat(auditCount("supplier_quotations", quotationId)).isEqualTo(4);
+        assertThat(auditCount("supplier_quotations", quotationId)).isEqualTo(5);
 
         setContext(tenantId, siteId, actorId);
         assertThat(jdbc.queryForObject("""
@@ -151,6 +161,40 @@ class SupplierQuotationTest extends BaseMasterDataIntegrationTest {
                 "{\"lines\":[{\"prLineId\":\"" + unrelatedPrLineId + "\",\"unitPrice\":12.50}]}",
                 UUID.randomUUID().toString()).andExpect(status().isBadRequest());
         assertThat(readQuotation(quotationId).path("status").asText()).isEqualTo("requested");
+    }
+
+    @Test
+    void quotationRequestSendsOnceAndRetriesOnlyAfterFailure() throws Exception {
+        jdbc.update("""
+                INSERT INTO supplier_contacts (tenant_id, supplier_id, name, email, is_primary)
+                VALUES (?, ?, 'Mill Buyer', 'buyer@mill.example', TRUE)
+                """, tenantId, supplierId);
+        UUID quotationId = createQuotation(UUID.randomUUID().toString());
+        JsonNode created = readQuotation(quotationId);
+        assertThat(created.path("deliveryStatus").asText()).isEqualTo("sent");
+        assertThat(created.path("deliveryRecipient").asText()).isEqualTo("buyer@mill.example");
+        verify(mailSender, times(1)).send(eq("buyer@mill.example"), any(), any());
+
+        createQuotation(UUID.randomUUID().toString());
+        verify(mailSender, times(1)).send(eq("buyer@mill.example"), any(), any());
+
+        jdbc.update("""
+                INSERT INTO supplier_contacts (tenant_id, supplier_id, name, email, is_primary)
+                VALUES (?, ?, 'Second Buyer', 'retry@mill.example', TRUE)
+                """, tenantId, secondSupplierId);
+        org.mockito.Mockito.when(mailSender.send(eq("retry@mill.example"), any(), any()))
+                .thenReturn(new ProcurementMailSender.SendResult(false, null, "mailbox unavailable"))
+                .thenReturn(new ProcurementMailSender.SendResult(true, "msg-2", null));
+        UUID failedId = createQuotationFor(secondSupplierId, UUID.randomUUID().toString());
+        assertThat(readQuotation(failedId).path("deliveryStatus").asText()).isEqualTo("failed");
+        setContext(tenantId, siteId, actorId);
+        postEmpty("/api/v1/supplier-quotations/" + failedId + "/deliver", UUID.randomUUID().toString())
+                .andExpect(status().isOk());
+        assertThat(readQuotation(failedId).path("deliveryStatus").asText()).isEqualTo("sent");
+        verify(mailSender, times(2)).send(eq("retry@mill.example"), any(), any());
+        postEmpty("/api/v1/supplier-quotations/" + failedId + "/deliver", UUID.randomUUID().toString())
+                .andExpect(status().isOk());
+        verify(mailSender, times(2)).send(eq("retry@mill.example"), any(), any());
     }
 
     @Test

@@ -25,8 +25,13 @@ components:
       properties:
         id: { type: string, format: uuid }
         prNumber: { type: string }
-        originType: { type: string, enum: [MANUAL, PRODUCTION_JOB, STOCK_DRIVEN] }
+        originType: { type: string, enum: [MANUAL, PRODUCTION_JOB, STOCK_DRIVEN, CUSTOMER_PO] }
         jobId: { type: string, format: uuid, nullable: true }
+        customerPoId:
+          type: string
+          format: uuid
+          nullable: true
+          description: Originating Customer PO when originType is CUSTOMER_PO. One open requisition is kept per Customer PO.
         status: { type: string, enum: [draft, pending_approval, approved, partially_ordered, ordered, cancelled] }
         prTypeId: { type: string, format: uuid, nullable: true }
         prTypeLabel: { type: string, nullable: true }
@@ -346,6 +351,9 @@ paths:
         - name: originType
           in: query
           schema: { type: string }
+        - name: customerPoId
+          in: query
+          schema: { type: string, format: uuid }
         - name: page
           in: query
           schema: { type: integer, default: 0 }
@@ -379,8 +387,13 @@ paths:
               type: object
               required: [lines]
               properties:
-                originType: { type: string, enum: [MANUAL, PRODUCTION_JOB, STOCK_DRIVEN], default: MANUAL }
+                originType: { type: string, enum: [MANUAL, PRODUCTION_JOB, STOCK_DRIVEN, CUSTOMER_PO], default: MANUAL }
                 jobId: { type: string, format: uuid, nullable: true }
+                customerPoId:
+                  type: string
+                  format: uuid
+                  nullable: true
+                  description: Required when originType is CUSTOMER_PO. Repeating the request returns the existing open requisition.
                 prTypeId: { type: string, format: uuid, nullable: true }
                 prTypeLabel: { type: string, nullable: true }
                 requiredDate: { type: string, format: date, nullable: true }
