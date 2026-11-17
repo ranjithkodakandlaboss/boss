@@ -92,7 +92,11 @@ by Platform Admin, industry-template defaults copied at tenant provisioning, and
 tenant-specific additions/overrides. Site overrides are future scope. Tenant label
 editing is disabled in the category registry; tenant deactivation is supported by
 the design only as a historical-preserving operation, not a hard delete. These are
-approved design rules, not a description of complete current API behavior.
+approved design rules, not a description of complete current API behavior. The
+design says Platform Admin maintains global defaults but does not define whether
+Platform Admin may change a global code, label, order, or active state; no current
+Platform Admin API resolves those permissions. Global-value editability is therefore
+undecided, not assumed.
 
 `V045_1` currently assigns `scope='tenant'` to `ITEM_CATEGORY`,
 `PRODUCTION_STAGES`, `INSPECTION_TYPES`, `REJECTION_REASONS`, `PAYMENT_MODES`,
