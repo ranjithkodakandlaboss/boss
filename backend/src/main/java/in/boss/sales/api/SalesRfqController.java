@@ -39,9 +39,10 @@ public class SalesRfqController {
     public PageResponse<RfqResponse> list(
             @RequestParam(required = false) UUID customerId,
             @RequestParam(required = false) String status,
+            @RequestParam(required = false) String q,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "50") int size) {
-        return salesService.listRfqs(customerId, status, page, size);
+        return salesService.listRfqs(customerId, status, q, page, size);
     }
 
     @PostMapping

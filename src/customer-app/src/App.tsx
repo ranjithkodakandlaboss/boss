@@ -10,6 +10,7 @@ import ActivatePage from "./screens/ActivatePage";
 import LoginPage from "./screens/LoginPage";
 import OnboardingPage from "./screens/OnboardingPage";
 import ScreenPage from "./screens/ScreenPage";
+import { CustomerDetailPage, CustomerFormPage, PoCreatePage, PoDetailPage, QuotationDetailPage, QuotationFormPage, RfqDetailPage, RfqFormPage, SalesHome } from "./sales/SalesPages";
 
 function Background({ pathname }: { pathname: string }) {
   const screen = findScreen(pathname.split("?")[0]);
@@ -80,6 +81,18 @@ function Guard() {
       <Route path="activate" element={<ActivatePage />} />
       <Route path="onboarding" element={<OnboardingPage />} />
       <Route element={<AppShell />}>
+        <Route path="sales" element={<SalesHome />} />
+        <Route path="sales/customers/new" element={<CustomerFormPage />} />
+        <Route path="sales/customers/:id/edit" element={<CustomerFormPage />} />
+        <Route path="sales/customers/:id" element={<CustomerDetailPage />} />
+        <Route path="sales/rfq/new" element={<RfqFormPage />} />
+        <Route path="sales/rfq/:id/edit" element={<RfqFormPage />} />
+        <Route path="sales/rfq/:rfqId/quotation/new" element={<QuotationFormPage />} />
+        <Route path="sales/rfq/:id" element={<RfqDetailPage />} />
+        <Route path="sales/quotation/new" element={<QuotationFormPage />} />
+        <Route path="sales/quotation/:id" element={<QuotationDetailPage />} />
+        <Route path="sales/po/new" element={<PoCreatePage />} />
+        <Route path="sales/po/:id" element={<PoDetailPage />} />
         <Route path="sales/customers" element={<Navigate to="/sales?tab=customers" replace />} />
         <Route path="settings" element={<Navigate to="/admin" replace />} />
         <Route path="admin/audit" element={<Navigate to="/audit" replace />} />
