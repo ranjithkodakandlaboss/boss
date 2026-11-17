@@ -143,6 +143,22 @@ function rows<T>(page: Page<T> | T[] | undefined): T[] {
   return page?.content ?? [];
 }
 
+export async function allPages<T>(path: string): Promise<T[]> {
+  const collected: T[] = [];
+  let page = 0;
+  let total = 0;
+  do {
+    const joiner = path.includes("?") ? "&" : "?";
+    const result = await api<Page<T>>(`${path}${joiner}size=100&page=${page}`);
+    const content = rows(result);
+    total = result?.totalElements ?? content.length;
+    collected.push(...content);
+    page += 1;
+    if (content.length === 0) break;
+  } while (collected.length < total && page < 20);
+  return collected;
+}
+
 function key() {
   return crypto.randomUUID();
 }
