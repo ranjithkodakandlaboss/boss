@@ -64,6 +64,7 @@ type SalesState = {
   updateCustomer: (id: string, patch: Partial<Party>) => Promise<void | null>;
   deactivateCustomer: (id: string) => Promise<void | null>;
   addRfq: (rfq: CustomerRFQ) => Promise<CustomerRFQ | null>;
+  copyRfq: (id: string) => Promise<CustomerRFQ | null>;
   updateRfq: (id: string, patch: Partial<CustomerRFQ>) => Promise<void | null>;
   addQuotation: (quotation: CustomerQuotation, lines: CustomerQuotationLine[]) => Promise<CustomerQuotation | null>;
   createDirectQuotation: (quotation: CustomerQuotation, lines: CustomerQuotationLine[]) => Promise<CustomerQuotation | null>;
@@ -150,7 +151,7 @@ function toParty(customer: Customer): Party & { code?: string; line1?: string } 
     panNumber: customer.pan || "",
     gstin: customer.gstin || "",
     state: customer.address?.state || "",
-    paymentTerms: termsLabel(customer.creditDays),
+    paymentTerms: customer.creditDays === 0 ? "Advance" : `Net ${customer.creditDays ?? 30}`,
     creditLimit: money(customer.creditLimit),
     currency: "INR",
     status,
@@ -298,7 +299,7 @@ function mapQuote(quote: Quotation): CustomerQuotation {
     uom: line.uomSymbol || "",
     uomId: line.uomId,
     unitPrice: money(line.unitPrice),
-    value: money(line.lineTotal ?? Number(line.qty) * Number(line.unitPrice)),
+    value: money(line.lineTotal || Number(line.qty) * Number(line.unitPrice)),
     requiredDate: line.requiredBy || "",
     gstRate: line.gstRate == null ? undefined : Number(line.gstRate),
     discountPct: line.discountPct == null ? undefined : Number(line.discountPct),
@@ -651,6 +652,28 @@ export function SalesProvider({ children }: { children?: ReactNode }) {
         });
         return mapRfq(saved, false);
       }, { title: "RFQ created" }),
+      copyRfq: (id) => guard(async () => {
+        const src = rfqs.find((item) => item.id === id);
+        if (!src) throw new Error("RFQ not found");
+        const lines = lineRequests((src.lines ?? []) as unknown as Array<Record<string, unknown>>, catalog, uoms);
+        const saved = await salesApi.saveRfq({
+          customerId: src.customerId,
+          requiredDate: src.requiredBy || null,
+          receivedDate: null,
+          receivedVia: src.channel,
+          paymentTerms: days(src.paymentTerms),
+          deliveryTerms: src.deliveryTerms || null,
+          notes: src.internalNotes || null,
+          customerRef: src.customerEnquiryRef || null,
+          technicalRequirements: src.technicalRequirements ?? {},
+          lines: lines.map((line) => ({
+            itemId: line.itemId, qty: line.qty, uomId: line.uomId, drawingNumber: line.drawingNumber,
+            drawingRevision: line.drawingRevision, material: line.material, description: line.description,
+            targetPrice: line.targetPrice, notes: line.notes, requiredBy: line.requiredBy,
+          })),
+        });
+        return mapRfq(saved, false);
+      }, { title: "RFQ copied", body: "A new draft RFQ has been created with the same lines." }),
       updateRfq: async (id, patch) => {
         const current = rfqs.find((item) => item.id === id);
         if (current && (current as CustomerRFQ & { apiStatus?: string }).apiStatus !== "draft" && patch.lines) {

@@ -19,7 +19,7 @@ export default function RFQDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { rfqs, quotations, customerPos, currentUser } = useStore();
+  const { rfqs, quotations, customerPos, currentUser, copyRfq } = useStore();
   const [tab, setTab] = useState<Tab>('lines');
 
   const rfq = rfqs.find(r => r.id === id) as (CustomerRFQ & Record<string, any>) | undefined;
@@ -91,6 +91,9 @@ export default function RFQDetail() {
             </div>
           </div>
           <div className="flex items-center gap-2 flex-shrink-0">
+            {['owner', 'sales'].includes(currentUser.role) && (
+              <button onClick={async () => { const copy = await copyRfq(rfq.id); if (copy) navigate(`/sales/rfq/${copy.id}`); }} className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-semibold border" style={{ borderColor: 'var(--border)', color: 'var(--text-2)' }}>Copy RFQ</button>
+            )}
             {['owner', 'sales'].includes(currentUser.role) && !['converted', 'cancelled'].includes(rfq.status) && <button onClick={() => navigate(`/sales/rfq/${rfq.id}/edit`)} className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-semibold border" style={{ borderColor: 'var(--border)', color: 'var(--text-2)' }}>Edit RFQ</button>}
             {canQuote && (
               <button

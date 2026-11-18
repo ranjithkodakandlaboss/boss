@@ -1,5 +1,5 @@
 // @ts-nocheck
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { ArrowLeft, ChevronRight, Edit2, Phone, Mail, Star, Upload } from 'lucide-react';
 import { useStore } from './runtime';
@@ -15,8 +15,14 @@ export default function CustomerDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { openRecord } = useReturnNavigation('/sales?tab=customers');
-  const { customers, customerPos, rfqs, quotations, documents, invoices, payments, addDocument, currentUser, showToast, deactivateCustomer } = useStore();
+  const { customers, customerPos, rfqs, quotations, documents, invoices, payments, addDocument, currentUser, showToast, deactivateCustomer, updateCustomer } = useStore();
   const [tab, setTab] = useState<Tab>('overview');
+  const [confirmDeactivate, setConfirmDeactivate] = useState(false);
+  const fmtSince = useCallback((raw: string) => {
+    if (!raw) return '—';
+    const d = new Date(raw.length === 4 ? `${raw}-01-01` : raw);
+    return isNaN(d.getTime()) ? raw : d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+  }, []);
 
   const customer = customers.find(c => c.id === id);
   if (!customer) return (
@@ -55,6 +61,7 @@ export default function CustomerDetail() {
   ];
 
   return (
+    <>
     <div className="flex flex-col h-full">
       {/* Header */}
       <div className="flex-shrink-0 px-6 py-4 border-b" style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}>
@@ -78,14 +85,15 @@ export default function CustomerDetail() {
               <p className="text-sm mt-0.5" style={{ color: 'var(--text-2)' }}>{customer.legalName} · {customer.city}, {customer.state}</p>
             </div>
           </div>
-          {customer.status === 'active' && <button type="button" onClick={() => deactivateCustomer(customer.id)} className="px-3 py-1.5 rounded-lg border text-sm font-medium" style={{ borderColor: 'var(--border)', color: 'var(--text-2)' }}>Deactivate</button>}
+          {customer.status === 'active' && <button type="button" onClick={() => setConfirmDeactivate(true)} className="px-3 py-1.5 rounded-lg border text-sm font-medium" style={{ borderColor: 'var(--border)', color: 'var(--text-2)' }}>Deactivate</button>}
+          {customer.status !== 'active' && <button type="button" onClick={() => updateCustomer(customer.id, { status: 'active' })} className="px-3 py-1.5 rounded-lg border text-sm font-medium" style={{ borderColor: 'var(--border)', color: 'var(--text-2)' }}>Reactivate</button>}
           <button onClick={() => navigate(`/sales/customers/${customer.id}/edit`)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-sm font-medium hover:opacity-80"
             style={{ borderColor: 'var(--border)', color: 'var(--text-2)' }}>
             <Edit2 size={13} /> Edit
           </button>
         </div>
         <div className="mt-4 flex items-center gap-6 flex-wrap">
-          <SBadge label="Customer Since" value={customer.since} />
+          <SBadge label="Customer Since" value={fmtSince(customer.since)} />
           <SBadge label="Payment Terms" value={customer.paymentTerms} />
           <SBadge label="Currency" value={customer.currency} />
           {customer.creditLimit != null && <SBadge label="Credit Limit" value={`₹${customer.creditLimit.toLocaleString('en-IN')}`} emphasis />}
@@ -382,6 +390,19 @@ export default function CustomerDetail() {
         )}
       </div>
     </div>
+    {confirmDeactivate && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4" onClick={() => setConfirmDeactivate(false)}>
+        <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl w-full max-w-md p-6 shadow-2xl" onClick={e => e.stopPropagation()}>
+          <h3 className="font-bold text-[var(--text)] mb-1">Deactivate Customer?</h3>
+          <p className="text-sm text-[var(--text-2)] mb-5">Historical RFQs, quotations and Customer POs stay readable. This can be undone by reactivating the customer.</p>
+          <div className="flex gap-3">
+            <button onClick={() => setConfirmDeactivate(false)} className="flex-1 py-2.5 border border-[var(--border)] rounded-xl text-sm text-[var(--text-2)]">Cancel</button>
+            <button onClick={() => { setConfirmDeactivate(false); deactivateCustomer(customer.id); }} className="flex-1 py-2.5 rounded-xl text-sm font-medium text-white" style={{ background: 'var(--error, #DC2626)' }}>Deactivate</button>
+          </div>
+        </div>
+      </div>
+    )}
+    </>
   );
 }
 
