@@ -214,6 +214,9 @@ class ConfigOptionsRlsTest {
         assertThatThrownBy(() -> configService.setOptionActive("CARRIER", carrier.id(), false))
                 .isInstanceOf(org.springframework.web.server.ResponseStatusException.class)
                 .hasMessageContaining("Only owners");
+        assertThatThrownBy(() -> configService.reorderOptions("CARRIER", List.of(carrier.id())))
+                .isInstanceOf(org.springframework.web.server.ResponseStatusException.class)
+                .hasMessageContaining("Only owners");
 
         setTenant(tenantB, Set.of("STORE_KEEPER"));
         ConfigOptionDto vehicle = configService.createOption("VEHICLE", "LOCAL_VEHICLE", "Local vehicle", 10);

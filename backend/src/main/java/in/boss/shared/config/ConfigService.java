@@ -200,11 +200,12 @@ public class ConfigService {
                 optionJson(existing), "{\"active\":" + active + "}");
     }
 
-    @PreAuthorize("hasRole('OWNER')")
+    @PreAuthorize("hasAnyRole('OWNER','OPS_MANAGER','STORE_KEEPER')")
     @Transactional
     public void reorderOptions(String categoryCode, List<UUID> optionIds) {
         var ctx = BossContextHolder.get();
         if (ctx == null) throw new IllegalStateException("BossContext required");
+        requireOwner(ctx);
         requireTenantEditable(categoryCode);
         if ("ITEM_CATEGORY".equalsIgnoreCase(categoryCode)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Item categories do not support custom ordering");
