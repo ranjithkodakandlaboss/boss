@@ -74,8 +74,9 @@ public class FeasibilityCheckService {
                 .filter(header -> context.canAccessSite(header.siteId()))
                 .orElseThrow(() -> new InventoryValidationException(
                         "Customer PO not found for this tenant"));
-        if (!Set.of("open", "partial").contains(cpo.status())) {
-            throw new InventoryValidationException("Only open or partial Customer POs can reserve stock");
+        if (!Set.of("open", "partial", "feasibility_pending").contains(cpo.status())) {
+            throw new InventoryValidationException(
+                    "Only open, partial, or feasibility-pending Customer POs can reserve stock");
         }
         if (!reservationRepository.activeCustomerPoReservations(context.tenantId(), cpoId, false).isEmpty()) {
             throw new ReservationConflictException(

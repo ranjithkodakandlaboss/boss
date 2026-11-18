@@ -414,7 +414,8 @@ public final class SalesApiDtos {
             @Min(0) @Max(365) Integer paymentTerms) {}
 
     public record CpoStatusRequest(
-            @NotNull @Pattern(regexp = "open|on_hold|cancelled") String status) {}
+            @NotNull @Pattern(regexp = "open|on_hold|feasibility_pending|feasibility_approved|cancelled")
+            String status) {}
 
     public record RecordMaterialAvailabilityRequest(
             @NotEmpty List<@Valid AvailabilityLine> lines) {

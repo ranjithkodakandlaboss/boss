@@ -96,7 +96,7 @@ public class ProductionQueryService {
                 JOIN items i ON i.id = l.item_id AND i.tenant_id = c.tenant_id
                 JOIN physical_sites s ON s.id = c.site_id AND s.tenant_id = c.tenant_id
                 WHERE c.tenant_id = ?
-                  AND c.status IN ('open', 'partial')
+                  AND c.status IN ('open', 'partial', 'feasibility_approved')
                   AND l.quantity > COALESCE((
                     SELECT SUM(j.quantity) FROM production_jobs j
                     WHERE j.tenant_id = c.tenant_id AND j.cpo_line_id = l.id AND j.status <> 'cancelled'), 0)
