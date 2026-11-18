@@ -115,10 +115,19 @@ function days(terms?: string | number | null) {
   return match ? Number(match[1]) : 30;
 }
 
-function termsLabel(value?: number | null) {
-  if (value == null) return "Net 30";
+function termsLabel(value?: number | null, text?: string | null) {
+  if (text && text.trim()) return text.trim();
+  if (value == null) return "Net 30 days";
   if (value === 0) return "Advance";
-  return `Net ${value}`;
+  return `Net ${value} days`;
+}
+
+function quoteMoney(lines: Array<{ value: number; gstRate?: number }>, discount: number) {
+  const subtotal = lines.reduce((sum, line) => sum + line.value, 0);
+  const taxable = Math.max(0, subtotal - discount);
+  const scale = subtotal > 0 ? taxable / subtotal : 0;
+  const tax = lines.reduce((sum, line) => sum + line.value * (Number(line.gstRate) || 0) / 100, 0) * scale;
+  return { subtotal, taxAmount: Math.round(tax * 100) / 100, totalValue: Math.round((taxable + tax) * 100) / 100 };
 }
 
 function money(value?: number | string | null) {
@@ -149,7 +158,7 @@ function toParty(customer: Customer): Party & { code?: string; line1?: string } 
     phone: contact?.phone || "",
     email: contact?.email || "",
     city: customer.address?.city || "",
-    since: "",
+    since: (customer.createdAt || "").slice(0, 10),
     code: customer.code,
     line1: customer.address?.line1 || "",
   };
@@ -288,12 +297,12 @@ function mapQuote(quote: Quotation): CustomerQuotation {
     uomId: line.uomId,
     unitPrice: money(line.unitPrice),
     value: money(line.lineTotal ?? Number(line.qty) * Number(line.unitPrice)),
-    requiredDate: "",
+    requiredDate: line.requiredBy || "",
     gstRate: line.gstRate == null ? undefined : Number(line.gstRate),
     discountPct: line.discountPct == null ? undefined : Number(line.discountPct),
     description: line.description || "",
   }));
-  const subtotal = lines.reduce((sum, line) => sum + line.value, 0);
+  const totals = quoteMoney(lines, money(quote.discountAmount));
   return {
     id: quote.id,
     quotationNumber: quote.quotationNumber,
@@ -305,13 +314,14 @@ function mapQuote(quote: Quotation): CustomerQuotation {
     validUntil: quote.validUntil || "",
     currency: "INR",
     status: quoteStatus(quote.status),
-    totalValue: Math.max(0, subtotal - money(quote.discountAmount)),
-    subtotal,
+    totalValue: totals.totalValue,
+    subtotal: totals.subtotal,
+    taxAmount: totals.taxAmount,
     discountAmount: money(quote.discountAmount),
     revision: quote.revision,
     owner: "",
     deliveryTerms: quote.deliveryTerms || "",
-    paymentTerms: termsLabel(quote.paymentTerms),
+    paymentTerms: termsLabel(quote.paymentTerms, quote.paymentTermsText),
     notes: quote.notes || "",
     createdAt: quote.createdAt,
     lines,
@@ -341,16 +351,18 @@ function linkRevisions(quotes: CustomerQuotation[]) {
 }
 
 function mapPo(po: Cpo): CustomerPO {
-  const total = po.lines.reduce((sum, line) => sum + money(line.lineTotal), 0) - money(po.discountAmount);
+  const priced = po.lines.map((line) => ({ value: money(line.lineTotal), gstRate: line.gstRate == null ? undefined : Number(line.gstRate) }));
+  const totals = quoteMoney(priced, money(po.discountAmount));
   return {
     id: po.id,
     poNumber: po.cpoNumber,
     customerId: po.customerId,
     customerName: po.customerName,
     acceptedDate: po.orderDate || po.createdAt || "",
-    paymentTerms: termsLabel(po.paymentTerms),
+    paymentTerms: termsLabel(po.paymentTerms, po.paymentTermsText),
     status: poStatus(po.status),
-    totalValue: total,
+    totalValue: totals.totalValue,
+    taxAmount: totals.taxAmount,
     currency: "INR",
     lineCount: po.lines.length,
     quotationRef: po.quotationNumber,
@@ -416,6 +428,8 @@ export function SalesProvider({ children }: { children?: ReactNode }) {
   const [catalog, setCatalog] = useState<CatalogItem[]>([]);
   const [uoms, setUoms] = useState<UomOption[]>([]);
   const [sites, setSites] = useState<{ id: string; name: string }[]>([]);
+  const [stores, setStores] = useState<{ id: string; siteId?: string }[]>([]);
+  const [jobs, setJobs] = useState<Array<{ id: string; jobNumber: string; customerPoId?: string; poId?: string; status: string }>>([]);
   const [purchaseReqs, setPurchaseReqs] = useState<any[]>([]);
   const [supplierPos, setSupplierPos] = useState<any[]>([]);
   const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([]);
@@ -448,8 +462,23 @@ export function SalesProvider({ children }: { children?: ReactNode }) {
     try {
       const company = await api<CompanyRecord>("/api/v1/company");
       setSites((company.sites ?? []).filter((site) => site.id && site.name).map((site) => ({ id: site.id as string, name: site.name })));
+      setStores((company.stores ?? []).filter((store) => store.id).map((store) => ({ id: store.id as string, siteId: store.siteId })));
     } catch {
       setSites([]);
+      setStores([]);
+    }
+    try {
+      const jobPage = await api<{ content?: Array<{ id: string; jobNumber: string; cpoId?: string; status: string }> }>("/api/v1/jobs?page=0&size=200");
+      setJobs((jobPage.content ?? []).map((job) => ({
+        id: job.id,
+        jobNumber: job.jobNumber,
+        customerPoId: job.cpoId,
+        poId: job.cpoId,
+        status: job.status,
+      })));
+    } catch (error) {
+      setJobs([]);
+      showToast({ type: "error", title: "Production jobs did not load", body: failure(error) });
     }
     try {
       const [prRows, spoRows] = await Promise.all([
@@ -481,7 +510,7 @@ export function SalesProvider({ children }: { children?: ReactNode }) {
       setPurchaseReqs([]);
       setSupplierPos([]);
     }
-  }, []);
+  }, [showToast]);
 
   useEffect(() => {
     let live = true;
@@ -565,6 +594,7 @@ export function SalesProvider({ children }: { children?: ReactNode }) {
       purchaseReqs,
       supplierPos,
       ready,
+      jobs,
       customers,
       rfqs,
       quotations,
@@ -716,16 +746,44 @@ export function SalesProvider({ children }: { children?: ReactNode }) {
         if (!po || decisions.length === 0 || decisions.some((decision) => !decision.availability)) {
           return { error: "Mark every material line as available, unavailable, or partial." };
         }
-        const shortages = decisions.filter((decision) => decision.availability !== "available");
+        const storeId = stores[0]?.id;
+        const reserveLines = decisions.flatMap((decision) => {
+          if (decision.availability === "unavailable") return [];
+          const line = poLines.find((item) => item.id === decision.lineId);
+          const ordered = Number(line?.orderedQty);
+          const claimed = decision.availability === "partial" ? Number(decision.shortageQty) : 0;
+          const qty = ordered - claimed;
+          return qty > 0 ? [{ cpoLineId: decision.lineId, storeId, qty }] : [];
+        });
+        const reservedByLine = new Map<string, { reserved: number; shortfall: number }>();
+        if (reserveLines.length > 0 && !storeId) return { error: "A store is required before stock can be reserved." };
+        if (reserveLines.length > 0) {
+          try {
+            const response = await api<{ lines?: Array<{ cpoLineId: string; reserved: number | string; shortfall: number | string }> }>(
+              "/api/v1/inventory/reservations/customer-pos?partial=true",
+              { method: "POST", body: JSON.stringify({ cpoId: po.id, lines: reserveLines }) },
+            );
+            (response.lines ?? []).forEach((line) => reservedByLine.set(line.cpoLineId, { reserved: Number(line.reserved), shortfall: Number(line.shortfall) }));
+          } catch (error) {
+            return { error: failure(error) };
+          }
+        }
+        const recorded = decisions.map((decision) => {
+          const line = poLines.find((item) => item.id === decision.lineId);
+          const ordered = Number(line?.orderedQty);
+          if (decision.availability === "unavailable") return { lineId: decision.lineId, availability: "unavailable", shortageQty: ordered };
+          const result = reservedByLine.get(decision.lineId);
+          const reserved = result?.reserved ?? 0;
+          const shortfall = result ? result.shortfall : ordered;
+          const availability = reserved <= 0 ? "unavailable" : shortfall > 0 ? "partial" : "available";
+          return { lineId: decision.lineId, availability, shortageQty: shortfall > 0 ? shortfall : undefined };
+        });
         try {
-          await salesApi.recordAvailability(po.id, decisions.map((decision) => ({
-            lineId: decision.lineId,
-            availability: decision.availability || "available",
-            shortageQty: decision.availability === "partial" ? Number(decision.shortageQty) : undefined,
-          })));
+          await salesApi.recordAvailability(po.id, recorded);
         } catch (error) {
           return { error: failure(error) };
         }
+        const shortages = recorded.filter((decision) => decision.availability !== "available");
         if (shortages.length === 0) {
           await reload();
           return { status: "available", message: "Material was confirmed available. No purchase requisition was created." };
@@ -767,7 +825,7 @@ export function SalesProvider({ children }: { children?: ReactNode }) {
       addDocument: () => showToast({ type: "info", title: "Document file was not stored", body: "Notes typed on the record are saved. File upload is not connected." }),
       appendAuditEvent: () => undefined,
     };
-  }, [auditEvents, catalog, companyConfig, currentUser, customerPos, customers, guard, poLines, purchaseReqs, quotations, ready, reload, removeToast, rfqs, showToast, sites, supplierPos, toasts, uoms]);
+  }, [auditEvents, catalog, companyConfig, currentUser, customerPos, customers, guard, jobs, poLines, purchaseReqs, quotations, ready, reload, removeToast, rfqs, showToast, sites, stores, supplierPos, toasts, uoms]);
 
   return (
     <SalesContext.Provider value={value}>
@@ -789,6 +847,7 @@ function quoteBody(quotation: CustomerQuotation, lines: CustomerQuotationLine[],
     rfqId: quotation.rfqId || null,
     validUntil: quotation.validUntil || null,
     paymentTerms: days(quotation.paymentTerms),
+    paymentTermsText: quotation.paymentTerms || null,
     deliveryTerms: quotation.deliveryTerms || null,
     notes: quotation.notes || null,
     discountAmount: quotation.discountAmount || 0,
@@ -802,6 +861,7 @@ function quoteBody(quotation: CustomerQuotation, lines: CustomerQuotationLine[],
       drawingNumber: line.drawingNumber,
       drawingRevision: line.drawingRevision,
       description: line.description,
+      requiredBy: line.requiredBy,
     })),
   };
 }

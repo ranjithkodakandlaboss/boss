@@ -6,6 +6,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -28,4 +29,5 @@ public class CustomerDto {
     private Integer creditDays;
     private String status;
     private List<ContactDto> contacts;
+    private Instant createdAt;
 }

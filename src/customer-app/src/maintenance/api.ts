@@ -24,6 +24,7 @@ export type Asset = {
   responsiblePerson?: string | null;
   installDate?: string | null;
   status: string;
+  capabilities?: { stageOptionId: string; stageLabel: string }[];
   archiveReason?: string | null;
   archivedAt?: string | null;
   openEvents: number;
@@ -113,6 +114,7 @@ const base = "/api/v1/maintenance";
 export const listAssets = (includeArchived: boolean) => api<Asset[]>(`${base}/assets?includeArchived=${includeArchived}`);
 export const getAsset = (id: string) => api<Asset>(`${base}/assets/${id}`);
 export const createAsset = (input: AssetInput) => send<Asset>("POST", `${base}/assets`, input);
+export const replaceCapabilities = (id: string, stageOptionIds: string[]) => send<Asset>("PUT", `${base}/assets/${id}/capabilities`, { stageOptionIds });
 export const updateAsset = (id: string, input: AssetInput) => send<Asset>("PUT", `${base}/assets/${id}`, input);
 export const archiveAsset = (id: string, reason: string) => send<Asset>("POST", `${base}/assets/${id}/archive`, { reason });
 export const listReadings = (id: string) => api<MeterReading[]>(`${base}/assets/${id}/readings`);
@@ -182,14 +184,20 @@ export function computeDue(asset: Asset, now = new Date()): DueInfo {
   }
   let nextDueDate: string | null = null;
   let remainingDays: number | null = null;
-  if (asset.pmFrequencyDays && asset.lastServiceDate) {
-    const due = new Date(asset.lastServiceDate);
+  const calendar = (value: string) => {
+    const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
+    return match ? new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3])) : new Date(value);
+  };
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  if (asset.nextServiceDate) {
+    const due = calendar(asset.nextServiceDate);
+    nextDueDate = asset.nextServiceDate.slice(0, 10);
+    remainingDays = Math.round((due.getTime() - today.getTime()) / 86400000);
+  } else if (asset.pmFrequencyDays && asset.lastServiceDate) {
+    const due = calendar(asset.lastServiceDate);
     due.setDate(due.getDate() + asset.pmFrequencyDays);
-    nextDueDate = due.toISOString().slice(0, 10);
-    remainingDays = Math.round((due.getTime() - now.getTime()) / 86400000);
-  } else if (asset.nextServiceDate) {
-    nextDueDate = asset.nextServiceDate;
-    remainingDays = Math.round((new Date(asset.nextServiceDate).getTime() - now.getTime()) / 86400000);
+    nextDueDate = `${due.getFullYear()}-${String(due.getMonth() + 1).padStart(2, "0")}-${String(due.getDate()).padStart(2, "0")}`;
+    remainingDays = Math.round((due.getTime() - today.getTime()) / 86400000);
   }
   const rank: Record<DueStatus, number> = { overdue: 3, due: 2, upcoming: 1, ok: 0, unknown: -1, in_maintenance: -1 };
   const classify = (remaining: number | null, threshold: number): DueStatus => {
@@ -221,6 +229,6 @@ export function nextServiceLabel(asset: Asset) {
   if (due.status === "in_maintenance") return "In maintenance";
   const parts: string[] = [];
   if (due.remainingHours != null) parts.push(`${due.remainingHours} ${asset.meterType} left`);
-  if (due.remainingDays != null) parts.push(`${due.remainingDays} days left`);
+  if (due.remainingDays != null) parts.push(due.remainingDays < 0 ? `Service overdue by ${Math.abs(due.remainingDays)} days` : `${due.remainingDays} days left`);
   return parts.length ? parts.join(" · ") : "Not scheduled";
 }

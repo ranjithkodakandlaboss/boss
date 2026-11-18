@@ -10,7 +10,7 @@ import { useReturnNavigation } from '../../sales/proto/useReturnNavigation';
 import StatusChip from '../../components/shared/StatusChip';
 import type { PurchaseRequisition, SupplierInvitation, SupplierQuotationLine } from './types';
 
-const TODAY = '2026-04-17';
+const TODAY = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
 
 function addDays(base: string, days: number): string {
   const dt = new Date(base);
@@ -162,7 +162,7 @@ export default function SupplierRFQCreate() {
   const [leadTimeDays, setLeadTimeDays] = useState<number>(10);
   const [paymentTerms, setPaymentTerms] = useState<string>('Net 30');
   const [taxRatePct, setTaxRatePct] = useState<number>(18);
-  const [deliveryCharges, setDeliveryCharges] = useState<number>(1500);
+  const [deliveryCharges, setDeliveryCharges] = useState<number>(0);
   const [discountAmount, setDiscountAmount] = useState<number>(0);
   const [attachmentName, setAttachmentName] = useState<string>('');
   const [quoteNotes, setQuoteNotes] = useState<string>('');

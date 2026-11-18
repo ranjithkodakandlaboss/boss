@@ -85,7 +85,11 @@ public class ProductionQueryService {
         return jdbc.query("""
                 SELECT c.id AS cpo_id, c.cpo_number, l.id AS line_id, c.customer_id, cu.name AS customer_name,
                        l.item_id, i.code AS item_code, i.name AS item_name, l.quantity, l.unit_price,
-                       c.site_id, s.name AS site_name, c.required_by_date, c.status
+                       c.site_id, s.name AS site_name, c.required_by_date, c.status,
+                       l.quantity - COALESCE((
+                         SELECT SUM(j.quantity) FROM production_jobs j
+                         WHERE j.tenant_id = c.tenant_id AND j.cpo_line_id = l.id AND j.status <> 'cancelled'
+                       ), 0) AS remaining_qty
                 FROM cpos c
                 JOIN cpo_lines l ON l.cpo_id = c.id AND l.tenant_id = c.tenant_id
                 JOIN customers cu ON cu.id = c.customer_id AND cu.tenant_id = c.tenant_id
@@ -93,9 +97,9 @@ public class ProductionQueryService {
                 JOIN physical_sites s ON s.id = c.site_id AND s.tenant_id = c.tenant_id
                 WHERE c.tenant_id = ?
                   AND c.status IN ('open', 'partial')
-                  AND NOT EXISTS (
-                    SELECT 1 FROM production_jobs j
-                    WHERE j.tenant_id = c.tenant_id AND j.cpo_line_id = l.id AND j.status <> 'cancelled')
+                  AND l.quantity > COALESCE((
+                    SELECT SUM(j.quantity) FROM production_jobs j
+                    WHERE j.tenant_id = c.tenant_id AND j.cpo_line_id = l.id AND j.status <> 'cancelled'), 0)
                 """ + siteSql + """
                  ORDER BY c.created_at DESC, l.line_no
                 """, (rs, row) -> new EligibleCpoLine(
@@ -113,7 +117,8 @@ public class ProductionQueryService {
                 rs.getObject("site_id", UUID.class),
                 rs.getString("site_name"),
                 date(rs, "required_by_date"),
-                rs.getString("status")), args.toArray());
+                rs.getString("status"),
+                rs.getBigDecimal("remaining_qty")), args.toArray());
     }
 
     public List<RoutingTemplateOption> routingTemplates(UUID itemId) {

@@ -370,8 +370,12 @@ public class MaintenanceService {
             throw bad("Completion cannot be earlier than downtime start");
         }
         BigDecimal downtime = null;
-        if (e.downtimeStart() != null) {
-            downtime = BigDecimal.valueOf(Duration.between(e.downtimeStart(), completion).toMinutes())
+        Instant downtimeFrom = e.downtimeStart();
+        if (downtimeFrom == null && e.plannedDate() != null) {
+            downtimeFrom = e.plannedDate().atStartOfDay(ZoneOffset.UTC).toInstant();
+        }
+        if (downtimeFrom != null && !completion.isBefore(downtimeFrom)) {
+            downtime = BigDecimal.valueOf(Duration.between(downtimeFrom, completion).toMinutes())
                     .divide(BigDecimal.valueOf(60), 2, RoundingMode.HALF_UP);
         }
         jdbc.update("""
@@ -385,7 +389,7 @@ public class MaintenanceService {
         AssetResponse asset = loadAsset(e.assetId());
         LocalDate completed = completion.atZone(ZoneOffset.UTC).toLocalDate();
         LocalDate next = asset.nextServiceDate();
-        if (asset.pmFrequencyDays() != null && asset.pmFrequencyDays() > 0) {
+        if (next == null && asset.pmFrequencyDays() != null && asset.pmFrequencyDays() > 0) {
             next = completed.plusDays(asset.pmFrequencyDays());
         }
         jdbc.update("""
@@ -413,6 +417,37 @@ public class MaintenanceService {
     /** Open breakdowns that list this job as affected, for the stage's work centre (or any, when none given). */
     @Transactional(readOnly = true)
     public String machineBlocker(UUID tenantId, UUID jobId, String workCentre) {
+        return machineBlocker(tenantId, jobId, null, workCentre);
+    }
+
+    /**
+     * Blocks a stage assigned to an unavailable asset, and otherwise keeps the existing
+     * affected-job work-centre check for stages that have no asset assignment.
+     */
+    @Transactional(readOnly = true)
+    public String machineBlocker(UUID tenantId, UUID jobId, UUID stageId, String workCentre) {
+        if (stageId != null) {
+            List<UUID> linked = jdbc.query("""
+                    SELECT asset_id FROM job_stages
+                    WHERE tenant_id = ? AND id = ? AND asset_id IS NOT NULL
+                    """, (rs, i) -> rs.getObject(1, UUID.class), tenantId, stageId);
+            if (!linked.isEmpty()) {
+                List<String> direct = jdbc.query("""
+                        SELECT COALESCE(e.event_number, 'maintenance') || ' on ' || a.asset_number || ' (' || a.name || ')'
+                        FROM assets a
+                        LEFT JOIN LATERAL (
+                          SELECT event_number FROM maintenance_events
+                          WHERE tenant_id = a.tenant_id AND asset_id = a.id AND status <> 'closed'
+                            AND event_type = 'Breakdown'
+                          ORDER BY created_at LIMIT 1
+                        ) e ON TRUE
+                        WHERE a.tenant_id = ? AND a.id = ?
+                          AND (a.status IN ('breakdown', 'in_maintenance') OR e.event_number IS NOT NULL)
+                        LIMIT 1
+                        """, (rs, i) -> rs.getString(1), tenantId, linked.get(0));
+                return direct.isEmpty() ? null : direct.get(0);
+            }
+        }
         List<String> blockers = jdbc.query("""
                 SELECT e.event_number || ' on ' || a.asset_number
                 FROM maintenance_events e JOIN assets a ON a.id = e.asset_id AND a.tenant_id = e.tenant_id
@@ -422,6 +457,30 @@ public class MaintenanceService {
                 ORDER BY e.created_at LIMIT 1
                 """, (rs, i) -> rs.getString(1), tenantId, jobId, workCentre, workCentre);
         return blockers.isEmpty() ? null : blockers.get(0);
+    }
+
+    @PreAuthorize(MAINTENANCE_WRITE)
+    public AssetResponse replaceCapabilities(UUID assetId, List<UUID> stageOptionIds) {
+        loadAsset(assetId);
+        BossContext ctx = context();
+        jdbc.update("DELETE FROM asset_capabilities WHERE tenant_id = ? AND asset_id = ?", ctx.tenantId(), assetId);
+        List<UUID> ids = stageOptionIds == null ? List.of() : stageOptionIds.stream().distinct().toList();
+        for (UUID optionId : ids) {
+            List<String> labels = jdbc.query("""
+                    SELECT o.label FROM tenant_config_options o
+                    JOIN config_categories c ON c.id = o.category_id
+                    WHERE o.tenant_id = ? AND o.id = ? AND c.code = 'PRODUCTION_STAGES' AND o.is_active
+                    """, (rs, i) -> rs.getString(1), ctx.tenantId(), optionId);
+            if (labels.isEmpty()) {
+                throw bad("Production stage is not a configured activity for this tenant");
+            }
+            jdbc.update("""
+                    INSERT INTO asset_capabilities (tenant_id, asset_id, stage_option_id, stage_label)
+                    VALUES (?, ?, ?, ?)
+                    """, ctx.tenantId(), assetId, optionId, labels.get(0));
+        }
+        audit.record("asset", assetId, "CAPABILITIES", null, "{\"count\":" + ids.size() + "}");
+        return loadAsset(assetId);
     }
 
     @PreAuthorize(MAINTENANCE_VIEW)
@@ -451,8 +510,17 @@ public class MaintenanceService {
 
     private static final String EVENT_SELECT = """
             SELECT e.*, a.asset_number, a.name AS asset_name, a.site_id AS asset_site_id,
-                   (SELECT COALESCE(json_agg(json_build_object('id', j.id, 'n', j.job_number)), '[]'::json)::text
-                      FROM production_jobs j WHERE j.tenant_id = e.tenant_id AND j.id = ANY(e.affected_job_ids)) AS jobs_json
+                   (SELECT COALESCE(json_agg(json_build_object('id', x.id, 'n', x.job_number)), '[]'::json)::text
+                      FROM (
+                        SELECT j.id, j.job_number FROM production_jobs j
+                         WHERE j.tenant_id = e.tenant_id AND j.id = ANY(e.affected_job_ids)
+                        UNION
+                        SELECT j.id, j.job_number FROM production_jobs j
+                        JOIN job_stages s ON s.tenant_id = j.tenant_id AND s.job_id = j.id
+                         WHERE j.tenant_id = e.tenant_id AND s.asset_id = e.asset_id
+                           AND s.status NOT IN ('completed', 'skipped')
+                           AND j.status NOT IN ('completed', 'cancelled')
+                      ) x) AS jobs_json
             FROM maintenance_events e JOIN assets a ON a.id = e.asset_id AND a.tenant_id = e.tenant_id
             """;
 
@@ -476,6 +544,14 @@ public class MaintenanceService {
         return rows.get(0);
     }
 
+    private List<AssetCapability> capabilities(UUID assetId) {
+        return jdbc.query("""
+                SELECT stage_option_id, stage_label FROM asset_capabilities
+                WHERE tenant_id = ? AND asset_id = ? ORDER BY stage_label
+                """, (rs, i) -> new AssetCapability(rs.getObject("stage_option_id", UUID.class), rs.getString("stage_label")),
+                context().tenantId(), assetId);
+    }
+
     private RowMapper<AssetResponse> assetMapper() {
         return (rs, i) -> new AssetResponse(rs.getObject("id", UUID.class), rs.getString("asset_number"),
                 rs.getString("name"), rs.getString("category"), rs.getObject("site_id", UUID.class),
@@ -487,7 +563,7 @@ public class MaintenanceService {
                 (Integer) rs.getObject("pm_frequency_days"), rs.getObject("responsible_user_id", UUID.class),
                 rs.getString("responsible_person"), date(rs.getDate("install_date")), rs.getString("status"),
                 rs.getString("archive_reason"), instant(rs.getTimestamp("archived_at")), rs.getInt("open_events"),
-                instant(rs.getTimestamp("created_at")));
+                instant(rs.getTimestamp("created_at")), capabilities(rs.getObject("id", UUID.class)));
     }
 
     private RowMapper<EventResponse> eventMapper() {

@@ -35,8 +35,12 @@ public final class MaintenanceDtos {
             LocalDate lastServiceDate, LocalDate nextServiceDate, String pmFrequencyMetric,
             BigDecimal pmFrequencyHours, Integer pmFrequencyDays, UUID responsibleUserId,
             String responsiblePerson, LocalDate installDate, String status, String archiveReason,
-            Instant archivedAt, int openEvents, Instant createdAt
+            Instant archivedAt, int openEvents, Instant createdAt, List<AssetCapability> capabilities
     ) {}
+
+    public record AssetCapability(UUID stageOptionId, String stageLabel) {}
+
+    public record CapabilityRequest(List<UUID> stageOptionIds) {}
 
     public record EventRequest(
             UUID assetId, String eventType, String severity, String symptom, UUID technicianUserId,

@@ -43,6 +43,12 @@ public class MaintenanceController {
         return service.updateAsset(id, request);
     }
 
+    @PutMapping("/assets/{id}/capabilities")
+    @PreAuthorize(BossPermissions.MAINTENANCE_WRITE)
+    public AssetResponse capabilities(@PathVariable UUID id, @RequestBody CapabilityRequest request) {
+        return service.replaceCapabilities(id, request.stageOptionIds());
+    }
+
     @PostMapping("/assets/{id}/archive")
     @PreAuthorize(BossPermissions.MAINTENANCE_WRITE)
     public AssetResponse archive(@PathVariable UUID id, @RequestBody ArchiveRequest request) {

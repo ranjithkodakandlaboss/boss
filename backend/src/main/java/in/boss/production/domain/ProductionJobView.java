@@ -64,10 +64,12 @@ class ProductionJobView {
 
     private List<JobStageResponse> stages(UUID tenantId, UUID jobId) {
         return jdbc.query("""
-                SELECT id, seq_no, name, stage_code, stage_config_option_id, stage_label_snapshot,
-                       status, requires_inspection, is_optional, work_centre,
-                       actual_start, actual_end, completed_by
-                FROM job_stages WHERE tenant_id = ? AND job_id = ? ORDER BY seq_no
+                SELECT s.id, s.seq_no, s.name, s.stage_code, s.stage_config_option_id, s.stage_label_snapshot,
+                       s.status, s.requires_inspection, s.is_optional, s.work_centre, s.asset_id,
+                       a.asset_number, s.actual_start, s.actual_end, s.completed_by
+                FROM job_stages s
+                LEFT JOIN assets a ON a.id = s.asset_id AND a.tenant_id = s.tenant_id
+                WHERE s.tenant_id = ? AND s.job_id = ? ORDER BY s.seq_no
                 """, (rs, row) -> stage(tenantId, rs), tenantId, jobId);
     }
 
@@ -82,7 +84,8 @@ class ProductionJobView {
                 rs.getObject("stage_config_option_id", UUID.class), rs.getString("status"), required,
                 inspectionStatus(tenantId, stageId, required), rs.getBoolean("is_optional"), rs.getBoolean("is_optional"),
                 rs.getString("work_centre"), instant(rs, "actual_start"), instant(rs, "actual_end"),
-                rs.getObject("completed_by", UUID.class));
+                rs.getObject("completed_by", UUID.class), rs.getObject("asset_id", UUID.class),
+                rs.getString("asset_number"));
     }
 
     private String inspectionStatus(UUID tenantId, UUID stageId, boolean required) {

@@ -98,7 +98,7 @@ class BomCreationTest extends BaseMasterDataIntegrationTest {
         assertThat(bomV1.getId()).isNotNull();
         assertThat(bomV1.getItemId()).isEqualTo(finishedGood.getId());
         assertThat(bomV1.getVersion()).isEqualTo(1);
-        assertThat(bomV1.getStatus()).isEqualTo("active");
+        assertThat(bomV1.getStatus()).isEqualTo("approved");
         assertThat(bomV1.getLines()).hasSize(2);
 
         // Active BOM query returns V1
@@ -122,7 +122,7 @@ class BomCreationTest extends BaseMasterDataIntegrationTest {
 
         assertThat(bomV2.getId()).isNotEqualTo(bomV1.getId());
         assertThat(bomV2.getVersion()).isEqualTo(2);
-        assertThat(bomV2.getStatus()).isEqualTo("active");
+        assertThat(bomV2.getStatus()).isEqualTo("approved");
         assertThat(bomV2.getLines()).hasSize(1);
 
         // Verify V1 status is now 'superseded' in DB

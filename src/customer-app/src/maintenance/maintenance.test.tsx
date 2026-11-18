@@ -89,6 +89,7 @@ it("creates an asset and shows API errors", async () => {
   const dialog = await screen.findByRole("dialog");
   await userEvent.type(within(dialog).getByLabelText("Asset code"), "PRESS-9");
   await userEvent.type(within(dialog).getByLabelText("Asset name"), "Press");
+  await userEvent.type(within(dialog).getByLabelText("Manufacturer"), "Acme");
   await waitFor(() => expect(within(dialog).getByRole("option", { name: "Plant" })).toBeTruthy());
   await userEvent.selectOptions(within(dialog).getByLabelText("Site"), siteId);
   failCreate = true;

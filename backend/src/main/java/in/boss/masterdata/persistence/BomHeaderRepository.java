@@ -12,5 +12,6 @@ public interface BomHeaderRepository extends JpaRepository<BomHeaderEntity, UUID
     Optional<BomHeaderEntity> findByIdAndTenantId(UUID id, UUID tenantId);
     Optional<BomHeaderEntity> findByTenantIdAndFinishedItemIdAndStatus(UUID tenantId, UUID finishedItemId, String status);
     List<BomHeaderEntity> findByTenantIdAndFinishedItemIdOrderByCreatedAtDesc(UUID tenantId, UUID finishedItemId);
+    List<BomHeaderEntity> findByTenantIdOrderByCreatedAtDesc(UUID tenantId);
     boolean existsByTenantIdAndFinishedItemIdAndStatus(UUID tenantId, UUID finishedItemId, String status);
 }

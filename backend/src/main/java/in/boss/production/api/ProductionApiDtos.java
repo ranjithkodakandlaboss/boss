@@ -22,8 +22,14 @@ public final class ProductionApiDtos {
             @NotNull UUID routingTemplateId,
             LocalDate scheduledStart,
             LocalDate scheduledEnd,
-            @Pattern(regexp = "low|normal|high|urgent") String priority
-    ) {}
+            @Pattern(regexp = "low|normal|high|urgent") String priority,
+            @DecimalMin("0.001") BigDecimal quantity
+    ) {
+        public CreateJobRequest(UUID cpoId, UUID cpoLineId, UUID routingTemplateId,
+                                 LocalDate scheduledStart, LocalDate scheduledEnd, String priority) {
+            this(cpoId, cpoLineId, routingTemplateId, scheduledStart, scheduledEnd, priority, null);
+        }
+    }
 
     public record ReasonRequest(@NotBlank String reason) {}
 
@@ -76,7 +82,9 @@ public final class ProductionApiDtos {
             String workCentre,
             Instant actualStartAt,
             Instant actualEndAt,
-            UUID completedBy
+            UUID completedBy,
+            UUID assetId,
+            String assetCode
     ) {}
 
     public record MaterialRequirementResponse(
@@ -200,7 +208,8 @@ public final class ProductionApiDtos {
             UUID siteId,
             String siteName,
             LocalDate requiredBy,
-            String status
+            String status,
+            BigDecimal remainingQty
     ) {}
 
     public record RoutingTemplateOption(
@@ -211,10 +220,22 @@ public final class ProductionApiDtos {
             int stageCount
     ) {}
 
+    public record RoutingStageRequest(
+            @NotBlank String name,
+            String workCentre,
+            UUID assetId,
+            UUID stageConfigOptionId
+    ) {}
+
     public record CreateRoutingTemplateRequest(
             @NotBlank String name,
-            @NotBlank String stageName
-    ) {}
+            String stageName,
+            java.util.List<@jakarta.validation.Valid RoutingStageRequest> stages
+    ) {
+        public CreateRoutingTemplateRequest(String name, String stageName) {
+            this(name, stageName, null);
+        }
+    }
 
     public record PageResponse<T>(List<T> content, int page, int size, long totalElements) {}
 

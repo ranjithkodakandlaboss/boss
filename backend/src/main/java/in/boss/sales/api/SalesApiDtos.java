@@ -141,11 +141,12 @@ public final class SalesApiDtos {
             @DecimalMin("0.00") @DecimalMax("100.00") BigDecimal discountPct,
             @Size(max = 80) String drawingNumber,
             @Size(max = 20) String drawingRevision,
-            @Size(max = 500) String description) {
+            @Size(max = 500) String description,
+            java.time.LocalDate requiredBy) {
         @JsonIgnore
         public CreateQuotationLineRequest(UUID itemId, BigDecimal qty, UUID uomId,
                                            BigDecimal unitPrice, Integer deliveryWeeks) {
-            this(itemId, qty, uomId, unitPrice, deliveryWeeks, null, null, null, null, null);
+            this(itemId, qty, uomId, unitPrice, deliveryWeeks, null, null, null, null, null, null);
         }
     }
 
@@ -157,11 +158,12 @@ public final class SalesApiDtos {
             @Min(0) @Max(365) Integer paymentTerms,
             @Size(max = 200) String deliveryTerms,
             @Size(max = 2000) String notes,
-            @DecimalMin("0.00") BigDecimal discountAmount) {
+            @DecimalMin("0.00") BigDecimal discountAmount,
+            @Size(max = 200) String paymentTermsText) {
         @JsonIgnore
         public CreateQuotationRequest(UUID customerId, UUID rfqId, LocalDate validUntil,
                                        List<@Valid CreateQuotationLineRequest> lines) {
-            this(customerId, rfqId, validUntil, lines, null, null, null, null);
+            this(customerId, rfqId, validUntil, lines, null, null, null, null, null);
         }
     }
 
@@ -171,7 +173,8 @@ public final class SalesApiDtos {
             @Min(0) @Max(365) Integer paymentTerms,
             @Size(max = 200) String deliveryTerms,
             @Size(max = 2000) String notes,
-            @DecimalMin("0.00") BigDecimal discountAmount) {}
+            @DecimalMin("0.00") BigDecimal discountAmount,
+            @Size(max = 200) String paymentTermsText) {}
 
     public record ReviseQuotationRequest(
             @Size(max = 500) String changeReason,
@@ -180,11 +183,12 @@ public final class SalesApiDtos {
             @Min(0) @Max(365) Integer paymentTerms,
             @Size(max = 200) String deliveryTerms,
             @Size(max = 2000) String notes,
-            @DecimalMin("0.00") BigDecimal discountAmount) {
+            @DecimalMin("0.00") BigDecimal discountAmount,
+            @Size(max = 200) String paymentTermsText) {
         @JsonIgnore
         public ReviseQuotationRequest(String changeReason, LocalDate validUntil,
                                        List<@Valid CreateQuotationLineRequest> lines) {
-            this(changeReason, validUntil, lines, null, null, null, null);
+            this(changeReason, validUntil, lines, null, null, null, null, null);
         }
     }
 
@@ -219,13 +223,14 @@ public final class SalesApiDtos {
             BigDecimal discountPct,
             String drawingNumber,
             String drawingRevision,
-            String description) {
+            String description,
+            java.time.LocalDate requiredBy) {
         @JsonIgnore
         public QuotationLineResponse(UUID id, UUID itemId, String itemCode, String itemName,
                                      BigDecimal qty, UUID uomId, String uomSymbol, BigDecimal unitPrice,
                                      BigDecimal lineTotal, Integer deliveryWeeks) {
             this(id, itemId, itemCode, itemName, qty, uomId, uomSymbol, unitPrice, lineTotal,
-                    deliveryWeeks, null, null, null, null, null);
+                    deliveryWeeks, null, null, null, null, null, null);
         }
     }
 
@@ -254,14 +259,15 @@ public final class SalesApiDtos {
             UUID cpoId,
             String cpoNumber,
             String rfqNumber,
-            List<RevisionLink> revisions) {
+            List<RevisionLink> revisions,
+            String paymentTermsText) {
         @JsonIgnore
         public QuotationResponse(UUID id, String quotationNumber, UUID rfqId, UUID customerId,
                                  String customerName, int revision, String status, LocalDate validUntil,
                                  List<QuotationLineResponse> lines, List<NegotiationEntryResponse> negotiationHistory,
                                  Instant createdAt) {
             this(id, quotationNumber, rfqId, customerId, customerName, revision, status, validUntil, lines,
-                    negotiationHistory, createdAt, null, null, null, null, null, null, null, null, null, null, null, List.of());
+                    negotiationHistory, createdAt, null, null, null, null, null, null, null, null, null, null, null, List.of(), null);
         }
     }
 
@@ -309,7 +315,8 @@ public final class SalesApiDtos {
             UUID decidedBy,
             Instant decidedAt,
             List<CpoLineResponse> lines,
-            Instant createdAt) {}
+            Instant createdAt,
+            String paymentTermsText) {}
 
     public record UpdateCpoRequest(
             @Size(max = 120) String customerPoRef,

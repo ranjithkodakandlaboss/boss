@@ -97,9 +97,9 @@ export default function SiteNeed() {
       <div className="flex-1 overflow-auto p-3">
         {loading ? <LoadingState label="Loading site need" /> : (
           <table className="w-full text-sm">
-            <thead><tr>{["Site", "Item", "Required", "Available", "Reserved", "Shortage", "Required by", "Source / action"].map((label) => <th key={label} className="px-3 py-2 text-left text-xs">{label}</th>)}</tr></thead>
+            <thead><tr>{["Site", "Item", "Required", "Issued", "Remaining", "Available", "Reserved", "Shortage", "Status", "Required by", "Source / action"].map((label) => <th key={label} className="px-3 py-2 text-left text-xs">{label}</th>)}</tr></thead>
             <tbody>
-              {visible.length === 0 && <tr><td colSpan={8} className="py-10 text-center text-sm text-[var(--text-3)]">No active site requirements.</td></tr>}
+              {visible.length === 0 && <tr><td colSpan={11} className="py-10 text-center text-sm text-[var(--text-3)]">No active site requirements.</td></tr>}
               {visible.map((row) => {
                 const uncovered = Math.max(row.shortage, 0);
                 const pr = new URLSearchParams({
@@ -115,9 +115,12 @@ export default function SiteNeed() {
                     <td className="px-3 py-2"><Link to={`/jobs/${row.job.id}`} className="text-xs font-semibold text-[var(--brand)]">{row.job.siteName || "Site"}</Link><div className="text-[11px] text-[var(--text-3)]">{row.job.jobNumber}</div></td>
                     <td className="px-3 py-2 text-sm font-semibold">{row.name}<div className="text-xs font-normal text-[var(--text-3)]">{row.uom}</div></td>
                     <td className="px-3 py-2 font-mono text-xs">{quantity(row.required)}</td>
+                    <td className="px-3 py-2 font-mono text-xs">{quantity(row.issued)}</td>
+                    <td className="px-3 py-2 font-mono text-xs">{quantity(Math.max(0, row.required - row.issued))}</td>
                     <td className="px-3 py-2 font-mono text-xs">{quantity(row.available)}</td>
                     <td className="px-3 py-2 font-mono text-xs">{quantity(row.reserved)}</td>
                     <td className="px-3 py-2 font-mono text-xs font-bold" style={{ color: row.shortage > 0 ? "var(--error)" : "var(--success)" }}>{quantity(row.shortage)}</td>
+                    <td className="px-3 py-2 text-xs">{row.issued >= row.required ? "Issued" : row.shortage > 0 ? "Shortage" : "Covered"}</td>
                     <td className="px-3 py-2 text-xs">{row.plannedEnd || "—"}</td>
                     <td className="px-3 py-2">
                       <div className="flex flex-wrap gap-1.5">

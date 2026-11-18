@@ -155,7 +155,7 @@ it("adds a workflow when none is active and does not add a priority", async () =
     if (url.includes("/jobs/features")) return Promise.resolve(json({ "production.job.create": true }));
     if (url.includes("/eligible-cpos")) return Promise.resolve(json([{ cpoId, cpoLineId: lineId, cpoNumber: "CPO-100", customerName: "North Works", itemId, itemName: "Frame", qty: 10, sellingPrice: 1000, siteName: "Plant" }]));
     if (url.includes("/routing-templates") && init?.method === "POST") {
-      expect(JSON.parse(String(init.body))).toEqual({ name: "Frame route", stageName: "Cutting" });
+      expect(JSON.parse(String(init.body))).toEqual({ name: "Frame route", stageName: "Cutting", stages: [{ name: "Cutting" }] });
       return Promise.resolve(json({ id: createdTemplate, name: "Frame route", version: "v1", stageCount: 1 }, 201));
     }
     if (url.includes("/routing-templates")) return Promise.resolve(json([]));
@@ -175,7 +175,7 @@ it("adds a workflow when none is active and does not add a priority", async () =
   expect(screen.queryByRole("button", { name: "Add priority" })).not.toBeInTheDocument();
   await userEvent.click(screen.getByRole("button", { name: "Add workflow" }));
   await userEvent.type(screen.getByLabelText("Workflow name"), "Frame route");
-  await userEvent.type(screen.getByLabelText("First stage"), "Cutting");
+  await userEvent.type(screen.getByLabelText("Stages in order, separated by commas"), "Cutting");
   await userEvent.click(screen.getByRole("button", { name: "Save" }));
   expect(await screen.findByRole("option", { name: "Frame route (1 stages)" })).toBeInTheDocument();
 });

@@ -225,6 +225,11 @@ public class SalesService {
             if (!request.customerId().equals(rfqCustomer)) {
                 throw badRequest("Quotation customer must match the linked RFQ customer");
             }
+            String rfqStatus = jdbc.queryForObject(
+                    "SELECT status FROM rfqs WHERE tenant_id = ? AND id = ?", String.class, tenantId, request.rfqId());
+            if ("closed".equals(rfqStatus) || "cancelled".equals(rfqStatus)) {
+                throw conflict("This RFQ is already closed and cannot start another quotation");
+            }
         }
 
         UUID quotationId = UUID.randomUUID();
@@ -232,12 +237,12 @@ public class SalesService {
         jdbc.update("""
                 INSERT INTO quotations
                   (id, tenant_id, quotation_number, rfq_id, customer_id, site_id, revision,
-                   status, valid_until, payment_terms, delivery_terms, notes, discount_amount, created_by)
-                VALUES (?, ?, ?, ?, ?, ?, 1, 'draft', ?, COALESCE(?, 30), ?, ?, COALESCE(?, 0), ?)
+                   status, valid_until, payment_terms, payment_terms_text, delivery_terms, notes, discount_amount, created_by)
+                VALUES (?, ?, ?, ?, ?, ?, 1, 'draft', ?, COALESCE(?, 30), ?, ?, ?, COALESCE(?, 0), ?)
                 """,
                 quotationId, tenantId, quotationNumber, request.rfqId(), request.customerId(),
-                siteId, request.validUntil(), request.paymentTerms(), request.deliveryTerms(),
-                request.notes(), request.discountAmount(), context.userId());
+                siteId, request.validUntil(), request.paymentTerms(), blank(request.paymentTermsText()),
+                request.deliveryTerms(), request.notes(), request.discountAmount(), context.userId());
         BigDecimal estimatedTotal = replaceQuotationLines(tenantId, quotationId, request.lines());
         jdbc.update("UPDATE quotations SET estimated_material_cost = ? WHERE tenant_id = ? AND id = ?",
                 estimatedTotal, tenantId, quotationId);
@@ -312,12 +317,13 @@ public class SalesService {
         jdbc.update("""
                 UPDATE quotations
                    SET valid_until = ?, payment_terms = COALESCE(?, payment_terms),
+                       payment_terms_text = COALESCE(?, payment_terms_text),
                        delivery_terms = ?, notes = ?, discount_amount = COALESCE(?, discount_amount),
                        updated_at = NOW()
                  WHERE tenant_id = ? AND id = ?
                 """,
-                request.validUntil(), request.paymentTerms(), request.deliveryTerms(), request.notes(),
-                request.discountAmount(), tenantId, quotationId);
+                request.validUntil(), request.paymentTerms(), blank(request.paymentTermsText()),
+                request.deliveryTerms(), request.notes(), request.discountAmount(), tenantId, quotationId);
         jdbc.update("DELETE FROM quotation_lines WHERE tenant_id = ? AND quotation_id = ?", tenantId, quotationId);
         BigDecimal estimatedTotal = replaceQuotationLines(tenantId, quotationId, request.lines());
         jdbc.update("UPDATE quotations SET estimated_material_cost = ? WHERE tenant_id = ? AND id = ?",
@@ -379,6 +385,16 @@ public class SalesService {
                 && Set.of("rejected", "expired").contains(nextStatus));
         if (!validTransition) {
             throw conflict("Invalid quotation status transition: " + current + " -> " + nextStatus);
+        }
+        if ("sent".equals(nextStatus)) {
+            Integer missingDrawing = jdbc.queryForObject("""
+                    SELECT COUNT(*) FROM quotation_lines
+                    WHERE tenant_id = ? AND quotation_id = ?
+                      AND (drawing_number IS NULL OR btrim(drawing_number) = '')
+                    """, Integer.class, tenantId, quotationId);
+            if (missingDrawing != null && missingDrawing > 0) {
+                throw badRequest("Drawing number is required on every line before the quotation is submitted");
+            }
         }
         QuotationResponse before = readQuotation(tenantId, quotationId);
         if ("rejected".equals(nextStatus)) {
@@ -470,17 +486,18 @@ public class SalesService {
         LocalDate validUntil = request.validUntil() != null ? request.validUntil() : original.validUntil();
         UUID siteId = quotationSiteId(tenantId, quotationId);
         Integer paymentTerms = request.paymentTerms() != null ? request.paymentTerms() : original.paymentTerms();
+        String paymentTermsText = request.paymentTermsText() != null ? request.paymentTermsText() : original.paymentTermsText();
         String deliveryTerms = request.deliveryTerms() != null ? request.deliveryTerms() : original.deliveryTerms();
         String notes = request.notes() != null ? request.notes() : original.notes();
         BigDecimal discount = request.discountAmount() != null ? request.discountAmount() : original.discountAmount();
         jdbc.update("""
                 INSERT INTO quotations
                   (id, tenant_id, quotation_number, rfq_id, customer_id, site_id, revision,
-                   status, valid_until, payment_terms, delivery_terms, notes, discount_amount, created_by)
-                VALUES (?, ?, ?, ?, ?, ?, ?, 'draft', ?, COALESCE(?, 30), ?, ?, COALESCE(?, 0), ?)
+                   status, valid_until, payment_terms, payment_terms_text, delivery_terms, notes, discount_amount, created_by)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 'draft', ?, COALESCE(?, 30), ?, ?, ?, COALESCE(?, 0), ?)
                 """,
                 revisedId, tenantId, original.quotationNumber(), original.rfqId(), original.customerId(),
-                siteId, nextRevision, validUntil, paymentTerms, deliveryTerms, notes, discount, context.userId());
+                siteId, nextRevision, validUntil, paymentTerms, blank(paymentTermsText), deliveryTerms, notes, discount, context.userId());
         BigDecimal estimatedTotal = replaceQuotationLines(tenantId, revisedId, request.lines());
         jdbc.update("UPDATE quotations SET estimated_material_cost = ? WHERE tenant_id = ? AND id = ?",
                 estimatedTotal, tenantId, revisedId);
@@ -525,12 +542,13 @@ public class SalesService {
                     INSERT INTO quotation_lines
                       (id, tenant_id, quotation_id, line_no, item_id, quantity, uom_id,
                        unit_price, delivery_days, estimated_material_cost_per_unit,
-                       gst_rate, discount_pct, drawing_number, drawing_revision, description)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, 0), ?, ?, ?)
+                       gst_rate, discount_pct, drawing_number, drawing_revision, description, required_by)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, 0), ?, ?, ?, ?)
                     """,
                     UUID.randomUUID(), tenantId, quotationId, lineNo++, line.itemId(), line.qty(),
                     line.uomId(), line.unitPrice(), deliveryDays, costPerUnit, line.gstRate(),
-                    line.discountPct(), line.drawingNumber(), line.drawingRevision(), line.description());
+                    line.discountPct(), line.drawingNumber(), line.drawingRevision(), line.description(),
+                    line.requiredBy());
         }
         return allCostsKnown ? totalCost.setScale(2, RoundingMode.HALF_UP) : null;
     }
@@ -632,7 +650,7 @@ public class SalesService {
     private QuotationResponse readQuotation(UUID tenantId, UUID quotationId) {
         List<QuotationHeader> headers = jdbc.query("""
                 SELECT q.id, q.quotation_number, q.rfq_id, q.customer_id, q.revision, q.status,
-                       q.valid_until, q.created_at, q.payment_terms, q.delivery_terms, q.notes,
+                       q.valid_until, q.created_at, q.payment_terms, q.payment_terms_text, q.delivery_terms, q.notes,
                        q.discount_amount, q.decision_channel, q.decision_note, q.decided_by, q.decided_at,
                        r.rfq_number, cpo.id AS cpo_id, cpo.cpo_number
                   FROM quotations q
@@ -649,6 +667,7 @@ public class SalesService {
                 localDate(rs, "valid_until"),
                 instant(rs, "created_at"),
                 (Integer) rs.getObject("payment_terms"),
+                rs.getString("payment_terms_text"),
                 rs.getString("delivery_terms"),
                 rs.getString("notes"),
                 rs.getBigDecimal("discount_amount"),
@@ -666,7 +685,7 @@ public class SalesService {
         CustomerDto customer = customerService.getCustomer(header.customerId());
         List<QuotationLineData> lineData = jdbc.query("""
                 SELECT id, item_id, quantity, uom_id, unit_price, delivery_days,
-                       gst_rate, discount_pct, drawing_number, drawing_revision, description
+                       gst_rate, discount_pct, drawing_number, drawing_revision, description, required_by
                   FROM quotation_lines
                  WHERE tenant_id = ? AND quotation_id = ?
                  ORDER BY line_no
@@ -681,7 +700,8 @@ public class SalesService {
                 rs.getBigDecimal("discount_pct"),
                 rs.getString("drawing_number"),
                 rs.getString("drawing_revision"),
-                rs.getString("description")), tenantId, quotationId);
+                rs.getString("description"),
+                localDate(rs, "required_by")), tenantId, quotationId);
         List<QuotationLineResponse> lines = lineData.stream().map(line -> {
             ItemDto item = itemService.getItem(line.itemId());
             UomDto uom = uomService.getUom(line.uomId());
@@ -690,7 +710,7 @@ public class SalesService {
                     commercialLineTotal(line.quantity(), line.unitPrice(), line.discountPct()),
                     line.deliveryDays() == null ? null : line.deliveryDays() / 7,
                     line.gstRate(), line.discountPct(), line.drawingNumber(), line.drawingRevision(),
-                    line.description());
+                    line.description(), line.requiredBy());
         }).toList();
         List<NegotiationEntryResponse> history = readNegotiationHistory(tenantId, quotationId);
         List<RevisionLink> revisions = jdbc.query("""
@@ -705,7 +725,7 @@ public class SalesService {
                 header.validUntil(), lines, history, header.createdAt(), header.paymentTerms(),
                 header.deliveryTerms(), header.notes(), header.discountAmount(), header.decisionChannel(),
                 header.decisionNote(), header.decidedBy(), header.decidedAt(), header.cpoId(),
-                header.cpoNumber(), header.rfqNumber(), revisions);
+                header.cpoNumber(), header.rfqNumber(), revisions, header.paymentTermsText());
     }
 
     private List<NegotiationEntryResponse> readNegotiationHistory(UUID tenantId, UUID quotationId) {
@@ -1050,6 +1070,10 @@ public class SalesService {
         }
     }
 
+    private static String blank(String value) {
+        return value == null || value.isBlank() ? null : value.trim();
+    }
+
     private static ResponseStatusException notFound(String message) {
         return new ResponseStatusException(HttpStatus.NOT_FOUND, message);
     }
@@ -1080,7 +1104,7 @@ public class SalesService {
 
     private record QuotationHeader(UUID id, String quotationNumber, UUID rfqId, UUID customerId,
                                    int revision, String status, LocalDate validUntil, Instant createdAt,
-                                   Integer paymentTerms, String deliveryTerms, String notes,
+                                   Integer paymentTerms, String paymentTermsText, String deliveryTerms, String notes,
                                    BigDecimal discountAmount, String decisionChannel, String decisionNote,
                                    UUID decidedBy, Instant decidedAt, String rfqNumber, UUID cpoId,
                                    String cpoNumber) {}
@@ -1088,7 +1112,7 @@ public class SalesService {
     private record QuotationLineData(UUID id, UUID itemId, BigDecimal quantity, UUID uomId,
                                     BigDecimal unitPrice, Integer deliveryDays, BigDecimal gstRate,
                                     BigDecimal discountPct, String drawingNumber, String drawingRevision,
-                                    String description) {}
+                                    String description, LocalDate requiredBy) {}
 
     private record NegotiationRow(UUID id, int round, String partyType, String offeredUnitPrices,
                                   String note, Instant createdAt) {}

@@ -83,13 +83,15 @@ public class CustomerPoService {
         jdbc.update("""
                 INSERT INTO cpos
                   (id, tenant_id, cpo_number, quotation_id, customer_id, site_id, status,
-                   customer_po_ref, order_date, required_by_date, payment_terms, notes,
+                   customer_po_ref, order_date, required_by_date, payment_terms, payment_terms_text, notes,
                    discount_amount, source_revision, created_by)
-                VALUES (?, ?, ?, ?, ?, ?, 'open', ?, CURRENT_DATE, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, 'open', ?, CURRENT_DATE, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 cpoId, tenantId, cpoNumber, quotationId, quotation.customerId(), quotation.siteId(),
-                customerPoRef, quotation.validUntil(), quotation.paymentTerms(), note,
-                quotation.discountAmount(), quotation.revision(), context.userId());
+                customerPoRef, quotation.validUntil(), quotation.paymentTerms(),
+                jdbc.queryForObject("SELECT payment_terms_text FROM quotations WHERE tenant_id = ? AND id = ?",
+                        String.class, tenantId, quotationId),
+                note, quotation.discountAmount(), quotation.revision(), context.userId());
         copyLines(tenantId, quotationId, cpoId);
         jdbc.update("""
                 UPDATE quotations
@@ -106,6 +108,11 @@ public class CustomerPoService {
         afterDecision.put("decisionNote", note == null ? "" : note);
         afterDecision.put("customerPoRef", customerPoRef == null ? "" : customerPoRef);
         afterDecision.put("cpoNumber", cpoNumber);
+        jdbc.update("""
+                UPDATE rfqs SET status = 'closed', updated_at = NOW()
+                WHERE tenant_id = ? AND id = (SELECT rfq_id FROM quotations WHERE tenant_id = ? AND id = ?)
+                  AND status <> 'cancelled'
+                """, tenantId, tenantId, quotationId);
         auditService.record("QUOTATION", quotationId, "OWNER_ACCEPTANCE", toJson(beforeDecision), toJson(afterDecision));
         auditService.record("CPO", cpoId, "CREATE_FROM_ACCEPTANCE", null, toJson(created));
         return new AcceptResult(created, true);

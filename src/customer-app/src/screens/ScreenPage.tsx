@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { Plus } from "lucide-react";
 import { loadList, SAVE_BLOCKED } from "../api/records";
@@ -24,6 +24,8 @@ import MaterialReturns from "../inventory/MaterialReturns";
 import RemnantsPage from "../inventory/RemnantsPage";
 import SiteNeed from "../inventory/SiteNeed";
 import StockTransferPage from "../inventory/StockTransferPage";
+import { api } from "../auth/api";
+import type { CompanyRecord } from "../auth/types";
 
 const SALES_TABS: Record<string, { title: string; columns: string[]; placeholder: string; statuses?: string[]; action?: { label: string; to: string } }> = {
   pos: {
@@ -78,6 +80,39 @@ export default function ScreenPage({ screen }: { screen: ScreenDef }) {
   if (screen.path === "products") return <ItemMaster />;
   if (screen.path === "allocations") return <SiteNeed />;
   return <Workspace screen={screen} />;
+}
+
+function AdminDirectory({ tab }: { tab: "sites" | "users" }) {
+  const [rows, setRows] = useState<string[][]>([]);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    setLoading(true);
+    setError("");
+    const load = tab === "sites"
+      ? api<CompanyRecord>("/api/v1/company").then((company) => {
+          const sites = (company.sites ?? []).map((site) => [site.code, site.name, site.siteType || "", site.city || ""]);
+          const stores = (company.stores ?? []).map((store) => [store.code, store.name, store.siteCode, store.storeType || ""]);
+          setRows([...sites.map((site) => ["Site", ...site]), ...stores.map((store) => ["Store", ...store])]);
+        })
+      : api<{ content?: Array<{ email?: string; displayName?: string; status?: string; roles?: Array<{ role?: string }> }> }>("/api/v1/users").then((page) => {
+          setRows((page.content ?? []).map((user) => [user.displayName || "", user.email || "", user.status || "", (user.roles ?? []).map((role) => role.role).filter(Boolean).join(", ")]));
+        });
+    load.catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "The list could not be loaded."))
+      .finally(() => setLoading(false));
+  }, [tab]);
+  if (loading) return <p className="px-6 text-sm text-[var(--text-2)]">Loading {tab === "sites" ? "sites and stores" : "users"}…</p>;
+  if (error) return <p role="alert" className="px-6 text-sm text-[var(--error)]">{error}</p>;
+  if (rows.length === 0) return <p className="px-6 text-sm text-[var(--text-2)]">No records are available for this account.</p>;
+  const headers = tab === "sites" ? ["Kind", "Code", "Name", "Type", "Location"] : ["Name", "Email", "Status", "Roles"];
+  return (
+    <div className="px-6 pb-6 overflow-auto">
+      <table className="w-full text-left text-sm">
+        <thead><tr>{headers.map((header) => <th key={header} className="py-2 text-xs">{header}</th>)}</tr></thead>
+        <tbody>{rows.map((row, index) => <tr key={index} className="border-t border-[var(--border)]">{row.map((cell, cellIndex) => <td key={cellIndex} className="py-2">{cell || "—"}</td>)}</tr>)}</tbody>
+      </table>
+    </div>
+  );
 }
 
 function Workspace({ screen }: { screen: ScreenDef }) {
@@ -165,7 +200,8 @@ function Workspace({ screen }: { screen: ScreenDef }) {
         </div>
       )}
       {screen.path === "admin" && tab === "company" && <CompanyPanel />}
-      {(screen.kind === "record" || screen.kind === "admin") && !screen.columns && !(screen.path === "admin" && tab === "company") && (
+      {screen.path === "admin" && (tab === "sites" || tab === "users") && <AdminDirectory tab={tab} />}
+      {(screen.kind === "record" || screen.kind === "admin") && !screen.columns && !(screen.path === "admin" && ["company", "sites", "users"].includes(tab)) && (
         <StateBody state={state} title="No records" />
       )}
       {screen.kind === "record" && screen.columns && <DataTable columns={screen.columns} state={state} emptyTitle="No lines" />}

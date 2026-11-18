@@ -18,13 +18,16 @@ const fmt = (d?: string) => formatDisplayDate(d);
 const fmtMoney = (n: number) => n ? `₹${Math.round(n).toLocaleString('en-IN')}` : '—';
 
 function quoteTotal(q: SupplierQuotation) {
-  return (q.lines ?? []).reduce((sum, l) => {
+  const lines = q.lines ?? [];
+  const goodsAndLineTax = lines.reduce((sum, l) => {
     const qty = l.quotedQty ?? l.orderedQty ?? 1;
     const rate = l.unitPrice ?? l.unitRate ?? 0;
     const base = l.lineTotal || qty * rate;
     const tax = l.taxPct ? base * (l.taxPct / 100) : 0;
     return sum + base + tax;
-  }, 0) + (q.taxAmount ?? 0) + (q.deliveryCharges ?? 0) - (q.discountAmount ?? 0);
+  }, 0);
+  const headerTax = lines.some((line) => line.taxPct) ? 0 : (q.taxAmount ?? 0);
+  return goodsAndLineTax + headerTax + (q.deliveryCharges ?? 0) - (q.discountAmount ?? 0);
 }
 
 function deliveryLabel(status?: string) {
@@ -200,6 +203,9 @@ export default function PRDetail() {
               >
                 <Pencil size={13} /> Edit PR
               </button>
+            )}
+            {pr.apiStatus === 'draft' && (
+              <button type="button" onClick={() => updatePurchaseReq(pr.id, { status: 'submitted' })} className="px-3 py-1.5 rounded-lg text-xs font-semibold text-white" style={{ background: "var(--brand-fill)" }}>Submit</button>
             )}
             {pr.status === 'pending' && canApprove && (
               <>

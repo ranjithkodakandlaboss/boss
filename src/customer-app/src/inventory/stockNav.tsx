@@ -3,6 +3,7 @@ import { NavLink } from "react-router-dom";
 export const STOCK_LINKS = [
   { to: "/inventory", label: "Stock on hand", end: true },
   { to: "/products", label: "Item master" },
+  { to: "/bom", label: "Bills of materials" },
   { to: "/inventory/transfer", label: "Move stock" },
   { to: "/inventory/transfers", label: "Transfers" },
   { to: "/inventory/returns", label: "Returns" },

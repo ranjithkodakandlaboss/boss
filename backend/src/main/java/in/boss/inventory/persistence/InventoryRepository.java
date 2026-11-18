@@ -72,6 +72,13 @@ public class InventoryRepository {
         return rows.stream().findFirst();
     }
 
+    public boolean lotNumberExists(UUID tenantId, String lotNumber) {
+        Integer count = jdbc.queryForObject("""
+                SELECT COUNT(*) FROM material_lots WHERE tenant_id = ? AND lot_number = ?
+                """, Integer.class, tenantId, lotNumber);
+        return count != null && count > 0;
+    }
+
     public void insertLot(UUID id, UUID tenantId, UUID itemId, UUID storeId, String lotNumber,
                           String batchNumber, BigDecimal quantity, BigDecimal unitCost,
                           String status, LocalDate expiryDate) {

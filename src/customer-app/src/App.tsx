@@ -42,6 +42,9 @@ import AssetsPage from "./maintenance/AssetsPage";
 import { AssetDetailPage, MaintenanceEventDetailPage } from "./maintenance/AssetDetailPage";
 import JobWorkspacePage from "./production/JobWorkspacePage";
 import StageUpdatePage from "./production/StageUpdatePage";
+import BomPage from "./inventory/BomPage";
+import ItemDetail from "./inventory/ItemDetail";
+import LotDetail from "./inventory/LotDetail";
 
 function Background({ pathname }: { pathname: string }) {
   const screen = findScreen(pathname.split("?")[0]);
@@ -192,6 +195,9 @@ function Guard() {
         <Route path="assets" element={<AssetsPage />} />
         <Route path="assets/me/:id" element={<MaintenanceEventDetailPage />} />
         <Route path="assets/:id" element={<AssetDetailPage />} />
+        <Route path="bom" element={<BomPage />} />
+        <Route path="inventory/item/:id" element={<ItemDetail />} />
+        <Route path="inventory/lot/:id" element={<LotDetail />} />
         <Route path="jobs" element={<JobsPage />} />
         <Route path="jobs/:id/stage/:stageId" element={<StageUpdatePage />} />
         <Route path="jobs/:id" element={<JobWorkspacePage />} />

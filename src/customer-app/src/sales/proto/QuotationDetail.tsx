@@ -18,7 +18,7 @@ export default function QuotationDetail() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { quotations, quotationLines, rfqs, customerPos, currentUser, updateQuotation, reviseQuotation, convertQuotationToPO, updateRfq, showToast, boms } = useStore();
-  const [confirming, setConfirming] = useState<'accept' | 'convert' | null>(null);
+  const [confirming, setConfirming] = useState<'submit' | 'accept' | 'convert' | null>(null);
   const [reviseModal, setReviseModal] = useState(false);
   const [reviseDiscount, setReviseDiscount] = useState('0');
   const [reviseNotes, setReviseNotes] = useState('');
@@ -157,7 +157,7 @@ export default function QuotationDetail() {
             />
             <p className="text-[11px] text-[var(--text-2)] max-w-[220px]">BOSS does not send email or WhatsApp. Download the PDF and send it outside BOSS.</p>
             {canSubmit && (
-              <button onClick={() => setConfirming('accept')} className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-semibold border" style={{ borderColor: 'var(--brand)', color: 'var(--brand)' }}>
+              <button onClick={() => setConfirming('submit')} className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-semibold border" style={{ borderColor: 'var(--brand)', color: 'var(--brand)' }}>
                 <Send size={14} /> Submit to Customer
               </button>
             )}
@@ -264,10 +264,10 @@ export default function QuotationDetail() {
                   <td className="font-mono text-xs font-semibold text-[var(--brand)]">{l.drawingNumber}</td>
                   <td className="font-mono text-xs">{l.drawingRevision}</td>
                   <td className="text-sm text-[var(--text)]">{l.productName}</td>
-                  <td className="font-mono text-sm text-right">{l.orderedQty}</td>
+                  <td className="font-mono text-sm text-left">{l.orderedQty}</td>
                   <td className="text-xs text-[var(--text-2)]">{l.uom}</td>
-                  <td className="font-mono text-sm text-right">{fmtMoney(l.unitPrice)}</td>
-                  <td className="font-mono text-sm text-right font-semibold">{fmtMoney(l.value)}</td>
+                  <td className="font-mono text-sm text-left">{fmtMoney(l.unitPrice)}</td>
+                  <td className="font-mono text-sm text-left font-semibold">{fmtMoney(l.value)}</td>
                   <td className="text-sm text-[var(--text-2)]">{fmt(l.requiredDate)}</td>
                 </tr>
               ))}
@@ -395,21 +395,23 @@ export default function QuotationDetail() {
         <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
           <div className="bg-[var(--surface)] rounded-2xl border p-6 max-w-sm w-full shadow-2xl" style={{ borderColor: 'var(--border)' }}>
             <h3 className="text-base font-bold text-[var(--text)] mb-2">
-              {confirming === 'convert' ? 'Convert to Customer PO?' : 'Mark Quotation Accepted?'}
+              {confirming === 'convert' ? 'Convert to Customer PO?' : confirming === 'submit' ? 'Submit quotation to the customer?' : 'Mark Quotation Accepted?'}
             </h3>
             <p className="text-sm text-[var(--text-2)] mb-5">
               {confirming === 'convert'
                 ? `A new Customer PO will be created for ${fmtMoney(quotation.totalValue)} against ${quotation.quotationNumber}. This cannot be undone.`
-                : `${quotation.quotationNumber} will be marked as accepted by ${quotation.customerName}.`}
+                : confirming === 'submit'
+                  ? `${quotation.quotationNumber} will be submitted to ${quotation.customerName}. This does not accept the quotation.`
+                  : `${quotation.quotationNumber} will be marked as accepted by ${quotation.customerName}.`}
             </p>
             <div className="flex gap-3 justify-end">
               <button onClick={() => setConfirming(null)} className="px-4 py-2 rounded-lg text-sm border" style={{ borderColor: 'var(--border)', color: 'var(--text-2)' }}>Cancel</button>
               <button
-                onClick={confirming === 'convert' ? handleConvertToPO : (quotation.status === 'draft' ? handleSubmit : handleAccept)}
+                onClick={confirming === 'convert' ? handleConvertToPO : confirming === 'submit' ? handleSubmit : handleAccept}
                 className="px-4 py-2 rounded-lg text-sm font-semibold text-white"
                 style={{ background: confirming === 'convert' ? 'var(--brand)' : '#16a34a' }}
               >
-                {confirming === 'convert' ? 'Create PO' : (quotation.status === 'draft' ? 'Submit' : 'Accept')}
+                {confirming === 'convert' ? 'Create PO' : confirming === 'submit' ? 'Submit' : 'Accept'}
               </button>
             </div>
           </div>

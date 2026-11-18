@@ -215,7 +215,13 @@ function MaterialRow({ job, row, canIssue, onIssue }: { job: ProductionJob; row:
   useEffect(() => {
     if (!canIssue) return;
     setLotError("");
-    usableLots(row.itemId, job.id).then((page) => setLots((page.content ?? []).filter((lot) => !job.siteId || lot.siteId === job.siteId)))
+    usableLots(row.itemId, job.id).then((page) => setLots((page.content ?? []).filter((lot) => {
+      if (job.siteId && lot.siteId && lot.siteId !== job.siteId) return false;
+      const status = (lot.status || "").toLowerCase();
+      if (["quarantine", "rejected", "hold", "qc_hold"].includes(status)) return false;
+      const available = Number(lot.availableQty ?? lot.qty ?? 0);
+      return available > 0 || status === "reserved";
+    })))
       .catch((cause: unknown) => {
         setLots([]);
         setLotError(cause instanceof Error ? cause.message : "Lots could not be loaded.");
@@ -328,13 +334,25 @@ function History({ job, canCost, onCost }: { job: ProductionJob; canCost: boolea
   const [amount, setAmount] = useState("");
   return (
     <div className="grid md:grid-cols-2 gap-4">
-      <section className="text-sm space-y-1">
+      <section className="text-sm space-y-3 md:col-span-2">
         <h2 className="font-bold">Record</h2>
-        <p>Created {displayDate(job.createdAt)}</p>
-        <p>Started {displayDate(job.actualStart)}</p>
-        <p>Completed {displayDate(job.actualEnd)}</p>
-        <p>Estimated {money(job.estimatedCost?.totalCost)} · Actual {money(job.actualCost?.totalCost)} · Variance {money(job.variance)}</p>
-        <p>Margin {job.actualCost?.marginPct ?? "—"}%</p>
+        <p>Created {displayDate(job.createdAt)} · Started {displayDate(job.actualStart)} · Completed {displayDate(job.actualEnd)}</p>
+        <p>Estimated {money(job.estimatedCost?.totalCost)} · Actual {money(job.actualCost?.totalCost)} · Variance {money(job.variance)} · Margin {job.actualCost?.marginPct ?? "—"}%</p>
+        <table className="w-full text-left text-xs">
+          <caption className="text-left font-semibold mb-1">Stages</caption>
+          <thead><tr><th>Stage</th><th>Work centre</th><th>Asset</th><th>Status</th></tr></thead>
+          <tbody>{(job.stages ?? []).map((stage) => <tr key={stage.id}><td>{stage.stageName}</td><td>{stage.workCentre || "—"}</td><td>{stage.assetCode || "—"}</td><td>{stage.status}</td></tr>)}</tbody>
+        </table>
+        <table className="w-full text-left text-xs">
+          <caption className="text-left font-semibold mb-1">Material movements</caption>
+          <thead><tr><th>Item</th><th>Type</th><th>Qty</th><th>When</th></tr></thead>
+          <tbody>{(job.movements ?? []).map((movement) => <tr key={movement.id}><td>{movement.lotId || "—"}</td><td>{movement.issueType}</td><td>{movement.quantity}</td><td>{displayDate(movement.createdAt)}</td></tr>)}</tbody>
+        </table>
+        <table className="w-full text-left text-xs">
+          <caption className="text-left font-semibold mb-1">Materials</caption>
+          <thead><tr><th>Item</th><th>Required</th><th>Issued</th><th>Returned</th></tr></thead>
+          <tbody>{(job.materials ?? []).map((material) => <tr key={material.id}><td>{material.itemCode}</td><td>{material.requiredQty}</td><td>{material.issuedQty}</td><td>{material.returnedQty}</td></tr>)}</tbody>
+        </table>
       </section>
       {canCost && (
         <form className="space-y-2" onSubmit={(event) => { event.preventDefault(); onCost(type, description, Number(amount)); }}>

@@ -68,6 +68,7 @@ export default function CustomerDirectory() {
           <option value="inactive">{getStatusLabel('inactive')}</option>
         </select>
       </div>
+      <p className="px-4 py-2 text-xs" style={{ color: 'var(--text-2)' }}>{customers.length} customers</p>
 
       {/* Table */}
       {filtered.length === 0 ? (
@@ -181,12 +182,12 @@ function AddCustomerModal({ onClose, onSave, initialValues, editMode }: { onClos
   };
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
-      <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl w-full max-w-md p-6 shadow-2xl max-h-[90vh] overflow-y-auto">
-        <div className="flex justify-between items-center mb-4">
+      <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl w-full max-w-md shadow-2xl max-h-[90vh] flex flex-col">
+        <div className="flex justify-between items-center mb-4 px-6 pt-6">
           <h3 className="font-bold text-[var(--text)]">{editMode ? 'Edit Customer' : 'Add Customer'}</h3>
           <button onClick={onClose}><X size={16} className="text-[var(--text-3)]" /></button>
         </div>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-2 gap-3 overflow-y-auto px-6">
           {[
             { label: 'Legal Name *', key: 'legalName', placeholder: 'As per company registration', span: true },
             { label: 'Trading Name', key: 'tradingName', placeholder: 'Short name', span: false },
@@ -210,10 +211,10 @@ function AddCustomerModal({ onClose, onSave, initialValues, editMode }: { onClos
             </select>
           </div>
         </div>
-        {err && <p className="text-xs text-[var(--danger)] mt-2">{err}</p>}
-        <div className="flex gap-3 mt-5">
+        {err && <p className="px-6 text-xs text-[var(--danger)] mt-2">{err}</p>}
+        <div className="sticky bottom-0 flex gap-3 mt-5 px-6 py-4 border-t border-[var(--border)] bg-[var(--surface)]">
           <button onClick={onClose} className="flex-1 py-2.5 border border-[var(--border)] rounded-xl text-sm text-[var(--text-2)]">Cancel</button>
-          <button onClick={save} className="flex-1 py-2.5 bg-[var(--brand-fill)] text-white rounded-xl text-sm font-medium">Save Customer</button>
+          <button onClick={save} className="flex-1 py-2.5 bg-[var(--brand-fill)] text-white rounded-xl text-sm font-medium">{editMode ? 'Save Changes' : 'Save Customer'}</button>
         </div>
       </div>
     </div>
