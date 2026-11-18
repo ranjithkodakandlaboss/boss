@@ -66,7 +66,11 @@ export type Item = {
 };
 
 export type Uom = { id: string; name: string; symbol: string };
-export type Category = { id: string; code?: string; label: string };
+export type Category = { id: string; code?: string; label?: string; name?: string };
+
+export function categoryName(category: Category) {
+  return category.label || category.name || category.code || "";
+}
 
 export type JobReservation = {
   jobId: string;
@@ -101,7 +105,7 @@ export async function allPages<T>(path: string): Promise<T[]> {
 }
 
 export function loadStores() {
-  return api<Company>("/api/v1/company").then((company) => company.stores ?? []).catch(() => [] as Store[]);
+  return api<Company>("/api/v1/company").then((company) => company.stores ?? []);
 }
 
 export function loadPositions(query = "") {
@@ -118,7 +122,7 @@ export function loadJobs() {
 }
 
 export function loadReservations() {
-  return api<JobReservation[]>("/api/v1/inventory/reservations").catch(() => [] as JobReservation[]);
+  return api<JobReservation[]>("/api/v1/inventory/reservations");
 }
 
 export function mutate<T>(path: string, method: "POST" | "PATCH", body: unknown) {

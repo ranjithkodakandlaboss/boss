@@ -6,14 +6,19 @@ import ErrorState from "../components/shared/ErrorState";
 import LoadingState from "../components/shared/LoadingState";
 import StockNav from "./stockNav";
 
-type Store = { id: string; siteId: string; name: string };
-type Company = { stores: Store[] };
+type Store = { id: string; siteId: string; name: string; siteCode?: string | null };
+type Company = { stores?: Store[] };
+
+function storeLabel(store: Store) {
+  return store.siteCode ? `${store.siteCode} · ${store.name}` : store.name;
+}
 type Page<T> = { content: T[]; totalElements: number };
 type Lot = {
   id: string;
   itemCode: string;
   itemName: string;
   batchRef: string | null;
+  lotNumber?: string | null;
   qty: number;
   availableQty: number;
   uomSymbol: string;
@@ -59,9 +64,11 @@ export default function StockTransferPage() {
     let active = true;
     api<Company>("/api/v1/company").then((company) => {
       if (!active) return;
-      setStores(company.stores);
-      const requested = company.stores.find((store) => store.name === requestedFrom);
-      setSourceStoreId(requested?.id ?? company.stores[0]?.id ?? "");
+      const list = company.stores ?? [];
+      setStores(list);
+      if (list.length === 0) setError("No stores are available for this company.");
+      const requested = list.find((store) => store.name === requestedFrom);
+      setSourceStoreId(requested?.id ?? list[0]?.id ?? "");
     }).catch((reason: unknown) => {
       if (active) setError(reason instanceof Error ? reason.message : "Stores could not be loaded.");
     }).finally(() => { if (active) setLoading(false); });
@@ -143,14 +150,14 @@ export default function StockTransferPage() {
         <label className="block text-sm font-medium">
           Source store
           <select className="eoss-input mt-1 w-full" required value={sourceStoreId} onChange={(event) => { setSourceStoreId(event.target.value); setDestinationStoreId(""); }}>
-            {stores.map((store) => <option key={store.id} value={store.id}>{store.name}</option>)}
+            {stores.map((store) => <option key={store.id} value={store.id}>{storeLabel(store)}</option>)}
           </select>
         </label>
         <label className="block text-sm font-medium">
           Destination store
           <select className="eoss-input mt-1 w-full" required value={destinationStoreId} onChange={(event) => setDestinationStoreId(event.target.value)}>
             <option value="">Select a different site</option>
-            {destinations.map((store) => <option key={store.id} value={store.id}>{store.name}</option>)}
+            {destinations.map((store) => <option key={store.id} value={store.id}>{storeLabel(store)}</option>)}
           </select>
         </label>
         {loadingLots ? <LoadingState label="Loading source lots" />
@@ -159,7 +166,7 @@ export default function StockTransferPage() {
             <select className="eoss-input mt-1 w-full" required value={lotId} onChange={(event) => { setLotId(event.target.value); setQty(""); }}>
               <option value="">Select a lot</option>
               {lots.map((lot) => <option key={lot.id} value={lot.id}>
-                {lot.itemCode} · {lot.itemName}{lot.batchRef ? ` · ${lot.batchRef}` : ""} · {lot.availableQty} {lot.uomSymbol} available
+                {lot.itemCode} · {lot.itemName}{(lot.lotNumber || lot.batchRef) ? ` · ${lot.lotNumber || lot.batchRef}` : ""} · {lot.availableQty} {lot.uomSymbol} available
               </option>)}
             </select>
           </label>}

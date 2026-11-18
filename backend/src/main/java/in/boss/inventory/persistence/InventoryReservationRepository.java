@@ -296,6 +296,29 @@ public class InventoryReservationRepository {
                 rs.getBigDecimal("reserved_qty")), args.toArray());
     }
 
+    public List<ActiveLotReservation> activeProductionLotReservations(UUID tenantId, UUID jobId, UUID siteId) {
+        String sql = """
+                SELECT r.reference_id AS job_id, r.lot_id, r.item_id, r.reserved_qty
+                  FROM stock_reservation_records r
+                  JOIN production_jobs j ON j.id = r.reference_id AND j.tenant_id = r.tenant_id
+                 WHERE r.tenant_id = ? AND r.reference_type = 'production_job' AND r.status = 'active'
+                   AND r.reference_id = ?
+                """ + (siteId == null ? "" : " AND j.site_id = ? ") + """
+                 ORDER BY r.lot_id
+                """;
+        List<Object> args = new ArrayList<>();
+        args.add(tenantId);
+        args.add(jobId);
+        if (siteId != null) {
+            args.add(siteId);
+        }
+        return jdbc.query(sql, (rs, rowNum) -> new ActiveLotReservation(
+                rs.getObject("job_id", UUID.class),
+                rs.getObject("lot_id", UUID.class),
+                rs.getObject("item_id", UUID.class),
+                rs.getBigDecimal("reserved_qty")), args.toArray());
+    }
+
     public record ActiveJobReservation(
             UUID jobId,
             String jobNumber,
@@ -303,6 +326,13 @@ public class InventoryReservationRepository {
             UUID itemId,
             String itemCode,
             String itemName,
+            BigDecimal reservedQty
+    ) {}
+
+    public record ActiveLotReservation(
+            UUID jobId,
+            UUID lotId,
+            UUID itemId,
             BigDecimal reservedQty
     ) {}
 

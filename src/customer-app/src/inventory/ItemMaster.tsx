@@ -6,7 +6,7 @@ import { useCustomer } from "../auth/CustomerState";
 import ErrorState from "../components/shared/ErrorState";
 import LoadingState from "../components/shared/LoadingState";
 import RecordTable, { type RecordColumn } from "../components/shared/RecordTable";
-import { allPages, mutate, type Category, type Item, type Uom } from "./api";
+import { allPages, categoryName, mutate, type Category, type Item, type Uom } from "./api";
 import StockNav from "./stockNav";
 
 const TYPES = ["RAW_MATERIAL", "SEMI_FINISHED", "FINISHED_GOOD", "CONSUMABLE", "SPARE_PART", "SERVICE"];
@@ -94,20 +94,23 @@ export function ItemForm({ item, onClose, onSaved }: { item?: Item; onClose: () 
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
+    const problems: string[] = [];
     Promise.all([
-      api<Uom[] | { content?: Uom[] }>("/api/v1/uoms"),
-      api<Category[]>("/api/v1/config/options/ITEM_CATEGORY").catch(() => [] as Category[]),
-    ]).then(([units, cats]) => {
-      const list = Array.isArray(units) ? units : units.content ?? [];
-      setUoms(list);
-      setCategories(cats);
-      setUomId((current) => current || list[0]?.id || "");
-    }).catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "Units could not be loaded."));
+      api<Uom[] | { content?: Uom[] }>("/api/v1/uoms").then((units) => {
+        const list = Array.isArray(units) ? units : units.content ?? [];
+        setUoms(list);
+        setUomId((current) => current || list[0]?.id || "");
+      }).catch((reason: unknown) => problems.push(reason instanceof Error ? reason.message : "Units of measure could not be loaded.")),
+      api<Category[] | { content?: Category[] }>("/api/v1/config/options/ITEM_CATEGORY").then((cats) => {
+        const list = Array.isArray(cats) ? cats : cats.content ?? [];
+        setCategories(list.filter((category) => category.id));
+      }).catch((reason: unknown) => problems.push(reason instanceof Error ? reason.message : "Categories could not be loaded.")),
+    ]).finally(() => { if (problems.length > 0) setError(problems.join(" ")); });
   }, []);
 
   async function save() {
-    if (!name.trim() || (!item && !uomId)) {
-      setError("Name and unit of measure are required.");
+    if (!name.trim() || (!item && (!code.trim() || !uomId))) {
+      setError(item ? "Name is required." : "Item code, name, and unit of measure are required.");
       return;
     }
     setSaving(true);
@@ -119,7 +122,7 @@ export function ItemForm({ item, onClose, onSaved }: { item?: Item; onClose: () 
           name: name.trim(),
           description: description.trim() || null,
           categoryId: categoryId || null,
-          categoryLabel: category?.label,
+          categoryLabel: category ? categoryName(category) : undefined,
           reorderPoint: reorderPoint === "" ? null : Number(reorderPoint),
         })
         : await mutate<Item>("/api/v1/items", "POST", {
@@ -128,7 +131,7 @@ export function ItemForm({ item, onClose, onSaved }: { item?: Item; onClose: () 
           description: description.trim() || null,
           itemType,
           categoryId: categoryId || null,
-          categoryLabel: category?.label,
+          categoryLabel: category ? categoryName(category) : undefined,
           uomId,
           reorderPoint: reorderPoint === "" ? null : Number(reorderPoint),
         });
@@ -150,7 +153,7 @@ export function ItemForm({ item, onClose, onSaved }: { item?: Item; onClose: () 
           {!item && (
             <label className="text-xs">Type<select className="eoss-input mt-1 w-full" value={itemType} onChange={(event) => setItemType(event.target.value)}>{TYPES.map((type) => <option key={type} value={type}>{type.replaceAll("_", " ")}</option>)}</select></label>
           )}
-          <label className="text-xs">Category<select className="eoss-input mt-1 w-full" value={categoryId} onChange={(event) => setCategoryId(event.target.value)}><option value="">No category</option>{categories.map((category) => <option key={category.id} value={category.id}>{category.label}</option>)}</select></label>
+          <label className="text-xs">Category<select className="eoss-input mt-1 w-full" value={categoryId} onChange={(event) => setCategoryId(event.target.value)}><option value="">No category</option>{categories.map((category) => <option key={category.id} value={category.id}>{categoryName(category) || "Unnamed category"}</option>)}</select></label>
           <label className="text-xs">Unit of measure<select className="eoss-input mt-1 w-full" value={uomId} disabled={!!item} onChange={(event) => setUomId(event.target.value)}>{uoms.map((uom) => <option key={uom.id} value={uom.id}>{uom.symbol} · {uom.name}</option>)}</select></label>
           <label className="text-xs">Reorder level<input className="eoss-input mt-1 w-full" type="number" min="0" value={reorderPoint} onChange={(event) => setReorderPoint(event.target.value)} /></label>
           <label className="text-xs sm:col-span-2">Description<textarea className="eoss-input mt-1 w-full" rows={2} value={description} onChange={(event) => setDescription(event.target.value)} /></label>

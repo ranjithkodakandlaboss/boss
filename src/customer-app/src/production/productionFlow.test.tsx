@@ -94,4 +94,53 @@ it("opens a job from an eligible customer order and issues material", async () =
   await userEvent.selectOptions(await screen.findByLabelText("Lot for PLATE"), lotId);
   await userEvent.click(screen.getByRole("button", { name: "Issue" }));
   expect(await screen.findByText("Material issued")).toBeInTheDocument();
+  const calls = vi.mocked(fetch).mock.calls.map(([input]) => String(input));
+  expect(calls.some((url) => url.includes("status=available"))).toBe(true);
+  expect(calls.some((url) => url.includes("status=reserved"))).toBe(true);
+  expect(calls.some((url) => url.includes(`/inventory/reservations/lots?jobId=${jobId}`))).toBe(true);
+});
+
+it("issues a lot reserved to this job and hides a lot reserved to another job", async () => {
+  const ownReserved = "22222222-2222-4222-8222-222222222222";
+  const otherReserved = "33333333-3333-4333-8333-333333333333";
+  vi.stubGlobal("fetch", vi.fn((input: RequestInfo, init?: RequestInit) => {
+    const url = String(input);
+    if (url.includes("/auth/me")) return Promise.resolve(json({ id: "1", tenantId: "t", email: "owner@example.test", displayName: "Owner", status: "active", roles: [{ role: "OWNER" }] }));
+    if (url.includes("/tenant/info")) return Promise.resolve(json({ id: "t", name: "North Works", status: "active" }));
+    if (url.includes("/onboarding")) return Promise.resolve(json({ industryType: "GENERAL_MANUFACTURING", completed: true, company: { sites: [], stores: [] } }));
+    if (url.includes("/jobs/features")) return Promise.resolve(json({ "production.material.issue": true }));
+    if (url.includes("status=available")) return Promise.resolve(json({ content: [{ id: lotId, itemId, lotNumber: "FREE", availableQty: 20, status: "available", siteId: "site" }] }));
+    if (url.includes("status=reserved")) return Promise.resolve(json({ content: [
+      { id: ownReserved, itemId, lotNumber: "OWN", availableQty: 0, reservedQty: 5, status: "reserved", siteId: "site" },
+      { id: otherReserved, itemId, lotNumber: "OTHER", availableQty: 0, reservedQty: 5, status: "reserved", siteId: "site" },
+    ] }));
+    if (url.includes("/inventory/reservations/lots")) return Promise.resolve(json([{ jobId, lotId: ownReserved, itemId, reservedQty: 5 }]));
+    if (url.includes("/materials/issues") && init?.method === "POST") {
+      expect(JSON.parse(String(init.body)).lotId).toBe(ownReserved);
+      return Promise.resolve(json({ id: "issue-2", issueType: "issue", quantity: 5 }, 201));
+    }
+    if (url.includes(`/jobs/${jobId}`)) return Promise.resolve(json({ ...job, siteId: "site" }));
+    return Promise.resolve(json({}));
+  }));
+
+  render(
+    <MemoryRouter initialEntries={[`/jobs/${jobId}`]}>
+      <CustomerProvider>
+        <Routes>
+          <Route path="/jobs/:id" element={<JobWorkspacePage />} />
+        </Routes>
+      </CustomerProvider>
+    </MemoryRouter>,
+  );
+  await userEvent.click(await screen.findByRole("button", { name: "Materials" }));
+  const select = await screen.findByLabelText("Lot for PLATE");
+  const values = Array.from((select as HTMLSelectElement).options).map((option) => option.value);
+  expect(values).toContain(lotId);
+  expect(values).toContain(ownReserved);
+  expect(values).not.toContain(otherReserved);
+  await userEvent.selectOptions(select, ownReserved);
+  await userEvent.clear(screen.getByLabelText("Issue quantity for PLATE"));
+  await userEvent.type(screen.getByLabelText("Issue quantity for PLATE"), "5");
+  await userEvent.click(screen.getByRole("button", { name: "Issue" }));
+  expect(await screen.findByText("Material issued")).toBeInTheDocument();
 });

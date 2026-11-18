@@ -5,6 +5,7 @@ import in.boss.inventory.api.InventoryApiDtos.CreateLotRequest;
 import in.boss.inventory.api.InventoryApiDtos.CustomerPoReservationRequest;
 import in.boss.inventory.api.InventoryApiDtos.CustomerPoReservationResponse;
 import in.boss.inventory.api.InventoryApiDtos.InventoryPage;
+import in.boss.inventory.api.InventoryApiDtos.JobLotReservationResponse;
 import in.boss.inventory.api.InventoryApiDtos.JobReservationResponse;
 import in.boss.inventory.api.InventoryApiDtos.InventoryPositionResponse;
 import in.boss.inventory.api.InventoryApiDtos.IssueMaterialRequest;
@@ -16,6 +17,7 @@ import in.boss.inventory.api.InventoryApiDtos.ReorderPolicyResponse;
 import in.boss.inventory.api.InventoryApiDtos.ReplenishmentRequestResponse;
 import in.boss.inventory.api.InventoryApiDtos.ReturnMaterialRequest;
 import in.boss.inventory.api.InventoryApiDtos.StockMovementResponse;
+import in.boss.inventory.domain.InventoryLotReservationQuery;
 import in.boss.inventory.domain.InventoryService;
 import in.boss.inventory.domain.InventoryFeatureFlags;
 import in.boss.inventory.domain.InventoryReplenishmentService;
@@ -46,14 +48,17 @@ import java.util.UUID;
 public class InventoryController {
 
     private final InventoryService inventoryService;
+    private final InventoryLotReservationQuery lotReservationQuery;
     private final InventoryFeatureFlags featureFlags;
     private final InventoryReplenishmentService replenishmentService;
 
     public InventoryController(
             InventoryService inventoryService,
+            InventoryLotReservationQuery lotReservationQuery,
             InventoryFeatureFlags featureFlags,
             InventoryReplenishmentService replenishmentService) {
         this.inventoryService = inventoryService;
+        this.lotReservationQuery = lotReservationQuery;
         this.featureFlags = featureFlags;
         this.replenishmentService = replenishmentService;
     }
@@ -110,6 +115,12 @@ public class InventoryController {
             @PathVariable UUID lotId,
             @Valid @RequestBody AddMovementRequest request) {
         return ResponseEntity.status(HttpStatus.CREATED).body(inventoryService.addMovement(lotId, request));
+    }
+
+    @GetMapping("/reservations/lots")
+    @PreAuthorize(BossPermissions.INVENTORY_READ + " or " + BossPermissions.PRODUCTION_VIEW)
+    public List<JobLotReservationResponse> listJobLotReservations(@RequestParam UUID jobId) {
+        return lotReservationQuery.listJobLotReservations(jobId);
     }
 
     @GetMapping("/reservations")

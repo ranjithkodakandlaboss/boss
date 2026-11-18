@@ -204,25 +204,41 @@ function Materials({ job, canIssue, canReturn, onIssue, onReturn }: {
 
 function MaterialRow({ job, row, canIssue, onIssue }: { job: ProductionJob; row: NonNullable<ProductionJob["materials"]>[number]; canIssue: boolean; onIssue: (requirementId: string, lotId: string, qty: number, note: string) => void }) {
   const [lots, setLots] = useState<LotOption[]>([]);
+  const [lotError, setLotError] = useState("");
   const [lotId, setLotId] = useState("");
   const [qty, setQty] = useState(String(Math.max(row.requiredQty - row.netIssuedQty, 0)));
   useEffect(() => {
     if (!canIssue) return;
-    usableLots(row.itemId).then((page) => setLots((page.content ?? []).filter((lot) => !job.siteId || lot.siteId === job.siteId))).catch(() => setLots([]));
-  }, [canIssue, row.itemId, job.siteId]);
+    setLotError("");
+    usableLots(row.itemId, job.id).then((page) => setLots((page.content ?? []).filter((lot) => !job.siteId || lot.siteId === job.siteId)))
+      .catch((cause: unknown) => {
+        setLots([]);
+        setLotError(cause instanceof Error ? cause.message : "Lots could not be loaded.");
+      });
+  }, [canIssue, row.itemId, job.siteId, job.id]);
   return (
     <div className="rounded-xl border p-3" style={{ borderColor: "var(--border)" }}>
       <div className="flex justify-between text-sm"><strong>{row.itemCode} {row.itemName}</strong><StatusChip status={row.readiness} label={readinessLabel(row.readiness)} size="sm" /></div>
       <p className="text-xs mt-1" style={{ color: "var(--text-2)" }}>Required {row.requiredQty} · Issued {row.issuedQty} · Returned {row.returnedQty} {row.uomSymbol}</p>
       {canIssue && row.netIssuedQty < row.requiredQty && (
         <div className="mt-2 flex flex-wrap gap-2 items-end">
-          <label className="text-xs">Lot<select className="eoss-input mt-1" aria-label={`Lot for ${row.itemCode}`} value={lotId} onChange={(event) => setLotId(event.target.value)}><option value="">Select lot</option>{lots.map((lot) => <option key={lot.id} value={lot.id}>{lot.batchRef || lot.id.slice(0, 8)} · {lot.availableQty ?? lot.qty}</option>)}</select></label>
+          <label className="text-xs">Lot<select className="eoss-input mt-1" aria-label={`Lot for ${row.itemCode}`} value={lotId} onChange={(event) => setLotId(event.target.value)}><option value="">Select lot</option>{lots.map((lot) => <option key={lot.id} value={lot.id}>{lotChoice(lot)}</option>)}</select></label>
           <label className="text-xs">Qty<input className="eoss-input mt-1 w-24" aria-label={`Issue quantity for ${row.itemCode}`} value={qty} onChange={(event) => setQty(event.target.value)} /></label>
           <button type="button" className="px-3 py-1.5 rounded-lg text-xs font-semibold text-white" style={{ background: "var(--brand-fill)" }} disabled={!lotId || Number(qty) <= 0} onClick={() => onIssue(row.id, lotId, Number(qty), "Issued to job")}>Issue</button>
         </div>
       )}
+      {lotError && <p role="alert" className="mt-2 text-xs text-[var(--error)]">{lotError}</p>}
     </div>
   );
+}
+
+function lotChoice(lot: LotOption) {
+  const identity = lot.lotNumber || lot.batchRef || lot.id.slice(0, 8);
+  const available = lot.availableQty ?? lot.qty ?? 0;
+  const reserved = Number(lot.reservedQty) > 0 ? ` · ${lot.reservedQty} reserved` : "";
+  const unit = lot.uomSymbol ? ` ${lot.uomSymbol}` : "";
+  const store = lot.storeName ? ` · ${lot.storeName}` : "";
+  return `${identity}${store} · ${available}${unit} available${reserved}`;
 }
 
 function ReturnControl({ movementId, max, onReturn }: { movementId: string; max: number; onReturn: (issueId: string, qty: number, note: string) => void }) {
