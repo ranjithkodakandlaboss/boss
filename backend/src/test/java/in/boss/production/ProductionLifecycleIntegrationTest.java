@@ -277,6 +277,45 @@ class ProductionLifecycleIntegrationTest extends BaseMasterDataIntegrationTest {
     }
 
     @Test
+    void siteScopedUserSeesOnlyThatSitesJobsAndEligibleOrders() {
+        UUID userId = BossContextHolder.get().userId();
+        UUID legalEntityId = jdbc.queryForObject(
+                "SELECT legal_entity_id FROM physical_sites WHERE id = ?", UUID.class, siteId);
+        UUID customerId = jdbc.queryForObject("SELECT customer_id FROM cpos WHERE id = ?", UUID.class, cpoId);
+        UUID uomId = jdbc.queryForObject("SELECT uom_id FROM cpo_lines WHERE id = ?", UUID.class, lineId);
+        UUID siteB = insert("""
+                INSERT INTO physical_sites (tenant_id, legal_entity_id, name, code)
+                VALUES (?, ?, 'Plant B', ?) RETURNING id
+                """, tenantId, legalEntityId, "SB-" + UUID.randomUUID().toString().substring(0, 6));
+        UUID cpoB = insert("""
+                INSERT INTO cpos (tenant_id, cpo_number, customer_id, site_id, status, order_date, created_by)
+                VALUES (?, ?, ?, ?, 'open', CURRENT_DATE, ?) RETURNING id
+                """, tenantId, "CPOB-" + UUID.randomUUID().toString().substring(0, 6), customerId, siteB, userId);
+        UUID lineB = insert("""
+                INSERT INTO cpo_lines (tenant_id, cpo_id, line_no, item_id, quantity, uom_id, unit_price)
+                VALUES (?, ?, 1, ?, 10, ?, 100) RETURNING id
+                """, tenantId, cpoB, finishedItemId, uomId);
+
+        scope(siteId);
+        assertThat(query.eligibleLines()).extracting(line -> line.cpoLineId()).contains(lineId).doesNotContain(lineB);
+        ProductionJobResponse jobA = jobs.create(new CreateJobRequest(cpoId, lineId, routingId, null, null, null));
+
+        scope(siteB);
+        assertThat(query.list(null, null, 0, 20).content()).extracting(job -> job.id()).doesNotContain(jobA.id());
+        assertThatThrownBy(() -> query.get(jobA.id())).isInstanceOf(ResponseStatusException.class);
+        assertThat(query.eligibleLines()).extracting(line -> line.cpoLineId()).containsExactly(lineB);
+        ProductionJobResponse jobB = jobs.create(new CreateJobRequest(cpoB, lineB, routingId, null, null, null));
+        assertThat(query.list(null, null, 0, 20).content()).extracting(job -> job.id()).containsExactly(jobB.id());
+
+        scope(siteId);
+        assertThat(query.list(null, null, 0, 20).content()).extracting(job -> job.id()).containsExactly(jobA.id());
+        assertThatThrownBy(() -> query.get(jobB.id())).isInstanceOf(ResponseStatusException.class);
+
+        scope(null);
+        assertThat(query.list(null, null, 0, 20).content()).extracting(job -> job.id()).contains(jobA.id(), jobB.id());
+    }
+
+    @Test
     void holdAndReleaseKeepTheJobAndAPlannedJobCanBeCancelled() {
         ProductionJobResponse job = jobs.create(new CreateJobRequest(cpoId, lineId, routingId, null, null, null));
         materials.issue(job.id(), new IssueMaterialRequest(job.materials().get(0).id(), lotId, new BigDecimal("20"), null));
@@ -365,6 +404,11 @@ class ProductionLifecycleIntegrationTest extends BaseMasterDataIntegrationTest {
                 SELECT tenant_id, ?, 1, item_id, quantity, uom_id, unit_price FROM cpo_lines WHERE id = ? RETURNING id
                 """, secondCpo, lineId);
         return jobs.create(new CreateJobRequest(secondCpo, secondLine, routingId, null, null, null));
+    }
+
+    private void scope(UUID site) {
+        BossContext current = BossContextHolder.get();
+        BossContextHolder.set(new BossContext(current.tenantId(), current.userId(), current.roles(), site, current.firebaseUid()));
     }
 
     private void asRole(String role) {

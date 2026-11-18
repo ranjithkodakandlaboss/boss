@@ -44,20 +44,29 @@ public class ProductionQueryService {
         BossContext context = support.requireContext();
         checkPage(page, size);
         List<Object> args = new ArrayList<>();
-        String filter = filters(context.tenantId(), cpoId, status, args);
+        String filter = filters(context.tenantId(), cpoId, status, context.siteId(), args);
         args.add(size);
         args.add(page * size);
         List<ProductionJobResponse> content = jdbc.query(selectSql() + filter
                 + " ORDER BY j.created_at DESC LIMIT ? OFFSET ?", jobs::map, args.toArray());
         Long total = jdbc.queryForObject("SELECT COUNT(*) FROM production_jobs j WHERE j.tenant_id = ?"
-                + statusClause(status) + cpoClause(cpoId), Long.class, countArgs(context.tenantId(), cpoId, status));
+                + siteClause(context.siteId()) + statusClause(status) + cpoClause(cpoId), Long.class,
+                countArgs(context.tenantId(), cpoId, status, context.siteId()));
         return new PageResponse<>(content, page, size, total == null ? 0 : total);
     }
 
     public ProductionJobResponse get(UUID jobId) {
         BossContext context = support.requireContext();
-        List<ProductionJobResponse> rows = jdbc.query(selectSql() + " AND j.id = ?",
-                jobs::map, context.tenantId(), jobId);
+        List<Object> args = new ArrayList<>();
+        args.add(context.tenantId());
+        args.add(jobId);
+        String siteSql = "";
+        if (context.siteId() != null) {
+            siteSql = " AND j.site_id = ?";
+            args.add(context.siteId());
+        }
+        List<ProductionJobResponse> rows = jdbc.query(selectSql() + " AND j.id = ?" + siteSql,
+                jobs::map, args.toArray());
         if (rows.isEmpty()) {
             throw ProductionSupport.notFound("Production job not found");
         }
@@ -66,6 +75,13 @@ public class ProductionQueryService {
 
     public List<EligibleCpoLine> eligibleLines() {
         BossContext context = support.requireContext();
+        List<Object> args = new ArrayList<>();
+        args.add(context.tenantId());
+        String siteSql = "";
+        if (context.siteId() != null) {
+            siteSql = " AND c.site_id = ?";
+            args.add(context.siteId());
+        }
         return jdbc.query("""
                 SELECT c.id AS cpo_id, c.cpo_number, l.id AS line_id, c.customer_id, cu.name AS customer_name,
                        l.item_id, i.code AS item_code, i.name AS item_name, l.quantity, l.unit_price,
@@ -80,7 +96,8 @@ public class ProductionQueryService {
                   AND NOT EXISTS (
                     SELECT 1 FROM production_jobs j
                     WHERE j.tenant_id = c.tenant_id AND j.cpo_line_id = l.id AND j.status <> 'cancelled')
-                ORDER BY c.created_at DESC, l.line_no
+                """ + siteSql + """
+                 ORDER BY c.created_at DESC, l.line_no
                 """, (rs, row) -> new EligibleCpoLine(
                 rs.getObject("cpo_id", UUID.class),
                 rs.getString("cpo_number"),
@@ -96,7 +113,7 @@ public class ProductionQueryService {
                 rs.getObject("site_id", UUID.class),
                 rs.getString("site_name"),
                 date(rs, "required_by_date"),
-                rs.getString("status")), context.tenantId());
+                rs.getString("status")), args.toArray());
     }
 
     public List<RoutingTemplateOption> routingTemplates(UUID itemId) {
@@ -204,9 +221,13 @@ public class ProductionQueryService {
                 """;
     }
 
-    private static String filters(UUID tenantId, UUID cpoId, String status, List<Object> args) {
+    private static String filters(UUID tenantId, UUID cpoId, String status, UUID siteId, List<Object> args) {
         args.add(tenantId);
         StringBuilder sql = new StringBuilder();
+        if (siteId != null) {
+            sql.append(" AND j.site_id = ?");
+            args.add(siteId);
+        }
         if (status != null && !status.isBlank()) {
             sql.append(" AND j.status = ?");
             args.add(status);
@@ -218,6 +239,10 @@ public class ProductionQueryService {
         return sql.toString();
     }
 
+    private static String siteClause(UUID siteId) {
+        return siteId == null ? "" : " AND j.site_id = ?";
+    }
+
     private static String statusClause(String status) {
         return status == null || status.isBlank() ? "" : " AND j.status = ?";
     }
@@ -226,9 +251,12 @@ public class ProductionQueryService {
         return cpoId == null ? "" : " AND j.cpo_id = ?";
     }
 
-    private static Object[] countArgs(UUID tenantId, UUID cpoId, String status) {
+    private static Object[] countArgs(UUID tenantId, UUID cpoId, String status, UUID siteId) {
         List<Object> args = new ArrayList<>();
         args.add(tenantId);
+        if (siteId != null) {
+            args.add(siteId);
+        }
         if (status != null && !status.isBlank()) {
             args.add(status);
         }
