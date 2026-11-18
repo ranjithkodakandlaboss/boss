@@ -3,10 +3,6 @@ package in.boss.sales.domain;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import in.boss.masterdata.api.dto.BOMExplosionMaterialDto;
-import in.boss.masterdata.api.dto.ItemDto;
-import in.boss.masterdata.domain.BomExplosionService;
-import in.boss.masterdata.domain.ItemService;
 import in.boss.sales.api.SalesApiDtos.CostRate;
 import in.boss.sales.api.SalesApiDtos.CreateQuotationLineRequest;
 import in.boss.sales.api.SalesApiDtos.QuotationCostingConfigRequest;
@@ -42,19 +38,16 @@ public class QuotationCostingService {
     private static final TypeReference<List<CostRate>> COST_RATES = new TypeReference<>() {};
 
     private final JdbcTemplate jdbc;
-    private final ItemService itemService;
-    private final BomExplosionService bomExplosionService;
     private final AuditService auditService;
     private final ObjectMapper objectMapper;
+    private final QuotationMaterialCostService materialCostService;
 
-    public QuotationCostingService(JdbcTemplate jdbc, ItemService itemService,
-                                   BomExplosionService bomExplosionService, AuditService auditService,
-                                   ObjectMapper objectMapper) {
+    public QuotationCostingService(JdbcTemplate jdbc, AuditService auditService,
+                                   ObjectMapper objectMapper, QuotationMaterialCostService materialCostService) {
         this.jdbc = jdbc;
-        this.itemService = itemService;
-        this.bomExplosionService = bomExplosionService;
         this.auditService = auditService;
         this.objectMapper = objectMapper;
+        this.materialCostService = materialCostService;
     }
 
     @PreAuthorize(COMMERCIAL_DATA_READ)
@@ -119,7 +112,7 @@ public class QuotationCostingService {
 
         for (int index = 0; index < lines.size(); index++) {
             CreateQuotationLineRequest line = lines.get(index);
-            BigDecimal materialCost = materialCostPerUnit(tenantId, line.itemId(), line.uomId());
+            BigDecimal materialCost = materialCostService.materialCostPerUnit(tenantId, line.itemId(), line.uomId());
             if (materialCost == null) {
                 available = false;
                 unavailableReasons.add("Line " + (index + 1) + " has no approved BOM or fully valued inventory");
@@ -164,31 +157,7 @@ public class QuotationCostingService {
     }
 
     public BigDecimal materialCostPerUnit(UUID tenantId, UUID finishedItemId, UUID quoteUomId) {
-        ItemDto finishedItem = itemService.getItem(finishedItemId);
-        String quoteUom = uomSymbol(tenantId, quoteUomId);
-        if (finishedItem.getUomSymbol() == null || !finishedItem.getUomSymbol().equals(quoteUom)) {
-            return null;
-        }
-        List<BOMExplosionMaterialDto> materials =
-                bomExplosionService.explodeBOM(finishedItemId, BigDecimal.ONE).getFlatMaterials();
-        if (materials == null || materials.isEmpty()) return null;
-        BigDecimal total = BigDecimal.ZERO;
-        for (BOMExplosionMaterialDto material : materials) {
-            ItemDto item = itemService.getItem(material.getItemId());
-            if (item.getUomSymbol() == null || !item.getUomSymbol().equals(material.getUomSymbol())) return null;
-            BigDecimal averageCost = jdbc.query("""
-                    SELECT CASE
-                             WHEN COUNT(*) FILTER (WHERE unit_cost IS NULL) > 0 THEN NULL
-                             ELSE SUM(quantity * unit_cost) / NULLIF(SUM(quantity), 0)
-                           END
-                      FROM material_lots
-                     WHERE tenant_id = ? AND item_id = ? AND status IN ('available', 'reserved')
-                       AND quantity > 0
-                    """, rs -> rs.next() ? rs.getBigDecimal(1) : null, tenantId, material.getItemId());
-            if (averageCost == null) return null;
-            total = total.add(material.getQty().multiply(averageCost));
-        }
-        return money(total);
+        return materialCostService.materialCostPerUnit(tenantId, finishedItemId, quoteUomId);
     }
 
     private QuotationCostingConfigResponse loadConfig(UUID tenantId) {
@@ -212,13 +181,6 @@ public class QuotationCostingService {
         return new QuotationCostingConfigResponse(List.of(), List.of(), BigDecimal.ZERO, BigDecimal.ZERO,
                 BigDecimal.ZERO, BigDecimal.ZERO, new BigDecimal("20.00"), new BigDecimal("10.00"),
                 new BigDecimal("15.00"));
-    }
-
-    private String uomSymbol(UUID tenantId, UUID uomId) {
-        List<String> values = jdbc.query("""
-                SELECT symbol FROM units_of_measure WHERE tenant_id = ? AND id = ?
-                """, (rs, row) -> rs.getString(1), tenantId, uomId);
-        return values.isEmpty() ? null : values.get(0);
     }
 
     private static BigDecimal hoursCost(Map<String, BigDecimal> hours, Map<String, BigDecimal> rates, String type) {
