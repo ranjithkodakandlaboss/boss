@@ -5,6 +5,7 @@ import in.boss.masterdata.domain.BomExplosionService;
 import in.boss.production.api.ProductionApiDtos.CreateJobRequest;
 import in.boss.production.api.ProductionApiDtos.RoutingStageRequest;
 import in.boss.production.api.ProductionApiDtos.CreateRoutingTemplateRequest;
+import in.boss.production.api.ProductionApiDtos.ReviseRoutingTemplateRequest;
 import in.boss.production.api.ProductionApiDtos.RoutingTemplateOption;
 import in.boss.production.api.ProductionApiDtos.ProductionJobResponse;
 import in.boss.production.api.ProductionApiDtos.ReasonRequest;
@@ -54,7 +55,7 @@ public class ProductionJobService {
         this.inventory = inventory;
     }
 
-    @PreAuthorize(PRODUCTION_WRITE)
+    @PreAuthorize(OWNER_OR_OPS)
     public RoutingTemplateOption createRoutingTemplate(CreateRoutingTemplateRequest request) {
         BossContext context = support.requireContext();
         String name = request.name().trim();
@@ -77,19 +78,56 @@ public class ProductionJobService {
                 INSERT INTO routing_templates (id, tenant_id, name, version, is_default, status)
                 VALUES (?, ?, ?, 'v1', false, 'active')
                 """, id, context.tenantId(), name);
-        int seq = 1;
-        for (RoutingStageRequest stage : requested) {
-            StageOption option = resolveStage(context.tenantId(), stage);
-            requireAssetCapability(context.tenantId(), stage.assetId(), option.id());
-            jdbc.update("""
-                    INSERT INTO routing_template_stages
-                      (tenant_id, routing_id, stage_config_id, seq_no, name, stage_type, work_centre, asset_id)
-                    VALUES (?, ?, ?, ?, ?, 'production', ?, ?)
-                    """, context.tenantId(), id, option.id(), seq++, option.label(), stage.workCentre(), stage.assetId());
-        }
+        saveRoutingStages(context.tenantId(), id, requested);
         audit.record("routing_templates", id, "CREATE", null,
                 "{\"name\":\"" + name.replace("\\", "\\\\").replace("\"", "\\\"") + "\"}");
         return new RoutingTemplateOption(id, name, "v1", null, requested.size());
+    }
+
+    @PreAuthorize(OWNER_OR_OPS)
+    public RoutingTemplateOption reviseRoutingTemplate(UUID routingId, ReviseRoutingTemplateRequest request) {
+        BossContext context = support.requireContext();
+        List<RoutingStageRequest> requested = request == null ? null : request.stages();
+        validateRoutingStages(requested);
+        RoutingRevision current = jdbc.query("""
+                SELECT id, name, version, finished_item_id, is_default, status,
+                       GREATEST(revision_number, CASE
+                         WHEN version ~ '^v[1-9][0-9]*$' THEN substring(version FROM 2)::INTEGER
+                         ELSE 1
+                       END) AS revision_number
+                FROM routing_templates
+                WHERE tenant_id = ? AND id = ?
+                FOR UPDATE
+                """, rs -> rs.next() ? new RoutingRevision(
+                rs.getObject("id", UUID.class), rs.getString("name"), rs.getString("version"),
+                rs.getObject("finished_item_id", UUID.class), rs.getBoolean("is_default"),
+                rs.getString("status"), rs.getInt("revision_number")) : null,
+                context.tenantId(), routingId);
+        if (current == null || !"active".equals(current.status())) {
+            throw ProductionSupport.notFound("Active routing template was not found for this tenant");
+        }
+
+        UUID revisedId = UUID.randomUUID();
+        int revisionNumber = current.revisionNumber() + 1;
+        String version = "v" + revisionNumber;
+        jdbc.update("""
+                UPDATE routing_templates
+                SET status = 'archived', is_default = FALSE, revision_number = ?, updated_at = NOW()
+                WHERE tenant_id = ? AND id = ? AND status = 'active'
+                """, current.revisionNumber(), context.tenantId(), current.id());
+        jdbc.update("""
+                INSERT INTO routing_templates
+                  (id, tenant_id, finished_item_id, name, version, is_default, status,
+                   revision_number, supersedes_id)
+                VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?)
+                """, revisedId, context.tenantId(), current.finishedItemId(), current.name(),
+                version, current.isDefault(), revisionNumber, current.id());
+        saveRoutingStages(context.tenantId(), revisedId, requested);
+        audit.record("routing_templates", revisedId, "REVISION",
+                "{\"routingTemplateId\":\"" + current.id() + "\",\"version\":\"" + current.version() + "\"}",
+                "{\"version\":\"" + version + "\"}");
+        return new RoutingTemplateOption(revisedId, current.name(), version,
+                current.finishedItemId(), requested.size());
     }
 
     @PreAuthorize(PRODUCTION_WRITE)
@@ -352,10 +390,47 @@ public class ProductionJobService {
 
     private record RoutingTemplate(UUID id, String version, String status, UUID itemId) {}
 
+    private record RoutingRevision(UUID id, String name, String version, UUID finishedItemId,
+                                   boolean isDefault, String status, int revisionNumber) {}
+
     private record StageSeed(int seq, String name, String code, UUID configId, boolean inspection,
                              UUID templateId, boolean optional, String workCentre, UUID assetId) {}
 
     private record StageOption(UUID id, String label) {}
+
+    private void saveRoutingStages(UUID tenantId, UUID routingId, List<RoutingStageRequest> stages) {
+        validateRoutingStages(stages);
+        int seq = 1;
+        for (RoutingStageRequest stage : stages) {
+            StageOption option = resolveStage(tenantId, stage);
+            requireAssetCapability(tenantId, stage.assetId(), option.id());
+            if (stage.inspectionTemplateId() != null) {
+                Integer active = jdbc.queryForObject("""
+                        SELECT COUNT(*) FROM inspection_parameter_templates
+                        WHERE tenant_id = ? AND id = ? AND is_active = TRUE
+                        """, Integer.class, tenantId, stage.inspectionTemplateId());
+                if (active == null || active == 0) {
+                    throw ProductionSupport.badRequest(
+                            "Inspection template was not found or is inactive for this tenant");
+                }
+            }
+            jdbc.update("""
+                    INSERT INTO routing_template_stages
+                      (tenant_id, routing_id, stage_config_id, seq_no, name, stage_type, work_centre,
+                       asset_id, requires_inspection, inspection_template_id)
+                    VALUES (?, ?, ?, ?, ?, 'production', ?, ?, ?, ?)
+                    """, tenantId, routingId, option.id(), seq++, option.label(), stage.workCentre(),
+                    stage.assetId(), stage.inspectionTemplateId() != null, stage.inspectionTemplateId());
+        }
+    }
+
+    private void validateRoutingStages(List<RoutingStageRequest> stages) {
+        if (stages == null || stages.isEmpty()
+                || stages.stream().anyMatch(stage -> stage == null || stage.name() == null
+                || stage.name().isBlank())) {
+            throw ProductionSupport.badRequest("Every routing template needs stages with names");
+        }
+    }
 
     private StageOption resolveStage(UUID tenantId, RoutingStageRequest stage) {
         if (stage.stageConfigOptionId() != null) {

@@ -7,12 +7,15 @@ import in.boss.inventory.domain.InventoryService;
 import in.boss.masterdata.BaseMasterDataIntegrationTest;
 import in.boss.production.api.ProductionApiDtos.AddCostRequest;
 import in.boss.production.api.ProductionApiDtos.ConcessionRequest;
+import in.boss.production.api.ProductionApiDtos.CreateRoutingTemplateRequest;
 import in.boss.production.api.ProductionApiDtos.CreateJobRequest;
 import in.boss.production.api.ProductionApiDtos.InspectionResultRequest;
 import in.boss.production.api.ProductionApiDtos.IssueMaterialRequest;
 import in.boss.production.api.ProductionApiDtos.ProductionJobResponse;
 import in.boss.production.api.ProductionApiDtos.ReasonRequest;
 import in.boss.production.api.ProductionApiDtos.ReturnMaterialRequest;
+import in.boss.production.api.ProductionApiDtos.ReviseRoutingTemplateRequest;
+import in.boss.production.api.ProductionApiDtos.RoutingStageRequest;
 import in.boss.production.domain.JobCostingService;
 import in.boss.production.domain.JobInspectionService;
 import in.boss.production.domain.JobMaterialService;
@@ -51,6 +54,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @WithMockUser(roles = "OWNER")
@@ -237,6 +241,109 @@ class ProductionLifecycleIntegrationTest extends BaseMasterDataIntegrationTest {
         assertThat(query.businessMetrics().materialConsumedQty()).isEqualByComparingTo("16");
         assertThat(query.list(cpoId, "completed", 0, 20).totalElements()).isEqualTo(1);
         assertThat(query.features()).containsEntry("production.job.create", true);
+    }
+
+    @Test
+    void routingTemplateRevisionKeepsExistingJobOnItsOriginalVersion() {
+        ProductionJobResponse job = jobs.create(new CreateJobRequest(
+                cpoId, lineId, routingId, null, null, null));
+
+        var revised = jobs.reviseRoutingTemplate(routingId, new ReviseRoutingTemplateRequest(List.of(
+                new RoutingStageRequest("Drilling", "Machine shop", null, null))));
+
+        assertThat(revised.version()).isEqualTo("v4");
+        assertThat(jdbc.queryForObject("""
+                SELECT supersedes_id FROM routing_templates
+                WHERE tenant_id = ? AND id = ?
+                """, UUID.class, tenantId, revised.id())).isEqualTo(routingId);
+        assertThat(query.get(job.id()).routingTemplateId()).isEqualTo(routingId);
+        assertThat(query.get(job.id()).routingTemplateVersion()).isEqualTo("v3");
+        assertThat(query.get(job.id()).stages()).extracting(stage -> stage.stageName())
+                .containsExactly("Cutting", "Inspect", "Pack");
+        assertThat(query.routingTemplates(finishedItemId)).extracting(template -> template.id())
+                .contains(revised.id()).doesNotContain(routingId);
+    }
+
+    @Test
+    void routingTemplateRevisionEndpointReturnsTheNewVersion() throws Exception {
+        mockMvc.perform(post("/api/v1/jobs/routing-templates/{routingId}/revisions", routingId)
+                        .with(user("owner").roles("OWNER"))
+                        .header("Idempotency-Key", UUID.randomUUID().toString())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new ReviseRoutingTemplateRequest(List.of(
+                                new RoutingStageRequest("Drilling", null, null, null))))))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.version").value("v4"));
+    }
+
+    @Test
+    void routingTemplateStageCanReferenceAnActiveTenantInspectionTemplate() {
+        UUID inspectionTemplateId = insert("""
+                INSERT INTO inspection_parameter_templates
+                  (tenant_id, name, parameter_name, spec_type, scope, inspection_type)
+                VALUES (?, 'In-process check', 'Dimension', 'range', 'job', 'in_process')
+                RETURNING id
+                """, tenantId);
+        var template = jobs.createRoutingTemplate(new CreateRoutingTemplateRequest("Inspection route", null,
+                List.of(new RoutingStageRequest("Inspect", null, null, null, inspectionTemplateId))));
+
+        assertThat(jdbc.queryForObject("""
+                SELECT inspection_template_id FROM routing_template_stages
+                WHERE tenant_id = ? AND routing_id = ?
+                """, UUID.class, tenantId, template.id())).isEqualTo(inspectionTemplateId);
+        assertThat(jdbc.queryForObject("""
+                SELECT requires_inspection FROM routing_template_stages
+                WHERE tenant_id = ? AND routing_id = ?
+                """, Boolean.class, tenantId, template.id())).isTrue();
+        ProductionJobResponse job = jobs.create(new CreateJobRequest(
+                cpoId, lineId, template.id(), null, null, null));
+        assertThat(jdbc.queryForObject("""
+                SELECT inspection_template_id FROM job_stages
+                WHERE tenant_id = ? AND job_id = ?
+                """, UUID.class, tenantId, job.id())).isEqualTo(inspectionTemplateId);
+    }
+
+    @Test
+    void routingTemplateManagementRequiresTenantAdminRole() {
+        asRole("PRODUCTION_SUPERVISOR");
+
+        assertThatThrownBy(() -> jobs.createRoutingTemplate(
+                new CreateRoutingTemplateRequest("Supervisor route", "Cutting")))
+                .isInstanceOf(AccessDeniedException.class);
+        assertThatThrownBy(() -> jobs.reviseRoutingTemplate(routingId,
+                new ReviseRoutingTemplateRequest(List.of(new RoutingStageRequest("Drilling", null, null, null)))))
+                .isInstanceOf(AccessDeniedException.class);
+    }
+
+    @Test
+    void routingTemplateRevisionRejectsEmptyStages() {
+        assertThatThrownBy(() -> jobs.reviseRoutingTemplate(routingId,
+                new ReviseRoutingTemplateRequest(List.of())))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("needs stages");
+    }
+
+    @Test
+    void routingTemplateRevisionAndInspectionReferencesAreTenantScoped() {
+        UUID otherTenant = provisionTenant("other-route");
+        setTenantContext(otherTenant, "OWNER");
+        UUID otherInspectionTemplate = insert("""
+                INSERT INTO inspection_parameter_templates
+                  (tenant_id, name, parameter_name, spec_type)
+                VALUES (?, 'Other tenant check', 'Dimension', 'range')
+                RETURNING id
+                """, otherTenant);
+        assertThatThrownBy(() -> jobs.reviseRoutingTemplate(routingId,
+                new ReviseRoutingTemplateRequest(List.of(new RoutingStageRequest("Drilling", null, null, null)))))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("not found");
+
+        setTenantContext(tenantId, "OWNER");
+        assertThatThrownBy(() -> jobs.createRoutingTemplate(new CreateRoutingTemplateRequest(
+                "Cross-tenant reference", null,
+                List.of(new RoutingStageRequest("Inspect", null, null, null, otherInspectionTemplate)))))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("Inspection template");
     }
 
     @Test

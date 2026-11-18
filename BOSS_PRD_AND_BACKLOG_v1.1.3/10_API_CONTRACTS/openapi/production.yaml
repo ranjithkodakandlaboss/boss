@@ -8,7 +8,8 @@ info:
 
     **Routing:** Stages are defined in the routing template (see config.yaml).
     When a job is created, the routing template stages are COPIED into job_stages.
-    The job retains its stage snapshot; changes to the template do NOT affect active jobs.
+    Revising a template creates a new immutable version; active jobs retain their
+    routing version and stage snapshots.
 
     **Stage config options:** Each stage stores stage_config_option_id (FK) + stage_name (snapshot).
 
@@ -39,7 +40,7 @@ components:
         qty: { type: number }
         routingTemplateId: { type: string, format: uuid }
         routingTemplateName: { type: string }
-        routingTemplateVersion: { type: integer }
+        routingTemplateVersion: { type: string, example: "v2" }
         status:
           type: string
           enum: [draft, scheduled, in_progress, on_hold, qc_pending, completed, cancelled]
@@ -95,6 +96,25 @@ components:
         unitCost: { type: number, nullable: true }
         amount: { type: number }
         createdAt: { type: string, format: date-time }
+
+    RoutingTemplate:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        version: { type: string, example: "v2" }
+        finishedItemId: { type: string, format: uuid, nullable: true }
+        stageCount: { type: integer }
+
+    RoutingStageInput:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string }
+        workCentre: { type: string, nullable: true }
+        assetId: { type: string, format: uuid, nullable: true }
+        stageConfigOptionId: { type: string, format: uuid, nullable: true }
+        inspectionTemplateId: { type: string, format: uuid, nullable: true }
 
 paths:
   /jobs:
@@ -158,6 +178,84 @@ paths:
               schema: { $ref: '#/components/schemas/ProductionJob' }
         '400': { description: CPO line or routing template not found }
         '409': { description: Job already exists for this CPO line }
+
+  /jobs/routing-templates:
+    get:
+      operationId: listRoutingTemplates
+      summary: List active routing templates for this tenant
+      tags: [Routing Templates]
+      parameters:
+        - name: itemId
+          in: query
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/RoutingTemplate' }
+
+    post:
+      operationId: createRoutingTemplate
+      summary: Create a routing template with stages
+      description: Requires a tenant admin role (OWNER or OPS_MANAGER).
+      tags: [Routing Templates]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string }
+                stageName: { type: string, description: "Legacy single-stage input" }
+                stages:
+                  type: array
+                  items: { $ref: '#/components/schemas/RoutingStageInput' }
+      responses:
+        '201':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RoutingTemplate' }
+        '400': { description: Invalid stage or inspection template reference }
+        '403': { description: Tenant admin role required }
+
+  /jobs/routing-templates/{routingId}/revisions:
+    post:
+      operationId: reviseRoutingTemplate
+      summary: Create a new routing template version
+      description: |
+        Requires a tenant admin role (OWNER or OPS_MANAGER). Creates the next
+        immutable version; jobs already created keep their original routing
+        version and copied stage snapshots.
+      tags: [Routing Templates]
+      parameters:
+        - name: routingId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [stages]
+              properties:
+                stages:
+                  type: array
+                  minItems: 1
+                  items: { $ref: '#/components/schemas/RoutingStageInput' }
+      responses:
+        '201':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RoutingTemplate' }
+        '400': { description: Invalid stage or inspection template reference }
+        '403': { description: Tenant admin role required }
+        '404': { description: Active routing template not found for this tenant }
 
   /jobs/{jobId}:
     get:
