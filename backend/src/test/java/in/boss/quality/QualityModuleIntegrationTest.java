@@ -191,6 +191,8 @@ class QualityModuleIntegrationTest extends BaseMasterDataIntegrationTest {
         assertThat(listedInspection.inspectionTypeLabel()).isEqualTo("Visual Check");
         assertThat(historicalNcr.defectCategoryId()).isEqualTo(defectCategoryOptionId);
         assertThat(historicalNcr.defectCategoryLabel()).isEqualTo("Surface Defect");
+        assertThat(historicalInspection.linkedNcrs()).hasSize(1);
+        assertThat(historicalInspection.linkedNcrs().get(0).defectCategoryLabel()).isEqualTo("Surface Defect");
         assertThat(listedNcr.defectCategoryLabel()).isEqualTo("Surface Defect");
     }
 

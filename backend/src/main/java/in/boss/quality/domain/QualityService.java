@@ -702,7 +702,8 @@ public class QualityService {
         return jdbc.query("""
                 SELECT n.id, n.ncr_number, n.inspection_id, n.item_id,
                        i.code AS item_code, i.name AS item_name,
-                       n.lot_id, n.job_id, n.defect_category_id, co.label AS defect_category_label,
+                       n.lot_id, n.job_id, n.defect_category_id,
+                       COALESCE(n.defect_category_label_snapshot, co.label) AS defect_category_label,
                        n.defect_description, n.severity, n.quantity, n.status, n.disposition,
                        n.raised_by, au.display_name AS raised_by_name,
                        n.created_at,
