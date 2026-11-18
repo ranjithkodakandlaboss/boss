@@ -41,6 +41,7 @@ class DispatchModuleIntegrationTest extends BaseMasterDataIntegrationTest {
     private UUID cpoId;
     private UUID cpoLineId;
     private UUID jobId;
+    private UUID dispatchMethodOptionId;
 
     @BeforeEach
     void setUp() {
@@ -97,15 +98,30 @@ class DispatchModuleIntegrationTest extends BaseMasterDataIntegrationTest {
                 INSERT INTO production_jobs (tenant_id, job_number, cpo_line_id, finished_item_id, site_id, quantity, uom_id, status, created_by)
                 VALUES (?, 'JOB-2026-99', ?, ?, ?, 100, ?, 'completed', ?) RETURNING id
                 """, tenantId, cpoLineId, itemId, siteId, uomId, userId);
+
+        dispatchMethodOptionId = createConfigOption(tenantId, "DISPATCH_METHOD", "ROAD", "Road Freight");
     }
 
     private UUID insert(String sql, Object... args) {
         return jdbc.queryForObject(sql, UUID.class, args);
     }
 
-    @Test
-    void testCreateDispatchAndRetrieve() {
-        CreateDispatchRequest req = new CreateDispatchRequest(
+    private UUID createConfigOption(UUID optionTenantId, String categoryCode, String code, String label) {
+        var previousContext = BossContextHolder.get();
+        BossContextHolder.set(new BossContext(optionTenantId, userId, Set.of("OWNER"), null, null));
+        try {
+            return insert("""
+                    INSERT INTO tenant_config_options (tenant_id, category_id, code, label)
+                    SELECT ?, id, ?, ? FROM config_categories WHERE code = ?
+                    RETURNING id
+                    """, optionTenantId, code, label, categoryCode);
+        } finally {
+            BossContextHolder.set(previousContext);
+        }
+    }
+
+    private CreateDispatchRequest dispatchRequest(UUID methodOptionId) {
+        return new CreateDispatchRequest(
                 customerId,
                 "Acme Aerospace",
                 cpoId,
@@ -124,14 +140,22 @@ class DispatchModuleIntegrationTest extends BaseMasterDataIntegrationTest {
                 "Fragile cargo",
                 List.of("JOB-2026-99"),
                 List.of(new CreateDispatchLineRequest(cpoLineId, jobId, itemId, new BigDecimal("25"), uomId, null, null, null)),
-                List.of(new CreateDispatchPackageRequest("PKG-01", "Wooden Crate", "Shaft Batch 1", new BigDecimal("25"), "pcs", new BigDecimal("45.5"), new BigDecimal("100"), new BigDecimal("50"), new BigDecimal("50"), "Handle with care"))
+                List.of(new CreateDispatchPackageRequest("PKG-01", "Wooden Crate", "Shaft Batch 1", new BigDecimal("25"), "pcs", new BigDecimal("45.5"), new BigDecimal("100"), new BigDecimal("50"), new BigDecimal("50"), "Handle with care")),
+                methodOptionId
         );
+    }
+
+    @Test
+    void testCreateDispatchAndRetrieve() {
+        CreateDispatchRequest req = dispatchRequest(dispatchMethodOptionId);
 
         DispatchDetail created = dispatchService.createDispatch(req);
         assertThat(created).isNotNull();
         assertThat(created.id()).isNotNull();
         assertThat(created.dispatchNumber()).startsWith("DSP-");
         assertThat(created.carrier()).isEqualTo("Blue Dart Express");
+        assertThat(created.dispatchMethodOptionId()).isEqualTo(dispatchMethodOptionId);
+        assertThat(created.dispatchMethodLabel()).isEqualTo("Road Freight");
         assertThat(created.vehicleNumber()).isEqualTo("TS09AB1234");
         assertThat(created.status()).isEqualTo("pending_docs");
         assertThat(created.lines()).hasSize(1);
@@ -143,6 +167,40 @@ class DispatchModuleIntegrationTest extends BaseMasterDataIntegrationTest {
         DispatchDetail fetched = dispatchService.getDispatch(created.id());
         assertThat(fetched.dispatchNumber()).isEqualTo(created.dispatchNumber());
         assertThat(fetched.customerName()).isEqualTo("Acme Aerospace");
+        assertThat(fetched.dispatchMethodLabel()).isEqualTo("Road Freight");
+    }
+
+    @Test
+    void testDispatchMethodRejectsCrossTenantAndWrongCategoryOptions() {
+        UUID otherTenantId = provisionTenant("dispatch-method-other");
+        BossContextHolder.set(new BossContext(tenantId, userId, Set.of("OWNER"), null, null));
+        UUID crossTenantOptionId = createConfigOption(otherTenantId, "DISPATCH_METHOD", "ROAD", "Other Tenant Road");
+        UUID wrongCategoryOptionId = createConfigOption(tenantId, "CARRIER", "CARRIER", "Carrier Option");
+
+        assertThatThrownBy(() -> dispatchService.createDispatch(dispatchRequest(crossTenantOptionId)))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("active option for this tenant");
+
+        assertThatThrownBy(() -> dispatchService.createDispatch(dispatchRequest(wrongCategoryOptionId)))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("active option for this tenant");
+    }
+
+    @Test
+    void testDispatchMethodLabelSnapshotSurvivesOptionRenameAndDeactivation() {
+        DispatchDetail created = dispatchService.createDispatch(dispatchRequest(dispatchMethodOptionId));
+
+        jdbc.update("""
+                UPDATE tenant_config_options
+                SET label = 'Updated Road Freight', is_active = false
+                WHERE id = ? AND tenant_id = ?
+                """, dispatchMethodOptionId, tenantId);
+        jdbc.update("UPDATE dispatches SET notes = 'Unrelated update' WHERE id = ? AND tenant_id = ?",
+                created.id(), tenantId);
+
+        DispatchDetail fetched = dispatchService.getDispatch(created.id());
+        assertThat(fetched.dispatchMethodOptionId()).isEqualTo(dispatchMethodOptionId);
+        assertThat(fetched.dispatchMethodLabel()).isEqualTo("Road Freight");
     }
 
     @Test
@@ -166,6 +224,7 @@ class DispatchModuleIntegrationTest extends BaseMasterDataIntegrationTest {
                 null,
                 null,
                 List.of(new CreateDispatchLineRequest(cpoLineId, jobId, itemId, new BigDecimal("150"), uomId, null, null, null)),
+                null,
                 null
         );
 
@@ -206,6 +265,7 @@ class DispatchModuleIntegrationTest extends BaseMasterDataIntegrationTest {
                 null,
                 null,
                 List.of(new CreateDispatchLineRequest(cpoLineId, jobId, itemId, new BigDecimal("10"), uomId, null, null, null)),
+                null,
                 null
         );
 
@@ -246,6 +306,7 @@ class DispatchModuleIntegrationTest extends BaseMasterDataIntegrationTest {
                 null,
                 null,
                 List.of(new CreateDispatchLineRequest(cpoLineId, jobId, itemId, new BigDecimal("10"), uomId, null, null, null)),
+                null,
                 null
         );
 
@@ -275,6 +336,7 @@ class DispatchModuleIntegrationTest extends BaseMasterDataIntegrationTest {
                 null,
                 null,
                 List.of(new CreateDispatchLineRequest(cpoLineId, jobId, itemId, new BigDecimal("10"), uomId, null, null, null)),
+                null,
                 null
         );
 
@@ -316,6 +378,7 @@ class DispatchModuleIntegrationTest extends BaseMasterDataIntegrationTest {
                 null,
                 null,
                 List.of(new CreateDispatchLineRequest(cpoLineId, jobId, itemId, new BigDecimal("5"), uomId, null, null, null)),
+                null,
                 null
         );
         DispatchDetail d = dispatchService.createDispatch(req);
@@ -375,6 +438,7 @@ class DispatchModuleIntegrationTest extends BaseMasterDataIntegrationTest {
                 null,
                 null,
                 List.of(new CreateDispatchLineRequest(cpoLineId, jobId, itemId, new BigDecimal("5"), uomId, null, null, null)),
+                null,
                 null
         );
         DispatchDetail d = dispatchService.createDispatch(req);
@@ -424,6 +488,7 @@ class DispatchModuleIntegrationTest extends BaseMasterDataIntegrationTest {
                 null,
                 null,
                 List.of(new CreateDispatchLineRequest(cpoLineId, jobId, itemId, new BigDecimal("20"), uomId, null, null, null)),
+                null,
                 null
         );
         DispatchDetail d = dispatchService.createDispatch(dReq);

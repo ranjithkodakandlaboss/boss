@@ -234,6 +234,9 @@ export default function DispatchDetailPage() {
                 />
               )}
               {dispatch.carrier && <Field label="Carrier" value={dispatch.carrier} />}
+              {dispatch.dispatchMethodLabel && (
+                <Field label="Dispatch Method" value={dispatch.dispatchMethodLabel} />
+              )}
               {dispatch.vehicleNumber && <Field label="Vehicle" value={dispatch.vehicleNumber} mono />}
               {dispatch.driverName && <Field label="Driver" value={dispatch.driverName} />}
               {dispatch.lrNumber && <Field label="LR / Consignment No." value={dispatch.lrNumber} mono />}
