@@ -218,10 +218,21 @@ class SalesApiIntegrationTest extends BaseMasterDataIntegrationTest {
 
     @Test
     void quotationCostingUsesWeightedAverageSnapshotsAndRequiresReasonedApproval() {
+        jdbc.update("DELETE FROM material_lots WHERE tenant_id = ? AND item_id = ?", tenantId, materialItemId);
+        assertThat(quotationCostingService.materialCostPerUnit(tenantId, finishedItemId, uomId)).isNull();
+        jdbc.update("""
+                INSERT INTO material_lots (tenant_id, item_id, store_id, quantity, unit_cost, status)
+                VALUES (?, ?, ?, 10, 2.50, 'available')
+                """, tenantId, materialItemId, storeId);
         jdbc.update("""
                 INSERT INTO material_lots (tenant_id, item_id, store_id, quantity, unit_cost, status)
                 VALUES (?, ?, ?, 30, 3.50, 'available')
                 """, tenantId, materialItemId, storeId);
+        jdbc.update("UPDATE material_lots SET unit_cost = NULL WHERE tenant_id = ? AND item_id = ? AND quantity = 10",
+                tenantId, materialItemId);
+        assertThat(quotationCostingService.materialCostPerUnit(tenantId, finishedItemId, uomId)).isNull();
+        jdbc.update("UPDATE material_lots SET unit_cost = 2.50 WHERE tenant_id = ? AND item_id = ? AND quantity = 10",
+                tenantId, materialItemId);
         jdbc.update("UPDATE items SET std_cost = 99.00 WHERE tenant_id = ? AND id = ?",
                 tenantId, materialItemId);
         assertThatThrownBy(() -> quotationCostingService.saveConfig(new QuotationCostingConfigRequest(

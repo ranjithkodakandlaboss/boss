@@ -177,7 +177,10 @@ public class QuotationCostingService {
             ItemDto item = itemService.getItem(material.getItemId());
             if (item.getUomSymbol() == null || !item.getUomSymbol().equals(material.getUomSymbol())) return null;
             BigDecimal averageCost = jdbc.query("""
-                    SELECT SUM(quantity * COALESCE(unit_cost, 0)) / NULLIF(SUM(quantity), 0)
+                    SELECT CASE
+                             WHEN COUNT(*) FILTER (WHERE unit_cost IS NULL) > 0 THEN NULL
+                             ELSE SUM(quantity * unit_cost) / NULLIF(SUM(quantity), 0)
+                           END
                       FROM material_lots
                      WHERE tenant_id = ? AND item_id = ? AND status IN ('available', 'reserved')
                        AND quantity > 0
