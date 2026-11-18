@@ -151,7 +151,7 @@ export function AssetFormModal({ open, asset, options, lookup, ctl, onClose, onS
     <RecordSheet
       title={asset ? "Edit Asset" : "Add Asset"}
       onClose={onClose}
-      primary={{ label: saving ? "Saving…" : "Save asset", onClick: () => { const fakeEvt = { preventDefault: () => {} } as FormEvent; void submit(fakeEvt); }, disabled: saving }}
+      primary={{ label: saving ? "Saving…" : "Save Asset", onClick: () => { const fakeEvt = { preventDefault: () => {} } as FormEvent; void submit(fakeEvt); }, disabled: saving }}
       secondary={{ label: "Cancel", onClick: onClose }}
     >
       <form id="asset-form" onSubmit={submit} className="space-y-3">
@@ -443,8 +443,11 @@ export default function AssetsPage() {
                 </tr>
               </thead>
               <tbody>
-                {visibleAssets.map((a) => (
-                  <tr key={a.id} className="border-t border-[var(--border)] hover:bg-[var(--surface-2)] cursor-pointer" onClick={() => navigate(`/assets/${a.id}`)}>
+                {visibleAssets.map((a) => {
+                  const due = computeDue(a);
+                  const rowBg = a.status === "breakdown" ? "bg-red-50 dark:bg-red-950/20" : due.status === "overdue" ? "bg-amber-50 dark:bg-amber-950/20" : "";
+                  return (
+                  <tr key={a.id} className={`border-t border-[var(--border)] hover:bg-[var(--surface-2)] cursor-pointer ${rowBg}`} onClick={() => navigate(`/assets/${a.id}`)}>
                     <td className="p-2 font-semibold">{a.assetCode}</td>
                     <td className="p-2">{a.name}<div className="text-[var(--text-3)]">{[a.manufacturer, a.model].filter(Boolean).join(" ")}</div></td>
                     <td className="p-2">{a.category ?? "—"}</td>
@@ -463,7 +466,8 @@ export default function AssetsPage() {
                       </td>
                     )}
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -507,8 +511,9 @@ export default function AssetsPage() {
       {!!archiveTarget && (
         <RecordSheet
           title={`Archive ${archiveTarget.assetCode}`}
+          danger
           onClose={() => setArchiveTarget(null)}
-          primary={{ label: "Archive asset", onClick: () => void confirmArchive() }}
+          primary={{ label: "Archive Asset", onClick: () => void confirmArchive() }}
           secondary={{ label: "Cancel", onClick: () => setArchiveTarget(null) }}
         >
           <div className="space-y-3">

@@ -107,7 +107,7 @@ export default function NcrDetailPage() {
       <div className="flex items-start justify-between mb-6">
         <div>
           <div className="flex items-center gap-2 mb-1">
-            <span className="font-mono text-xs text-[var(--text-3)]">{ncr.ncrNumber}</span>
+            <span className="font-mono text-xs font-bold" style={{ color: "var(--brand)" }}>{ncr.ncrNumber}</span>
             <StatusChip status={ncr.status} />
           </div>
           <h1 className="text-lg font-bold">{ncr.defectCategoryLabel ?? "Non-Conformance Report"}</h1>
@@ -128,7 +128,7 @@ export default function NcrDetailPage() {
             <button
               type="button"
               onClick={() => setShowConcession(true)}
-              className="rounded-lg bg-[var(--accent)] px-3 py-1.5 text-sm font-semibold text-white"
+              className="rounded-lg bg-[var(--brand-fill)] px-3 py-1.5 text-sm font-semibold text-white"
             >
               Grant Concession
             </button>
@@ -139,7 +139,7 @@ export default function NcrDetailPage() {
       {/* Detail fields */}
       <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-6 rounded-xl border p-4" style={{ borderColor: "var(--border)", background: "var(--surface)" }}>
         <Field label="Severity">
-          <span className={`font-medium ${ncr.severity === "critical" ? "text-red-600" : ncr.severity === "major" ? "text-orange-600" : "text-[var(--text-1)]"}`}>
+          <span className={`font-medium ${ncr.severity === "critical" ? "text-red-600" : ncr.severity === "major" ? "text-orange-600" : "text-[var(--text)]"}`}>
             {severityLabel(ncr.severity)}
           </span>
         </Field>
@@ -258,7 +258,7 @@ export default function NcrDetailPage() {
                 <button
                   type="submit"
                   disabled={saving}
-                  className="rounded-lg bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+                  className="rounded-lg bg-[var(--brand-fill)] px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
                 >
                   {saving ? "Saving…" : "Save"}
                 </button>
@@ -303,7 +303,7 @@ export default function NcrDetailPage() {
                 <button
                   type="submit"
                   disabled={saving}
-                  className="rounded-lg bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+                  className="rounded-lg bg-[var(--brand-fill)] px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
                 >
                   {saving ? "Granting…" : "Grant"}
                 </button>
@@ -330,7 +330,7 @@ function Field({
   return (
     <div className={span ? "col-span-full" : ""}>
       <dt className="text-xs text-[var(--text-3)] font-medium mb-0.5">{label}</dt>
-      <dd className="text-sm text-[var(--text-1)]">{children ?? value ?? "—"}</dd>
+      <dd className="text-sm text-[var(--text)]">{children ?? value ?? "—"}</dd>
     </div>
   );
 }

@@ -271,7 +271,7 @@ export default function QualityPage() {
             <button
               type="button"
               onClick={() => setShowNewInspection(true)}
-              className="inline-flex items-center gap-1 rounded-lg bg-[var(--accent)] px-3 py-1.5 text-sm font-semibold text-white"
+              className="inline-flex items-center gap-1 rounded-lg bg-[var(--brand-fill)] px-3 py-1.5 text-sm font-semibold text-white"
             >
               <Plus size={14} /> New Inspection
             </button>
@@ -291,8 +291,8 @@ export default function QualityPage() {
             onClick={() => setTab(t)}
             className={`relative px-4 py-3 text-sm font-medium transition-colors whitespace-nowrap ${
               tab === t
-                ? "text-[var(--accent)] after:absolute after:bottom-0 after:inset-x-0 after:h-0.5 after:bg-[var(--accent)]"
-                : "text-[var(--text-2)] hover:text-[var(--text-1)]"
+                ? "text-[var(--brand)] after:absolute after:bottom-0 after:inset-x-0 after:h-0.5 after:bg-[var(--brand-fill)]"
+                : "text-[var(--text-3)] hover:text-[var(--text)]"
             }`}
           >
             {t === "ncrs"
@@ -382,6 +382,7 @@ export default function QualityPage() {
       {showNewNcr && (
         <RecordSheet
           title="Raise NCR"
+          danger
           onClose={() => { setShowNewNcr(false); setNcrInspectionId(""); }}
           primary={{ label: saving ? "Raising…" : "Raise NCR", onClick: () => { const fakeEvt = { preventDefault: () => {} } as React.FormEvent; void handleCreateNcr(fakeEvt); }, disabled: saving }}
           secondary={{ label: "Cancel", onClick: () => { setShowNewNcr(false); setNcrInspectionId(""); } }}
@@ -452,7 +453,7 @@ function InspectionsTable({
             style={{ borderColor: "var(--border)" }}
           >
             <div className="flex items-center justify-between gap-2">
-              <span className="font-mono text-xs font-bold" style={{ color: "var(--accent)" }}>{insp.inspectionNumber}</span>
+              <span className="font-mono text-xs font-bold" style={{ color: "var(--brand)" }}>{insp.inspectionNumber}</span>
               <ResultCell result={insp.result} status={insp.status} />
             </div>
             <div className="text-sm mt-1">{insp.itemName ?? insp.referenceLabel ?? "—"}</div>
@@ -493,7 +494,7 @@ function InspectionsTable({
                   style={{ borderColor: "var(--border)" }}
                   onClick={() => onSelect(insp.id)}
                 >
-                  <td className="px-4 py-3 font-mono text-xs font-bold" style={{ color: "var(--accent)" }}>{insp.inspectionNumber}</td>
+                  <td className="px-4 py-3 font-mono text-xs font-bold" style={{ color: "var(--brand)" }}>{insp.inspectionNumber}</td>
                   <td className="px-4 py-3 text-sm">{insp.inspectionTypeLabel ?? inspectionTypeLabel(insp.inspectionType)}</td>
                   <td className="px-4 py-3">
                     {insp.referenceLabel ? (
@@ -527,7 +528,7 @@ function InspectionsTable({
                       <button
                         type="button"
                         onClick={() => onSelect(insp.id)}
-                        className="rounded-lg bg-[var(--accent)] px-2.5 py-1 text-xs font-semibold text-white whitespace-nowrap"
+                        className="rounded-lg bg-[var(--brand-fill)] px-2.5 py-1 text-xs font-semibold text-white whitespace-nowrap"
                       >
                         Record
                       </button>
@@ -536,7 +537,8 @@ function InspectionsTable({
                       <button
                         type="button"
                         onClick={() => onRaiseNcr(insp.id)}
-                        className="rounded-lg bg-[var(--accent)] px-2.5 py-1 text-xs font-semibold text-white whitespace-nowrap"
+                        className="rounded-lg border border-[var(--error)] px-2.5 py-1 text-xs font-semibold whitespace-nowrap"
+                        style={{ color: "var(--error)" }}
                       >
                         Raise NCR
                       </button>
@@ -588,7 +590,7 @@ function NcrsTable({
             style={{ borderColor: "var(--border)" }}
           >
             <div className="flex items-center justify-between gap-2">
-              <span className="font-mono text-xs font-bold" style={{ color: "var(--accent)" }}>{ncr.ncrNumber}</span>
+              <span className="font-mono text-xs font-bold" style={{ color: "var(--brand)" }}>{ncr.ncrNumber}</span>
               <StatusChip status={ncr.status} size="sm" />
             </div>
             <div className="text-sm mt-1 truncate">{ncr.defectDescription ?? "—"}</div>
@@ -621,7 +623,7 @@ function NcrsTable({
                 style={{ borderColor: "var(--border)" }}
                 onClick={() => onSelect(ncr.id)}
               >
-                <td className="px-4 py-3 font-mono text-xs font-bold" style={{ color: "var(--accent)" }}>{ncr.ncrNumber}</td>
+                <td className="px-4 py-3 font-mono text-xs font-bold" style={{ color: "var(--brand)" }}>{ncr.ncrNumber}</td>
                 <td className="px-4 py-3">{ncr.itemCode ? `${ncr.itemCode} — ${ncr.itemName}` : "—"}</td>
                 <td className="px-4 py-3 max-w-[220px] truncate" style={{ color: "var(--text-2)" }}>{ncr.defectDescription ?? "—"}</td>
                 <td className="px-4 py-3">
