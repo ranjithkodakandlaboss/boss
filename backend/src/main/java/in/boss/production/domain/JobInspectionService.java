@@ -107,9 +107,9 @@ public class JobInspectionService {
         }
         jdbc.update("""
                 INSERT INTO concessions
-                  (id, tenant_id, ncr_id, concession_type, approved_by, approval_notes, status)
-                VALUES (?, ?, ?, ?, ?, ?, 'approved')
-                """, UUID.randomUUID(), context.tenantId(), ncrId, request.concessionType(),
+                  (id, tenant_id, ncr_id, approved_by, approval_notes, status)
+                VALUES (?, ?, ?, ?, ?, 'approved')
+                """, UUID.randomUUID(), context.tenantId(), ncrId,
                 context.userId(), request.note().trim());
         audit.record("concession", ncrId, "APPROVE", null, "{\"status\":\"approved\"}");
         return query.get(jobId);
@@ -121,9 +121,9 @@ public class JobInspectionService {
         BigDecimal qty = inspection.quantity() == null ? BigDecimal.ONE : inspection.quantity();
         jdbc.update("""
                 INSERT INTO ncrs
-                  (id, tenant_id, ncr_number, inspection_id, item_id, quantity, defect_type,
+                  (id, tenant_id, ncr_number, inspection_id, item_id, quantity,
                    defect_description, status, raised_by)
-                VALUES (?, ?, ?, ?, ?, ?, 'in_process', ?, 'open', ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 'open', ?)
                 """, ncrId, context.tenantId(), number, inspection.id(), inspection.itemId(), qty,
                 note == null ? "In-process inspection failed" : note, context.userId());
     }

@@ -189,8 +189,8 @@ public class IncomingInspectionService {
         jdbc.update("""
                 INSERT INTO ncrs
                   (id, tenant_id, ncr_number, inspection_id, item_id, lot_id, quantity,
-                   defect_type, defect_description, status, raised_by)
-                VALUES (?, ?, ?, ?, ?, ?, ?, 'non_conforming', ?, 'open', ?)
+                   defect_description, status, raised_by)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'open', ?)
                 """, ncrId, context.tenantId(), ncrNumber, inspection.id(), inspection.itemId(),
                 inspection.lotId(), rejected, blank(notes), context.userId());
         auditService.record("ncrs", ncrId, "CREATE", null, null);
@@ -198,9 +198,10 @@ public class IncomingInspectionService {
             UUID concessionId = UUID.randomUUID();
             jdbc.update("""
                     INSERT INTO concessions
-                      (id, tenant_id, ncr_id, concession_type, approved_by, approval_notes, status)
-                    VALUES (?, ?, ?, 'use_as_is', ?, ?, 'approved')
-                    """, concessionId, context.tenantId(), ncrId, context.userId(), notes.trim());
+                      (id, tenant_id, ncr_id, approved_by, approval_notes, status)
+                    VALUES (?, ?, ?, ?, ?, 'approved')
+                    """, concessionId, context.tenantId(), ncrId, context.userId(),
+                    notes == null ? null : notes.trim());
             auditService.record("concessions", concessionId, "APPROVED", null, null);
         }
     }
