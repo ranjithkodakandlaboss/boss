@@ -4,8 +4,8 @@ import { ArrowLeft, CheckCircle, XCircle } from "lucide-react";
 import { useCustomer } from "../auth/CustomerState";
 import StatusChip from "../components/shared/StatusChip";
 import {
-  getInspection, recordResult, createNcr,
-  statusLabel, inspectionTypeLabel, displayDate,
+  getInspection, recordResult,
+  inspectionTypeLabel, displayDate,
   type InspectionDetail, type ChecklistResponse,
 } from "./api";
 
@@ -103,15 +103,9 @@ export default function InspectionDetailPage() {
         <div>
           <div className="flex items-center gap-2 mb-1">
             <span className="font-mono text-xs text-[var(--text-3)]">{inspection.inspectionNumber}</span>
-            <StatusChip
-              label={statusLabel(inspection.status)}
-              variant={inspection.status === "completed" ? "success" : "info"}
-            />
+            <StatusChip status={inspection.status} />
             {inspection.result && (
-              <StatusChip
-                label={inspection.result.toUpperCase()}
-                variant={inspection.result === "pass" ? "success" : "error"}
-              />
+              <StatusChip status={inspection.result} />
             )}
           </div>
           <h1 className="text-lg font-bold">{inspectionTypeLabel(inspection.inspectionType)} Inspection</h1>
@@ -167,10 +161,7 @@ export default function InspectionDetailPage() {
               >
                 <div className="flex items-center justify-between">
                   <span className="font-mono text-xs">{ncr.ncrNumber}</span>
-                  <StatusChip
-                    label={statusLabel(ncr.status)}
-                    variant={ncr.status === "closed" ? "success" : ncr.status === "open" ? "error" : "warning"}
-                  />
+                  <StatusChip status={ncr.status} />
                 </div>
                 <p className="text-sm text-[var(--text-2)] mt-1 truncate">{ncr.defectDescription}</p>
               </button>

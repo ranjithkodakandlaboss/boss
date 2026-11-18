@@ -161,7 +161,7 @@ export default function ChecklistTemplatesPage() {
                 >
                   <div className="flex items-start justify-between gap-2">
                     <span className="text-sm font-medium">{t.name}</span>
-                    <StatusChip label={t.isActive ? "Active" : "Inactive"} variant={t.isActive ? "success" : "default"} />
+                    <StatusChip status={t.isActive ? "active" : "inactive"} />
                   </div>
                   <p className="text-xs text-[var(--text-3)] mt-1 capitalize">
                     {t.scope ?? "—"} · {(t.inspectionType ?? "any").replace(/_/g, " ")}

@@ -6,26 +6,9 @@ import StatusChip from "../components/shared/StatusChip";
 import {
   listInspections, listNcrs, createInspection, createNcr,
   listConfigOptions,
-  statusLabel, inspectionTypeLabel, displayDate,
+  severityLabel, inspectionTypeLabel, displayDate,
   type InspectionSummary, type NcrSummary, type ConfigOption,
 } from "./api";
-
-function statusVariant(status: string): "default" | "success" | "warning" | "error" | "info" {
-  switch (status) {
-    case "completed": case "closed": case "concession_granted": return "success";
-    case "in_progress": case "concession_requested": return "warning";
-    case "pending": case "open": return "info";
-    case "rework": return "warning";
-    case "scrapped": return "error";
-    default: return "default";
-  }
-}
-
-function resultVariant(result?: string): "success" | "error" | "default" {
-  if (result === "pass") return "success";
-  if (result === "fail") return "error";
-  return "default";
-}
 
 type Tab = "inspections" | "ncrs";
 
@@ -492,11 +475,11 @@ function InspectionsTable({ inspections, onSelect }: { inspections: InspectionSu
               <td className="px-4 py-3 tabular-nums">{insp.quantityInspected ?? "—"}</td>
               <td className="px-4 py-3">
                 {insp.result ? (
-                  <StatusChip label={insp.result.toUpperCase()} variant={insp.result === "pass" ? "success" : insp.result === "fail" ? "error" : "default"} />
+                  <StatusChip status={insp.result} />
                 ) : "—"}
               </td>
               <td className="px-4 py-3">
-                <StatusChip label={statusLabel(insp.status)} variant={statusVariant(insp.status)} />
+                <StatusChip status={insp.status} />
               </td>
               <td className="px-4 py-3 text-[var(--text-2)]">{displayDate(insp.inspectionDate)}</td>
             </tr>
@@ -543,7 +526,7 @@ function NcrsTable({ ncrs, onSelect }: { ncrs: NcrSummary[]; onSelect: (id: stri
               </td>
               <td className="px-4 py-3 tabular-nums">{ncr.quantity ?? "—"}</td>
               <td className="px-4 py-3">
-                <StatusChip label={statusLabel(ncr.status)} variant={statusVariant(ncr.status)} />
+                <StatusChip status={ncr.status} />
               </td>
               <td className="px-4 py-3 text-[var(--text-2)]">{displayDate(ncr.createdAt)}</td>
             </tr>

@@ -5,7 +5,7 @@ import { useCustomer } from "../auth/CustomerState";
 import StatusChip from "../components/shared/StatusChip";
 import {
   getNcr, updateNcr, createConcession,
-  statusLabel, severityLabel, displayDate,
+  severityLabel, displayDate,
   type NcrDetail,
 } from "./api";
 
@@ -108,10 +108,7 @@ export default function NcrDetailPage() {
         <div>
           <div className="flex items-center gap-2 mb-1">
             <span className="font-mono text-xs text-[var(--text-3)]">{ncr.ncrNumber}</span>
-            <StatusChip
-              label={statusLabel(ncr.status)}
-              variant={isClosed ? "success" : ncr.status === "open" ? "error" : "warning"}
-            />
+            <StatusChip status={ncr.status} />
           </div>
           <h1 className="text-lg font-bold">{ncr.defectCategoryLabel ?? "Non-Conformance Report"}</h1>
           <p className="text-sm text-[var(--text-2)] mt-0.5">{ncr.defectDescription}</p>
@@ -176,10 +173,7 @@ export default function NcrDetailPage() {
               <div key={c.id} className="rounded-lg border p-3" style={{ borderColor: "var(--border)" }}>
                 <div className="flex items-center justify-between mb-1">
                   <span className="text-sm font-medium">Concession</span>
-                  <StatusChip
-                    label={statusLabel(c.status)}
-                    variant={c.status === "approved" ? "success" : "warning"}
-                  />
+                  <StatusChip status={c.status} />
                 </div>
                 {c.approvalNotes && <p className="text-xs text-[var(--text-2)]">{c.approvalNotes}</p>}
                 <p className="text-xs text-[var(--text-3)] mt-1">
