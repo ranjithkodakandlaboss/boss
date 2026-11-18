@@ -13,8 +13,16 @@ import { getStatusLabel } from "../components/shared/StatusChip";
 import CompanyPanel from "./CompanyPanel";
 import HomePage from "./HomePage";
 import OnboardingPage from "./OnboardingPage";
+import CertificateDetail from "../inventory/CertificateDetail";
+import CycleCountPage from "../inventory/CycleCountPage";
 import InventoryHome from "../inventory/InventoryHome";
 import InventoryTransfers from "../inventory/InventoryTransfers";
+import ItemDetail from "../inventory/ItemDetail";
+import ItemMaster from "../inventory/ItemMaster";
+import LotDetail from "../inventory/LotDetail";
+import MaterialReturns from "../inventory/MaterialReturns";
+import RemnantsPage from "../inventory/RemnantsPage";
+import SiteNeed from "../inventory/SiteNeed";
 import StockTransferPage from "../inventory/StockTransferPage";
 
 const SALES_TABS: Record<string, { title: string; columns: string[]; placeholder: string; statuses?: string[]; action?: { label: string; to: string } }> = {
@@ -59,8 +67,16 @@ export default function ScreenPage({ screen }: { screen: ScreenDef }) {
   if (screen.kind === "home") return <HomePage />;
   if (screen.kind === "onboarding") return <OnboardingPage />;
   if (screen.path === "inventory") return <InventoryHome />;
-  if (screen.path === "inventory/transfers") return <InventoryTransfers />;
+  if (screen.path === "inventory/transfers" || screen.path === "transfers") return <InventoryTransfers />;
   if (screen.path === "inventory/transfer") return <StockTransferPage />;
+  if (screen.path === "inventory/returns") return <MaterialReturns />;
+  if (screen.path === "inventory/cycle") return <CycleCountPage />;
+  if (screen.path === "inventory/remnants") return <RemnantsPage />;
+  if (screen.path === "inventory/item/:id") return <ItemDetail />;
+  if (screen.path === "inventory/lot/:id") return <LotDetail />;
+  if (screen.path === "inventory/cert/:id") return <CertificateDetail />;
+  if (screen.path === "products") return <ItemMaster />;
+  if (screen.path === "allocations") return <SiteNeed />;
   return <Workspace screen={screen} />;
 }
 

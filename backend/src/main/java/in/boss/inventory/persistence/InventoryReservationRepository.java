@@ -268,6 +268,44 @@ public class InventoryReservationRepository {
                 storeId, performedBy, notes);
     }
 
+    public List<ActiveJobReservation> activeProductionReservations(UUID tenantId, UUID siteId) {
+        String sql = """
+                SELECT r.reference_id AS job_id, j.job_number, j.site_id, r.item_id,
+                       i.code AS item_code, i.name AS item_name,
+                       SUM(r.reserved_qty) AS reserved_qty
+                  FROM stock_reservation_records r
+                  JOIN production_jobs j ON j.id = r.reference_id AND j.tenant_id = r.tenant_id
+                  JOIN items i ON i.id = r.item_id AND i.tenant_id = r.tenant_id
+                 WHERE r.tenant_id = ? AND r.reference_type = 'production_job' AND r.status = 'active'
+                """ + (siteId == null ? "" : " AND j.site_id = ? ") + """
+                 GROUP BY r.reference_id, j.job_number, j.site_id, r.item_id, i.code, i.name
+                 ORDER BY j.job_number, i.code
+                """;
+        List<Object> args = new ArrayList<>();
+        args.add(tenantId);
+        if (siteId != null) {
+            args.add(siteId);
+        }
+        return jdbc.query(sql, (rs, rowNum) -> new ActiveJobReservation(
+                rs.getObject("job_id", UUID.class),
+                rs.getString("job_number"),
+                rs.getObject("site_id", UUID.class),
+                rs.getObject("item_id", UUID.class),
+                rs.getString("item_code"),
+                rs.getString("item_name"),
+                rs.getBigDecimal("reserved_qty")), args.toArray());
+    }
+
+    public record ActiveJobReservation(
+            UUID jobId,
+            String jobNumber,
+            UUID siteId,
+            UUID itemId,
+            String itemCode,
+            String itemName,
+            BigDecimal reservedQty
+    ) {}
+
     public record CustomerPoHeader(UUID siteId, String status, LocalDate requiredByDate) {}
 
     public record JobMaterialNeed(UUID itemId, BigDecimal remainingQty) {}

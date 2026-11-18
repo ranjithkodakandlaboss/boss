@@ -6,6 +6,7 @@ import Button from "../components/shared/Button";
 import ErrorState from "../components/shared/ErrorState";
 import LoadingState from "../components/shared/LoadingState";
 import RecordTable, { type RecordColumn } from "../components/shared/RecordTable";
+import StockNav from "./stockNav";
 
 type TransferLine = {
   id: string;
@@ -78,6 +79,7 @@ export default function InventoryTransfers() {
 
   return (
     <div className="flex min-h-[calc(100vh-var(--topbar-h))] flex-col">
+      <StockNav />
       <header className="flex items-start justify-between gap-3 px-6 py-4">
         <div>
           <h1 className="text-lg font-bold text-[var(--text)]">Inventory transfers</h1>

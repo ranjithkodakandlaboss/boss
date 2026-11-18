@@ -14,6 +14,7 @@ public record LotRow(
         String storeName,
         UUID siteId,
         String batchNumber,
+        String lotNumber,
         UUID grnLineId,
         BigDecimal quantity,
         BigDecimal reservedQty,

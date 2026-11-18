@@ -5,6 +5,7 @@ import in.boss.inventory.api.InventoryApiDtos.CreateLotRequest;
 import in.boss.inventory.api.InventoryApiDtos.CustomerPoReservationRequest;
 import in.boss.inventory.api.InventoryApiDtos.CustomerPoReservationResponse;
 import in.boss.inventory.api.InventoryApiDtos.InventoryPage;
+import in.boss.inventory.api.InventoryApiDtos.JobReservationResponse;
 import in.boss.inventory.api.InventoryApiDtos.InventoryPositionResponse;
 import in.boss.inventory.api.InventoryApiDtos.IssueMaterialRequest;
 import in.boss.inventory.api.InventoryApiDtos.MaterialLotResponse;
@@ -36,6 +37,7 @@ import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.time.LocalDate;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -108,6 +110,12 @@ public class InventoryController {
             @PathVariable UUID lotId,
             @Valid @RequestBody AddMovementRequest request) {
         return ResponseEntity.status(HttpStatus.CREATED).body(inventoryService.addMovement(lotId, request));
+    }
+
+    @GetMapping("/reservations")
+    @PreAuthorize(BossPermissions.INVENTORY_READ + " or " + BossPermissions.PRODUCTION_VIEW)
+    public List<JobReservationResponse> listActiveJobReservations() {
+        return inventoryService.listActiveJobReservations();
     }
 
     @PostMapping("/reservations")

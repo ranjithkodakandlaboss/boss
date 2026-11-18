@@ -113,6 +113,7 @@ public final class InventoryApiDtos {
             String storeName,
             UUID siteId,
             String batchRef,
+            String lotNumber,
             UUID grnLineId,
             BigDecimal qty,
             BigDecimal reservedQty,
@@ -229,4 +230,14 @@ public final class InventoryApiDtos {
     ) {}
 
     public record InventoryPage<T>(List<T> content, int page, long totalElements) {}
+
+    public record JobReservationResponse(
+            UUID jobId,
+            String jobNumber,
+            UUID siteId,
+            UUID itemId,
+            String itemCode,
+            String itemName,
+            BigDecimal reservedQty
+    ) {}
 }

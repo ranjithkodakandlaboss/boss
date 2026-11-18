@@ -5,7 +5,7 @@ import { useCustomer } from "../auth/CustomerState";
 import { ApiError } from "../auth/api";
 import StatusChip from "../components/shared/StatusChip";
 import {
-  addCost, concede, displayDate, featureFlags, getJob, issueMaterial, money, openInspection, readinessLabel,
+  addCost, cancelJob, concede, displayDate, featureFlags, getJob, issueMaterial, money, openInspection, readinessLabel,
   recordInspection, releaseHold, returnMaterial, skipStage, usableLots,
   type LotOption, type ProductionJob,
 } from "./api";
@@ -27,6 +27,7 @@ export default function JobWorkspacePage() {
   const [tab, setTab] = useState("Overview");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [cancelOpen, setCancelOpen] = useState(false);
 
   async function load() {
     try {
@@ -68,6 +69,7 @@ export default function JobWorkspacePage() {
         </div>
         <div className="flex items-center gap-2">
           {job.status === "on_hold" && canWrite && <button type="button" className="px-4 py-2 rounded-lg text-xs font-semibold text-white" style={{ background: "var(--brand-fill)" }} onClick={() => act(() => releaseHold(job.id, "Hold released"), "Hold released")}>Release hold</button>}
+          {!closed && canWrite && <button type="button" className="px-3 py-2 rounded-lg text-xs font-semibold border" style={{ borderColor: "var(--error)", color: "var(--error)" }} onClick={() => setCancelOpen(true)}>Cancel job</button>}
           {!closed && <button type="button" className="px-4 py-2 rounded-lg text-xs font-semibold text-white" style={{ background: "var(--brand-fill)" }} onClick={() => navigate(`/jobs/${job.id}/stage/${currentStage(job)?.id ?? ""}`)}>Update stage</button>}
         </div>
       </div>
@@ -84,12 +86,43 @@ export default function JobWorkspacePage() {
       {tab === "Updates" && <Updates job={job} />}
       {tab === "Blockers" && <Blockers job={job} />}
       {tab === "History" && <History job={job} canCost={canCost && flags["production.job.costing"] !== false && !closed} onCost={(type, description, amount) => act(() => addCost(job.id, type, description, amount), "Cost recorded")} />}
+      {cancelOpen && <CancelDialog job={job} onClose={() => setCancelOpen(false)} onDone={() => { setCancelOpen(false); void load(); }} />}
     </div>
   );
 
   function act(call: () => Promise<unknown>, done: string) {
     call().then(() => { setNotice(done); return load(); }).catch((cause) => setError(cause instanceof ApiError ? cause.message : "The change was not saved"));
   }
+}
+
+function CancelDialog({ job, onClose, onDone }: { job: ProductionJob; onClose: () => void; onDone: () => void }) {
+  const [reason, setReason] = useState("");
+  const [error, setError] = useState("");
+  const reserved = (job.materials ?? []).reduce((sum, row) => sum + Math.max(0, Number(row.requiredQty) - Number(row.netIssuedQty ?? 0)), 0);
+  const issued = (job.materials ?? []).reduce((sum, row) => sum + Number(row.netIssuedQty ?? 0), 0);
+  async function confirm() {
+    try {
+      await cancelJob(job.id, reason.trim());
+      onDone();
+    } catch (cause) {
+      setError(cause instanceof ApiError ? cause.message : "The job was not cancelled");
+    }
+  }
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+      <div className="w-full max-w-lg space-y-3 rounded-xl border p-5" style={{ background: "var(--surface)", borderColor: "var(--border)" }}>
+        <h2 className="text-sm font-bold">Cancel {job.jobNumber}</h2>
+        <p className="text-xs text-[var(--text-2)]">Cancellation preserves the job and its history. Reserved but unissued quantities will be released. Issued material is not restored automatically.</p>
+        <div className="rounded-lg p-3 text-xs" style={{ background: "var(--surface-2)" }}>Status: <strong>{job.status}</strong> · Stage: <strong>{job.currentStage}</strong> · Unissued: <strong>{reserved}</strong> · Issued: <strong>{issued}</strong></div>
+        <label className="block text-xs font-semibold">Cancellation reason *<textarea className="eoss-input mt-1 w-full" rows={3} value={reason} onChange={(event) => setReason(event.target.value)} /></label>
+        {error && <p role="alert" className="text-xs text-[var(--error)]">{error}</p>}
+        <div className="flex justify-end gap-2">
+          <button type="button" onClick={onClose} className="text-xs">Keep job</button>
+          <button type="button" disabled={!reason.trim()} onClick={() => void confirm()} className="rounded-lg px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50" style={{ background: "var(--error)" }}>Confirm cancellation</button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function currentStage(job: ProductionJob) {

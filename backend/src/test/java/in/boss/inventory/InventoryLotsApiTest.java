@@ -64,7 +64,8 @@ class InventoryLotsApiTest extends InventoryIntegrationTest {
                         .content(body))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.status").value("available"))
-                .andExpect(jsonPath("$.batchRef").value("BATCH"));
+                .andExpect(jsonPath("$.batchRef").value("BATCH"))
+                .andExpect(jsonPath("$.lotNumber").value(org.hamcrest.Matchers.startsWith("LOT-")));
 
         asKeeper();
         mockMvc.perform(post("/api/v1/inventory/lots")
@@ -191,6 +192,16 @@ class InventoryLotsApiTest extends InventoryIntegrationTest {
                         .with(user("owner").roles("OWNER")))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.title").value("Lot Not Found"));
+    }
+
+    @Test
+    void listReservations_isEmptyUntilAJobReservesStock() throws Exception {
+        asKeeper();
+        mockMvc.perform(get("/api/v1/inventory/reservations")
+                        .with(user("keeper").roles("STORE_KEEPER")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$").isArray())
+                .andExpect(jsonPath("$").isEmpty());
     }
 
     private void asKeeper() {
