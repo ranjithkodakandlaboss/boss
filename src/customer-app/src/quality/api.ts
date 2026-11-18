@@ -14,6 +14,8 @@ export type InspectionSummary = {
   id: string;
   inspectionNumber: string;
   inspectionType: string;
+  inspectionTypeOptionId?: string;
+  inspectionTypeLabel?: string;
   referenceType: string;
   referenceId: string;
   referenceLabel?: string;
@@ -189,6 +191,7 @@ export function getInspection(id: string) {
 
 export function createInspection(body: {
   inspectionType: string;
+  inspectionTypeOptionId?: string;
   referenceType: string;
   referenceId: string;
   itemId?: string;

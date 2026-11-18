@@ -120,6 +120,7 @@ public class ItemServiceImpl implements ItemService {
                 .description(request.getDescription())
                 .itemType(dbItemType)
                 .categoryId(category != null ? category.getId() : null)
+                .categoryLabelSnapshot(category != null ? category.getName() : null)
                 .baseUomId(uom.getId())
                 .hsnCodeId(hsnCodeId)
                 .gstRate(gstRate)
@@ -176,6 +177,7 @@ public class ItemServiceImpl implements ItemService {
             ItemCategoryEntity cat = categoryRepository.findByIdAndTenantId(request.getCategoryId(), tenantId)
                     .orElseThrow(() -> new ValidationException("Invalid category ID: " + request.getCategoryId()));
             entity.setCategoryId(cat.getId());
+            entity.setCategoryLabelSnapshot(cat.getName());
         }
         if (request.getStandardCost() != null) {
             entity.setStdCost(request.getStandardCost());
@@ -287,8 +289,8 @@ public class ItemServiceImpl implements ItemService {
                 .map(UnitOfMeasureEntity::getSymbol)
                 .orElse(null);
 
-        String categoryLabel = null;
-        if (entity.getCategoryId() != null) {
+        String categoryLabel = entity.getCategoryLabelSnapshot();
+        if (categoryLabel == null && entity.getCategoryId() != null) {
             categoryLabel = categoryRepository.findByIdAndTenantId(entity.getCategoryId(), tenantId)
                     .map(ItemCategoryEntity::getName)
                     .orElse(null);

@@ -108,7 +108,9 @@ export default function InspectionDetailPage() {
               <StatusChip status={inspection.result} />
             )}
           </div>
-          <h1 className="text-lg font-bold">{inspectionTypeLabel(inspection.inspectionType)} Inspection</h1>
+          <h1 className="text-lg font-bold">
+            {inspection.inspectionTypeLabel ?? `${inspectionTypeLabel(inspection.inspectionType)} Inspection`}
+          </h1>
           <p className="text-sm text-[var(--text-2)]">{inspection.referenceLabel ?? inspection.referenceId}</p>
         </div>
         {canRecord && (

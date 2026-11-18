@@ -6,7 +6,7 @@ info:
     GRN with incoming inspection, quality inspections (stage-gate + final + customer),
     NCR and concession management, customer clearance certificate, and dispatch with POD.
 
-    **Inspection types** come from GET /api/v1/config/options/INSPECTION_TYPE.
+    **Inspection types** come from GET /api/v1/config/options/INSPECTION_TYPES.
     **Defect categories** come from GET /api/v1/config/options/DEFECT_CATEGORY.
     **Dispatch methods** come from GET /api/v1/config/options/DISPATCH_METHOD.
 
@@ -87,7 +87,7 @@ components:
         jobId: { type: string, format: uuid }
         jobStageId: { type: string, format: uuid, nullable: true }
         inspectionType: { type: string, enum: [STAGE_GATE, FINAL, CUSTOMER, INCOMING] }
-        inspectionTypeConfigId: { type: string, format: uuid, nullable: true }
+        inspectionTypeOptionId: { type: string, format: uuid, nullable: true }
         inspectionTypeLabel: { type: string, nullable: true }
         status: { type: string, enum: [pending, in_progress, passed, failed, concession_pending, concession_granted] }
         parameters:
