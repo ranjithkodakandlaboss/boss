@@ -117,7 +117,7 @@ components:
         customerPoRef: { type: string, nullable: true }
         status:
           type: string
-          enum: [pending_feasibility, feasibility_approved, in_production, completed, cancelled]
+          enum: [open, on_hold, partial, feasibility_pending, feasibility_approved, fulfilled, cancelled]
         lines:
           type: array
           items: { $ref: '#/components/schemas/CPOLine' }
@@ -636,6 +636,34 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/CPO' }
         '404': { description: CPO not found }
+
+  /cpos/{cpoId}/status:
+    patch:
+      operationId: updateCPOStatus
+      summary: Submit, approve, or cancel a Customer Purchase Order
+      tags: [CPO]
+      parameters:
+        - name: cpoId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  enum: [open, on_hold, feasibility_pending, feasibility_approved, cancelled]
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CPO' }
+        '409': { description: Invalid transition or required materials unavailable }
 
   /cpos/{cpoId}/feasibility:
     post:

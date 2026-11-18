@@ -20,6 +20,7 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 import static in.boss.shared.security.BossPermissions.OWNER_OR_OPS;
@@ -181,7 +182,7 @@ public class ProductionJobService {
         if (!context.canAccessSite(line.siteId())) {
             throw ProductionSupport.notFound("Customer PO line was not found for this tenant");
         }
-        if (!"open".equals(line.status()) && !"partial".equals(line.status())) {
+        if (!Set.of("open", "partial", "feasibility_approved").contains(line.status())) {
             throw ProductionSupport.badRequest("Customer PO status " + line.status() + " cannot start production");
         }
         return line;

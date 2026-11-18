@@ -154,13 +154,26 @@ public class CustomerPoService {
     public CpoResponse updateStatus(UUID cpoId, String nextStatus) {
         UUID tenantId = requireContext().tenantId();
         String current = lockStatus(tenantId, cpoId);
-        boolean allowed = (Set.of("open", "on_hold", "partial").contains(current) && "cancelled".equals(nextStatus))
+        if (current.equals(nextStatus)
+                && Set.of("feasibility_pending", "feasibility_approved", "cancelled").contains(current)) {
+            return cpoLookup.read(tenantId, cpoId);
+        }
+        boolean allowed = (Set.of("open", "on_hold", "partial", "feasibility_pending",
+                        "feasibility_approved").contains(current) && "cancelled".equals(nextStatus))
                 || ("open".equals(current) && "on_hold".equals(nextStatus))
-                || ("on_hold".equals(current) && "open".equals(nextStatus));
+                || ("on_hold".equals(current) && "open".equals(nextStatus))
+                || ("open".equals(current) && "feasibility_pending".equals(nextStatus))
+                || ("feasibility_pending".equals(current) && "feasibility_approved".equals(nextStatus));
         if (!allowed) {
             throw conflict("Invalid Customer PO status transition: " + current + " -> " + nextStatus);
         }
         CpoResponse before = cpoLookup.read(tenantId, cpoId);
+        if ("feasibility_approved".equals(nextStatus)) {
+            var feasibility = inventoryService.checkAndReserveForCustomerPo(cpoId);
+            if (!feasibility.feasible()) {
+                throw conflict("Customer PO cannot be approved because required materials are unavailable");
+            }
+        }
         jdbc.update("UPDATE cpos SET status = ?, updated_at = NOW() WHERE tenant_id = ? AND id = ?",
                 nextStatus, tenantId, cpoId);
         if ("cancelled".equals(nextStatus)) {
@@ -219,13 +232,14 @@ public class CustomerPoService {
     }
 
     private String lockStatus(UUID tenantId, UUID cpoId) {
-        List<String> statuses = jdbc.query(
-                "SELECT status FROM cpos WHERE tenant_id = ? AND id = ? FOR UPDATE",
-                (rs, rowNum) -> rs.getString("status"), tenantId, cpoId);
-        if (statuses.isEmpty()) {
+        List<CpoStatusRow> rows = jdbc.query(
+                "SELECT status, site_id FROM cpos WHERE tenant_id = ? AND id = ? FOR UPDATE",
+                (rs, rowNum) -> new CpoStatusRow(rs.getString("status"),
+                        rs.getObject("site_id", UUID.class)), tenantId, cpoId);
+        if (rows.isEmpty() || !requireContext().canAccessSite(rows.get(0).siteId())) {
             throw notFound("Customer PO not found");
         }
-        return statuses.get(0);
+        return rows.get(0).status();
     }
 
     @Transactional
@@ -298,6 +312,8 @@ public class CustomerPoService {
 
     private record QuotationLock(String status, UUID customerId, UUID siteId, LocalDate validUntil,
                                  Integer paymentTerms, BigDecimal discountAmount, int revision) {}
+
+    private record CpoStatusRow(String status, UUID siteId) {}
 
     private record SourceLine(UUID id, int lineNo, UUID itemId, BigDecimal quantity, UUID uomId,
                               BigDecimal unitPrice, BigDecimal gstRate, BigDecimal discountPct) {}
