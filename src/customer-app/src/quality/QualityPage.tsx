@@ -86,7 +86,7 @@ export default function QualityPage() {
   useEffect(() => {
     listConfigOptions("INSPECTION_TYPE").then((opts) => {
       setInspectionTypes(opts);
-      if (opts.length > 0 && !newInspType) setNewInspType(opts[0].id);
+      if (opts.length > 0 && !newInspType) setNewInspType(opts[0].code);
     }).catch(() => {});
     listConfigOptions("DEFECT_CATEGORY").then((opts) => {
       setDefectCategories(opts);
@@ -94,7 +94,7 @@ export default function QualityPage() {
     }).catch(() => {});
     listConfigOptions("DEFECT_SEVERITY").then((opts) => {
       setSeverityOptions(opts);
-      if (opts.length > 0) setNcrSeverity(opts[0].id);
+      if (opts.length > 0 && !ncrSeverity) setNcrSeverity(opts[0].code);
     }).catch(() => {});
   }, []);
 
@@ -345,7 +345,7 @@ export default function QualityPage() {
                   onChange={(e) => setNewInspType(e.target.value)}
                 >
                   {inspectionTypes.map((opt) => (
-                    <option key={opt.id} value={opt.id}>{opt.label}</option>
+                    <option key={opt.id} value={opt.code}>{opt.label}</option>
                   ))}
                 </select>
               </label>
@@ -465,7 +465,7 @@ export default function QualityPage() {
                 >
                   <option value="">— Select severity —</option>
                   {severityOptions.map((opt) => (
-                    <option key={opt.id} value={opt.id}>{opt.label}</option>
+                    <option key={opt.id} value={opt.code}>{opt.label}</option>
                   ))}
                 </select>
               </label>
