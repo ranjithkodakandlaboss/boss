@@ -179,40 +179,15 @@ public class QualityService {
     public InspectionDetail recordResult(UUID inspectionId, RecordResultRequest request) {
         BossContext ctx = requireContext();
         InspectionDetail current = getInspection(inspectionId);
+        validateResultRequest(ctx.tenantId(), current, inspectionId, request);
 
-        if ("completed".equals(current.status()) || "cancelled".equals(current.status())) {
-            throw conflict("Inspection is already " + current.status());
-        }
-
-        // Validate result value
         String result = request.result();
-        if (result != null && !List.of("pass", "fail", "conditional").contains(result)) {
-            throw badRequest("Invalid result: must be pass, fail, or conditional");
-        }
-
-        // Validate quantities
         BigDecimal accepted = request.quantityAccepted();
         BigDecimal rejected = request.quantityRejected();
-        if (accepted != null && rejected != null) {
-            BigDecimal total = accepted.add(rejected);
-            if (total.compareTo(current.quantityInspected()) > 0) {
-                throw badRequest("Accepted + rejected quantities exceed quantity inspected");
-            }
-        }
+        String newStatus = result != null ? "completed" : "in_progress";
 
-        // Check mandatory checklist responses
-        if (!current.checklistResponses().isEmpty()) {
-            validateMandatoryResponses(ctx.tenantId(), inspectionId, request.checklistResponses());
-        }
-
-        // Save checklist responses
         if (request.checklistResponses() != null) {
             saveChecklistResponses(ctx, inspectionId, request.checklistResponses());
-        }
-
-        String newStatus = "in_progress";
-        if (result != null) {
-            newStatus = "completed";
         }
 
         jdbc.update("""
@@ -230,17 +205,35 @@ public class QualityService {
                 request.notes(),
                 ctx.tenantId(), inspectionId);
 
-        // Auto-create NCR for failed inspections on job stages
-        if ("fail".equals(result) && "job_stage".equals(current.referenceType())) {
-            if (listNcrsForInspection(ctx.tenantId(), inspectionId).isEmpty()) {
-                createNcrForFailedInspection(ctx, current, rejected);
-            }
+        if ("fail".equals(result) && "job_stage".equals(current.referenceType())
+                && listNcrsForInspection(ctx.tenantId(), inspectionId).isEmpty()) {
+            createNcrForFailedInspection(ctx, current, rejected);
         }
 
         audit.record("quality_inspections", inspectionId, "RESULT",
                 "{\"status\":\"" + current.status() + "\"}",
                 "{\"result\":\"" + result + "\",\"status\":\"" + newStatus + "\"}");
         return getInspection(inspectionId);
+    }
+
+    private void validateResultRequest(UUID tenantId, InspectionDetail current, UUID inspectionId,
+                                       RecordResultRequest request) {
+        if ("completed".equals(current.status()) || "cancelled".equals(current.status())) {
+            throw conflict("Inspection is already " + current.status());
+        }
+        String result = request.result();
+        if (result != null && !List.of("pass", "fail", "conditional").contains(result)) {
+            throw badRequest("Invalid result: must be pass, fail, or conditional");
+        }
+        BigDecimal accepted = request.quantityAccepted();
+        BigDecimal rejected = request.quantityRejected();
+        if (accepted != null && rejected != null
+                && accepted.add(rejected).compareTo(current.quantityInspected()) > 0) {
+            throw badRequest("Accepted + rejected quantities exceed quantity inspected");
+        }
+        if (!current.checklistResponses().isEmpty()) {
+            validateMandatoryResponses(tenantId, inspectionId, request.checklistResponses());
+        }
     }
 
     // ===== NCR =====
@@ -896,30 +889,26 @@ public class QualityService {
 
     private void validateInspectionReference(UUID tenantId, String refType, UUID refId, String inspType) {
         switch (refType) {
-            case "grn" -> {
-                Integer found = jdbc.queryForObject(
-                        "SELECT COUNT(*) FROM grns WHERE tenant_id = ? AND id = ?",
-                        Integer.class, tenantId, refId);
-                if (found == null || found == 0) throw notFound("GRN not found");
-                if (!"incoming".equals(inspType)) throw badRequest("GRN references must use incoming inspection type");
-            }
-            case "job_stage" -> {
-                Integer found = jdbc.queryForObject(
-                        "SELECT COUNT(*) FROM job_stages WHERE tenant_id = ? AND id = ?",
-                        Integer.class, tenantId, refId);
-                if (found == null || found == 0) throw notFound("Job stage not found");
-            }
-            case "production_job" -> {
-                Integer found = jdbc.queryForObject(
-                        "SELECT COUNT(*) FROM production_jobs WHERE tenant_id = ? AND id = ?",
-                        Integer.class, tenantId, refId);
-                if (found == null || found == 0) throw notFound("Production job not found");
-            }
-            case "dispatch" -> {
-                // dispatch reference is valid for dispatch_readiness inspections
-            }
+            case "grn" -> validateGrnReference(tenantId, refId, inspType);
+            case "job_stage" -> requireExists("job_stages", tenantId, refId, "Job stage not found");
+            case "production_job" -> requireExists("production_jobs", tenantId, refId, "Production job not found");
+            case "dispatch" -> { /* dispatch_readiness inspections: no additional validation needed */ }
             default -> throw badRequest("Unknown reference type: " + refType);
         }
+    }
+
+    private void validateGrnReference(UUID tenantId, UUID refId, String inspType) {
+        requireExists("grns", tenantId, refId, "GRN not found");
+        if (!"incoming".equals(inspType)) {
+            throw badRequest("GRN references must use incoming inspection type");
+        }
+    }
+
+    private void requireExists(String table, UUID tenantId, UUID id, String notFoundMessage) {
+        Integer found = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM " + table + " WHERE tenant_id = ? AND id = ?",
+                Integer.class, tenantId, id);
+        if (found == null || found == 0) throw notFound(notFoundMessage);
     }
 
     private void validateItem(UUID tenantId, UUID itemId) {
