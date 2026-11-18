@@ -60,6 +60,9 @@ public class BomLineEntity {
     @Column(name = "notes")
     private String notes;
 
+    @Column(name = "quantity_formula")
+    private String quantityFormula;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 }

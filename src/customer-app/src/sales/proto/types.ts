@@ -1268,6 +1268,8 @@ export interface CustomerQuotationLine {
   requiredDate: string;
   labourHours?: Record<string, number>;
   machineHours?: Record<string, number>;
+  rfqLineId?: ID;
+  specificationValues?: Record<string, number>;
 }
 
 // ── Site Allocation ──
@@ -1581,6 +1583,7 @@ export interface RFQLine {
   certificationReqs?: string;
   packagingReqs?: string;
   technicalNotes?: string;
+  specificationValues?: Record<string, number>;
 }
 
 export interface RFQDocument {

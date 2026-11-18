@@ -4,6 +4,7 @@ import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Size;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -20,7 +21,6 @@ public class CreateBOMLineRequest {
     @NotNull(message = "componentItemId is required")
     private UUID componentItemId;
 
-    @NotNull(message = "qty is required")
     @DecimalMin(value = "0.001", message = "qty must be at least 0.001")
     private BigDecimal qty;
 
@@ -32,4 +32,7 @@ public class CreateBOMLineRequest {
     private BigDecimal scrapFactor;
 
     private Integer level;
+
+    @Size(max = 256, message = "quantityFormula must be at most 256 characters")
+    private String quantityFormula;
 }

@@ -560,12 +560,14 @@ public class SalesService {
             jdbc.update("""
                     INSERT INTO rfq_lines
                       (id, tenant_id, rfq_id, line_no, item_id, quantity, uom_id, specifications,
-                       drawing_number, drawing_revision, material, description, target_price, notes, required_by)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                       drawing_number, drawing_revision, material, description, target_price, notes, required_by,
+                       specification_values)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb)
                     """,
                     UUID.randomUUID(), tenantId, rfqId, lineNo++, line.itemId(), line.qty(),
                     line.uomId(), line.customerSpecRef(), line.drawingNumber(), line.drawingRevision(),
-                    line.material(), line.description(), line.targetPrice(), line.notes(), line.requiredBy());
+                    line.material(), line.description(), line.targetPrice(), line.notes(), line.requiredBy(),
+                    toJson(validateSpecificationValues(line.specificationValues())));
         }
     }
 
@@ -574,9 +576,15 @@ public class SalesService {
         BigDecimal totalCost = BigDecimal.ZERO;
         boolean allCostsKnown = true;
         int lineNo = 1;
+        UUID quotationRfqId = jdbc.query("""
+                SELECT rfq_id FROM quotations WHERE tenant_id = ? AND id = ?
+                """, rs -> rs.next() ? rs.getObject("rfq_id", UUID.class) : null, tenantId, quotationId);
         for (CreateQuotationLineRequest line : lines) {
             requireItemAndUom(line.itemId(), line.uomId());
-            BigDecimal costPerUnit = quotationCostingService.materialCostPerUnit(tenantId, line.itemId(), line.uomId());
+            Map<String, BigDecimal> specificationValues = resolveSpecificationValues(
+                    tenantId, quotationRfqId, line);
+            BigDecimal costPerUnit = quotationCostingService.materialCostPerUnit(
+                    tenantId, line.itemId(), line.uomId(), specificationValues);
             if (costPerUnit == null) {
                 allCostsKnown = false;
             } else {
@@ -585,24 +593,78 @@ public class SalesService {
             Integer deliveryDays = line.deliveryWeeks() == null ? null : Math.multiplyExact(line.deliveryWeeks(), 7);
             jdbc.update("""
                     INSERT INTO quotation_lines
-                      (id, tenant_id, quotation_id, line_no, item_id, quantity, uom_id,
+                      (id, tenant_id, quotation_id, rfq_line_id, line_no, item_id, quantity, uom_id,
                        unit_price, delivery_days, estimated_material_cost_per_unit,
                        gst_rate, discount_pct, drawing_number, drawing_revision, description, required_by,
-                       labour_hours, machine_hours)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, 0), ?, ?, ?, ?, ?::jsonb, ?::jsonb)
+                       labour_hours, machine_hours, specification_values)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, 0), ?, ?, ?, ?, ?::jsonb, ?::jsonb, ?::jsonb)
                     """,
-                    UUID.randomUUID(), tenantId, quotationId, lineNo++, line.itemId(), line.qty(),
+                    UUID.randomUUID(), tenantId, quotationId, line.rfqLineId(), lineNo++, line.itemId(), line.qty(),
                     line.uomId(), line.unitPrice(), deliveryDays, costPerUnit, line.gstRate(),
                     line.discountPct(), line.drawingNumber(), line.drawingRevision(), line.description(),
                     line.requiredBy(), jsonOrNull(line.labourHours() == null ? Map.of() : line.labourHours()),
-                    jsonOrNull(line.machineHours() == null ? Map.of() : line.machineHours()));
+                    jsonOrNull(line.machineHours() == null ? Map.of() : line.machineHours()),
+                    toJson(specificationValues));
         }
         return allCostsKnown ? totalCost.setScale(2, RoundingMode.HALF_UP) : null;
     }
 
+    private Map<String, BigDecimal> resolveSpecificationValues(
+            UUID tenantId, UUID quotationRfqId, CreateQuotationLineRequest line) {
+        Map<String, BigDecimal> provided = validateSpecificationValues(line.specificationValues());
+        if (line.rfqLineId() == null) {
+            return provided;
+        }
+        if (quotationRfqId == null) {
+            throw badRequest("An RFQ line can only be referenced by a quotation linked to that RFQ");
+        }
+        List<RfqSpecificationSource> sources = jdbc.query("""
+                SELECT item_id, specification_values::text AS specification_values
+                  FROM rfq_lines
+                 WHERE tenant_id = ? AND rfq_id = ? AND id = ?
+                """, (rs, rowNum) -> new RfqSpecificationSource(
+                rs.getObject("item_id", UUID.class), rs.getString("specification_values")),
+                tenantId, quotationRfqId, line.rfqLineId());
+        if (sources.isEmpty()) {
+            throw badRequest("The referenced RFQ line does not belong to this quotation's RFQ");
+        }
+        RfqSpecificationSource source = sources.get(0);
+        if (!source.itemId().equals(line.itemId())) {
+            throw badRequest("The quotation line item must match its referenced RFQ line");
+        }
+        return validateSpecificationValues(readDecimalMap(source.specificationValues()));
+    }
+
+    private static Map<String, BigDecimal> validateSpecificationValues(Map<String, BigDecimal> values) {
+        if (values == null || values.isEmpty()) {
+            return Map.of();
+        }
+        if (values.size() > 30) {
+            throw badRequest("At most 30 specification values can be supplied");
+        }
+        for (Map.Entry<String, BigDecimal> entry : values.entrySet()) {
+            if (entry.getKey() == null || !entry.getKey().matches("[a-z][a-z0-9_]*")
+                    || entry.getValue() == null || entry.getValue().signum() < 0) {
+                throw badRequest("Specification values require valid names and non-negative numbers");
+            }
+        }
+        return Map.copyOf(values);
+    }
+
     private void saveCostingSnapshot(UUID tenantId, UUID quotationId,
                                     List<CreateQuotationLineRequest> lines, BigDecimal discountAmount) {
-        QuotationCostingSnapshot costing = quotationCostingService.calculate(tenantId, lines, discountAmount);
+        UUID quotationRfqId = jdbc.query("""
+                SELECT rfq_id FROM quotations WHERE tenant_id = ? AND id = ?
+                """, rs -> rs.next() ? rs.getObject("rfq_id", UUID.class) : null, tenantId, quotationId);
+        List<CreateQuotationLineRequest> snapshotLines = lines.stream()
+                .map(line -> new CreateQuotationLineRequest(
+                        line.itemId(), line.qty(), line.uomId(), line.unitPrice(), line.deliveryWeeks(),
+                        line.gstRate(), line.discountPct(), line.drawingNumber(), line.drawingRevision(),
+                        line.description(), line.requiredBy(), line.labourHours(), line.machineHours(),
+                        line.rfqLineId(), resolveSpecificationValues(tenantId, quotationRfqId, line)))
+                .toList();
+        QuotationCostingSnapshot costing = quotationCostingService.calculate(
+                tenantId, snapshotLines, discountAmount);
         jdbc.update("""
                 UPDATE quotations
                    SET estimated_total_cost = ?, estimated_gross_profit = ?,
@@ -647,7 +709,7 @@ public class SalesService {
         List<RfqLineData> lineData = jdbc.query("""
                 SELECT id, line_no, item_id, quantity, uom_id, specifications,
                        drawing_number, drawing_revision, material, description,
-                       target_price, notes, required_by
+                       target_price, notes, required_by, specification_values::text AS specification_values
                   FROM rfq_lines
                  WHERE tenant_id = ? AND rfq_id = ?
                  ORDER BY line_no
@@ -664,14 +726,15 @@ public class SalesService {
                 rs.getString("description"),
                 rs.getBigDecimal("target_price"),
                 rs.getString("notes"),
-                localDate(rs, "required_by")), tenantId, rfqId);
+                localDate(rs, "required_by"),
+                readDecimalMap(rs.getString("specification_values"))), tenantId, rfqId);
         List<RfqLineResponse> lines = lineData.stream().map(line -> {
             ItemDto item = itemService.getItem(line.itemId());
             UomDto uom = uomService.getUom(line.uomId());
             return new RfqLineResponse(line.id(), line.lineNo(), line.itemId(), item.getCode(),
                     item.getName(), line.quantity(), line.uomId(), uom.getSymbol(), line.specifications(),
                     line.drawingNumber(), line.drawingRevision(), line.material(), line.description(),
-                    line.targetPrice(), line.notes(), line.requiredBy());
+                    line.targetPrice(), line.notes(), line.requiredBy(), line.specificationValues());
         }).toList();
         return new RfqResponse(header.id(), header.rfqNumber(), header.customerId(), customer.getName(),
                 header.rfqTypeId(), header.rfqTypeLabel(), header.status(), header.requiredDate(),
@@ -723,13 +786,15 @@ public class SalesService {
         QuotationHeader header = headers.get(0);
         CustomerDto customer = customerService.getCustomer(header.customerId());
         List<QuotationLineData> lineData = jdbc.query("""
-                SELECT id, item_id, quantity, uom_id, unit_price, delivery_days,
-                       gst_rate, discount_pct, drawing_number, drawing_revision, description, required_by
+                SELECT id, rfq_line_id, item_id, quantity, uom_id, unit_price, delivery_days,
+                       gst_rate, discount_pct, drawing_number, drawing_revision, description, required_by,
+                       specification_values::text AS specification_values
                   FROM quotation_lines
                  WHERE tenant_id = ? AND quotation_id = ?
                  ORDER BY line_no
                 """, (rs, rowNum) -> new QuotationLineData(
                 rs.getObject("id", UUID.class),
+                rs.getObject("rfq_line_id", UUID.class),
                 rs.getObject("item_id", UUID.class),
                 rs.getBigDecimal("quantity"),
                 rs.getObject("uom_id", UUID.class),
@@ -740,7 +805,8 @@ public class SalesService {
                 rs.getString("drawing_number"),
                 rs.getString("drawing_revision"),
                 rs.getString("description"),
-                localDate(rs, "required_by")), tenantId, quotationId);
+                localDate(rs, "required_by"),
+                readDecimalMap(rs.getString("specification_values"))), tenantId, quotationId);
         List<QuotationLineResponse> lines = lineData.stream().map(line -> {
             ItemDto item = itemService.getItem(line.itemId());
             UomDto uom = uomService.getUom(line.uomId());
@@ -749,7 +815,7 @@ public class SalesService {
                     commercialLineTotal(line.quantity(), line.unitPrice(), line.discountPct()),
                     line.deliveryDays() == null ? null : line.deliveryDays() / 7,
                     line.gstRate(), line.discountPct(), line.drawingNumber(), line.drawingRevision(),
-                    line.description(), line.requiredBy());
+                    line.description(), line.requiredBy(), line.rfqLineId(), line.specificationValues());
         }).toList();
         List<NegotiationEntryResponse> history = readNegotiationHistory(tenantId, quotationId);
         List<RevisionLink> revisions = jdbc.query("""
@@ -1125,6 +1191,15 @@ public class SalesService {
         }
     }
 
+    private Map<String, BigDecimal> readDecimalMap(String json) {
+        if (json == null || json.isBlank()) return Map.of();
+        try {
+            return objectMapper.readValue(json, new TypeReference<>() {});
+        } catch (JsonProcessingException exception) {
+            throw new IllegalStateException("Could not read specification values", exception);
+        }
+    }
+
     private QuotationCostingSnapshot parseCostingSnapshot(String json) {
         if (json == null || json.isBlank()) return null;
         try {
@@ -1172,7 +1247,9 @@ public class SalesService {
     private record RfqLineData(UUID id, int lineNo, UUID itemId, BigDecimal quantity, UUID uomId,
                                String specifications, String drawingNumber, String drawingRevision,
                                String material, String description, BigDecimal targetPrice, String notes,
-                               LocalDate requiredBy) {}
+                               LocalDate requiredBy, Map<String, BigDecimal> specificationValues) {}
+
+    private record RfqSpecificationSource(UUID itemId, String specificationValues) {}
 
     private record QuotationHeader(UUID id, String quotationNumber, UUID rfqId, UUID customerId,
                                    int revision, String status, LocalDate validUntil, Instant createdAt,
@@ -1182,10 +1259,11 @@ public class SalesService {
                                    UUID costOverrideBy, Instant costOverrideAt, String rfqNumber, UUID cpoId,
                                    String cpoNumber) {}
 
-    private record QuotationLineData(UUID id, UUID itemId, BigDecimal quantity, UUID uomId,
+    private record QuotationLineData(UUID id, UUID rfqLineId, UUID itemId, BigDecimal quantity, UUID uomId,
                                     BigDecimal unitPrice, Integer deliveryDays, BigDecimal gstRate,
                                     BigDecimal discountPct, String drawingNumber, String drawingRevision,
-                                    String description, LocalDate requiredBy) {}
+                                    String description, LocalDate requiredBy,
+                                    Map<String, BigDecimal> specificationValues) {}
 
     private record NegotiationRow(UUID id, int round, String partyType, String offeredUnitPrices,
                                   String note, Instant createdAt) {}

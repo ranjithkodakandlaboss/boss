@@ -6,6 +6,7 @@ import in.boss.masterdata.api.dto.BOMLineDto;
 import in.boss.masterdata.api.dto.CreateBOMLineRequest;
 import in.boss.masterdata.api.dto.CreateBOMRequest;
 import in.boss.masterdata.domain.BomService;
+import in.boss.masterdata.domain.BomQuantityFormula;
 import in.boss.masterdata.domain.CircularReferenceException;
 import in.boss.masterdata.domain.EntityNotFoundException;
 import in.boss.masterdata.domain.MaxBomLevelExceededException;
@@ -127,8 +128,19 @@ public class BomServiceImpl implements BomService {
             if (line.getComponentItemId().equals(itemId)) {
                 throw new CircularReferenceException("Item cannot reference itself in BOM: " + itemId);
             }
-            if (line.getQty() == null || line.getQty().compareTo(BigDecimal.ZERO) <= 0) {
+            boolean hasFormula = line.getQuantityFormula() != null && !line.getQuantityFormula().isBlank();
+            if (!hasFormula && (line.getQty() == null || line.getQty().compareTo(BigDecimal.ZERO) <= 0)) {
                 throw new ValidationException("BOM line quantity must be greater than 0");
+            }
+            if (hasFormula && line.getQty() != null && line.getQty().compareTo(BigDecimal.ZERO) <= 0) {
+                throw new ValidationException("BOM line quantity must be greater than 0 when supplied");
+            }
+            if (hasFormula) {
+                try {
+                    BomQuantityFormula.validate(line.getQuantityFormula());
+                } catch (IllegalArgumentException exception) {
+                    throw new ValidationException("Invalid BOM quantity formula: " + exception.getMessage());
+                }
             }
             if (line.getScrapFactor() != null) {
                 if (line.getScrapFactor().compareTo(BigDecimal.ZERO) < 0 ||
@@ -224,10 +236,11 @@ public class BomServiceImpl implements BomService {
                     .tenantId(tenantId)
                     .bomHeaderId(savedHeader.getId())
                     .componentItemId(lineReq.getComponentItemId())
-                    .quantity(lineReq.getQty())
+                    .quantity(lineReq.getQty() == null ? BigDecimal.ONE : lineReq.getQty())
                     .uomId(lineReq.getUomId())
                     .level(lineReq.getLevel() != null ? lineReq.getLevel() : 1)
                     .scrapPercent(lineReq.getScrapFactor() != null ? lineReq.getScrapFactor() : BigDecimal.ZERO)
+                    .quantityFormula(blankToNull(lineReq.getQuantityFormula()))
                     .isOptional(false)
                     .createdAt(now)
                     .build();
@@ -322,6 +335,7 @@ public class BomServiceImpl implements BomService {
                     .uomSymbol(uom != null ? uom.getSymbol() : null)
                     .scrapFactor(line.getScrapPercent())
                     .level(line.getLevel())
+                    .quantityFormula(line.getQuantityFormula())
                     .build());
         }
 
@@ -350,5 +364,9 @@ public class BomServiceImpl implements BomService {
         } catch (Exception e) {
             return null;
         }
+    }
+
+    private static String blankToNull(String value) {
+        return value == null || value.isBlank() ? null : value.trim();
     }
 }

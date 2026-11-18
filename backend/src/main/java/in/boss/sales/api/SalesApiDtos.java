@@ -1,6 +1,7 @@
 package in.boss.sales.api;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
+import in.boss.masterdata.api.dto.BOMExplosionResultDto;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.DecimalMax;
 import jakarta.validation.constraints.DecimalMin;
@@ -35,10 +36,19 @@ public final class SalesApiDtos {
             @Size(max = 500) String description,
             @DecimalMin(value = "0.00") BigDecimal targetPrice,
             @Size(max = 500) String notes,
-            LocalDate requiredBy) {
+            LocalDate requiredBy,
+            @Size(max = 30) Map<String, @NotNull @DecimalMin("0.00") BigDecimal> specificationValues) {
         @JsonIgnore
         public RfqLineRequest(UUID itemId, BigDecimal qty, UUID uomId, String customerSpecRef) {
-            this(itemId, qty, uomId, customerSpecRef, null, null, null, null, null, null, null);
+            this(itemId, qty, uomId, customerSpecRef, null, null, null, null, null, null, null, Map.of());
+        }
+
+        @JsonIgnore
+        public RfqLineRequest(UUID itemId, BigDecimal qty, UUID uomId, String customerSpecRef,
+                              String drawingNumber, String drawingRevision, String material, String description,
+                              BigDecimal targetPrice, String notes, LocalDate requiredBy) {
+            this(itemId, qty, uomId, customerSpecRef, drawingNumber, drawingRevision, material, description,
+                    targetPrice, notes, requiredBy, Map.of());
         }
     }
 
@@ -109,7 +119,8 @@ public final class SalesApiDtos {
             String description,
             BigDecimal targetPrice,
             String notes,
-            LocalDate requiredBy) {}
+            LocalDate requiredBy,
+            Map<String, BigDecimal> specificationValues) {}
 
     public record RfqResponse(
             UUID id,
@@ -144,11 +155,14 @@ public final class SalesApiDtos {
             @Size(max = 500) String description,
             java.time.LocalDate requiredBy,
             Map<String, @DecimalMin("0.00") BigDecimal> labourHours,
-            Map<String, @DecimalMin("0.00") BigDecimal> machineHours) {
+            Map<String, @DecimalMin("0.00") BigDecimal> machineHours,
+            UUID rfqLineId,
+            @Size(max = 30) Map<String, @NotNull @DecimalMin("0.00") BigDecimal> specificationValues) {
         @JsonIgnore
         public CreateQuotationLineRequest(UUID itemId, BigDecimal qty, UUID uomId,
                                            BigDecimal unitPrice, Integer deliveryWeeks) {
-            this(itemId, qty, uomId, unitPrice, deliveryWeeks, null, null, null, null, null, null, Map.of(), Map.of());
+            this(itemId, qty, uomId, unitPrice, deliveryWeeks, null, null, null, null, null, null,
+                    Map.of(), Map.of(), null, Map.of());
         }
 
         @JsonIgnore
@@ -157,7 +171,18 @@ public final class SalesApiDtos {
                                            BigDecimal gstRate, BigDecimal discountPct, String drawingNumber,
                                            String drawingRevision, String description, java.time.LocalDate requiredBy) {
             this(itemId, qty, uomId, unitPrice, deliveryWeeks, gstRate, discountPct, drawingNumber,
-                    drawingRevision, description, requiredBy, Map.of(), Map.of());
+                    drawingRevision, description, requiredBy, Map.of(), Map.of(), null, Map.of());
+        }
+
+        @JsonIgnore
+        public CreateQuotationLineRequest(UUID itemId, BigDecimal qty, UUID uomId,
+                                           BigDecimal unitPrice, Integer deliveryWeeks,
+                                           BigDecimal gstRate, BigDecimal discountPct, String drawingNumber,
+                                           String drawingRevision, String description, java.time.LocalDate requiredBy,
+                                           Map<String, BigDecimal> labourHours,
+                                           Map<String, BigDecimal> machineHours) {
+            this(itemId, qty, uomId, unitPrice, deliveryWeeks, gstRate, discountPct, drawingNumber,
+                    drawingRevision, description, requiredBy, labourHours, machineHours, null, Map.of());
         }
     }
 
@@ -235,13 +260,26 @@ public final class SalesApiDtos {
             String drawingNumber,
             String drawingRevision,
             String description,
-            java.time.LocalDate requiredBy) {
+            java.time.LocalDate requiredBy,
+            UUID rfqLineId,
+            Map<String, BigDecimal> specificationValues) {
         @JsonIgnore
         public QuotationLineResponse(UUID id, UUID itemId, String itemCode, String itemName,
                                      BigDecimal qty, UUID uomId, String uomSymbol, BigDecimal unitPrice,
                                      BigDecimal lineTotal, Integer deliveryWeeks) {
             this(id, itemId, itemCode, itemName, qty, uomId, uomSymbol, unitPrice, lineTotal,
-                    deliveryWeeks, null, null, null, null, null, null);
+                    deliveryWeeks, null, null, null, null, null, null, null, Map.of());
+        }
+
+        @JsonIgnore
+        public QuotationLineResponse(UUID id, UUID itemId, String itemCode, String itemName,
+                                     BigDecimal qty, UUID uomId, String uomSymbol, BigDecimal unitPrice,
+                                     BigDecimal lineTotal, Integer deliveryWeeks, BigDecimal gstRate,
+                                     BigDecimal discountPct, String drawingNumber, String drawingRevision,
+                                     String description, LocalDate requiredBy) {
+            this(id, itemId, itemCode, itemName, qty, uomId, uomSymbol, unitPrice, lineTotal,
+                    deliveryWeeks, gstRate, discountPct, drawingNumber, drawingRevision, description,
+                    requiredBy, null, Map.of());
         }
     }
 
@@ -337,7 +375,9 @@ public final class SalesApiDtos {
             BigDecimal packagingCost,
             BigDecimal transportCost,
             Map<String, BigDecimal> labourHours,
-            Map<String, BigDecimal> machineHours) {}
+            Map<String, BigDecimal> machineHours,
+            Map<String, BigDecimal> specificationValues,
+            BOMExplosionResultDto bomSnapshot) {}
 
     public record QuotationCostingSnapshot(
             boolean available,

@@ -8,6 +8,7 @@ import in.boss.masterdata.api.dto.CreateUomRequest;
 import in.boss.masterdata.api.dto.ItemDto;
 import in.boss.masterdata.api.dto.UomDto;
 import in.boss.masterdata.domain.BomService;
+import in.boss.masterdata.domain.BomExplosionService;
 import in.boss.masterdata.domain.ItemService;
 import in.boss.masterdata.domain.UomService;
 import org.junit.jupiter.api.BeforeEach;
@@ -24,6 +25,9 @@ class BomCreationTest extends BaseMasterDataIntegrationTest {
 
     @Autowired
     private BomService bomService;
+
+    @Autowired
+    private BomExplosionService bomExplosionService;
 
     @Autowired
     private ItemService itemService;
@@ -140,5 +144,33 @@ class BomCreationTest extends BaseMasterDataIntegrationTest {
                 "SELECT COUNT(*) FROM audit_events WHERE tenant_id = ? AND entity_type = 'BOM'",
                 Integer.class, tenantId);
         assertThat(auditCount).isGreaterThanOrEqualTo(2);
+    }
+
+    @Test
+    void createBOM_withFormulaDoesNotRequireAFixedQuantity() {
+        bomService.createOrReviseBOM(component1.getId(), CreateBOMRequest.builder()
+                .lines(List.of(CreateBOMLineRequest.builder()
+                        .componentItemId(component2.getId())
+                        .qty(null)
+                        .uomId(uom.getId())
+                        .quantityFormula("thickness")
+                        .build()))
+                .build());
+        BOMHeaderDto bom = bomService.createOrReviseBOM(finishedGood.getId(), CreateBOMRequest.builder()
+                .lines(List.of(CreateBOMLineRequest.builder()
+                        .componentItemId(component1.getId())
+                        .qty(null)
+                        .uomId(uom.getId())
+                        .quantityFormula("length * width")
+                        .build()))
+                .build());
+
+        assertThat(bom.getLines().get(0).getQuantityFormula()).isEqualTo("length * width");
+        assertThat(bomExplosionService.requiredSpecificationNames(finishedGood.getId()))
+                .containsExactlyInAnyOrder("length", "width", "thickness");
+        assertThat(bomExplosionService.explodeBOM(finishedGood.getId(), new BigDecimal("2"),
+                java.util.Map.of("length", new BigDecimal("2"), "width", new BigDecimal("3"),
+                        "thickness", new BigDecimal("4")))
+                .getFlatMaterials().get(0).getQty()).isEqualByComparingTo("48.0000");
     }
 }

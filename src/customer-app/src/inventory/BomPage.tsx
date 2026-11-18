@@ -14,6 +14,7 @@ type BomLine = {
   uomId?: string;
   uomSymbol?: string;
   scrapFactor?: number | string;
+  quantityFormula?: string;
 };
 
 type Bom = {
@@ -88,7 +89,7 @@ export default function BomPage() {
               <h2 className="font-semibold">{selected.itemCode} — {selected.itemName}</h2>
               <p className="text-xs text-[var(--text-2)]">Version {selected.version} · {selected.status === "approved" ? "Approved" : selected.status}</p>
               <table className="mt-3 w-full text-left text-sm">
-                <thead><tr className="text-xs text-[var(--text-3)]"><th>Component</th><th>Qty</th><th>UOM</th><th>Scrap %</th></tr></thead>
+                <thead><tr className="text-xs text-[var(--text-3)]"><th>Component</th><th>Qty</th><th>UOM</th><th>Scrap %</th><th>Formula</th></tr></thead>
                 <tbody>
                   {(selected.lines ?? []).map((line, index) => (
                     <tr key={`${line.componentItemId}-${index}`} className="border-t border-[var(--border)]">
@@ -96,15 +97,101 @@ export default function BomPage() {
                       <td>{line.qty}</td>
                       <td>{line.uomSymbol}</td>
                       <td>{line.scrapFactor ?? 0}</td>
+                      <td>{line.quantityFormula || "Fixed"}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
+              <BomCalculator key={selected.id} bom={selected} />
             </section>
           )}
         </div>
       )}
       {creating && <BomForm items={items} uoms={uoms} onClose={() => setCreating(false)} onSaved={() => { setCreating(false); load(); }} />}
+    </div>
+  );
+}
+
+type Explosion = {
+  bomVersion?: string;
+  bomRevisions?: Array<{ itemId: string; version: string }>;
+  flatMaterials?: Array<{ itemId: string; itemCode?: string; itemName?: string; qty: number; uomSymbol?: string }>;
+};
+
+function BomCalculator({ bom }: { bom: Bom }) {
+  const [quantity, setQuantity] = useState("1");
+  const [specifications, setSpecifications] = useState<Record<string, string>>({});
+  const [explosion, setExplosion] = useState<Explosion | null>(null);
+  const [error, setError] = useState("");
+  const [calculating, setCalculating] = useState(false);
+  const [names, setNames] = useState<string[]>([]);
+  const [loadingNames, setLoadingNames] = useState(true);
+
+  useEffect(() => {
+    if (!bom.itemId) {
+      setLoadingNames(false);
+      return;
+    }
+    api<string[]>(`/api/v1/items/${bom.itemId}/bom/specifications`)
+      .then(setNames)
+      .catch((reason: unknown) => setError(reason instanceof Error
+        ? reason.message : "BOM specification fields could not be loaded."))
+      .finally(() => setLoadingNames(false));
+  }, [bom.itemId]);
+
+  async function calculate() {
+    setError("");
+    setExplosion(null);
+    setCalculating(true);
+    try {
+      const values = Object.fromEntries(names.map((name) => {
+        const value = Number(specifications[name]);
+        if (!Number.isFinite(value) || value < 0) throw new Error(`Enter a non-negative number for ${name}.`);
+        return [name, value];
+      }));
+      const result = await api<Explosion>(`/api/v1/items/${bom.itemId}/bom/explode`, {
+        method: "POST",
+        body: JSON.stringify({ quantity: Number(quantity), specifications: values }),
+      });
+      setExplosion(result);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "The BOM calculation could not be completed.");
+    } finally {
+      setCalculating(false);
+    }
+  }
+
+  return (
+    <div className="mt-5 border-t border-[var(--border)] pt-4">
+      <h3 className="font-semibold">Calculate material requirements</h3>
+      <p className="mt-1 text-xs text-[var(--text-2)]">Specification values are numeric; use the unit convention agreed for the formula variables.</p>
+      <div className="mt-3 grid gap-2 md:grid-cols-3">
+        <label className="text-xs font-medium">Product quantity
+          <input aria-label="Product quantity" className="eoss-input mt-1 w-full" type="number" min="0.001" step="0.001" value={quantity} onChange={(event) => setQuantity(event.target.value)} />
+        </label>
+        {names.map((name) => (
+          <label key={name} className="text-xs font-medium">{name}
+            <input aria-label={`Specification ${name}`} className="eoss-input mt-1 w-full" type="number" min="0" step="any" value={specifications[name] ?? ""} onChange={(event) => setSpecifications((current) => ({ ...current, [name]: event.target.value }))} />
+          </label>
+        ))}
+      </div>
+      <button type="button" className="mt-3 rounded-lg px-3 py-1.5 text-xs font-semibold text-white" style={{ background: "var(--brand-fill)" }} disabled={calculating || loadingNames || Boolean(error) || !Number.isFinite(Number(quantity)) || Number(quantity) <= 0} onClick={() => void calculate()}>{calculating ? "Calculating…" : "Calculate"}</button>
+      {error && <p role="alert" className="mt-2 text-sm text-[var(--error)]">{error}</p>}
+      {explosion && (
+        <div className="mt-3">
+          <p className="text-xs text-[var(--text-2)]">Calculated from BOM version {explosion.bomVersion ?? "—"}. The response includes the BOM revisions and specification values used.</p>
+          <table className="mt-2 w-full text-left text-sm">
+            <thead><tr className="text-xs text-[var(--text-3)]"><th>Material</th><th>Required quantity</th><th>UOM</th></tr></thead>
+            <tbody>{(explosion.flatMaterials ?? []).map((material, index) => (
+              <tr key={`${material.itemId}-${index}`} className="border-t border-[var(--border)]">
+                <td className="py-1">{material.itemCode} {material.itemName}</td>
+                <td>{material.qty}</td>
+                <td>{material.uomSymbol}</td>
+              </tr>
+            ))}</tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
@@ -127,8 +214,10 @@ function BomForm({ items, uoms, onClose, onSaved }: { items: Item[]; uoms: Uom[]
       setError("Select the finished item this BOM produces.");
       return;
     }
-    if (lines.some((line) => !line.componentItemId || Number(line.qty) <= 0 || !line.uomId)) {
-      setError("Each component needs an item, a quantity greater than zero, and a unit.");
+    if (lines.some((line) => !line.componentItemId
+      || ((!line.quantityFormula?.trim() || line.qty !== "") && Number(line.qty) <= 0)
+      || !line.uomId)) {
+      setError("Each component needs an item, a positive fixed quantity or a formula, and a unit.");
       return;
     }
     setSaving(true);
@@ -138,9 +227,10 @@ function BomForm({ items, uoms, onClose, onSaved }: { items: Item[]; uoms: Uom[]
         body: JSON.stringify({
           lines: lines.map((line) => ({
             componentItemId: line.componentItemId,
-            qty: Number(line.qty),
+            qty: line.quantityFormula?.trim() ? (Number(line.qty) || 1) : Number(line.qty),
             uomId: line.uomId,
             scrapFactor: Number(line.scrapFactor || 0),
+            quantityFormula: line.quantityFormula?.trim() || null,
           })),
         }),
       });
@@ -165,16 +255,17 @@ function BomForm({ items, uoms, onClose, onSaved }: { items: Item[]; uoms: Uom[]
         </label>
         <div className="mt-4 space-y-2">
           {lines.map((line, index) => (
-            <div key={index} className="grid gap-2 md:grid-cols-4">
+            <div key={index} className="grid gap-2 md:grid-cols-5">
               <select aria-label={`Component ${index + 1}`} className="eoss-input" value={line.componentItemId} onChange={(event) => update(index, { componentItemId: event.target.value })}>
                 <option value="">Component</option>
                 {items.filter((item) => item.id !== itemId).map((item) => <option key={item.id} value={item.id}>{item.code} — {item.name}</option>)}
               </select>
-              <input aria-label={`Quantity ${index + 1}`} className="eoss-input text-left" inputMode="decimal" value={line.qty} onChange={(event) => update(index, { qty: event.target.value })} placeholder="Qty" />
+              <input aria-label={`Quantity ${index + 1}`} className="eoss-input text-left" inputMode="decimal" value={line.qty} onChange={(event) => update(index, { qty: event.target.value })} placeholder="Fixed qty (or default)" />
               <select aria-label={`Unit ${index + 1}`} className="eoss-input" value={line.uomId} onChange={(event) => update(index, { uomId: event.target.value })}>
                 {uoms.map((uom) => <option key={uom.id} value={uom.id}>{uom.symbol}</option>)}
               </select>
               <input aria-label={`Scrap ${index + 1}`} className="eoss-input text-left" inputMode="decimal" value={line.scrapFactor} onChange={(event) => update(index, { scrapFactor: event.target.value })} placeholder="Scrap %" />
+              <input aria-label={`Formula ${index + 1}`} className="eoss-input text-left" value={line.quantityFormula ?? ""} onChange={(event) => update(index, { quantityFormula: event.target.value })} placeholder="Optional: length * width" />
             </div>
           ))}
         </div>
