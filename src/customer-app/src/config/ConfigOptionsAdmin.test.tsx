@@ -71,10 +71,12 @@ describe("configuration options admin", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "Deactivate Bank transfer" }));
     const dialog = screen.getByRole("dialog");
+    expect(screen.getByRole("combobox", { name: "Reference data category" })).toBeDisabled();
     await userEvent.click(within(dialog).getByRole("button", { name: "Deactivate value" }));
     await waitFor(() => {
       expect(vi.mocked(fetch).mock.calls.some(([input, init]) => String(input).includes("/bank/status") && init?.method === "PATCH")).toBe(true);
     });
+    await waitFor(() => expect(screen.getByRole("combobox", { name: "Reference data category" })).toBeEnabled());
 
     fireEvent.click(screen.getByRole("button", { name: "Move UPI up" }));
     await waitFor(() => {

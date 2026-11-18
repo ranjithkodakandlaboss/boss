@@ -87,10 +87,15 @@ class ConfigOptionsRlsTest {
     }
 
     private void setTenant(UUID tenantId) {
-        BossContextHolder.set(new BossContext(
-                tenantId, UUID.randomUUID(), Set.of("OWNER"), null, "uid-" + tenantId));
+        String firebaseUid = "uid-" + tenantId + "-" + UUID.randomUUID();
+        BossContextHolder.set(new BossContext(tenantId, null, Set.of("OWNER"), null, firebaseUid));
+        UUID userId = UUID.fromString(jdbc.queryForObject(
+                "INSERT INTO app_users (tenant_id, firebase_uid, email, display_name) "
+                        + "VALUES (?, ?, ?, 'Config test user') RETURNING id::text",
+                String.class, tenantId, firebaseUid, firebaseUid + "@example.test"));
+        BossContextHolder.set(new BossContext(tenantId, userId, Set.of("OWNER"), null, firebaseUid));
         var auth = new UsernamePasswordAuthenticationToken(
-                "uid-" + tenantId, null, List.of(new SimpleGrantedAuthority("ROLE_OWNER")));
+                firebaseUid, null, List.of(new SimpleGrantedAuthority("ROLE_OWNER")));
         SecurityContextHolder.getContext().setAuthentication(auth);
     }
 
@@ -164,6 +169,11 @@ class ConfigOptionsRlsTest {
         reordered.add(second.id());
         reordered.add(first.id());
         configService.reorderOptions("PAYMENT_MODES", reordered);
+        assertThat(jdbc.queryForObject("""
+                SELECT COUNT(*) FROM tenant_config_option_history
+                WHERE tenant_id = ? AND option_id = ? AND change_type = 'REORDERED'
+                  AND old_sort_order = 10 AND new_sort_order > old_sort_order
+                """, Integer.class, tenantA, first.id())).isEqualTo(1);
         configService.updateOption("PAYMENT_MODES", first.id(), "Card payment");
         configService.setOptionActive("PAYMENT_MODES", second.id(), false);
 

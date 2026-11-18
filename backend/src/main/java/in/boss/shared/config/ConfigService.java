@@ -246,6 +246,11 @@ public class ConfigService {
             if (previousOrder != null && previousOrder != sortOrder) {
                 audit.record("CONFIG_OPTION", id, "REORDERED",
                         "{\"sortOrder\":" + previousOrder + "}", "{\"sortOrder\":" + sortOrder + "}");
+                jdbc.update("""
+                        INSERT INTO tenant_config_option_history
+                          (option_id, tenant_id, changed_by, change_type, old_sort_order, new_sort_order)
+                        VALUES (?, ?, ?, 'REORDERED', ?, ?)
+                        """, id, ctx.tenantId(), ctx.userId(), previousOrder, sortOrder);
             }
         }
         evict(ctx.tenantId(), categoryCode);
