@@ -64,12 +64,22 @@ public class BomExplosionServiceImpl implements BomExplosionService {
 
     @Override
     public BOMExplosionResultDto explodeBOM(UUID itemId, BigDecimal quantity) {
-        return explodeBOM(itemId, quantity, Map.of());
+        return explode(itemId, quantity, Map.of(), false);
     }
 
     @Override
     public BOMExplosionResultDto explodeBOM(UUID itemId, BigDecimal quantity,
                                             Map<String, BigDecimal> specifications) {
+        return explode(itemId, quantity, specifications, false);
+    }
+
+    @Override
+    public BOMExplosionResultDto explodeBOMExact(UUID itemId, BigDecimal quantity) {
+        return explode(itemId, quantity, Map.of(), true);
+    }
+
+    private BOMExplosionResultDto explode(UUID itemId, BigDecimal quantity,
+                                          Map<String, BigDecimal> specifications, boolean exact) {
         UUID tenantId = getTenantId();
         Map<String, BigDecimal> safeSpecifications = validateSpecifications(specifications);
 
@@ -105,7 +115,7 @@ public class BomExplosionServiceImpl implements BomExplosionService {
                     .itemId(raw.itemId())
                     .itemCode(item != null ? item.getCode() : null)
                     .itemName(item != null ? item.getName() : null)
-                    .qty(raw.qty().setScale(4, RoundingMode.HALF_UP))
+                    .qty(exact ? raw.qty() : raw.qty().setScale(4, RoundingMode.HALF_UP))
                     .uomId(raw.uomId())
                     .uomSymbol(uom != null ? uom.getSymbol() : null)
                     .level(raw.level())

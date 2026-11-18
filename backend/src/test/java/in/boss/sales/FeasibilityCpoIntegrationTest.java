@@ -4,6 +4,7 @@ import in.boss.inventory.api.InventoryApiDtos.CreateLotRequest;
 import in.boss.inventory.domain.InventoryService;
 import in.boss.masterdata.BaseMasterDataIntegrationTest;
 import in.boss.sales.domain.CustomerPoService;
+import in.boss.sales.domain.CpoMaterialAvailabilityService;
 import in.boss.shared.context.BossContext;
 import in.boss.shared.context.BossContextHolder;
 import org.junit.jupiter.api.BeforeEach;
@@ -23,6 +24,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
@@ -35,6 +37,9 @@ class FeasibilityCpoIntegrationTest extends BaseMasterDataIntegrationTest {
 
     @Autowired
     private CustomerPoService customerPoService;
+
+    @Autowired
+    private CpoMaterialAvailabilityService materialAvailabilityService;
 
     @Autowired
     private InventoryService inventoryService;
@@ -206,9 +211,152 @@ class FeasibilityCpoIntegrationTest extends BaseMasterDataIntegrationTest {
         assertThat(reservedQty()).isEqualByComparingTo("0.000");
     }
 
-    private void lot(String quantity) {
-        inventoryService.createLot(new CreateLotRequest(materialId, storeId, new BigDecimal(quantity),
-                BigDecimal.ONE, null, null, null, null));
+    @Test
+    void materialPreviewConsolidatesRequirementsAndUsesOnlyEligibleSiteStock() throws Exception {
+        UUID anotherProduct = insert("""
+                INSERT INTO items (tenant_id, code, name, item_type, base_uom_id)
+                VALUES (?, ?, 'Second Product', 'finished_goods', ?) RETURNING id
+                """, tenantId, "FG-" + UUID.randomUUID(), uomId);
+        UUID secondBom = insert("""
+                INSERT INTO bom_headers (tenant_id, finished_item_id, version, status, created_by)
+                VALUES (?, ?, 'v1', 'approved', ?) RETURNING id
+                """, tenantId, anotherProduct, BossContextHolder.get().userId());
+        jdbc.update("""
+                INSERT INTO bom_lines (tenant_id, bom_header_id, component_item_id, quantity, uom_id, level)
+                VALUES (?, ?, ?, 3, ?, 1)
+                """, tenantId, secondBom, materialId, uomId);
+        jdbc.update("""
+                INSERT INTO cpo_lines (tenant_id, cpo_id, line_no, item_id, quantity, uom_id, unit_price)
+                VALUES (?, ?, 2, ?, 2, ?, 1)
+                """, tenantId, cpoId, anotherProduct, uomId);
+
+        UUID eligibleLot = lot("10");
+        jdbc.update("UPDATE material_lots SET reserved_qty = 3 WHERE tenant_id = ? AND id = ?",
+                tenantId, eligibleLot);
+        jdbc.update("""
+                INSERT INTO stock_reservation_records
+                  (tenant_id, lot_id, item_id, reserved_qty, reference_type, reference_id, status)
+                VALUES (?, ?, ?, 3, 'other', ?, 'active')
+                """, tenantId, eligibleLot, materialId, UUID.randomUUID());
+        UUID expired = lot("50");
+        jdbc.update("UPDATE material_lots SET expiry_date = CURRENT_DATE - 1 WHERE tenant_id = ? AND id = ?",
+                tenantId, expired);
+        UUID quarantined = lot("50");
+        jdbc.update("UPDATE material_lots SET status = 'quarantine' WHERE tenant_id = ? AND id = ?",
+                tenantId, quarantined);
+        UUID otherSite = insert("""
+                INSERT INTO physical_sites (tenant_id, legal_entity_id, name, code)
+                SELECT tenant_id, legal_entity_id, 'Other site', ? FROM physical_sites WHERE id = ?
+                RETURNING id
+                """, "OTHER-" + UUID.randomUUID(), siteId);
+        UUID otherStore = insert("""
+                INSERT INTO stores (tenant_id, site_id, name, code, store_type)
+                VALUES (?, ?, 'Other store', ?, 'raw_material') RETURNING id
+                """, tenantId, otherSite, "OTHER-" + UUID.randomUUID());
+        jdbc.update("""
+                INSERT INTO material_lots (tenant_id, item_id, store_id, quantity, reserved_qty, status)
+                VALUES (?, ?, ?, 100, 0, 'available')
+                """, tenantId, materialId, otherStore);
+
+        mockMvc.perform(get("/api/v1/cpos/" + cpoId + "/material-availability")
+                        .with(user("sales-owner").roles("OWNER")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.siteId").value(siteId.toString()))
+                .andExpect(jsonPath("$.basis").value("CURRENT_APPROVED_FIXED_BOM"))
+                .andExpect(jsonPath("$.limitations[1]").value("Specification-driven calculations are not supported."))
+                .andExpect(jsonPath("$.materials.length()").value(1))
+                .andExpect(jsonPath("$.materials[0].itemId").value(materialId.toString()))
+                .andExpect(jsonPath("$.materials[0].uomId").value(uomId.toString()))
+                .andExpect(jsonPath("$.materials[0].requiredQty").value(16))
+                .andExpect(jsonPath("$.materials[0].eligibleStockQty").value(10))
+                .andExpect(jsonPath("$.materials[0].reservedQty").value(3))
+                .andExpect(jsonPath("$.materials[0].availableQty").value(7))
+                .andExpect(jsonPath("$.materials[0].shortageQty").value(9));
+        assertThat(cpoStatus()).isEqualTo("open");
+        assertThat(activeReservations()).isZero();
+        assertThat(reservedQty()).isEqualByComparingTo("3");
+    }
+
+    @Test
+    void previewKeepsRequirementPrecisionBeforeComputingShortage() {
+        jdbc.update("UPDATE bom_lines SET quantity = 0.00001 WHERE tenant_id = ?", tenantId);
+        var line = materialAvailabilityService.preview(cpoId).materials().get(0);
+        assertThat(line.requiredQty()).isEqualByComparingTo("0.00005");
+        assertThat(line.shortageQty()).isEqualByComparingTo("0.00005");
+    }
+
+    @Test
+    void previewRejectsMissingBomAndMismatchedUnits() {
+        jdbc.update("UPDATE bom_headers SET status = 'draft' WHERE tenant_id = ? AND finished_item_id = ?",
+                tenantId, finishedItemId);
+        assertThatThrownBy(() -> materialAvailabilityService.preview(cpoId))
+                .isInstanceOfSatisfying(ResponseStatusException.class, error -> {
+                    assertThat(error.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+                    assertThat(error.getReason()).contains("no approved BOM");
+                });
+        jdbc.update("UPDATE bom_headers SET status = 'approved' WHERE tenant_id = ? AND finished_item_id = ?",
+                tenantId, finishedItemId);
+        UUID otherUom = insert("""
+                INSERT INTO units_of_measure (tenant_id, name, symbol, is_base)
+                VALUES (?, 'Other', ?, TRUE) RETURNING id
+                """, tenantId, "OTHER-" + UUID.randomUUID());
+        jdbc.update("UPDATE bom_lines SET uom_id = ? WHERE tenant_id = ?", otherUom, tenantId);
+        assertThatThrownBy(() -> materialAvailabilityService.preview(cpoId))
+                .isInstanceOfSatisfying(ResponseStatusException.class, error ->
+                        assertThat(error.getReason()).contains("base UOM"));
+    }
+
+    @Test
+    void previewRejectsOptionalBomLinesAndDirectReservations() {
+        jdbc.update("UPDATE bom_lines SET is_optional = TRUE WHERE tenant_id = ?", tenantId);
+        assertThatThrownBy(() -> materialAvailabilityService.preview(cpoId))
+                .isInstanceOfSatisfying(ResponseStatusException.class, error ->
+                        assertThat(error.getReason()).contains("Optional"));
+        jdbc.update("UPDATE bom_lines SET is_optional = FALSE WHERE tenant_id = ?", tenantId);
+        UUID lotId = lot("10");
+        UUID lineId = jdbc.queryForObject("SELECT id FROM cpo_lines WHERE tenant_id = ? AND cpo_id = ?",
+                UUID.class, tenantId, cpoId);
+        jdbc.update("UPDATE material_lots SET reserved_qty = 1 WHERE tenant_id = ? AND id = ?", tenantId, lotId);
+        jdbc.update("""
+                INSERT INTO stock_reservation_records
+                  (tenant_id, lot_id, item_id, reserved_qty, reference_type, reference_id, cpo_line_id, status)
+                VALUES (?, ?, ?, 1, 'cpo', ?, ?, 'active')
+                """, tenantId, lotId, materialId, cpoId, lineId);
+        assertThatThrownBy(() -> materialAvailabilityService.preview(cpoId))
+                .isInstanceOfSatisfying(ResponseStatusException.class, error ->
+                        assertThat(error.getReason()).contains("direct line reservations"));
+        assertThat(activeReservations()).isEqualTo(1);
+        assertThat(reservedQty()).isEqualByComparingTo("1");
+    }
+
+    @Test
+    void previewEnforcesTenantAndSiteAccess() {
+        UUID userId = BossContextHolder.get().userId();
+        BossContextHolder.set(new BossContext(tenantId, userId, Set.of("OWNER"), UUID.randomUUID(), null));
+        assertThatThrownBy(() -> materialAvailabilityService.preview(cpoId))
+                .isInstanceOfSatisfying(ResponseStatusException.class, error ->
+                        assertThat(error.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND));
+        UUID otherTenant = provisionTenant("cpo-preview-other");
+        BossContextHolder.set(new BossContext(otherTenant, userId, Set.of("OWNER"), null, null));
+        assertThatThrownBy(() -> materialAvailabilityService.preview(cpoId))
+                .isInstanceOfSatisfying(ResponseStatusException.class, error ->
+                        assertThat(error.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND));
+    }
+
+    @Test
+    void previewRejectsMaterialReservationsWithoutHistoricalBomSnapshot() {
+        lot("10");
+        customerPoService.checkFeasibility(cpoId);
+        assertThatThrownBy(() -> materialAvailabilityService.preview(cpoId))
+                .isInstanceOfSatisfying(ResponseStatusException.class, error ->
+                        assertThat(error.getReason()).contains("without a BOM snapshot"));
+        assertThat(activeReservations()).isEqualTo(1);
+        assertThat(reservedQty()).isEqualByComparingTo("10");
+    }
+
+    private UUID lot(String quantity) {
+        return inventoryService.createLot(new CreateLotRequest(materialId, storeId, new BigDecimal(quantity),
+                BigDecimal.ONE, null, null, null, null)).id();
     }
 
     private UUID insert(String sql, Object... args) {

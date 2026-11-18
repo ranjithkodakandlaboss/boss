@@ -146,6 +146,27 @@ Error body shape (all error responses):
 
 ---
 
+## Customer PO material availability preview
+
+`GET /api/v1/cpos/{cpoId}/material-availability` returns consolidated remaining
+requirements from current approved fixed BOMs and eligible stock at the order's site.
+Each material includes its base UOM, required, eligible stock, total reserved,
+freely available and shortage quantities. The response includes its calculation basis
+and limitations. It is read-only and does not reserve stock or create a requisition.
+
+The preview rejects orders with active CPO reservations because their BOM revision is
+not snapshotted, as well as missing, ambiguous, ineffective or unsupported BOMs and
+incompatible units. Specification-driven calculations and traded products without BOMs
+are not supported. It is not a historical snapshot or a stock commitment.
+
+A future reservation or shortage-PR operation must recalculate under appropriate locks,
+reconcile existing reservations and persist its own requirement snapshot; it must not
+trust or reuse a previous preview as authorization to allocate stock or create a PR.
+Inventory reservations use three-decimal quantities, so that operation must define
+safe rounding rather than silently truncating the preview's exact requirements.
+
+---
+
 ## 8. Known Risks / Pending Items
 
 | Item | Owner | Status |
