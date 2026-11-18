@@ -70,12 +70,20 @@ public final class MaintenanceDtos {
 
     public record AffectedJob(UUID id, String jobNumber) {}
 
+    public record AlternativeAsset(UUID id, String assetCode, String name, String workCentre) {}
+
+    public record AffectedStage(
+            UUID id, UUID jobId, String jobNumber, int sequence, String name, String status,
+            String customerOrderNumber, LocalDate requiredByDate, List<AlternativeAsset> alternatives
+    ) {}
+
     public record EventResponse(
             UUID id, String eventNumber, UUID assetId, String assetCode, String assetName, String eventType,
             String status, String severity, String symptom, UUID technicianUserId, String technicianName,
             LocalDate plannedDate, BigDecimal expectedDurationHours, Instant downtimeStart,
             Instant downtimeEnd, Instant completionDate, BigDecimal downtimeHours,
-            List<AffectedJob> affectedJobs, String rootCause, String correctiveAction, String workDone,
+            List<AffectedJob> affectedJobs, List<AffectedStage> affectedStages, UUID responsibleUserId,
+            String responsibleOwner, String rootCause, String correctiveAction, String workDone,
             String resolutionNotes, String partsUsed, Instant createdAt, UUID siteId, String notes
     ) {}
 

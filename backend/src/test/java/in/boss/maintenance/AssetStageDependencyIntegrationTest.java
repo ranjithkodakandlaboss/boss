@@ -2,6 +2,7 @@ package in.boss.maintenance;
 
 import in.boss.maintenance.api.MaintenanceDtos.AssetRequest;
 import in.boss.maintenance.api.MaintenanceDtos.AssetResponse;
+import in.boss.maintenance.api.MaintenanceDtos.AffectedStage;
 import in.boss.maintenance.api.MaintenanceDtos.CloseEventRequest;
 import in.boss.maintenance.api.MaintenanceDtos.EventRequest;
 import in.boss.maintenance.api.MaintenanceDtos.EventResponse;
@@ -42,6 +43,8 @@ class AssetStageDependencyIntegrationTest extends BaseMasterDataIntegrationTest 
     private UUID itemId;
     private UUID uomId;
     private UUID cuttingId;
+    private UUID cpoId;
+    private LocalDate requiredByDate;
 
     @BeforeEach
     void fixtures() {
@@ -62,6 +65,15 @@ class AssetStageDependencyIntegrationTest extends BaseMasterDataIntegrationTest 
                 INSERT INTO items (tenant_id, code, name, item_type, base_uom_id)
                 VALUES (?, ?, 'Frame', 'finished_goods', ?) RETURNING id
                 """, tenantId, "FG-" + UUID.randomUUID().toString().substring(0, 6), uomId);
+        UUID customerId = id("""
+                INSERT INTO customers (tenant_id, code, name) VALUES (?, ?, 'Acme') RETURNING id
+                """, tenantId, "C-" + UUID.randomUUID().toString().substring(0, 6));
+        requiredByDate = LocalDate.now().plusDays(20);
+        cpoId = id("""
+                INSERT INTO cpos (tenant_id, cpo_number, customer_id, site_id, order_date, required_by_date, created_by)
+                VALUES (?, ?, ?, ?, CURRENT_DATE, ?, ?) RETURNING id
+                """, tenantId, "PO-" + UUID.randomUUID().toString().substring(0, 6), customerId,
+                siteId, requiredByDate, userId);
         jdbc.queryForObject("SELECT seed_tenant_defaults(?, 'GENERAL_MANUFACTURING')", Integer.class, tenantId);
         jdbc.queryForObject("SELECT seed_tenant_defaults(?, 'GENERAL_MANUFACTURING')", Integer.class, otherTenant);
         cuttingId = jdbc.queryForObject("""
@@ -104,6 +116,7 @@ class AssetStageDependencyIntegrationTest extends BaseMasterDataIntegrationTest 
         UUID jobB = job("JOB-B", lathe.id());
         UUID otherAssetJob = job("JOB-C", spare.id());
         UUID unrelated = job("JOB-D", mill.id());
+        jdbc.update("UPDATE production_jobs SET cpo_id = ? WHERE tenant_id = ? AND id = ?", cpoId, tenantId, jobA);
         UUID stageA = stage(jobA);
         UUID stageB = stage(jobB);
 
@@ -115,7 +128,25 @@ class AssetStageDependencyIntegrationTest extends BaseMasterDataIntegrationTest 
         assertThat(maintenance.machineBlocker(tenantId, jobB, stageB, "CNC Bay")).contains(event.eventNumber());
         assertThat(maintenance.machineBlocker(tenantId, otherAssetJob, stage(otherAssetJob), "CNC Bay")).isNull();
         assertThat(maintenance.machineBlocker(tenantId, unrelated, stage(unrelated), "CNC Bay")).isNull();
-        assertThat(maintenance.getEvent(event.id()).affectedJobs()).extracting(j -> j.id()).contains(jobA, jobB);
+        EventResponse impacted = maintenance.getEvent(event.id());
+        assertThat(impacted.affectedJobs()).extracting(j -> j.id()).contains(jobA, jobB);
+        AffectedStage impactedStage = impacted.affectedStages().stream()
+                .filter(s -> s.jobId().equals(jobA)).findFirst().orElseThrow();
+        assertThat(impactedStage.name()).isEqualTo("Cutting");
+        assertThat(impactedStage.customerOrderNumber()).isNotBlank();
+        assertThat(impactedStage.requiredByDate()).isEqualTo(requiredByDate);
+        assertThat(impactedStage.alternatives()).extracting(a -> a.assetCode()).contains("LTH-2");
+
+        UUID otherTenantStage = jdbc.queryForObject("""
+                SELECT o.id FROM tenant_config_options o
+                JOIN config_categories c ON c.id = o.category_id
+                WHERE o.tenant_id = ? AND c.code = 'PRODUCTION_STAGES'
+                ORDER BY o.label LIMIT 1
+                """, UUID.class, otherTenant);
+        assertThatThrownBy(() -> maintenance.replaceCapabilities(lathe.id(), List.of(otherTenantStage)))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("not a configured activity for this tenant");
+        assertThat(maintenance.getAsset(lathe.id()).capabilities()).hasSize(2);
 
         EventResponse closed = maintenance.closeEvent(event.id(),
                 new CloseEventRequest(null, "Belt", "Replaced belt", null, null, "Belt"));
@@ -134,9 +165,10 @@ class AssetStageDependencyIntegrationTest extends BaseMasterDataIntegrationTest 
                 VALUES (?, ?, ?, ?, 5, ?, 'released', ?) RETURNING id
                 """, tenantId, number, itemId, siteId, uomId, userId);
         jdbc.update("""
-                INSERT INTO job_stages (tenant_id, job_id, seq_no, name, work_centre, asset_id, status)
-                VALUES (?, ?, 1, 'Cutting', 'CNC Bay', ?, 'pending')
-                """, tenantId, job, assetId);
+                INSERT INTO job_stages (tenant_id, job_id, seq_no, name, stage_config_option_id, stage_label_snapshot,
+                                        work_centre, asset_id, status)
+                VALUES (?, ?, 1, 'Cutting', ?, 'Cutting', 'CNC Bay', ?, 'pending')
+                """, tenantId, job, cuttingId, assetId);
         return job;
     }
 

@@ -1,5 +1,8 @@
 package in.boss.maintenance.domain;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import in.boss.maintenance.api.MaintenanceDtos.*;
 import in.boss.shared.audit.AuditService;
 import in.boss.shared.context.BossContext;
@@ -31,6 +34,8 @@ import static in.boss.shared.security.BossPermissions.MAINTENANCE_WRITE;
 @Transactional
 public class MaintenanceService {
 
+    private static final TypeReference<List<AffectedStage>> AFFECTED_STAGES_TYPE = new TypeReference<>() {};
+
     private static final String ASSET_SELECT = """
             SELECT a.*, s.name AS site_name,
                    (SELECT count(*) FROM maintenance_events e
@@ -40,10 +45,12 @@ public class MaintenanceService {
 
     private final JdbcTemplate jdbc;
     private final AuditService audit;
+    private final ObjectMapper objectMapper;
 
-    public MaintenanceService(JdbcTemplate jdbc, AuditService audit) {
+    public MaintenanceService(JdbcTemplate jdbc, AuditService audit, ObjectMapper objectMapper) {
         this.jdbc = jdbc;
         this.audit = audit;
+        this.objectMapper = objectMapper;
     }
 
     // ---- lookups ---------------------------------------------------------
@@ -516,6 +523,8 @@ public class MaintenanceService {
 
     private static final String EVENT_SELECT = """
             SELECT e.*, a.asset_number, a.name AS asset_name, a.site_id AS asset_site_id,
+                   a.responsible_user_id,
+                   COALESCE(NULLIF(owner.display_name, ''), NULLIF(a.responsible_person, ''), owner.email) AS responsible_owner,
                    (SELECT COALESCE(json_agg(json_build_object('id', x.id, 'n', x.job_number)), '[]'::json)::text
                       FROM (
                         SELECT j.id, j.job_number FROM production_jobs j
@@ -526,8 +535,52 @@ public class MaintenanceService {
                          WHERE j.tenant_id = e.tenant_id AND s.asset_id = e.asset_id
                            AND s.status NOT IN ('completed', 'skipped')
                            AND j.status NOT IN ('completed', 'cancelled')
-                      ) x) AS jobs_json
-            FROM maintenance_events e JOIN assets a ON a.id = e.asset_id AND a.tenant_id = e.tenant_id
+                      ) x) AS jobs_json,
+                   (SELECT COALESCE(json_agg(json_build_object(
+                       'id', s.id,
+                       'jobId', j.id,
+                       'jobNumber', j.job_number,
+                       'sequence', s.seq_no,
+                       'name', COALESCE(s.stage_label_snapshot, s.name),
+                       'status', s.status,
+                       'customerOrderNumber', c.cpo_number,
+                       'requiredByDate', COALESCE(cl.required_by_date, c.required_by_date),
+                       'alternatives', COALESCE((
+                           SELECT json_agg(json_build_object(
+                               'id', alt.id,
+                               'assetCode', alt.asset_number,
+                               'name', alt.name,
+                               'workCentre', alt.work_centre
+                           ) ORDER BY alt.asset_number)
+                           FROM asset_capabilities capability
+                           JOIN assets alt ON alt.tenant_id = capability.tenant_id
+                                          AND alt.id = capability.asset_id
+                           WHERE capability.tenant_id = e.tenant_id
+                             AND capability.stage_option_id = s.stage_config_option_id
+                             AND alt.id <> e.asset_id
+                             AND alt.site_id = a.site_id
+                             AND alt.status IN ('operational', 'pm_overdue')
+                             AND NOT EXISTS (
+                                 SELECT 1 FROM maintenance_events unavailable
+                                 WHERE unavailable.tenant_id = alt.tenant_id
+                                   AND unavailable.asset_id = alt.id
+                                   AND unavailable.event_type = 'Breakdown'
+                                   AND unavailable.status <> 'closed'
+                             )
+                       ), '[]'::json)
+                   ) ORDER BY j.job_number, s.seq_no), '[]'::json)::text
+                    FROM job_stages s
+                    JOIN production_jobs j ON j.tenant_id = s.tenant_id AND j.id = s.job_id
+                    LEFT JOIN cpo_lines cl ON cl.tenant_id = j.tenant_id AND cl.id = j.cpo_line_id
+                    LEFT JOIN cpos c ON c.tenant_id = j.tenant_id
+                                    AND c.id = COALESCE(j.cpo_id, cl.cpo_id)
+                    WHERE s.tenant_id = e.tenant_id AND s.asset_id = e.asset_id
+                      AND s.status NOT IN ('completed', 'skipped')
+                      AND j.status NOT IN ('completed', 'cancelled')
+                   ) AS affected_stages_json
+            FROM maintenance_events e
+            JOIN assets a ON a.id = e.asset_id AND a.tenant_id = e.tenant_id
+            LEFT JOIN app_users owner ON owner.id = a.responsible_user_id AND owner.tenant_id = a.tenant_id
             """;
 
     private EventResponse loadEvent(UUID id) {
@@ -581,9 +634,20 @@ public class MaintenanceService {
                 rs.getBigDecimal("expected_duration_hours"), instant(rs.getTimestamp("downtime_start")),
                 instant(rs.getTimestamp("downtime_end")), instant(rs.getTimestamp("completion_date")),
                 rs.getBigDecimal("downtime_hours"), parseJobs(rs.getString("jobs_json")),
+                parseAffectedStages(rs.getString("affected_stages_json")),
+                rs.getObject("responsible_user_id", UUID.class), rs.getString("responsible_owner"),
                 rs.getString("root_cause"), rs.getString("corrective_action"), rs.getString("work_done"),
                 rs.getString("resolution_notes"), rs.getString("parts_used"), instant(rs.getTimestamp("created_at")),
                 rs.getObject("asset_site_id", UUID.class), rs.getString("notes"));
+    }
+
+    private List<AffectedStage> parseAffectedStages(String json) {
+        if (json == null || json.isBlank()) return List.of();
+        try {
+            return objectMapper.readValue(json, AFFECTED_STAGES_TYPE);
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("Could not decode maintenance production impact", e);
+        }
     }
 
     private List<AffectedJob> parseJobs(String json) {
