@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { Plus } from "lucide-react";
 import { api } from "../auth/api";
 import { useCustomer } from "../auth/CustomerState";
+import CreatableSelect, { roleAllowed } from "../components/shared/CreatableSelect";
 import ErrorState from "../components/shared/ErrorState";
 import LoadingState from "../components/shared/LoadingState";
 import RecordTable, { type RecordColumn } from "../components/shared/RecordTable";
@@ -81,6 +82,8 @@ export default function ItemMaster() {
 }
 
 export function ItemForm({ item, onClose, onSaved }: { item?: Item; onClose: () => void; onSaved: (item: Item) => void }) {
+  const { user } = useCustomer();
+  const canCreateReference = roleAllowed(user?.roles, ["OWNER", "OPS_MANAGER"]);
   const [uoms, setUoms] = useState<Uom[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [code, setCode] = useState(item?.code ?? "");
@@ -91,22 +94,25 @@ export function ItemForm({ item, onClose, onSaved }: { item?: Item; onClose: () 
   const [reorderPoint, setReorderPoint] = useState(item?.reorderPoint == null ? "" : String(item.reorderPoint));
   const [description, setDescription] = useState(item?.description ?? "");
   const [error, setError] = useState("");
+  const [categoryError, setCategoryError] = useState("");
+  const [uomError, setUomError] = useState("");
   const [saving, setSaving] = useState(false);
 
-  useEffect(() => {
-    const problems: string[] = [];
-    Promise.all([
-      api<Uom[] | { content?: Uom[] }>("/api/v1/uoms").then((units) => {
-        const list = Array.isArray(units) ? units : units.content ?? [];
-        setUoms(list);
-        setUomId((current) => current || list[0]?.id || "");
-      }).catch((reason: unknown) => problems.push(reason instanceof Error ? reason.message : "Units of measure could not be loaded.")),
-      api<Category[] | { content?: Category[] }>("/api/v1/config/options/ITEM_CATEGORY").then((cats) => {
-        const list = Array.isArray(cats) ? cats : cats.content ?? [];
-        setCategories(list.filter((category) => category.id));
-      }).catch((reason: unknown) => problems.push(reason instanceof Error ? reason.message : "Categories could not be loaded.")),
-    ]).finally(() => { if (problems.length > 0) setError(problems.join(" ")); });
-  }, []);
+  function loadReferences() {
+    setCategoryError("");
+    setUomError("");
+    api<Uom[] | { content?: Uom[] }>("/api/v1/uoms").then((units) => {
+      const list = Array.isArray(units) ? units : units.content ?? [];
+      setUoms(list);
+      setUomId((current) => current || list[0]?.id || "");
+    }).catch((reason: unknown) => setUomError(reason instanceof Error ? reason.message : "Units of measure could not be loaded."));
+    api<Category[] | { content?: Category[] }>("/api/v1/config/options/ITEM_CATEGORY").then((cats) => {
+      const list = Array.isArray(cats) ? cats : cats.content ?? [];
+      setCategories(list.filter((category) => category.id));
+    }).catch((reason: unknown) => setCategoryError(reason instanceof Error ? reason.message : "Categories could not be loaded."));
+  }
+
+  useEffect(() => { loadReferences(); }, []);
 
   async function save() {
     if (!name.trim() || (!item && (!code.trim() || !uomId))) {
@@ -151,10 +157,22 @@ export function ItemForm({ item, onClose, onSaved }: { item?: Item; onClose: () 
           <label className="text-xs">Item code<input className="eoss-input mt-1 w-full" value={code} disabled={!!item} onChange={(event) => setCode(event.target.value)} /></label>
           <label className="text-xs">Material name *<input className="eoss-input mt-1 w-full" value={name} onChange={(event) => setName(event.target.value)} /></label>
           {!item && (
-            <label className="text-xs">Type<select className="eoss-input mt-1 w-full" value={itemType} onChange={(event) => setItemType(event.target.value)}>{TYPES.map((type) => <option key={type} value={type}>{type.replaceAll("_", " ")}</option>)}</select></label>
+            <label className="text-xs">Type<select aria-label="Item type" className="eoss-input mt-1 w-full" value={itemType} onChange={(event) => setItemType(event.target.value)}>{TYPES.map((type) => <option key={type} value={type}>{type.replaceAll("_", " ")}</option>)}</select></label>
           )}
-          <label className="text-xs">Category<select className="eoss-input mt-1 w-full" value={categoryId} onChange={(event) => setCategoryId(event.target.value)}><option value="">No category</option>{categories.map((category) => <option key={category.id} value={category.id}>{categoryName(category) || "Unnamed category"}</option>)}</select></label>
-          <label className="text-xs">Unit of measure<select className="eoss-input mt-1 w-full" value={uomId} disabled={!!item} onChange={(event) => setUomId(event.target.value)}>{uoms.map((uom) => <option key={uom.id} value={uom.id}>{uom.symbol} · {uom.name}</option>)}</select></label>
+          <div className="text-xs">Category
+            <CreatableSelect label="category" ariaLabel="Category" value={categoryId} onChange={setCategoryId} placeholder="No category" error={categoryError} onRetry={loadReferences} creatable={canCreateReference} options={categories.map((category) => ({ id: category.id, label: categoryName(category) || "Unnamed category" }))} fields={[{ name: "code", label: "Code", required: true }, { name: "name", label: "Name", required: true }]} unique={(values) => categories.some((category) => (category.code ?? "").toLowerCase() === values.code.toLowerCase()) ? "This value already exists." : null} onCreate={async (values) => {
+              const created = await mutate<Category>("/api/v1/item-categories", "POST", { code: values.code, name: values.name });
+              setCategories((current) => [...current.filter((category) => category.id !== created.id), { ...created, label: created.name }]);
+              return { id: created.id, label: created.name || values.name };
+            }} />
+          </div>
+          <div className="text-xs">Unit of measure
+            <CreatableSelect label="unit of measure" ariaLabel="Unit of measure" value={uomId} onChange={setUomId} disabled={!!item} error={uomError} onRetry={loadReferences} creatable={canCreateReference && !item} options={uoms.map((uom) => ({ id: uom.id, label: `${uom.symbol} · ${uom.name}` }))} fields={[{ name: "name", label: "Name", required: true }, { name: "symbol", label: "Symbol", required: true }]} unique={(values) => uoms.some((uom) => uom.symbol.toLowerCase() === values.symbol.toLowerCase()) ? "This value already exists." : null} onCreate={async (values) => {
+              const created = await mutate<Uom>("/api/v1/uoms", "POST", { name: values.name, symbol: values.symbol, uomType: "quantity" });
+              setUoms((current) => [...current.filter((uom) => uom.id !== created.id), created]);
+              return { id: created.id, label: `${created.symbol} · ${created.name}` };
+            }} />
+          </div>
           <label className="text-xs">Reorder level<input className="eoss-input mt-1 w-full" type="number" min="0" value={reorderPoint} onChange={(event) => setReorderPoint(event.target.value)} /></label>
           <label className="text-xs sm:col-span-2">Description<textarea className="eoss-input mt-1 w-full" rows={2} value={description} onChange={(event) => setDescription(event.target.value)} /></label>
         </div>

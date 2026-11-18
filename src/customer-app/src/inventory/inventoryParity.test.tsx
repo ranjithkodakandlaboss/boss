@@ -84,6 +84,39 @@ describe("inventory prototype screens", () => {
     render(<ItemForm onClose={() => undefined} onSaved={() => undefined} />);
     expect(await screen.findByRole("option", { name: "KG · Kilogram" })).toBeInTheDocument();
     expect(await screen.findByRole("alert")).toHaveTextContent("Categories could not be loaded.");
+    expect(screen.queryByRole("button", { name: "Add category" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add item type" })).not.toBeInTheDocument();
+  });
+
+  it("adds a category from the empty item form and selects the saved record", async () => {
+    let categories: { id: string; code: string; name: string; label: string }[] = [];
+    vi.mocked(api).mockImplementation(async (path, init) => {
+      const url = String(path);
+      if (init?.method === "POST" && url.includes("/api/v1/item-categories")) {
+        const body = JSON.parse(String(init.body)) as { code: string; name: string };
+        if (categories.some((category) => category.code === body.code)) throw new Error("Category code already exists for this tenant");
+        const created = { id: "cat-1", code: body.code, name: body.name, label: body.name };
+        categories = [created];
+        return created;
+      }
+      if (url.includes("/api/v1/uoms")) return [{ id: "uom-1", name: "Kilogram", symbol: "KG" }];
+      if (url.includes("ITEM_CATEGORY")) return categories;
+      return {};
+    });
+    render(<ItemForm onClose={() => undefined} onSaved={() => undefined} />);
+    expect(await screen.findByText("No options available. Add your first option.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Add category" }));
+    fireEvent.change(screen.getByLabelText("Code"), { target: { value: "COND" } });
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Conductor" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByRole("option", { name: "Conductor" })).toBeInTheDocument();
+    expect(api).toHaveBeenCalledWith("/api/v1/item-categories", expect.objectContaining({ method: "POST" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add category" }));
+    fireEvent.change(screen.getByLabelText("Code"), { target: { value: "COND" } });
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Again" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("This value already exists.");
   });
 
   it("reserves a short job requirement through the job reservation API", async () => {

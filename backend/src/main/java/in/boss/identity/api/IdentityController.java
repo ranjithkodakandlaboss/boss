@@ -1,5 +1,6 @@
 package in.boss.identity.api;
 
+import in.boss.identity.domain.CompanyLocationService;
 import in.boss.identity.domain.CompanyWorkspaceService;
 import in.boss.identity.domain.CustomerIdentityService;
 import in.boss.shared.security.BossPermissions;
@@ -21,10 +22,13 @@ import org.springframework.web.bind.annotation.RestController;
 public class IdentityController {
     private final CustomerIdentityService identity;
     private final CompanyWorkspaceService company;
+    private final CompanyLocationService locations;
 
-    public IdentityController(CustomerIdentityService identity, CompanyWorkspaceService company) {
+    public IdentityController(CustomerIdentityService identity, CompanyWorkspaceService company,
+                              CompanyLocationService locations) {
         this.identity = identity;
         this.company = company;
+        this.locations = locations;
     }
 
     @PostMapping("/auth/activate")
@@ -76,6 +80,20 @@ public class IdentityController {
     @PreAuthorize(BossPermissions.OWNER)
     public Map<String, Object> saveCompany(@RequestBody CompanySaveRequest request) {
         return company.save(request, false);
+    }
+
+    @PostMapping("/company/sites")
+    @PreAuthorize(BossPermissions.OWNER)
+    public ResponseEntity<Map<String, Object>> addSite(@RequestBody Map<String, String> request) {
+        return ResponseEntity.status(HttpStatus.CREATED).body(locations.addSite(
+                request.get("name"), request.get("code"), request.get("siteType")));
+    }
+
+    @PostMapping("/company/stores")
+    @PreAuthorize(BossPermissions.OWNER)
+    public ResponseEntity<Map<String, Object>> addStore(@RequestBody Map<String, String> request) {
+        return ResponseEntity.status(HttpStatus.CREATED).body(locations.addStore(
+                request.get("siteCode"), request.get("name"), request.get("code"), request.get("storeType")));
     }
 
     @GetMapping("/onboarding")

@@ -144,3 +144,38 @@ it("issues a lot reserved to this job and hides a lot reserved to another job", 
   await userEvent.click(screen.getByRole("button", { name: "Issue" }));
   expect(await screen.findByText("Material issued")).toBeInTheDocument();
 });
+
+it("adds a workflow when none is active and does not add a priority", async () => {
+  const createdTemplate = "99999999-9999-4999-8999-999999999999";
+  vi.stubGlobal("fetch", vi.fn((input: RequestInfo, init?: RequestInit) => {
+    const url = String(input);
+    if (url.includes("/auth/me")) return Promise.resolve(json({ id: "1", tenantId: "t", email: "owner@example.test", displayName: "Owner", status: "active", roles: [{ role: "OWNER" }] }));
+    if (url.includes("/tenant/info")) return Promise.resolve(json({ id: "t", name: "North Works", status: "active" }));
+    if (url.includes("/onboarding")) return Promise.resolve(json({ industryType: "GENERAL_MANUFACTURING", completed: true, company: { sites: [], stores: [] } }));
+    if (url.includes("/jobs/features")) return Promise.resolve(json({ "production.job.create": true }));
+    if (url.includes("/eligible-cpos")) return Promise.resolve(json([{ cpoId, cpoLineId: lineId, cpoNumber: "CPO-100", customerName: "North Works", itemId, itemName: "Frame", qty: 10, sellingPrice: 1000, siteName: "Plant" }]));
+    if (url.includes("/routing-templates") && init?.method === "POST") {
+      expect(JSON.parse(String(init.body))).toEqual({ name: "Frame route", stageName: "Cutting" });
+      return Promise.resolve(json({ id: createdTemplate, name: "Frame route", version: "v1", stageCount: 1 }, 201));
+    }
+    if (url.includes("/routing-templates")) return Promise.resolve(json([]));
+    if (url.includes("/api/v1/jobs")) return Promise.resolve(json({ content: [], totalElements: 0 }));
+    return Promise.resolve(json({}));
+  }));
+  render(
+    <MemoryRouter initialEntries={["/jobs"]}>
+      <CustomerProvider>
+        <Routes><Route path="/jobs" element={<JobsPage />} /></Routes>
+      </CustomerProvider>
+    </MemoryRouter>,
+  );
+  await userEvent.click(await screen.findByRole("button", { name: "New Job" }));
+  await userEvent.selectOptions(await screen.findByLabelText("Customer PO"), lineId);
+  expect(await screen.findByText("No options available. Add your first option.")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Add priority" })).not.toBeInTheDocument();
+  await userEvent.click(screen.getByRole("button", { name: "Add workflow" }));
+  await userEvent.type(screen.getByLabelText("Workflow name"), "Frame route");
+  await userEvent.type(screen.getByLabelText("First stage"), "Cutting");
+  await userEvent.click(screen.getByRole("button", { name: "Save" }));
+  expect(await screen.findByRole("option", { name: "Frame route (1 stages)" })).toBeInTheDocument();
+});
