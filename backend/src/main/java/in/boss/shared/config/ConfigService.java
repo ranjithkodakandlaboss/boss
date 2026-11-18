@@ -69,10 +69,6 @@ public class ConfigService {
                 .computeIfAbsent(cacheKey, c -> loadOptions(ctx.tenantId(), categoryCode, includeInactive));
     }
 
-    public List<ConfigOptionDto> getOptions(String categoryCode) {
-        return getOptions(categoryCode, false);
-    }
-
     @PreAuthorize("hasAnyRole('OWNER','OPS_MANAGER','STORE_KEEPER')")
     @Transactional
     public ConfigOptionDto createOption(String categoryCode, String code,
@@ -182,11 +178,12 @@ public class ConfigService {
         return updated;
     }
 
-    @PreAuthorize("hasRole('OWNER')")
+    @PreAuthorize("hasAnyRole('OWNER','OPS_MANAGER','STORE_KEEPER')")
     @Transactional
     public void setOptionActive(String categoryCode, UUID optionId, boolean active) {
         var ctx = BossContextHolder.get();
         if (ctx == null) throw new IllegalStateException("BossContext required");
+        requireOwner(ctx);
         requireTenantEditable(categoryCode);
         ConfigOptionDto existing = findOption(ctx.tenantId(), categoryCode, optionId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Configuration option not found"));
@@ -382,5 +379,9 @@ public class ConfigService {
 
     private void evict(UUID tenantId, String categoryCode) {
         cache.remove(tenantId);
+    }
+
+    public List<ConfigOptionDto> getOptions(String categoryCode) {
+        return getOptions(categoryCode, false);
     }
 }
