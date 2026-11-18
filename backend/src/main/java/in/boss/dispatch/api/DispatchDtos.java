@@ -25,6 +25,8 @@ public final class DispatchDtos {
             UUID sourceStoreId,
             String sourceStoreName,
             String carrier,
+            UUID dispatchMethodOptionId,
+            String dispatchMethodLabel,
             String vehicleNumber,
             String driverName,
             String lrNumber,
@@ -53,6 +55,8 @@ public final class DispatchDtos {
             String sourceStoreName,
             String destination,
             String carrier,
+            UUID dispatchMethodOptionId,
+            String dispatchMethodLabel,
             String vehicleNumber,
             String driverName,
             String lrNumber,
@@ -159,7 +163,8 @@ public final class DispatchDtos {
             String notes,
             List<String> jobs,
             List<CreateDispatchLineRequest> lines,
-            List<CreateDispatchPackageRequest> packages
+            List<CreateDispatchPackageRequest> packages,
+            UUID dispatchMethodOptionId
     ) {}
 
     public record CreateDispatchLineRequest(

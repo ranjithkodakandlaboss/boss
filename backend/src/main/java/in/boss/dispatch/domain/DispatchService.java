@@ -79,6 +79,7 @@ public class DispatchService {
 
         // Validate customer belongs to tenant
         validateCustomer(tenantId, req.customerId());
+        validateDispatchMethodOption(tenantId, req.dispatchMethodOptionId());
 
         // Validate site if provided, or fallback to default site
         UUID siteId = resolveSiteId(tenantId, req.sourceSiteId());
@@ -106,13 +107,13 @@ public class DispatchService {
                   id, tenant_id, dispatch_number, cpo_id, customer_id, site_id,
                   status, dispatch_date, expected_delivery, vehicle_number, transporter, carrier,
                   driver_name, lr_number, source_store_id, source_store_name, job_id,
-                  quality_release_id, challan_number, notes, total_qty, line_count,
+                  quality_release_id, challan_number, notes, total_qty, line_count, dispatch_method_option_id,
                   created_by, created_at, updated_at
                 ) VALUES (
                   ?, ?, ?, ?, ?, ?,
                   ?, ?, ?, ?, ?, ?,
                   ?, ?, ?, ?, ?,
-                  ?, ?, ?, ?, ?,
+                  ?, ?, ?, ?, ?, ?,
                   ?, NOW(), NOW()
                 )
                 """,
@@ -120,7 +121,7 @@ public class DispatchService {
                 initialStatus, req.dispatchDate(), req.expectedDelivery(), req.vehicleNumber(),
                 req.carrier(), req.carrier(), req.driverName(), req.lrNumber(), req.sourceStoreId(),
                 req.sourceStoreName(), jobId, clearanceCertId, challanNumber, req.notes(),
-                totalQty, lineCount, ctx.userId()
+                totalQty, lineCount, req.dispatchMethodOptionId(), ctx.userId()
         );
 
         // Insert dispatch lines if provided
@@ -148,7 +149,9 @@ public class DispatchService {
                 SELECT d.id, d.dispatch_number, d.customer_id, c.name AS customer_name,
                        d.cpo_id, cp.cpo_number, d.job_id, pj.job_number,
                        d.site_id, ps.name AS site_name, d.source_store_id, st.name AS store_name,
-                       COALESCE(d.carrier, d.transporter) AS carrier, d.vehicle_number, d.driver_name,
+                       COALESCE(d.carrier, d.transporter) AS carrier,
+                       d.dispatch_method_option_id, d.dispatch_method_label_snapshot AS dispatch_method_label,
+                       d.vehicle_number, d.driver_name,
                        d.lr_number, d.dispatch_date, d.expected_delivery, d.total_qty, d.line_count,
                        d.status, d.has_pod, d.created_at
                 FROM dispatches d
@@ -207,6 +210,8 @@ public class DispatchService {
                     getUuid(rs, "source_store_id"),
                     rs.getString("store_name"),
                     rs.getString("carrier"),
+                    getUuid(rs, "dispatch_method_option_id"),
+                    rs.getString("dispatch_method_label"),
                     rs.getString("vehicle_number"),
                     rs.getString("driver_name"),
                     rs.getString("lr_number"),
@@ -230,7 +235,9 @@ public class DispatchService {
                        d.cpo_id, cp.cpo_number, d.job_id, pj.job_number,
                        d.site_id, ps.name AS site_name, d.source_store_id,
                        COALESCE(d.source_store_name, st.name) AS store_name,
-                       COALESCE(d.carrier, d.transporter) AS carrier, d.vehicle_number, d.driver_name,
+                       COALESCE(d.carrier, d.transporter) AS carrier,
+                       d.dispatch_method_option_id, d.dispatch_method_label_snapshot AS dispatch_method_label,
+                       d.vehicle_number, d.driver_name,
                        d.lr_number, d.dispatch_date, d.expected_delivery, d.actual_delivery_date,
                        d.delivery_condition, d.pod_reference, d.delivery_notes,
                        d.total_qty, d.line_count, d.status, d.has_pod,
@@ -265,6 +272,8 @@ public class DispatchService {
                     rs.getString("store_name"),
                     null, // destination
                     rs.getString("carrier"),
+                    getUuid(rs, "dispatch_method_option_id"),
+                    rs.getString("dispatch_method_label"),
                     rs.getString("vehicle_number"),
                     rs.getString("driver_name"),
                     rs.getString("lr_number"),
@@ -473,6 +482,8 @@ public class DispatchService {
                 base.sourceStoreName(),
                 base.destination(),
                 base.carrier(),
+                base.dispatchMethodOptionId(),
+                base.dispatchMethodLabel(),
                 base.vehicleNumber(),
                 base.driverName(),
                 base.lrNumber(),
@@ -659,6 +670,28 @@ public class DispatchService {
     // ==========================================
     // HELPERS
     // ==========================================
+
+    private void validateDispatchMethodOption(UUID tenantId, UUID optionId) {
+        if (optionId == null) return;
+
+        Boolean valid = jdbc.queryForObject("""
+                SELECT EXISTS (
+                  SELECT 1
+                  FROM tenant_config_options o
+                  JOIN config_categories c ON c.id = o.category_id
+                  WHERE o.id = ?
+                    AND o.tenant_id = ?
+                    AND o.is_active
+                    AND c.code = 'DISPATCH_METHOD'
+                    AND c.scope = 'tenant'
+                    AND c.is_active
+                )
+                """, Boolean.class, optionId, tenantId);
+        if (!Boolean.TRUE.equals(valid)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Dispatch method must be an active option for this tenant");
+        }
+    }
 
     private void validateCustomer(UUID tenantId, UUID customerId) {
         Boolean customerExists = jdbc.queryForObject(

@@ -79,7 +79,7 @@ working form/API consumer exists.
 | 21 | Maintenance / `MAINTENANCE_CATEGORY` | Maintenance categories | None | No current form/API consumer found. | Intended global defaults plus tenant copy; tenant add yes, edit no. |
 | 22 | Maintenance / `BREAKDOWN_REASON` | Breakdown reasons | None | No current form/API consumer found. | Intended global defaults plus tenant copy; tenant add yes, edit no. |
 | 23 | Maintenance / `FAILURE_CATEGORY` | Failure categories | None | No current form/API consumer found. | Intended global defaults plus tenant copy; tenant add yes, edit no. |
-| 24 | Dispatch / `DISPATCH_METHOD` | Dispatch methods | None | Quality contract names this code, but no current dispatch form/consumer was found. | Intended global defaults plus tenant copy; tenant add yes, edit no. |
+| 24 | Dispatch / `DISPATCH_METHOD` | Dispatch methods | None | Dispatch creation accepts a tenant option; list and detail display its saved historical label. Existing dispatches without a selection remain blank. | Tenant-managed options; intended global defaults and tenant copy remain unimplemented. |
 | 25 | Dispatch / `PACKING_TYPE` | Packing types | None | No current form/API consumer found. | Intended global defaults plus tenant copy; tenant add yes, edit no. |
 | 26 | Dispatch / `TRANSPORT_CATEGORY` | Transport categories | None | No current form/API consumer found. | Intended global defaults plus tenant copy; tenant add yes, edit no. |
 | 27 | Finance / `PAYMENT_METHOD` | Payment methods | None | Registry has `PAYMENT_MODES`, but no industry values. Customer terms are hard-coded; terms are not payment methods. | Registry says tenant scope. Design says tenant add no, edit no. |
