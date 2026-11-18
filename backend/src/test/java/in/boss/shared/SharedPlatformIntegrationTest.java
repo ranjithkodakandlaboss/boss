@@ -324,8 +324,13 @@ class SharedPlatformIntegrationTest {
     }
 
     private void setContextWithSecurity(UUID tenantId, String role) {
-        setContext(tenantId, role);
-        var auth = new UsernamePasswordAuthenticationToken("test-user", null,
+        String firebaseUid = "test-user-" + UUID.randomUUID();
+        UUID userId = UUID.fromString(jdbc.queryForObject(
+                "INSERT INTO app_users (tenant_id, firebase_uid, email, display_name) "
+                        + "VALUES (?, ?, ?, 'Shared platform test user') RETURNING id::text",
+                String.class, tenantId, firebaseUid, firebaseUid + "@example.test"));
+        BossContextHolder.set(new BossContext(tenantId, userId, Set.of(role), null, firebaseUid));
+        var auth = new UsernamePasswordAuthenticationToken(firebaseUid, null,
                 List.of(new SimpleGrantedAuthority("ROLE_" + role)));
         SecurityContextHolder.getContext().setAuthentication(auth);
     }

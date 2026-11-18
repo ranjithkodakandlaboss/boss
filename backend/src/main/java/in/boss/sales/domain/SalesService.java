@@ -382,37 +382,57 @@ public class SalesService {
         BossContext context = requireContext();
         UUID tenantId = context.tenantId();
         String current = quotationStatus(tenantId, quotationId);
-        boolean validTransition = ("draft".equals(current) && "sent".equals(nextStatus))
-                || (Set.of("sent", "negotiating").contains(current)
-                && Set.of("rejected", "expired").contains(nextStatus));
-        if (!validTransition) {
-            throw conflict("Invalid quotation status transition: " + current + " -> " + nextStatus);
-        }
+        validateQuotationTransition(current, nextStatus);
         if ("sent".equals(nextStatus)) {
-            Integer missingDrawing = jdbc.queryForObject("""
-                    SELECT COUNT(*) FROM quotation_lines
-                    WHERE tenant_id = ? AND quotation_id = ?
-                      AND (drawing_number IS NULL OR btrim(drawing_number) = '')
-                    """, Integer.class, tenantId, quotationId);
-            if (missingDrawing != null && missingDrawing > 0) {
-                throw badRequest("Drawing number is required on every line before the quotation is submitted");
-            }
-            QuotationResponse draft = readQuotation(tenantId, quotationId);
-            QuotationCostingSnapshot costing = draft.costing();
-            if (costing == null || !costing.available()) {
-                throw conflict("A complete quotation cost estimate is required before submission");
-            }
-            if (costing.requiresApproval()) {
-                if (!context.hasAnyRole("OWNER", "OPS_MANAGER")) {
-                    throw new ResponseStatusException(HttpStatus.FORBIDDEN,
-                            "An owner or operations manager must approve a below-threshold quotation");
-                }
-                if (note == null || note.isBlank()) {
-                    throw badRequest("A reason is required to approve a below-threshold quotation");
-                }
-            }
+            validateQuotationSubmission(context, tenantId, quotationId, note);
         }
         QuotationResponse before = readQuotation(tenantId, quotationId);
+        updateQuotationStatusRecord(context, tenantId, quotationId, nextStatus, note, before);
+        QuotationResponse result = readQuotation(tenantId, quotationId);
+        auditService.record("QUOTATION", quotationId, "STATUS_" + nextStatus.toUpperCase(), toJson(before), toJson(result));
+        return result;
+    }
+
+    private void validateQuotationTransition(String current, String nextStatus) {
+        boolean valid = ("draft".equals(current) && "sent".equals(nextStatus))
+                || (Set.of("sent", "negotiating").contains(current)
+                && Set.of("rejected", "expired").contains(nextStatus));
+        if (!valid) {
+            throw conflict("Invalid quotation status transition: " + current + " -> " + nextStatus);
+        }
+    }
+
+    private void validateQuotationSubmission(BossContext context, UUID tenantId,
+                                             UUID quotationId, String note) {
+        Integer missingDrawing = jdbc.queryForObject("""
+                SELECT COUNT(*) FROM quotation_lines
+                WHERE tenant_id = ? AND quotation_id = ?
+                  AND (drawing_number IS NULL OR btrim(drawing_number) = '')
+                """, Integer.class, tenantId, quotationId);
+        if (missingDrawing != null && missingDrawing > 0) {
+            throw badRequest("Drawing number is required on every line before the quotation is submitted");
+        }
+        QuotationCostingSnapshot costing = readQuotation(tenantId, quotationId).costing();
+        if (costing == null || !costing.available()) {
+            throw conflict("A complete quotation cost estimate is required before submission");
+        }
+        if (costing.requiresApproval()) {
+            validateMarginOverride(context, note);
+        }
+    }
+
+    private static void validateMarginOverride(BossContext context, String note) {
+        if (!context.hasAnyRole("OWNER", "OPS_MANAGER")) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+                    "An owner or operations manager must approve a below-threshold quotation");
+        }
+        if (note == null || note.isBlank()) {
+            throw badRequest("A reason is required to approve a below-threshold quotation");
+        }
+    }
+
+    private void updateQuotationStatusRecord(BossContext context, UUID tenantId, UUID quotationId,
+                                             String nextStatus, String note, QuotationResponse before) {
         if ("rejected".equals(nextStatus)) {
             jdbc.update("""
                     UPDATE quotations
@@ -421,7 +441,7 @@ public class SalesService {
                      WHERE tenant_id = ? AND id = ?
                     """,
                     nextStatus, note, context.userId(), tenantId, quotationId);
-        } else if ("sent".equals(nextStatus) && before.costing() != null && before.costing().requiresApproval()) {
+        } else if (requiresMarginOverride(nextStatus, before)) {
             jdbc.update("""
                     UPDATE quotations
                        SET status = ?, cost_override_reason = ?, cost_override_by = ?,
@@ -432,9 +452,10 @@ public class SalesService {
             jdbc.update("UPDATE quotations SET status = ?, updated_at = NOW() WHERE tenant_id = ? AND id = ?",
                     nextStatus, tenantId, quotationId);
         }
-        QuotationResponse result = readQuotation(tenantId, quotationId);
-        auditService.record("QUOTATION", quotationId, "STATUS_" + nextStatus.toUpperCase(), toJson(before), toJson(result));
-        return result;
+    }
+
+    private static boolean requiresMarginOverride(String nextStatus, QuotationResponse before) {
+        return "sent".equals(nextStatus) && before.costing() != null && before.costing().requiresApproval();
     }
 
     @Transactional
@@ -1011,28 +1032,54 @@ public class SalesService {
     private List<FieldChange> fieldChanges(String oldJson, String newJson) {
         JsonNode previous = readTree(oldJson);
         JsonNode next = readTree(newJson);
-        if ((previous == null || !previous.isObject()) && (next == null || !next.isObject())) return List.of();
-        Map<String, JsonNode> keys = new LinkedHashMap<>();
-        if (previous != null && previous.isObject()) previous.fieldNames().forEachRemaining(key -> keys.put(key, previous.get(key)));
-        if (next != null && next.isObject()) next.fieldNames().forEachRemaining(key -> keys.putIfAbsent(key, next.get(key)));
+        if (!isObject(previous) && !isObject(next)) return List.of();
+        Map<String, JsonNode> fields = historyFields(previous, next);
         List<FieldChange> changes = new ArrayList<>();
-        for (String key : keys.keySet()) {
-            if (changes.size() == 12 || skipHistoryField(key)) continue;
-            JsonNode before = previous == null ? null : previous.get(key);
-            JsonNode after = next == null ? null : next.get(key);
-            if ((before != null && before.isContainerNode()) || (after != null && after.isContainerNode())) {
-                int beforeCount = before != null && before.isArray() ? before.size() : 0;
-                int afterCount = after != null && after.isArray() ? after.size() : 0;
-                if (before != null && before.isArray() && beforeCount != afterCount) {
-                    changes.add(new FieldChange(label(key), beforeCount + " rows", afterCount + " rows"));
-                }
-                continue;
-            }
-            String beforeValue = scalar(before);
-            String afterValue = scalar(after);
-            if (!beforeValue.equals(afterValue)) changes.add(new FieldChange(label(key), beforeValue, afterValue));
+        for (Map.Entry<String, JsonNode> field : fields.entrySet()) {
+            if (changes.size() == 12) break;
+            addFieldChange(changes, field.getKey(), field.getValue(),
+                    next == null ? null : next.get(field.getKey()));
         }
         return changes;
+    }
+
+    private static boolean isObject(JsonNode node) {
+        return node != null && node.isObject();
+    }
+
+    private static Map<String, JsonNode> historyFields(JsonNode previous, JsonNode next) {
+        Map<String, JsonNode> fields = new LinkedHashMap<>();
+        if (isObject(previous)) previous.fieldNames().forEachRemaining(key -> fields.put(key, previous.get(key)));
+        if (isObject(next)) next.fieldNames().forEachRemaining(key -> fields.putIfAbsent(key, next.get(key)));
+        return fields;
+    }
+
+    private static void addFieldChange(List<FieldChange> changes, String key, JsonNode before, JsonNode after) {
+        if (skipHistoryField(key)) return;
+        if (isContainer(before) || isContainer(after)) {
+            addArrayChange(changes, key, before, after);
+            return;
+        }
+        addScalarChange(changes, key, before, after);
+    }
+
+    private static boolean isContainer(JsonNode node) {
+        return node != null && node.isContainerNode();
+    }
+
+    private static void addArrayChange(List<FieldChange> changes, String key, JsonNode before, JsonNode after) {
+        if (before == null || !before.isArray()) return;
+        int beforeCount = before.size();
+        int afterCount = after != null && after.isArray() ? after.size() : 0;
+        if (beforeCount != afterCount) {
+            changes.add(new FieldChange(label(key), beforeCount + " rows", afterCount + " rows"));
+        }
+    }
+
+    private static void addScalarChange(List<FieldChange> changes, String key, JsonNode before, JsonNode after) {
+        String beforeValue = scalar(before);
+        String afterValue = scalar(after);
+        if (!beforeValue.equals(afterValue)) changes.add(new FieldChange(label(key), beforeValue, afterValue));
     }
 
     private static boolean skipHistoryField(String key) {

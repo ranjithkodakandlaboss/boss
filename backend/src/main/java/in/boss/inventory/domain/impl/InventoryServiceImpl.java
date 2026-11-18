@@ -90,11 +90,6 @@ public class InventoryServiceImpl implements InventoryService {
     }
 
     @Override
-    public MaterialLotResponse createLot(CreateLotRequest request) {
-        return createLot(request, null);
-    }
-
-    @Override
     public MaterialLotResponse createLot(CreateLotRequest request, String preferredLotNumber) {
         BossContext ctx = requireContext();
         String status = LotStatus.canonical(request.status());

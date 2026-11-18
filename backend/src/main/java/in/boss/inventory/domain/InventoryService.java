@@ -20,11 +20,11 @@ import java.util.UUID;
 
 public interface InventoryService {
 
-    MaterialLotResponse createLot(CreateLotRequest request);
-
-    default MaterialLotResponse createLot(CreateLotRequest request, String preferredLotNumber) {
-        return createLot(request);
+    default MaterialLotResponse createLot(CreateLotRequest request) {
+        return createLot(request, null);
     }
+
+    MaterialLotResponse createLot(CreateLotRequest request, String preferredLotNumber);
 
     StockMovementResponse addMovement(UUID lotId, AddMovementRequest request);
 
