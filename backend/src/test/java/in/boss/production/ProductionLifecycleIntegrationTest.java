@@ -317,6 +317,58 @@ class ProductionLifecycleIntegrationTest extends BaseMasterDataIntegrationTest {
     }
 
     @Test
+    void siteScopedMetricsStayOnThatSite() {
+        UUID legalEntityId = jdbc.queryForObject(
+                "SELECT legal_entity_id FROM physical_sites WHERE id = ?", UUID.class, siteId);
+        UUID customerId = jdbc.queryForObject("SELECT customer_id FROM cpos WHERE id = ?", UUID.class, cpoId);
+        UUID uomId = jdbc.queryForObject("SELECT uom_id FROM cpo_lines WHERE id = ?", UUID.class, lineId);
+        UUID userId = BossContextHolder.get().userId();
+        UUID siteB = insert("""
+                INSERT INTO physical_sites (tenant_id, legal_entity_id, name, code)
+                VALUES (?, ?, 'Plant B', ?) RETURNING id
+                """, tenantId, legalEntityId, "SM-" + UUID.randomUUID().toString().substring(0, 6));
+        UUID cpoB = insert("""
+                INSERT INTO cpos (tenant_id, cpo_number, customer_id, site_id, status, order_date, created_by)
+                VALUES (?, ?, ?, ?, 'open', CURRENT_DATE, ?) RETURNING id
+                """, tenantId, "CPOM-" + UUID.randomUUID().toString().substring(0, 6), customerId, siteB, userId);
+        UUID lineB = insert("""
+                INSERT INTO cpo_lines (tenant_id, cpo_id, line_no, item_id, quantity, uom_id, unit_price)
+                VALUES (?, ?, 1, ?, 10, ?, 100) RETURNING id
+                """, tenantId, cpoB, finishedItemId, uomId);
+
+        scope(siteId);
+        ProductionJobResponse jobA = jobs.create(new CreateJobRequest(cpoId, lineId, routingId, null, null, null));
+        materials.issue(jobA.id(), new IssueMaterialRequest(
+                jobA.materials().get(0).id(), lotId, new BigDecimal("20"), null));
+        stages.start(jobA.id(), jobA.stages().get(0).id(), null);
+
+        scope(siteB);
+        jobs.create(new CreateJobRequest(cpoB, lineB, routingId, null, null, null));
+        var siteBMetrics = query.businessMetrics();
+        assertThat(siteBMetrics.activeJobs()).isEqualTo(1);
+        assertThat(siteBMetrics.byStatus()).containsEntry("planned", 1L);
+        assertThat(siteBMetrics.byCurrentStage()).isEmpty();
+        assertThat(siteBMetrics.materialIssuedQty()).isEqualByComparingTo("0");
+        assertThat(siteBMetrics.estimatedCost()).isEqualByComparingTo("50.00");
+
+        scope(siteId);
+        var siteAMetrics = query.businessMetrics();
+        assertThat(siteAMetrics.activeJobs()).isEqualTo(1);
+        assertThat(siteAMetrics.byStatus()).containsEntry("in_progress", 1L);
+        assertThat(siteAMetrics.byCurrentStage()).containsEntry("Cutting", 1L);
+        assertThat(siteAMetrics.materialIssuedQty()).isEqualByComparingTo("20.000");
+        assertThat(siteAMetrics.estimatedCost()).isEqualByComparingTo("50.00");
+
+        scope(null);
+        var tenantMetrics = query.businessMetrics();
+        assertThat(tenantMetrics.activeJobs()).isEqualTo(2);
+        assertThat(tenantMetrics.byStatus()).containsEntry("planned", 1L).containsEntry("in_progress", 1L);
+        assertThat(tenantMetrics.byCurrentStage()).containsEntry("Cutting", 1L);
+        assertThat(tenantMetrics.materialIssuedQty()).isEqualByComparingTo("20.000");
+        assertThat(tenantMetrics.estimatedCost()).isEqualByComparingTo("100.00");
+    }
+
+    @Test
     void siteScopedUserCannotReadOrExecuteAnotherSitesJob() {
         UUID legalEntityId = jdbc.queryForObject(
                 "SELECT legal_entity_id FROM physical_sites WHERE id = ?", UUID.class, siteId);

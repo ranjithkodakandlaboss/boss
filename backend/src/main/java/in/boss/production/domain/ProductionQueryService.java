@@ -145,52 +145,60 @@ public class ProductionQueryService {
     public BusinessMetrics businessMetrics() {
         BossContext context = support.requireContext();
         UUID tenantId = context.tenantId();
+        String site = siteClause(context.siteId());
+        Object[] args = context.siteId() == null
+                ? new Object[]{tenantId}
+                : new Object[]{tenantId, context.siteId()};
         Map<String, Long> byStatus = new LinkedHashMap<>();
         jdbc.query("""
-                SELECT status, COUNT(*) AS n FROM production_jobs
-                WHERE tenant_id = ? GROUP BY status
+                SELECT j.status, COUNT(*) AS n FROM production_jobs j
+                WHERE j.tenant_id = ?""" + site + """
+                 GROUP BY j.status
                 """, rs -> {
             byStatus.put(rs.getString("status"), rs.getLong("n"));
-        }, tenantId);
+        }, args);
         Map<String, Long> byStage = new LinkedHashMap<>();
         jdbc.query("""
                 SELECT s.stage_label_snapshot AS stage_name, COUNT(*) AS n
                 FROM job_stages s
                 JOIN production_jobs j ON j.id = s.job_id AND j.tenant_id = s.tenant_id
                 WHERE s.tenant_id = ? AND s.status = 'in_progress'
-                  AND j.status NOT IN ('completed', 'cancelled')
-                GROUP BY s.stage_label_snapshot
+                  AND j.status NOT IN ('completed', 'cancelled')""" + site + """
+                 GROUP BY s.stage_label_snapshot
                 """, rs -> {
             byStage.put(rs.getString("stage_name"), rs.getLong("n"));
-        }, tenantId);
+        }, args);
         BigDecimal issued = sum("""
-                SELECT COALESCE(SUM(quantity), 0) FROM job_material_issues
-                WHERE tenant_id = ? AND issue_type = 'issue'
-                """, tenantId);
+                SELECT COALESCE(SUM(i.quantity), 0)
+                FROM job_material_issues i
+                JOIN production_jobs j ON j.id = i.job_id AND j.tenant_id = i.tenant_id
+                WHERE i.tenant_id = ? AND i.issue_type = 'issue'""" + site, args);
         BigDecimal returned = sum("""
-                SELECT COALESCE(SUM(quantity), 0) FROM job_material_issues
-                WHERE tenant_id = ? AND issue_type = 'return'
-                """, tenantId);
+                SELECT COALESCE(SUM(i.quantity), 0)
+                FROM job_material_issues i
+                JOIN production_jobs j ON j.id = i.job_id AND j.tenant_id = i.tenant_id
+                WHERE i.tenant_id = ? AND i.issue_type = 'return'""" + site, args);
         BigDecimal estimated = sum("""
-                SELECT COALESCE(SUM(est_material_cost + est_labour_cost + est_overhead_cost), 0)
-                FROM job_costing_headers WHERE tenant_id = ?
-                """, tenantId);
+                SELECT COALESCE(SUM(h.est_material_cost + h.est_labour_cost + h.est_overhead_cost), 0)
+                FROM job_costing_headers h
+                JOIN production_jobs j ON j.id = h.job_id AND j.tenant_id = h.tenant_id
+                WHERE h.tenant_id = ?""" + site, args);
         BigDecimal actual = sum("""
-                SELECT COALESCE(SUM(act_material_cost + act_labour_cost + act_overhead_cost), 0)
-                FROM job_costing_headers WHERE tenant_id = ?
-                """, tenantId);
+                SELECT COALESCE(SUM(h.act_material_cost + h.act_labour_cost + h.act_overhead_cost), 0)
+                FROM job_costing_headers h
+                JOIN production_jobs j ON j.id = h.job_id AND j.tenant_id = h.tenant_id
+                WHERE h.tenant_id = ?""" + site, args);
         long active = count("""
-                SELECT COUNT(*) FROM production_jobs
-                WHERE tenant_id = ? AND status IN ('planned','released','in_progress','on_hold')
-                """, tenantId);
+                SELECT COUNT(*) FROM production_jobs j
+                WHERE j.tenant_id = ? AND j.status IN ('planned','released','in_progress','on_hold')"""
+                + site, args);
         long completed = count("""
-                SELECT COUNT(*) FROM production_jobs WHERE tenant_id = ? AND status = 'completed'
-                """, tenantId);
+                SELECT COUNT(*) FROM production_jobs j
+                WHERE j.tenant_id = ? AND j.status = 'completed'""" + site, args);
         long delayed = count("""
-                SELECT COUNT(*) FROM production_jobs
-                WHERE tenant_id = ? AND status NOT IN ('completed','cancelled')
-                  AND planned_end IS NOT NULL AND planned_end < CURRENT_DATE
-                """, tenantId);
+                SELECT COUNT(*) FROM production_jobs j
+                WHERE j.tenant_id = ? AND j.status NOT IN ('completed','cancelled')
+                  AND j.planned_end IS NOT NULL AND j.planned_end < CURRENT_DATE""" + site, args);
         boolean showMoney = support.commercial(context);
         return new BusinessMetrics(active, completed, delayed, byStatus, byStage,
                 issued, returned, issued.subtract(returned),
@@ -271,8 +279,8 @@ public class ProductionQueryService {
         return value == null ? BigDecimal.ZERO : value;
     }
 
-    private long count(String sql, UUID tenantId) {
-        Long value = jdbc.queryForObject(sql, Long.class, tenantId);
+    private long count(String sql, Object... args) {
+        Long value = jdbc.queryForObject(sql, Long.class, args);
         return value == null ? 0 : value;
     }
 
