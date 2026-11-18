@@ -7,6 +7,7 @@ export const STOCK_LINKS = [
   { to: "/inventory/transfers", label: "Transfers" },
   { to: "/inventory/returns", label: "Returns" },
   { to: "/allocations", label: "Site need" },
+  { to: "/inventory/bom", label: "Bills of materials" },
 ];
 
 export default function StockNav() {
