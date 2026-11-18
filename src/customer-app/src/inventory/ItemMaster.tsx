@@ -12,6 +12,7 @@ import { allPages, categoryName, mutate, type Category, type Item, type Uom } fr
 import StockNav from "./stockNav";
 
 const TYPES = ["RAW_MATERIAL", "SEMI_FINISHED", "FINISHED_GOOD", "CONSUMABLE", "SPARE_PART", "SERVICE"];
+const TRACKING_MODES = ["None", "Lot", "Heat", "Serial"] as const;
 
 export default function ItemMaster() {
   const navigate = useNavigate();
@@ -70,7 +71,7 @@ export default function ItemMaster() {
           <option value="active">Active</option>
           <option value="inactive">Inactive</option>
         </select>
-        {canWrite && <button type="button" onClick={() => setOpen(true)} className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold text-white" style={{ background: "var(--brand-fill)" }}><Plus size={13} /> Add material</button>}
+        {canWrite && <button type="button" onClick={() => setOpen(true)} className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold text-white" style={{ background: "var(--brand-fill)" }}><Plus size={13} /> Add Material</button>}
       </header>
       <div className="min-h-0 flex-1 overflow-auto">
         {loading ? <LoadingState label="Loading item master" /> : error ? <ErrorState body={error} /> : (
@@ -94,7 +95,6 @@ export function ItemForm({ item, onClose, onSaved }: { item?: Item; onClose: () 
   const [categoryId, setCategoryId] = useState(item?.categoryId ?? "");
   const [uomId, setUomId] = useState(item?.uomId ?? "");
   const [reorderPoint, setReorderPoint] = useState(item?.reorderPoint == null ? "" : String(item.reorderPoint));
-  const [description, setDescription] = useState(item?.description ?? "");
   const [error, setError] = useState("");
   const [categoryError, setCategoryError] = useState("");
   const [uomError, setUomError] = useState("");
@@ -118,7 +118,7 @@ export function ItemForm({ item, onClose, onSaved }: { item?: Item; onClose: () 
 
   async function save() {
     if (!name.trim() || (!item && (!code.trim() || !uomId))) {
-      setError(item ? "Name is required." : "Item code, name, and unit of measure are required.");
+      setError(item ? "Name is required." : "Item code *, Name * and Unit of measure * are required.");
       return;
     }
     setSaving(true);
@@ -128,7 +128,6 @@ export function ItemForm({ item, onClose, onSaved }: { item?: Item; onClose: () 
       const saved = item
         ? await mutate<Item>(`/api/v1/items/${item.id}`, "PATCH", {
           name: name.trim(),
-          description: description.trim() || null,
           categoryId: categoryId || null,
           categoryLabel: category ? categoryName(category) : undefined,
           reorderPoint: reorderPoint === "" ? null : Number(reorderPoint),
@@ -136,7 +135,6 @@ export function ItemForm({ item, onClose, onSaved }: { item?: Item; onClose: () 
         : await mutate<Item>("/api/v1/items", "POST", {
           code: code.trim(),
           name: name.trim(),
-          description: description.trim() || null,
           itemType,
           categoryId: categoryId || null,
           categoryLabel: category ? categoryName(category) : undefined,
@@ -153,33 +151,74 @@ export function ItemForm({ item, onClose, onSaved }: { item?: Item; onClose: () 
 
   return (
     <RecordSheet
-      title={item ? "Edit material" : "Add material"}
+      title={item ? "Edit Material" : "Add Material"}
       onClose={onClose}
-      primary={{ label: saving ? "Saving…" : item ? "Save changes" : "Create material", onClick: () => void save(), disabled: saving }}
+      primary={{ label: saving ? "Saving…" : item ? "Save Changes" : "Create Material", onClick: () => void save(), disabled: saving }}
       secondary={{ label: "Cancel", onClick: onClose }}
     >
       <div className="grid gap-3 sm:grid-cols-2">
-        <label className="text-xs">Item code<input className="eoss-input mt-1 w-full" value={code} disabled={!!item} onChange={(event) => setCode(event.target.value)} /></label>
-        <label className="text-xs">Material name *<input className="eoss-input mt-1 w-full" value={name} onChange={(event) => setName(event.target.value)} /></label>
+        <label className="text-xs">
+          <span className="block text-[11px] font-mono uppercase text-[var(--text-3)] mb-1">Item Code *</span>
+          <input className="eoss-input mt-1 w-full" placeholder="e.g. RM-001" value={code} disabled={!!item} onChange={(event) => setCode(event.target.value)} />
+        </label>
+        <label className="text-xs">
+          <span className="block text-[11px] font-mono uppercase text-[var(--text-3)] mb-1">Material Name *</span>
+          <input className="eoss-input mt-1 w-full" placeholder="e.g. Hot Rolled Steel Sheet" value={name} onChange={(event) => setName(event.target.value)} />
+        </label>
         {!item && (
-          <label className="text-xs">Type<select aria-label="Item type" className="eoss-input mt-1 w-full" value={itemType} onChange={(event) => setItemType(event.target.value)}>{TYPES.map((type) => <option key={type} value={type}>{type.replaceAll("_", " ")}</option>)}</select></label>
+          <label className="text-xs">
+            <span className="block text-[11px] font-mono uppercase text-[var(--text-3)] mb-1">Type</span>
+            <select aria-label="Item type" className="eoss-input mt-1 w-full" value={itemType} onChange={(event) => setItemType(event.target.value)}>
+              {TYPES.map((type) => <option key={type} value={type}>{type.replaceAll("_", " ")}</option>)}
+            </select>
+          </label>
         )}
-        <div className="text-xs">Category
+        <div className="text-xs">
+          <span className="block text-[11px] font-mono uppercase text-[var(--text-3)] mb-1">Category</span>
           <CreatableSelect label="category" ariaLabel="Category" value={categoryId} onChange={setCategoryId} placeholder="No category" error={categoryError} onRetry={loadReferences} creatable={canCreateReference} options={categories.map((category) => ({ id: category.id, label: categoryName(category) || "Unnamed category" }))} fields={[{ name: "code", label: "Code", required: true }, { name: "name", label: "Name", required: true }]} unique={(values) => categories.some((category) => (category.code ?? "").toLowerCase() === values.code.toLowerCase()) ? "This value already exists." : null} onCreate={async (values) => {
             const created = await mutate<Category>("/api/v1/item-categories", "POST", { code: values.code, name: values.name });
             setCategories((current) => [...current.filter((category) => category.id !== created.id), { ...created, label: created.name }]);
             return { id: created.id, label: created.name || values.name };
           }} />
         </div>
-        <div className="text-xs">Unit of measure
+        <label className="text-xs">
+          <span className="block text-[11px] font-mono uppercase text-[var(--text-3)] mb-1">Grade / Specification</span>
+          <input className="eoss-input mt-1 w-full" placeholder="e.g. IS 2062 Grade A" disabled title="Not stored yet" />
+        </label>
+        <label className="text-xs">
+          <span className="block text-[11px] font-mono uppercase text-[var(--text-3)] mb-1">Dimensions</span>
+          <input className="eoss-input mt-1 w-full" placeholder="e.g. 2440 × 1220 × 3 mm" disabled title="Not stored yet" />
+        </label>
+        <div className="text-xs">
+          <span className="block text-[11px] font-mono uppercase text-[var(--text-3)] mb-1">Unit of Measure *</span>
           <CreatableSelect label="unit of measure" ariaLabel="Unit of measure" value={uomId} onChange={setUomId} disabled={!!item} error={uomError} onRetry={loadReferences} creatable={canCreateReference && !item} options={uoms.map((uom) => ({ id: uom.id, label: `${uom.symbol} · ${uom.name}` }))} fields={[{ name: "name", label: "Name", required: true }, { name: "symbol", label: "Symbol", required: true }]} unique={(values) => uoms.some((uom) => uom.symbol.toLowerCase() === values.symbol.toLowerCase()) ? "This value already exists." : null} onCreate={async (values) => {
             const created = await mutate<Uom>("/api/v1/uoms", "POST", { name: values.name, symbol: values.symbol, uomType: "quantity" });
             setUoms((current) => [...current.filter((uom) => uom.id !== created.id), created]);
             return { id: created.id, label: `${created.symbol} · ${created.name}` };
           }} />
         </div>
-        <label className="text-xs">Reorder level<input className="eoss-input mt-1 w-full" type="number" min="0" value={reorderPoint} onChange={(event) => setReorderPoint(event.target.value)} /></label>
-        <label className="text-xs sm:col-span-2">Description<textarea className="eoss-input mt-1 w-full" rows={2} value={description} onChange={(event) => setDescription(event.target.value)} /></label>
+        <label className="text-xs">
+          <span className="block text-[11px] font-mono uppercase text-[var(--text-3)] mb-1">Reorder Level</span>
+          <input className="eoss-input mt-1 w-full" type="number" min="0" placeholder="e.g. 100" value={reorderPoint} onChange={(event) => setReorderPoint(event.target.value)} />
+        </label>
+        <label className="text-xs">
+          <span className="block text-[11px] font-mono uppercase text-[var(--text-3)] mb-1">Lead Time (days)</span>
+          <input className="eoss-input mt-1 w-full" type="number" min="0" placeholder="e.g. 14" disabled title="Not stored yet" />
+        </label>
+        <label className="text-xs">
+          <span className="block text-[11px] font-mono uppercase text-[var(--text-3)] mb-1">Site</span>
+          <input className="eoss-input mt-1 w-full" placeholder="e.g. Main Plant" disabled title="Not stored yet" />
+        </label>
+        <label className="text-xs">
+          <span className="block text-[11px] font-mono uppercase text-[var(--text-3)] mb-1">Store</span>
+          <input className="eoss-input mt-1 w-full" placeholder="e.g. Raw Materials Store" disabled title="Not stored yet" />
+        </label>
+        <label className="text-xs">
+          <span className="block text-[11px] font-mono uppercase text-[var(--text-3)] mb-1">Tracking Mode</span>
+          <select className="eoss-input mt-1 w-full" disabled title="Not stored yet">
+            {TRACKING_MODES.map((mode) => <option key={mode}>{mode}</option>)}
+          </select>
+        </label>
       </div>
       {error && <p role="alert" className="mt-3 text-xs text-[var(--error)]">{error}</p>}
     </RecordSheet>

@@ -37,7 +37,7 @@ export default function PODetail() {
   const po = customerPos.find(p => p.id === id);
   if (!po) return <div className="p-6 text-sm" style={{ color: 'var(--text-2)' }}>PO not found</div>;
 
-  const poJobs = jobs.filter(j => j.customerPoId === po.id);
+  const poJobs = jobs.filter(j => j.customerPoId === po.id || j.customerPoNumber === po.poNumber);
   const amendments = poAmendments.filter(a => a.entityType === 'customer_po' && a.poId === po.id);
   const pendingAmendment = amendments.find(a => a.status === 'pending_approval');
   const actualLines = poLines.filter(line => line.poId === po.id);
@@ -186,9 +186,9 @@ export default function PODetail() {
         : 'completed',
       reference: po.availabilityStatus && po.availabilityStatus !== 'not_assessed' ? po.availabilityStatus.replace('_', ' ') : undefined,
       blocker: hasShortage && !firstPr ? 'Material shortage — Purchase Requisition not yet raised' : undefined,
-      note: po.availabilityStatus === 'allocated'
+      note: po.availabilityStatus === 'allocated' && linkedReqs.some(r => r.reservedQty > 0)
         ? 'Available stock is reserved for this order'
-        : po.availabilityStatus === 'partial'
+        : po.availabilityStatus === 'partial' && linkedReqs.some(r => r.reservedQty > 0)
           ? 'Only the available quantity is reserved. The shortage remains on the purchase requisition.'
           : undefined,
     });
@@ -245,7 +245,7 @@ export default function PODetail() {
       recordPath: firstJob ? `/jobs/${firstJob.id}` : undefined,
       date: firstJob?.estimatedEnd ? new Date(firstJob.estimatedEnd).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : undefined,
       blocker: firstJob?.status === 'hold' ? `Job on hold — ${firstJob.currentStage}` : undefined,
-      note: linkedJobs.length > 1 ? `${linkedJobs.length} jobs` : firstJob ? `Stage: ${firstJob.currentStage}` : undefined,
+      note: linkedJobs.length > 1 ? `${linkedJobs.length} jobs` : firstJob && firstJob.currentStage ? `Stage: ${firstJob.currentStage}` : undefined,
     });
 
     steps.push({

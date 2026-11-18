@@ -113,7 +113,14 @@ export default function Sales() {
   const latestQuotations = [...quotations.reduce((latest, quote) => {
     const key = quote.quotationNumber.replace(/-R\d+$/i, "");
     const current = latest.get(key);
-    if (!current || (quote.revision ?? 0) >= (current.revision ?? 0)) latest.set(key, quote);
+    const thisRev = quote.revision ?? 1;
+    const curRev = current ? (current.revision ?? 1) : -1;
+    const thisIsSuperseded = quote.status === 'superseded';
+    const curIsSuperseded = current ? current.status === 'superseded' : true;
+    // Prefer non-superseded; among equal-status prefer higher revision
+    if (!current || (!thisIsSuperseded && curIsSuperseded) || (thisIsSuperseded === curIsSuperseded && thisRev > curRev)) {
+      latest.set(key, quote);
+    }
     return latest;
   }, new Map<string, typeof quotations[number]>()).values()];
   const filteredQuotations = latestQuotations.filter(qt => {

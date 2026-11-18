@@ -97,7 +97,7 @@ export function ConfigSelect({ category, label, value, onChange, options, byLabe
 
   return (
     <div className="space-y-1">
-      {inlineAddable && options.length > 0 && (
+      {inlineAddable && (
         <input aria-label={`Search ${label}`} placeholder={`Search ${label.toLowerCase()}…`} className="eoss-input w-full" value={query} onChange={(e) => setQuery(e.target.value)} />
       )}
       <Select label={label} byLabel={byLabel} value={value} onChange={onChange} options={matches} />
@@ -155,6 +155,11 @@ export function AssetFormModal({ open, asset, options, lookup, ctl, onClose, onS
       secondary={{ label: "Cancel", onClick: onClose }}
     >
       <form id="asset-form" onSubmit={submit} className="space-y-3">
+        {asset?.status === "breakdown" && (
+          <div className="rounded-lg px-3 py-2 text-xs font-semibold" style={{ background: "rgba(220,38,38,0.08)", color: "var(--error)", border: "1px solid var(--error)" }}>
+            This asset is currently in breakdown. Editing will not change its status automatically.
+          </div>
+        )}
         <div className="grid grid-cols-2 gap-3">
           <Field label="Asset code *"><input aria-label="Asset code" className="eoss-input w-full" value={form.assetCode ?? ""} onChange={(e) => set({ assetCode: e.target.value })} /></Field>
           <Field label="Name *"><input aria-label="Asset name" className="eoss-input w-full" value={form.name ?? ""} onChange={(e) => set({ name: e.target.value })} /></Field>
@@ -445,9 +450,9 @@ export default function AssetsPage() {
               <tbody>
                 {visibleAssets.map((a) => {
                   const due = computeDue(a);
-                  const rowBg = a.status === "breakdown" ? "bg-red-50 dark:bg-red-950/20" : due.status === "overdue" ? "bg-amber-50 dark:bg-amber-950/20" : "";
+                  const rowStyle = a.status === "breakdown" ? { background: "rgba(220,38,38,0.07)" } : due.status === "overdue" ? { background: "rgba(217,119,6,0.07)" } : {};
                   return (
-                  <tr key={a.id} className={`border-t border-[var(--border)] hover:bg-[var(--surface-2)] cursor-pointer ${rowBg}`} onClick={() => navigate(`/assets/${a.id}`)}>
+                  <tr key={a.id} className="border-t border-[var(--border)] hover:bg-[var(--surface-2)] cursor-pointer" style={rowStyle} onClick={() => navigate(`/assets/${a.id}`)}>
                     <td className="p-2 font-semibold">{a.assetCode}</td>
                     <td className="p-2">{a.name}<div className="text-[var(--text-3)]">{[a.manufacturer, a.model].filter(Boolean).join(" ")}</div></td>
                     <td className="p-2">{a.category ?? "—"}</td>

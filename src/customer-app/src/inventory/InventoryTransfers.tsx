@@ -1,12 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
-import { Link } from "react-router-dom";
-import { Plus } from "lucide-react";
+import { ArrowLeft, ArrowRightLeft, Plus } from "lucide-react";
+import { Link, useNavigate } from "react-router-dom";
 import { api, safeRandomUUID } from "../auth/api";
-import Button from "../components/shared/Button";
 import ErrorState from "../components/shared/ErrorState";
 import LoadingState from "../components/shared/LoadingState";
-import RecordTable, { type RecordColumn } from "../components/shared/RecordTable";
-import StockNav from "./stockNav";
+import StatusChip from "../components/shared/StatusChip";
 
 type TransferLine = {
   id: string;
@@ -27,6 +25,7 @@ type Transfer = {
 type Page<T> = { content: T[]; totalElements: number };
 
 export default function InventoryTransfers() {
+  const navigate = useNavigate();
   const [rows, setRows] = useState<Transfer[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -65,36 +64,59 @@ export default function InventoryTransfers() {
     }
   }
 
-  const columns: RecordColumn<Transfer>[] = [
-    { key: "transferNumber", label: "Transfer", value: (row) => row.transferNumber, render: (row) => <span className="font-semibold">{row.transferNumber}</span> },
-    { key: "fromStoreName", label: "From", value: (row) => row.fromStoreName, render: (row) => row.fromStoreName },
-    { key: "toStoreName", label: "To", value: (row) => row.toStoreName, render: (row) => row.toStoreName },
-    { key: "lines", label: "Lines", value: (row) => row.lines.length, render: (row) => row.lines.map((line) => `${line.itemCode} · ${line.qty} ${line.uomSymbol}`).join(", ") },
-    { key: "transferDate", label: "Date", value: (row) => row.transferDate, render: (row) => row.transferDate },
-    { key: "status", label: "Status", value: (row) => row.status, render: (row) => row.status.replaceAll("_", " ") },
-    { key: "actions", label: "", render: (row) => row.status === "in_transit"
-      ? <Button className="px-2 py-1 text-xs" disabled={receiving === row.id} onClick={() => void receive(row)}>{receiving === row.id ? "Receiving…" : "Receive"}</Button>
-      : null },
-  ];
-
   return (
-    <div className="flex min-h-[calc(100vh-var(--topbar-h))] flex-col">
-      <StockNav />
-      <header className="flex items-start justify-between gap-3 px-6 py-4">
-        <div>
-          <h1 className="text-lg font-bold text-[var(--text)]">Inventory transfers</h1>
-          <p className="mt-1 text-xs text-[var(--text-2)]">{rows.length} transfers</p>
+    <div className="p-4 md:p-6 max-w-5xl mx-auto space-y-5">
+      <button type="button" onClick={() => navigate("/inventory")} className="flex items-center gap-1.5 text-sm text-[var(--text-2)] hover:text-[var(--brand)] mb-3">
+        <ArrowLeft size={14} /> Inventory
+      </button>
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <ArrowRightLeft size={20} className="text-[var(--brand)]" />
+          <h1 className="text-xl font-bold">Inventory Transfers</h1>
         </div>
         <Link to="/inventory/transfer" className="inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-semibold text-white" style={{ background: "var(--brand-fill)" }}>
-          <Plus size={15} /> Move stock
+          <Plus size={15} /> New transfer
         </Link>
-      </header>
-      {actionError && <p role="alert" className="mx-6 mb-3 text-sm text-[var(--error)]">{actionError}</p>}
-      <div className="min-h-0 flex-1 overflow-auto">
-        {loading ? <LoadingState label="Loading transfers" />
-          : error ? <ErrorState body={error} />
-            : <RecordTable rows={rows} columns={columns} empty="No transfers" />}
       </div>
+      <p className="text-sm text-[var(--text-2)] mt-1">Inter-site stock movements. Dispatched stock is in transit until received at the destination.</p>
+
+      {actionError && <p role="alert" className="text-sm text-[var(--error)]">{actionError}</p>}
+      {loading ? <LoadingState label="Loading transfers" />
+        : error ? <ErrorState body={error} />
+          : rows.length === 0 ? (
+            <div className="rounded-xl border p-10 text-center text-sm text-[var(--text-3)]" style={{ borderColor: "var(--border)" }}>No transfers recorded.</div>
+          ) : (
+            <div className="space-y-3">
+              {rows.map((row) => (
+                <article key={row.id} className="rounded-xl border p-4" style={{ borderColor: "var(--border)", background: "var(--surface)" }}>
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-semibold font-mono text-sm">{row.transferNumber}</span>
+                        <span className="text-xs px-2 py-0.5 rounded-full font-medium" style={{ background: row.status === 'in_transit' ? 'var(--warning-bg,#FEF3C7)' : 'var(--success-bg,#DCFCE7)', color: row.status === 'in_transit' ? 'var(--warning,#D97706)' : 'var(--success,#16A34A)' }}>{row.status.replace(/_/g, ' ')}</span>
+                      </div>
+                      <div className="mt-1 text-sm">
+                        <span className="font-medium">{row.fromStoreName}</span>
+                        <span className="mx-1.5 text-[var(--text-3)]">→</span>
+                        <span className="font-medium">{row.toStoreName}</span>
+                      </div>
+                      <div className="mt-1 text-xs text-[var(--text-3)]">
+                        {row.lines.map((line) => `${line.itemCode} · ${line.qty} ${line.uomSymbol}`).join(" · ")}
+                      </div>
+                    </div>
+                    <div className="flex flex-col items-end gap-2">
+                      <span className="text-xs text-[var(--text-3)]">{row.transferDate}</span>
+                      {row.status === "in_transit" && (
+                        <button type="button" className="rounded-lg px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50" style={{ background: "var(--brand-fill)" }} disabled={receiving === row.id} onClick={() => void receive(row)}>
+                          {receiving === row.id ? "Receiving…" : "Receive"}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </article>
+              ))}
+            </div>
+          )}
     </div>
   );
 }

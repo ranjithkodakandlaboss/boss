@@ -99,7 +99,7 @@ export default function NcrDetailPage() {
       <button
         type="button"
         onClick={() => navigate("/quality?tab=ncrs")}
-        className="inline-flex items-center gap-1 text-sm text-[var(--text-2)] hover:text-[var(--text-1)] mb-4"
+        className="inline-flex items-center gap-1 text-sm text-[var(--text-2)] hover:text-[var(--text)] mb-4"
       >
         <ArrowLeft size={15} /> Back to NCRs
       </button>
@@ -150,7 +150,7 @@ export default function NcrDetailPage() {
           <Field label="Inspection">
             <button
               type="button"
-              className="text-[var(--accent)] underline text-sm"
+              className="text-[var(--brand)] underline text-sm"
               onClick={() => ncr.inspectionId && navigate(`/quality/inspection/${ncr.inspectionId}`)}
             >
               {ncr.inspectionNumber}

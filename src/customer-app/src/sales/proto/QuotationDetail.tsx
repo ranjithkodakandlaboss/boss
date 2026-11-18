@@ -10,7 +10,7 @@ import RelatedRecordsPanel from './workflow/RelatedRecordsPanel';
 import RecordHistoryPanel from './workflow/RecordHistoryPanel';
 import { useReturnNavigation } from './useReturnNavigation';
 
-const fmt = (d: string) => d ? new Date(d).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : '—';
+const fmt = (d: string) => { if (!d) return '—'; const dt = new Date(d); return isNaN(dt.getTime()) ? '—' : dt.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }); };
 const fmtMoney = (n: number) => `₹${n.toLocaleString('en-IN')}`;
 
 export default function QuotationDetail() {
@@ -352,14 +352,16 @@ export default function QuotationDetail() {
         <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
           <div className="bg-[var(--surface)] rounded-2xl border p-6 max-w-sm w-full shadow-2xl" style={{ borderColor: 'var(--border)' }}>
             <h3 className="text-base font-bold text-[var(--text)] mb-2">
-              {confirming === 'convert' ? 'Convert to Customer PO?' : confirming === 'submit' ? 'Submit quotation to the customer?' : 'Mark Quotation Accepted?'}
+              {confirming === 'convert' ? 'Convert to Customer PO?' : confirming === 'submit' ? 'Submit Quotation to Customer?' : confirming === 'decline' ? 'Decline Quotation?' : 'Mark Quotation Accepted?'}
             </h3>
             <p className="text-sm text-[var(--text-2)] mb-5">
               {confirming === 'convert'
                 ? `A new Customer PO will be created for ${fmtMoney(quotation.totalValue)} against ${quotation.quotationNumber}. This cannot be undone.`
                 : confirming === 'submit'
                   ? `${quotation.quotationNumber} will be submitted to ${quotation.customerName}. This does not accept the quotation.`
-                  : `${quotation.quotationNumber} will be marked as accepted by ${quotation.customerName}.`}
+                  : confirming === 'decline'
+                    ? `${quotation.quotationNumber} will be declined. This action cannot be undone.`
+                    : `${quotation.quotationNumber} will be marked as accepted by ${quotation.customerName}.`}
             </p>
             {confirming === 'submit' && quotation.costing?.requiresApproval && (
               <div className="mb-5">
@@ -371,12 +373,12 @@ export default function QuotationDetail() {
             <div className="flex gap-3 justify-end">
               <button onClick={() => setConfirming(null)} className="px-4 py-2 rounded-lg text-sm border" style={{ borderColor: 'var(--border)', color: 'var(--text-2)' }}>Cancel</button>
               <button
-                onClick={confirming === 'convert' ? handleConvertToPO : confirming === 'submit' ? handleSubmit : handleAccept}
+                onClick={confirming === 'convert' ? handleConvertToPO : confirming === 'submit' ? handleSubmit : confirming === 'decline' ? () => { handleDecision('rejected'); setConfirming(null); } : handleAccept}
                 disabled={confirming === 'submit' && quotation.costing?.requiresApproval && !overrideReason.trim()}
                 className="px-4 py-2 rounded-lg text-sm font-semibold text-white"
-                style={{ background: confirming === 'convert' ? 'var(--brand)' : '#16a34a' }}
+                style={{ background: confirming === 'decline' ? 'var(--error, #DC2626)' : confirming === 'convert' ? 'var(--brand-fill)' : '#16a34a' }}
               >
-                {confirming === 'convert' ? 'Create PO' : confirming === 'submit' ? 'Submit' : 'Accept'}
+                {confirming === 'convert' ? 'Create PO' : confirming === 'submit' ? 'Submit' : confirming === 'decline' ? 'Decline' : 'Accept'}
               </button>
             </div>
           </div>

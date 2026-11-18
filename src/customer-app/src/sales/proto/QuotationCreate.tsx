@@ -23,7 +23,7 @@ interface QLine {
   productName: string;
   orderedQty: number;
   uom: string;
-  unitPrice: number;
+  unitPrice: number | undefined;
   requiredDate: string;
   gstRate?: number;
   labourHours: Record<string, number>;
@@ -39,7 +39,7 @@ function newLine(n: number, rfqLine?: any): QLine {
     productName: rfqLine?.description ?? rfqLine?.productName ?? rfqLine?.partName ?? '',
     orderedQty: rfqLine?.quantity ?? rfqLine?.qty ?? 1,
     uom: rfqLine?.uom ?? 'Nos',
-    unitPrice: rfqLine?.targetPrice ?? 0,
+    unitPrice: rfqLine?.targetPrice ?? undefined,
     requiredDate: rfqLine?.requiredBy ?? '',
     labourHours: {},
     machineHours: {},
@@ -93,7 +93,8 @@ export default function QuotationCreate() {
   const updateLine = (id: string, field: keyof QLine, value: any) =>
     setLines(ls => ls.map(l => l.id === id ? { ...l, [field]: value } : l));
 
-  const subtotal = lines.reduce((s, l) => s + l.orderedQty * l.unitPrice, 0);
+  const subtotal = lines.reduce((s, l) => s + l.orderedQty * (l.unitPrice ?? 0), 0);
+  const discountPct = subtotal > 0 ? ((discountAmount || 0) / subtotal) * 100 : 0;
   const taxable = Math.max(0, subtotal - (discountAmount || 0));
   const taxAmount = Math.round((taxable * (taxRatePct || 0)) / 100);
   const totalValue = Math.round(taxable + taxAmount);
@@ -249,6 +250,8 @@ export default function QuotationCreate() {
               </Field>
               <Field label="Discount (₹)">
                 <input type="number" min={0} value={discountAmount} onChange={e => setDiscountAmount(Number(e.target.value) || 0)} className="eoss-input font-mono" />
+                {discountPct > 100 && <p className="text-xs text-red-600 mt-1">Discount cannot exceed the subtotal (100%).</p>}
+                {discountPct > 30 && discountPct <= 100 && <p className="text-xs text-amber-600 mt-1">Discount is over 30% — please confirm.</p>}
               </Field>
               <Field label="Prepared By">
                 <input value={currentUser.name} disabled className="eoss-input opacity-60 cursor-not-allowed" />
@@ -347,10 +350,10 @@ export default function QuotationCreate() {
                     <input type="number" min={1} value={l.orderedQty} onChange={e => updateLine(l.id, 'orderedQty', parseInt(e.target.value) || 1)} className="eoss-input" />
                   </Field>
                   <Field label="Unit Price (₹)">
-                    <input type="number" min={0} value={l.unitPrice} onChange={e => updateLine(l.id, 'unitPrice', parseFloat(e.target.value) || 0)} className="eoss-input" />
+                    <input type="number" min={0} value={l.unitPrice ?? ''} onChange={e => updateLine(l.id, 'unitPrice', e.target.value === '' ? undefined : parseFloat(e.target.value) || 0)} className="eoss-input" />
                   </Field>
                   <Field label="Line Value">
-                    <input value={fmtMoney(l.orderedQty * l.unitPrice)} disabled className="eoss-input opacity-60 cursor-not-allowed font-mono" />
+                    <input value={l.unitPrice != null ? fmtMoney(l.orderedQty * l.unitPrice) : '—'} disabled className="eoss-input opacity-60 cursor-not-allowed font-mono" />
                   </Field>
                 </div>
                 {(costingConfig?.labourRates.length || costingConfig?.machineRates.length) ? (

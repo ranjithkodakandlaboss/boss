@@ -34,8 +34,8 @@ describe("inventory transfers", () => {
 
     render(<MemoryRouter><InventoryTransfers /></MemoryRouter>);
     expect(await screen.findByText("TRF-0001")).toBeInTheDocument();
-    expect(screen.getByText("in transit")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Receive" }));
+    expect(screen.getByText("In Transit")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Receive at destination" }));
 
     await waitFor(() => expect(api).toHaveBeenCalledWith(
       "/api/v1/inter-site-transfers/transfer-1/receive",
@@ -44,6 +44,6 @@ describe("inventory transfers", () => {
         headers: { "Idempotency-Key": "idempotency-key" },
       }),
     ));
-    expect(await screen.findByText("received")).toBeInTheDocument();
+    expect(await screen.findByText("Received")).toBeInTheDocument();
   });
 });
