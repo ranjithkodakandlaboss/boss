@@ -168,7 +168,9 @@ public class IdempotencyFilter extends OncePerRequestFilter {
             String existingHash = (String) existing.get("request_hash");
             String lockStatus = (String) existing.get("lock_status");
 
-            if (!requestHash.equals(existingHash)) {
+            if (existingHash == null || !MessageDigest.isEqual(
+                    requestHash.getBytes(StandardCharsets.UTF_8),
+                    existingHash.getBytes(StandardCharsets.UTF_8))) {
                 return ClaimResult.hashMismatch();
             }
             if ("locked".equals(lockStatus)) {
@@ -273,9 +275,19 @@ public class IdempotencyFilter extends OncePerRequestFilter {
 
     // ---- helpers ----
 
+    private static final int MAX_BODY_BYTES = 10 * 1024 * 1024; // 10 MB limit to prevent unbounded memory allocation
+
     private static byte[] readBodyBytes(HttpServletRequest request) throws IOException {
+        long contentLength = request.getContentLengthLong();
+        if (contentLength > MAX_BODY_BYTES) {
+            throw new IOException("Payload exceeds maximum allowed size of " + MAX_BODY_BYTES + " bytes");
+        }
         try (InputStream is = request.getInputStream()) {
-            return is.readAllBytes();
+            byte[] bytes = is.readNBytes(MAX_BODY_BYTES + 1);
+            if (bytes.length > MAX_BODY_BYTES) {
+                throw new IOException("Payload exceeds maximum allowed size of " + MAX_BODY_BYTES + " bytes");
+            }
+            return bytes;
         }
     }
 
@@ -295,8 +307,11 @@ public class IdempotencyFilter extends OncePerRequestFilter {
                                    String error, String message) throws IOException {
         response.setStatus(status);
         response.setContentType("application/json");
+        response.setCharacterEncoding(StandardCharsets.UTF_8.name());
+        String safeError = error.replace("\"", "\\\"");
+        String safeMessage = message.replace("\"", "\\\"");
         response.getWriter().write(
-                "{\"error\":\"" + error + "\",\"message\":\"" + message + "\"}");
+                "{\"error\":\"" + safeError + "\",\"message\":\"" + safeMessage + "\"}");
     }
 
     // ---- inner types ----

@@ -3,7 +3,6 @@ package in.boss.masterdata;
 import in.boss.masterdata.api.dto.CreateUomRequest;
 import in.boss.masterdata.api.dto.UomDto;
 import in.boss.masterdata.domain.DuplicateEntityException;
-import in.boss.masterdata.domain.EntityNotFoundException;
 import in.boss.masterdata.domain.UomService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;

@@ -7,7 +7,6 @@ import in.boss.masterdata.api.dto.PageResponse;
 import in.boss.masterdata.api.dto.UomDto;
 import in.boss.masterdata.api.dto.UpdateItemRequest;
 import in.boss.masterdata.domain.DuplicateEntityException;
-import in.boss.masterdata.domain.EntityNotFoundException;
 import in.boss.masterdata.domain.ItemService;
 import in.boss.masterdata.domain.UomService;
 import org.junit.jupiter.api.BeforeEach;

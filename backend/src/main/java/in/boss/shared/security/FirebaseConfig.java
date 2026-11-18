@@ -41,9 +41,10 @@ public class FirebaseConfig {
                 .setHttpTransport(new ApacheHttpTransport());
 
         if (StringUtils.hasText(credentialPath)) {
-            GoogleCredentials credentials = GoogleCredentials.fromStream(
-                    Files.newInputStream(Path.of(credentialPath)));
-            builder.setCredentials(credentials);
+            try (var is = Files.newInputStream(Path.of(credentialPath))) {
+                GoogleCredentials credentials = GoogleCredentials.fromStream(is);
+                builder.setCredentials(credentials);
+            }
         } else {
             try {
                 builder.setCredentials(GoogleCredentials.getApplicationDefault());

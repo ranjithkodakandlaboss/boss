@@ -15,6 +15,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
+import java.util.regex.Pattern;
 import org.springframework.transaction.annotation.Transactional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -30,6 +31,7 @@ import org.springframework.web.server.ResponseStatusException;
 public class TenantManagementService {
     public static final String NOT_REQUESTED = "NOT_REQUESTED";
     public static final String PENDING_ACTIVATION = "PENDING_ACTIVATION";
+    private static final Pattern SLUG_PATTERN = Pattern.compile("^[a-z0-9]+(-[a-z0-9]+)*$");
     public static final String CREATED = "CREATED";
     public static final String RETRY_REQUIRED = "RETRY_REQUIRED";
     private static final Logger log = LoggerFactory.getLogger(TenantManagementService.class);
@@ -72,10 +74,10 @@ public class TenantManagementService {
         }
 
         // Validate slug formatting: lowercase alphanumeric with single hyphens, 2-63 chars
-        if (!tenantSlug.matches("^[a-z0-9]+(?:-[a-z0-9]+)*$") || tenantSlug.length() < 2 || tenantSlug.length() > 63) {
+        if (!SLUG_PATTERN.matcher(tenantSlug).matches() || tenantSlug.length() < 2 || tenantSlug.length() > 63) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid tenant slug format: " + tenantSlug);
         }
-        if (!groupSlug.matches("^[a-z0-9]+(?:-[a-z0-9]+)*$") || groupSlug.length() < 2 || groupSlug.length() > 63) {
+        if (!SLUG_PATTERN.matcher(groupSlug).matches() || groupSlug.length() < 2 || groupSlug.length() > 63) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid customer group slug format: " + groupSlug);
         }
 

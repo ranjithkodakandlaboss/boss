@@ -10,7 +10,6 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneId;
@@ -109,7 +108,7 @@ public class ResendEmailSenderImpl implements ResendEmailSender {
         }
         if (apiKeyFilePath != null && !apiKeyFilePath.isBlank()) {
             try {
-                Path path = Paths.get(apiKeyFilePath);
+                Path path = Path.of(apiKeyFilePath).toAbsolutePath().normalize();
                 if (Files.exists(path)) {
                     String fileContent = Files.readString(path).trim();
                     if (!fileContent.isEmpty()) return fileContent;
@@ -137,9 +136,9 @@ public class ResendEmailSenderImpl implements ResendEmailSender {
             workspaceSection = """
                 <div style="background-color: #f1f5f9; border: 1px solid #e2e8f0; border-radius: 6px; padding: 12px 16px; margin: 16px 0;">
                   <span style="font-size: 12px; font-weight: 600; text-transform: uppercase; color: #64748b; letter-spacing: 0.5px; display: block; margin-bottom: 4px;">Customer Workspace URL</span>
-                  <a href="%s" style="color: #2563eb; text-decoration: none; font-weight: 600; font-size: 14px; word-break: break-all;">%s</a>
+                  <a href="{WORKSPACE_URL}" style="color: #2563eb; text-decoration: none; font-weight: 600; font-size: 14px; word-break: break-all;">{WORKSPACE_URL}</a>
                 </div>
-            """.formatted(workspaceUrl, workspaceUrl);
+            """.replace("{WORKSPACE_URL}", workspaceUrl);
         }
 
         return """
@@ -150,7 +149,7 @@ public class ResendEmailSenderImpl implements ResendEmailSender {
           <title>BOSS Workspace Invitation</title>
         </head>
         <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f8fafc; margin: 0; padding: 40px 16px; color: #0f172a;">
-          <table align="center" width="100%%" style="max-width: 580px; background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.06); border-spacing: 0;">
+          <table align="center" width="100%" style="max-width: 580px; background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.06); border-spacing: 0;">
             <tr>
               <td style="background-color: #0f172a; padding: 24px 32px; text-align: left;">
                 <span style="display: inline-block; background-color: #2563eb; color: #ffffff; font-weight: 800; font-size: 18px; width: 36px; height: 36px; line-height: 36px; text-align: center; border-radius: 6px; margin-right: 12px; vertical-align: middle;">B</span>
@@ -162,23 +161,23 @@ public class ResendEmailSenderImpl implements ResendEmailSender {
               <td style="padding: 36px 32px;">
                 <h2 style="margin: 0 0 16px 0; color: #0f172a; font-size: 20px; font-weight: 600;">Welcome to BOSS</h2>
                 <p style="margin: 0 0 16px 0; line-height: 1.6; color: #334155; font-size: 15px;">
-                  You have been invited as the initial <strong>Administrator</strong> for <strong>%s</strong>.
+                  You have been invited as the initial <strong>Administrator</strong> for <strong>{TENANT_NAME}</strong>.
                 </p>
-                %s
+                {WORKSPACE_SECTION}
                 <p style="margin: 0 0 28px 0; line-height: 1.6; color: #334155; font-size: 15px;">
                   To complete your organization setup and access your workspace, please activate your account and set your password.
                 </p>
                 <div style="text-align: center; margin: 32px 0;">
-                  <a href="%s" style="background-color: #2563eb; color: #ffffff; text-decoration: none; padding: 12px 28px; border-radius: 6px; font-weight: 600; font-size: 15px; display: inline-block;">Activate Your Account</a>
+                  <a href="{ACTIVATION_LINK}" style="background-color: #2563eb; color: #ffffff; text-decoration: none; padding: 12px 28px; border-radius: 6px; font-weight: 600; font-size: 15px; display: inline-block;">Activate Your Account</a>
                 </div>
                 <p style="margin: 0 0 8px 0; font-size: 13px; color: #64748b;">
                   If the button above does not work, copy and paste this secure link into your browser:
                 </p>
                 <p style="margin: 0 0 28px 0; font-size: 13px; color: #2563eb; word-break: break-all;">
-                  %s
+                  {ACTIVATION_LINK}
                 </p>
                 <p style="margin: 0; font-size: 12px; color: #94a3b8; border-top: 1px solid #f1f5f9; padding-top: 16px;">
-                  This invitation link is valid until %s. If you did not expect this invitation, you can ignore this email.
+                  This invitation link is valid until {FORMATTED_EXPIRY}. If you did not expect this invitation, you can ignore this email.
                 </p>
               </td>
             </tr>
@@ -190,6 +189,10 @@ public class ResendEmailSenderImpl implements ResendEmailSender {
           </table>
         </body>
         </html>
-        """.formatted(tenantName, workspaceSection, activationLink, activationLink, formattedExpiry);
+        """
+                .replace("{TENANT_NAME}", tenantName)
+                .replace("{WORKSPACE_SECTION}", workspaceSection)
+                .replace("{ACTIVATION_LINK}", activationLink)
+                .replace("{FORMATTED_EXPIRY}", formattedExpiry);
     }
 }

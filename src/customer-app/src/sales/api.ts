@@ -246,7 +246,7 @@ export const salesApi = {
     anchor.download = named?.[1] || `quotation-${id}.pdf`;
     anchor.click();
     window.open(url, "_blank", "noopener");
-    URL.revokeObjectURL(url);
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
   },
   cpos: (q = "", customerId = "") => api<Page<Cpo>>(`/api/v1/cpos?size=100${q ? `&q=${encodeURIComponent(q)}` : ""}${customerId ? `&customerId=${customerId}` : ""}`).then(rows),
   cpo: (id: string) => api<Cpo>(`/api/v1/cpos/${id}`),

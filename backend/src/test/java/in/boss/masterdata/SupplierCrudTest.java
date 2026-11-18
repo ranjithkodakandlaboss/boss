@@ -2,7 +2,6 @@ package in.boss.masterdata;
 
 import in.boss.masterdata.api.dto.ContactDto;
 import in.boss.masterdata.api.dto.CreateSupplierRequest;
-import in.boss.masterdata.api.dto.PageResponse;
 import in.boss.masterdata.api.dto.SupplierDto;
 import in.boss.masterdata.api.dto.UpdateSupplierRequest;
 import in.boss.masterdata.domain.DuplicateEntityException;

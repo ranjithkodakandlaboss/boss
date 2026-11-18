@@ -38,6 +38,10 @@ public class ConfigService {
         var ctx = BossContextHolder.get();
         if (ctx == null) throw new IllegalStateException("BossContext required");
 
+        if (!categoryExists(categoryCode)) {
+            return List.of();
+        }
+
         return cache
                 .computeIfAbsent(ctx.tenantId(), t -> new ConcurrentHashMap<>())
                 .computeIfAbsent(categoryCode, c -> loadOptions(ctx.tenantId(), c));
@@ -149,12 +153,22 @@ public class ConfigService {
                 tenantId, categoryCode);
     }
 
+    private boolean categoryExists(String categoryCode) {
+        if ("ITEM_CATEGORY".equalsIgnoreCase(categoryCode)) return true;
+        Integer count = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM config_categories WHERE code = ?",
+                Integer.class, categoryCode);
+        return count != null && count > 0;
+    }
+
     private UUID resolveCategoryId(String categoryCode) {
-        return UUID.fromString(Objects.requireNonNull(
-                jdbc.queryForObject(
-                        "SELECT id::text FROM config_categories WHERE code = ?",
-                        String.class, categoryCode),
-                "Config category not found: " + categoryCode));
+        List<String> ids = jdbc.query(
+                "SELECT id::text FROM config_categories WHERE code = ?",
+                (rs, i) -> rs.getString(1), categoryCode);
+        if (ids.isEmpty()) {
+            throw new IllegalArgumentException("Config category not found: " + categoryCode);
+        }
+        return UUID.fromString(ids.get(0));
     }
 
     private void evict(UUID tenantId, String categoryCode) {

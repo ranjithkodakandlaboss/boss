@@ -7,13 +7,13 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.core.RowMapper;
 
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
@@ -118,5 +118,30 @@ class OutboxRelayPublishTest {
         relay.relay();
 
         verify(pubSubTemplate).publish("PURCHASE_ORDER.APPROVED", "{}");
+    }
+
+    @Test
+    void relay_onInterruptedException_restoresThreadInterruptFlag() {
+        UUID rowId = UUID.randomUUID();
+        Map<String, Object> row = Map.of(
+                "id", rowId,
+                "aggregate_type", "ORDER",
+                "event_type", "CREATED",
+                "payload", "{}");
+
+        when(jdbc.queryForList(anyString(), any(Object[].class)))
+                .thenReturn(List.of(row));
+        CompletableFuture<String> future = new CompletableFuture<>() {
+            @Override
+            public String get() throws InterruptedException {
+                throw new InterruptedException("Thread interrupted");
+            }
+        };
+        when(pubSubTemplate.publish(anyString(), anyString())).thenReturn(future);
+
+        relay.relay();
+
+        assertThat(Thread.currentThread().isInterrupted()).isTrue();
+        Thread.interrupted(); // Clear interrupt flag
     }
 }

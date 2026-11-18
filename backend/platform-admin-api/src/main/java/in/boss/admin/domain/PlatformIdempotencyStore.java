@@ -100,7 +100,10 @@ public class PlatformIdempotencyStore {
         }
 
         Map<String, Object> existing = rows.getFirst();
-        if (!requestHash.equals(existing.get("request_hash"))) {
+        String existingHash = (String) existing.get("request_hash");
+        if (existingHash == null || !MessageDigest.isEqual(
+                requestHash.getBytes(StandardCharsets.UTF_8),
+                existingHash.getBytes(StandardCharsets.UTF_8))) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "IDEMPOTENCY_KEY_REUSE");
         }
         if (!"complete".equals(existing.get("lock_status"))) {
