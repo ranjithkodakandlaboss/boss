@@ -102,6 +102,20 @@ public class InventoryReservationRepository {
         return rows.stream().findFirst();
     }
 
+    public List<CustomerPoLine> customerPoLines(UUID tenantId, UUID cpoId) {
+        return jdbc.query("""
+                SELECT cpo_id, item_id, quantity, delivered_qty, uom_id
+                  FROM cpo_lines
+                 WHERE tenant_id = ? AND cpo_id = ?
+                 ORDER BY line_no
+                """, (rs, rowNum) -> new CustomerPoLine(
+                rs.getObject("cpo_id", UUID.class),
+                rs.getObject("item_id", UUID.class),
+                rs.getBigDecimal("quantity"),
+                rs.getBigDecimal("delivered_qty"),
+                rs.getObject("uom_id", UUID.class)), tenantId, cpoId);
+    }
+
     public BigDecimal activeCustomerPoReservedQty(UUID tenantId, UUID cpoLineId) {
         BigDecimal quantity = jdbc.queryForObject("""
                 SELECT COALESCE(SUM(reserved_qty), 0)
