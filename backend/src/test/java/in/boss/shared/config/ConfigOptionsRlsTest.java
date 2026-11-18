@@ -187,20 +187,26 @@ class ConfigOptionsRlsTest {
     }
 
     @Test
-    void tenantCannotDeactivateSystemControlledOption() {
+    void tenantCanDeactivateAndReactivateSystemOptionWithoutChangingItsDefinition() {
         setTenant(tenantA);
         industryTemplateService.seedTenantDefaults(tenantA, "FABRICATION_STEEL");
         ConfigOptionDto protectedOption = configService.getOptions("PRODUCTION_STAGES").get(0);
 
         assertThat(protectedOption.isSystem()).isTrue();
-        assertThatThrownBy(() -> configService.setOptionActive(
-                "PRODUCTION_STAGES", protectedOption.id(), false))
-                .isInstanceOf(org.springframework.web.server.ResponseStatusException.class)
-                .hasMessageContaining("System-controlled options");
+        configService.setOptionActive("PRODUCTION_STAGES", protectedOption.id(), false);
+        ConfigOptionDto deactivated = configService.getOptions("PRODUCTION_STAGES", true).stream()
+                .filter(option -> option.id().equals(protectedOption.id())).findFirst().orElseThrow();
+        assertThat(deactivated.isActive()).isFalse();
+        assertThat(deactivated.isSystem()).isTrue();
+        assertThat(deactivated.label()).isEqualTo(protectedOption.label());
+
+        configService.setOptionActive("PRODUCTION_STAGES", protectedOption.id(), true);
+        assertThat(configService.getOptions("PRODUCTION_STAGES").stream()
+                .filter(option -> option.id().equals(protectedOption.id())).findFirst().orElseThrow().isActive()).isTrue();
     }
 
     @Test
-    void referencedItemCategoryCannotBeRenamedOrDeactivated() {
+    void referencedItemCategoryCanBeDeactivatedButCannotBeRenamed() {
         setTenant(tenantB);
         ConfigOptionDto category = configService.createOption("ITEM_CATEGORY", "USED_CATEGORY", "Used Category", 10);
         UUID uomId = UUID.fromString(jdbc.queryForObject(
@@ -215,8 +221,12 @@ class ConfigOptionsRlsTest {
         assertThatThrownBy(() -> configService.updateOption("ITEM_CATEGORY", category.id(), "Renamed"))
                 .isInstanceOf(org.springframework.web.server.ResponseStatusException.class)
                 .hasMessageContaining("referenced by business records");
-        assertThatThrownBy(() -> configService.setOptionActive("ITEM_CATEGORY", category.id(), false))
-                .isInstanceOf(org.springframework.web.server.ResponseStatusException.class)
-                .hasMessageContaining("referenced by business records");
+        configService.setOptionActive("ITEM_CATEGORY", category.id(), false);
+        ConfigOptionDto deactivated = configService.getOptions("ITEM_CATEGORY", true).stream()
+                .filter(option -> option.id().equals(category.id())).findFirst().orElseThrow();
+        assertThat(deactivated.isActive()).isFalse();
+        assertThat(deactivated.label()).isEqualTo("Used Category");
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM items WHERE tenant_id = ? AND category_id = ?",
+                Integer.class, tenantB, category.id())).isEqualTo(1);
     }
 }

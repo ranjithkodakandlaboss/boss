@@ -185,22 +185,12 @@ public class ConfigService {
         requireTenantEditable(categoryCode);
         ConfigOptionDto existing = findOption(ctx.tenantId(), categoryCode, optionId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Configuration option not found"));
-        if (existing.isSystem()) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "System-controlled options cannot be changed");
-        }
-        List<String> dependencies = active ? List.of() : findReferences(
-                "ITEM_CATEGORY".equalsIgnoreCase(categoryCode) ? "item_categories" : "tenant_config_options",
-                optionId, ctx.tenantId());
-        if (!dependencies.isEmpty()) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT,
-                    "This option is referenced by business records and cannot be deactivated: " + String.join(", ", dependencies));
-        }
         if ("ITEM_CATEGORY".equalsIgnoreCase(categoryCode)) {
-            jdbc.update("UPDATE item_categories SET is_active = ? WHERE id = ? AND tenant_id = ? AND is_system = FALSE",
+            jdbc.update("UPDATE item_categories SET is_active = ? WHERE id = ? AND tenant_id = ?",
                     active, optionId, ctx.tenantId());
         } else {
             jdbc.update("UPDATE tenant_config_options SET is_active = ?, updated_at = NOW() "
-                            + "WHERE id = ? AND tenant_id = ? AND is_system = FALSE",
+                            + "WHERE id = ? AND tenant_id = ?",
                     active, optionId, ctx.tenantId());
         }
         evict(ctx.tenantId(), categoryCode);

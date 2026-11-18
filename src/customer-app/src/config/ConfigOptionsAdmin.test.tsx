@@ -50,6 +50,14 @@ describe("configuration options admin", () => {
     renderPage();
     expect(await screen.findByText("Bank transfer")).toBeInTheDocument();
     expect(screen.getByText("Protected")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Edit Cash" })).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Deactivate Cash" }));
+    const systemDialog = screen.getByRole("dialog");
+    await userEvent.click(within(systemDialog).getByRole("button", { name: "Deactivate value" }));
+    await waitFor(() => {
+      expect(vi.mocked(fetch).mock.calls.some(([input, init]) => String(input).includes("/system-cash/status") && init?.method === "PATCH")).toBe(true);
+    });
 
     await userEvent.click(screen.getByRole("button", { name: "Edit Bank transfer" }));
     const labelInput = screen.getByRole("textbox", { name: "Display value" });

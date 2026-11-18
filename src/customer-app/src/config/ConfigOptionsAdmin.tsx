@@ -114,7 +114,7 @@ export default function ConfigOptionsAdmin() {
   }
 
   async function changeActive(option: ConfigOption) {
-    if (!category || !canManage || option.isSystem) return;
+    if (!category || !canManage || !category.tenantEditable) return;
     const action = option.isActive ? "deactivate" : "reactivate";
     if (option.isActive) {
       setConfirmOption(option);
@@ -173,7 +173,7 @@ export default function ConfigOptionsAdmin() {
       <div>
         <h2 className="text-sm font-bold text-[var(--text)]">Master Data &amp; Business Configuration</h2>
         <p className="mt-1 text-sm text-[var(--text-2)]">
-          Manage tenant-specific reference values used by operational workflows. Protected system values remain read-only.
+          Manage tenant reference values used by operational workflows. System-managed codes and labels stay protected; admins can deactivate values for new selections.
         </p>
         <div className="mt-3 flex flex-wrap gap-2">
           <Link className="btn-ghost inline-flex items-center rounded-lg px-3 py-2 text-sm" to="/products">Product &amp; Material Master</Link>
@@ -225,15 +225,16 @@ export default function ConfigOptionsAdmin() {
                     <td className="px-4 py-3">{option.label}</td>
                     <td className="px-4 py-3">{option.isActive ? "Active" : "Inactive"}{option.isSystem && <span className="ml-2 inline-flex items-center gap-1 text-xs text-[var(--text-2)]"><LockKeyhole size={12} /> System</span>}</td>
                     <td className="px-4 py-2">
-                      {canManage && category.tenantEditable && !option.isSystem ? (
+                      {canManage && category.tenantEditable ? (
                         <div className="flex items-center gap-1">
-                          {category.supportsOrdering && option.isActive && (
+                          {option.isSystem && <span className="mr-1 text-xs text-[var(--text-2)]">Protected</span>}
+                          {!option.isSystem && category.supportsOrdering && option.isActive && (
                             <>
                               <button type="button" disabled={saving} className="btn-ghost rounded p-2" aria-label={`Move ${option.label} up`} onClick={() => void move(option, -1)}><ArrowUp size={14} /></button>
                               <button type="button" disabled={saving} className="btn-ghost rounded p-2" aria-label={`Move ${option.label} down`} onClick={() => void move(option, 1)}><ArrowDown size={14} /></button>
                             </>
                           )}
-                          {option.isActive && <button type="button" disabled={saving} className="btn-ghost rounded p-2" aria-label={`Edit ${option.label}`} onClick={() => beginEdit(option)}><Pencil size={14} /></button>}
+                          {!option.isSystem && option.isActive && <button type="button" disabled={saving} className="btn-ghost rounded p-2" aria-label={`Edit ${option.label}`} onClick={() => beginEdit(option)}><Pencil size={14} /></button>}
                           <button type="button" disabled={saving} className="btn-ghost rounded p-2" aria-label={`${option.isActive ? "Deactivate" : "Reactivate"} ${option.label}`} onClick={() => void changeActive(option)}>
                             {option.isActive ? <LockKeyhole size={14} /> : <RotateCcw size={14} />}
                           </button>
@@ -274,7 +275,7 @@ export default function ConfigOptionsAdmin() {
           <ConfirmDialog
             open={confirmOption !== null}
             title="Deactivate configuration value?"
-            body={confirmOption ? `Deactivate “${confirmOption.label}”? Existing records will remain unchanged. The value cannot be deactivated while business records still reference it.` : ""}
+            body={confirmOption ? `Deactivate “${confirmOption.label}”? Existing records will remain unchanged, but the value will no longer be available for new selections.` : ""}
             confirmLabel="Deactivate value"
             onConfirm={() => void confirmDeactivate()}
             onCancel={() => setConfirmOption(null)}
