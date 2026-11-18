@@ -5,7 +5,6 @@ import in.boss.inventory.api.InventoryApiDtos.CreateLotRequest;
 import in.boss.inventory.api.InventoryApiDtos.CustomerPoReservationRequest;
 import in.boss.inventory.api.InventoryApiDtos.CustomerPoReservationResponse;
 import in.boss.inventory.api.InventoryApiDtos.InventoryPage;
-import in.boss.inventory.api.InventoryApiDtos.JobLotReservationResponse;
 import in.boss.inventory.api.InventoryApiDtos.JobReservationResponse;
 import in.boss.inventory.api.InventoryApiDtos.InventoryPositionResponse;
 import in.boss.inventory.api.InventoryApiDtos.IssueMaterialRequest;
@@ -60,6 +59,4 @@ public interface InventoryService {
             UUID lotId, LocalDate from, LocalDate to, int page, int size);
 
     List<JobReservationResponse> listActiveJobReservations();
-
-    List<JobLotReservationResponse> listJobLotReservations(UUID jobId);
 }

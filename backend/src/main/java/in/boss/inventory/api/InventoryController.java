@@ -17,6 +17,7 @@ import in.boss.inventory.api.InventoryApiDtos.ReorderPolicyResponse;
 import in.boss.inventory.api.InventoryApiDtos.ReplenishmentRequestResponse;
 import in.boss.inventory.api.InventoryApiDtos.ReturnMaterialRequest;
 import in.boss.inventory.api.InventoryApiDtos.StockMovementResponse;
+import in.boss.inventory.domain.InventoryLotReservationQuery;
 import in.boss.inventory.domain.InventoryService;
 import in.boss.inventory.domain.InventoryFeatureFlags;
 import in.boss.inventory.domain.InventoryReplenishmentService;
@@ -47,14 +48,17 @@ import java.util.UUID;
 public class InventoryController {
 
     private final InventoryService inventoryService;
+    private final InventoryLotReservationQuery lotReservationQuery;
     private final InventoryFeatureFlags featureFlags;
     private final InventoryReplenishmentService replenishmentService;
 
     public InventoryController(
             InventoryService inventoryService,
+            InventoryLotReservationQuery lotReservationQuery,
             InventoryFeatureFlags featureFlags,
             InventoryReplenishmentService replenishmentService) {
         this.inventoryService = inventoryService;
+        this.lotReservationQuery = lotReservationQuery;
         this.featureFlags = featureFlags;
         this.replenishmentService = replenishmentService;
     }
@@ -116,7 +120,7 @@ public class InventoryController {
     @GetMapping("/reservations/lots")
     @PreAuthorize(BossPermissions.INVENTORY_READ + " or " + BossPermissions.PRODUCTION_VIEW)
     public List<JobLotReservationResponse> listJobLotReservations(@RequestParam UUID jobId) {
-        return inventoryService.listJobLotReservations(jobId);
+        return lotReservationQuery.listJobLotReservations(jobId);
     }
 
     @GetMapping("/reservations")
