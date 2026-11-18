@@ -4,7 +4,7 @@ import { ArrowRightLeft, Pencil, Plus, ShieldAlert } from "lucide-react";
 import ErrorState from "../components/shared/ErrorState";
 import LoadingState from "../components/shared/LoadingState";
 import RecordTable, { type RecordColumn } from "../components/shared/RecordTable";
-import { loadLots, loadPositions, loadStores, quantity, type Lot, type Position, type Store } from "./api";
+import { loadLots, loadPositions, loadStores, quantity, type Position, type Store } from "./api";
 import StockNav from "./stockNav";
 
 type StockRow = Position & { id: string; qcHoldQty: number; lotCount: number; status: string };

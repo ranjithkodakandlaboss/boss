@@ -86,7 +86,8 @@ export default function StockTransferPage() {
 
   useEffect(() => {
     if (!lots.length && !loadingLots && stores.length > 0 && lotId === "") {
-      const firstStoreId = stores[0]?.id ?? "";
+      const namedSource = stores.find((store) => store.name === requestedFrom);
+      const firstStoreId = namedSource?.id ?? stores[0]?.id ?? "";
       if (!firstStoreId) return;
       let active = true;
       setLots([]);
