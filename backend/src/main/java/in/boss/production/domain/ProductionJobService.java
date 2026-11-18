@@ -1,5 +1,6 @@
 package in.boss.production.domain;
 
+import in.boss.inventory.domain.InventoryService;
 import in.boss.masterdata.domain.BomExplosionService;
 import in.boss.production.api.ProductionApiDtos.CreateJobRequest;
 import in.boss.production.api.ProductionApiDtos.ProductionJobResponse;
@@ -33,10 +34,12 @@ public class ProductionJobService {
     private final BomExplosionService explosion;
     private final AuditService audit;
     private final OutboxPublisher outbox;
+    private final InventoryService inventory;
 
     public ProductionJobService(JdbcTemplate jdbc, ProductionSupport support, ProductionFeatureFlags flags,
                                 ProductionMetrics metrics, ProductionQueryService query,
-                                BomExplosionService explosion, AuditService audit, OutboxPublisher outbox) {
+                                BomExplosionService explosion, AuditService audit, OutboxPublisher outbox,
+                                InventoryService inventory) {
         this.jdbc = jdbc;
         this.support = support;
         this.flags = flags;
@@ -45,6 +48,7 @@ public class ProductionJobService {
         this.explosion = explosion;
         this.audit = audit;
         this.outbox = outbox;
+        this.inventory = inventory;
     }
 
     @PreAuthorize(PRODUCTION_WRITE)
@@ -271,6 +275,7 @@ public class ProductionJobService {
                     WHERE tenant_id = ? AND id = ?
                     """, target, reason.trim(), context.tenantId(), jobId);
         } else if (JobStatusMachine.CANCELLED.equals(target)) {
+            inventory.releaseJobReservations(jobId);
             jdbc.update("""
                     UPDATE production_jobs SET status = ?, cancel_reason = ?, updated_at = NOW()
                     WHERE tenant_id = ? AND id = ?

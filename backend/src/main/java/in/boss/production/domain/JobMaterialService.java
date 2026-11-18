@@ -2,6 +2,8 @@ package in.boss.production.domain;
 
 import in.boss.inventory.api.InventoryApiDtos.AddMovementRequest;
 import in.boss.inventory.api.InventoryApiDtos.MaterialLotResponse;
+import in.boss.inventory.api.InventoryApiDtos.ReservationRequest;
+import in.boss.inventory.api.InventoryApiDtos.ReservationRequirement;
 import in.boss.inventory.domain.InventoryService;
 import in.boss.inventory.domain.InventoryValidationException;
 import in.boss.inventory.domain.InvalidLotTransitionException;
@@ -18,6 +20,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.util.List;
 import java.util.UUID;
 
 import static in.boss.shared.security.BossPermissions.PRODUCTION_WRITE;
@@ -92,10 +95,12 @@ public class JobMaterialService {
             throw ProductionSupport.badRequest("Issue quantity exceeds the remaining requirement");
         }
         MaterialLotResponse lot = usableLot(request.lotId(), requirement.itemId(), job.siteId(), jobId, qty);
+        ensureIssueReservation(jobId, lot, qty);
         UUID issueId = UUID.randomUUID();
         inventoryCall[0] = true;
-        var movement = inventory.addMovement(lot.id(), new AddMovementRequest(
-                "issue", qty, "production_job", issueId, request.note()));
+        var movement = inventory.issueReservedMaterial(
+                new in.boss.inventory.api.InventoryApiDtos.IssueMaterialRequest(
+                        jobId, lot.id(), qty, request.note()));
         insertMovement(context, jobId, requirement.id(), null, lot, issueId, "issue", qty,
                 request.note(), movement.id(), lot.unitCost());
         jdbc.update("""
@@ -140,6 +145,51 @@ public class JobMaterialService {
                 "{\"returnId\":\"" + returnId + "\"}");
         return new MaterialMovementResponse(returnId, movement.id(), source.requirementId(), source.id(),
                 lot.id(), "return", qty, source.unitCost(), java.time.Instant.now());
+    }
+
+    private void ensureIssueReservation(UUID jobId, MaterialLotResponse lot, BigDecimal qty) {
+        BigDecimal reserved = reservedForJobLot(jobId, lot.id());
+        if (reserved.compareTo(qty) >= 0) {
+            return;
+        }
+        if (hasActiveJobReservation(jobId)) {
+            return;
+        }
+        BigDecimal needed = qty.subtract(reserved);
+        var reservation = inventory.reserveForJob(new ReservationRequest(jobId, List.of(
+                new ReservationRequirement(lot.itemId(), lot.storeId(), needed))), false);
+        if (!"FULLY_RESERVED".equals(reservation.status()) || !coversLot(reservation, lot.id(), needed)) {
+            throw ProductionSupport.badRequest("Usable available stock is not sufficient");
+        }
+    }
+
+    private boolean hasActiveJobReservation(UUID jobId) {
+        BossContext context = support.requireContext();
+        Integer count = jdbc.queryForObject("""
+                SELECT COUNT(*) FROM stock_reservation_records
+                WHERE tenant_id = ? AND reference_type = 'production_job'
+                  AND reference_id = ? AND status = 'active'
+                """, Integer.class, context.tenantId(), jobId);
+        return count != null && count > 0;
+    }
+
+    private BigDecimal reservedForJobLot(UUID jobId, UUID lotId) {
+        BossContext context = support.requireContext();
+        return sum("""
+                SELECT COALESCE(SUM(reserved_qty), 0) FROM stock_reservation_records
+                WHERE tenant_id = ? AND lot_id = ? AND status = 'active'
+                  AND reference_type = 'production_job' AND reference_id = ?
+                """, context.tenantId(), lotId, jobId);
+    }
+
+    private static boolean coversLot(
+            in.boss.inventory.api.InventoryApiDtos.ReservationResponse reserved, UUID lotId, BigDecimal qty) {
+        BigDecimal allocated = reserved.lines().stream()
+                .flatMap(line -> line.allocations().stream())
+                .filter(allocation -> lotId.equals(allocation.lotId()))
+                .map(in.boss.inventory.api.InventoryApiDtos.ReservationAllocation::qty)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        return allocated.compareTo(qty) >= 0;
     }
 
     private MaterialLotResponse usableLot(UUID lotId, UUID itemId, UUID siteId, UUID jobId, BigDecimal qty) {

@@ -1,6 +1,8 @@
 package in.boss.production;
 
 import in.boss.inventory.api.InventoryApiDtos.CreateLotRequest;
+import in.boss.inventory.api.InventoryApiDtos.ReservationRequest;
+import in.boss.inventory.api.InventoryApiDtos.ReservationRequirement;
 import in.boss.inventory.domain.InventoryService;
 import in.boss.masterdata.BaseMasterDataIntegrationTest;
 import in.boss.production.api.ProductionApiDtos.AddCostRequest;
@@ -415,6 +417,39 @@ class ProductionLifecycleIntegrationTest extends BaseMasterDataIntegrationTest {
                 .isInstanceOf(ResponseStatusException.class)
                 .extracting(error -> ((ResponseStatusException) error).getStatusCode())
                 .isEqualTo(HttpStatus.FORBIDDEN);
+    }
+
+    @Test
+    void issueWritesOneReservedMovementAndCancelReleasesTheRemainder() {
+        ProductionJobResponse job = jobs.create(new CreateJobRequest(cpoId, lineId, routingId, null, null, null));
+        var issued = materials.issue(job.id(), new IssueMaterialRequest(
+                job.materials().get(0).id(), lotId, new BigDecimal("10"), "kit"));
+        assertThat(issued.movementId()).isNotNull();
+        assertThat(jdbc.queryForObject("""
+                SELECT COUNT(*) FROM stock_movements
+                WHERE tenant_id = ? AND reference_type = 'JOB' AND reference_id = ?
+                  AND movement_type = 'issue'
+                """, Integer.class, tenantId, job.id())).isEqualTo(1);
+        assertThat(jdbc.queryForObject("""
+                SELECT COUNT(*) FROM job_material_issues
+                WHERE tenant_id = ? AND job_id = ? AND issue_type = 'issue'
+                """, Integer.class, tenantId, job.id())).isEqualTo(1);
+        assertThat(inventory.getLot(lotId).qty()).isEqualByComparingTo("10.000");
+
+        inventory.reserveForJob(new ReservationRequest(job.id(), List.of(
+                new ReservationRequirement(materialItemId, inventory.getLot(lotId).storeId(),
+                        new BigDecimal("5")))), false);
+        assertThat(jobs.cancel(job.id(), new ReasonRequest("customer stopped the order")).status())
+                .isEqualTo("cancelled");
+        assertThat(inventory.getLot(lotId).qty()).isEqualByComparingTo("10.000");
+        assertThat(inventory.getLot(lotId).reservedQty()).isEqualByComparingTo("0");
+        assertThat(jdbc.queryForObject("""
+                SELECT COUNT(*) FROM stock_reservation_records
+                WHERE tenant_id = ? AND reference_id = ? AND status = 'active'
+                """, Integer.class, tenantId, job.id())).isZero();
+        assertThat(jdbc.queryForObject("""
+                SELECT COUNT(*) FROM job_material_issues WHERE tenant_id = ? AND job_id = ?
+                """, Integer.class, tenantId, job.id())).isEqualTo(1);
     }
 
     @Test

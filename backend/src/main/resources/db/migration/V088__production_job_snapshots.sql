@@ -1,4 +1,4 @@
--- V087: Production traceability snapshots.
+-- V088: Production traceability snapshots.
 -- Additive only. Existing production rows keep their current columns and statuses.
 ALTER TABLE production_jobs
   ADD COLUMN cpo_id UUID REFERENCES cpos(id),

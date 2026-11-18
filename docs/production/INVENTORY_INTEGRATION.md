@@ -1,14 +1,13 @@
 # Production and Inventory
 
-Production does not keep its own stock quantity, lot, reservation or movement ledger. Material issue and return call `InventoryService.addMovement`.
+Production does not keep its own stock quantity, lot, reservation or movement ledger.
 
-- Issue writes an outbound `issue` movement. Return writes an inbound `return` movement.
-- The movement `referenceType` is `production_job` and `referenceId` is the `job_material_issues` row.
+- A material issue reserves the requested quantity for the job when that lot does not already have an active reservation, then calls `InventoryService.issueReservedMaterial()`. That writes one outbound `issue` movement with `referenceType` `JOB` and `referenceId` of the job. It does not insert `job_material_issues`. Production inserts that row once, with the movement id, requirement, and source traceability.
+- A material return keeps Production's quantity check against the source issue and calls `InventoryService.addMovement()` once. The return movement uses `referenceType` `production_job` and `referenceId` of the production return row. Production does not call `InventoryService.returnMaterial()`, which would insert a second return row.
+- Cancelling a job calls `InventoryService.releaseJobReservations(jobId)` so any active reservation that was not issued is released.
 - The lot must match the requirement item and the job site. Issue accepts `available` and `reserved` lots. Return rejects `disposed` and `quarantine` lots. A `consumed` lot can receive a return and becomes available again.
-- Usable quantity is the lot quantity minus active `stock_reservation_records` for other references and any unattributed `material_lots.reserved_qty`. Production reads those rows. It does not insert reservations. The Inventory service on this baseline also does not write `reserved_qty`.
-- The issue, the movement and the requirement quantity update run in one transaction. A failed Inventory call rolls the issue row back.
+- Usable quantity is the lot quantity minus active reservations for other references and any unattributed `material_lots.reserved_qty`.
+- The reservation, movement, production issue row, and requirement quantity update run in one transaction. A failed Inventory call rolls the issue row back.
 - The same idempotency key replays the first HTTP response and does not post a second movement.
 
-`POST /api/v1/inventory/issues` and `POST /api/v1/inventory/returns` from the inventory contract are not on `main`. Production therefore calls the existing service method and exposes job issue and return under `/api/v1/jobs/{jobId}/materials`. Those endpoints are the production record of the issue. They are not a second stock ledger.
-
-When Inventory changes those contracts on `main`, this branch has to be rebased and the call adapted to the merged API. This pull request must not merge before that Inventory change.
+Production exposes issue and return under `/api/v1/jobs/{jobId}/materials`. Those rows are the production record. They are not a second stock ledger.
