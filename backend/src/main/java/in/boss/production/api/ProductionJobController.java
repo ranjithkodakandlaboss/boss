@@ -6,6 +6,7 @@ import in.boss.production.api.ProductionApiDtos.ConcessionRequest;
 import in.boss.production.api.ProductionApiDtos.CostEntryResponse;
 import in.boss.production.api.ProductionApiDtos.CostingResponse;
 import in.boss.production.api.ProductionApiDtos.CreateJobRequest;
+import in.boss.production.api.ProductionApiDtos.CreateRoutingTemplateRequest;
 import in.boss.production.api.ProductionApiDtos.EligibleCpoLine;
 import in.boss.production.api.ProductionApiDtos.InspectionResultRequest;
 import in.boss.production.api.ProductionApiDtos.IssueMaterialRequest;
@@ -79,6 +80,13 @@ public class ProductionJobController {
     @GetMapping("/routing-templates")
     public List<RoutingTemplateOption> routingTemplates(@RequestParam(required = false) UUID itemId) {
         return query.routingTemplates(itemId);
+    }
+
+    @PostMapping("/routing-templates")
+    @ResponseStatus(HttpStatus.CREATED)
+    @PreAuthorize(BossPermissions.PRODUCTION_WRITE)
+    public RoutingTemplateOption createRoutingTemplate(@Valid @RequestBody CreateRoutingTemplateRequest request) {
+        return jobs.createRoutingTemplate(request);
     }
 
     @GetMapping("/features")

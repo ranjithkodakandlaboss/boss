@@ -211,6 +211,11 @@ public final class ProductionApiDtos {
             int stageCount
     ) {}
 
+    public record CreateRoutingTemplateRequest(
+            @NotBlank String name,
+            @NotBlank String stageName
+    ) {}
+
     public record PageResponse<T>(List<T> content, int page, int size, long totalElements) {}
 
     public record BusinessMetrics(

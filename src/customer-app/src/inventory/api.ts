@@ -4,7 +4,8 @@ import type { ProductionJob } from "../production/api";
 export type Page<T> = { content?: T[]; totalElements?: number; page?: number };
 
 export type Store = { id: string; siteId: string; name: string; code?: string; siteCode?: string; storeType?: string };
-export type Company = { stores?: Store[] };
+export type Site = { id: string; name: string; code: string; siteType?: string };
+export type Company = { stores?: Store[]; sites?: Site[] };
 
 export type Position = {
   itemId: string;

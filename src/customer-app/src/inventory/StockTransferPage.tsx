@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { api, safeRandomUUID } from "../auth/api";
+import { useCustomer } from "../auth/CustomerState";
 import Button from "../components/shared/Button";
-import ErrorState from "../components/shared/ErrorState";
+import CreatableSelect, { roleAllowed } from "../components/shared/CreatableSelect";
 import LoadingState from "../components/shared/LoadingState";
+import { createLot, createStore, lotFields, storeFields } from "./inlineCreate";
 import StockNav from "./stockNav";
 
 type Store = { id: string; siteId: string; name: string; siteCode?: string | null };
@@ -43,6 +45,9 @@ async function loadLots(storeId: string): Promise<Lot[]> {
 
 export default function StockTransferPage() {
   const navigate = useNavigate();
+  const { user } = useCustomer();
+  const canCreateStore = roleAllowed(user?.roles, ["OWNER"]);
+  const canCreateLot = roleAllowed(user?.roles, ["OWNER", "OPS_MANAGER", "STORE_KEEPER"]);
   const [searchParams] = useSearchParams();
   const requestedFrom = searchParams.get("from") ?? "";
   const requestedTo = searchParams.get("to") ?? "";
@@ -57,23 +62,26 @@ export default function StockTransferPage() {
   const [note, setNote] = useState("");
   const [loading, setLoading] = useState(true);
   const [loadingLots, setLoadingLots] = useState(false);
+  const [lotReload, setLotReload] = useState(0);
   const [saving, setSaving] = useState(false);
+  const [storeError, setStoreError] = useState("");
+  const [lotError, setLotError] = useState("");
   const [error, setError] = useState("");
 
-  useEffect(() => {
-    let active = true;
+  function loadStoreList() {
+    setLoading(true);
+    setStoreError("");
     api<Company>("/api/v1/company").then((company) => {
-      if (!active) return;
       const list = company.stores ?? [];
       setStores(list);
-      if (list.length === 0) setError("No stores are available for this company.");
       const requested = list.find((store) => store.name === requestedFrom);
-      setSourceStoreId(requested?.id ?? list[0]?.id ?? "");
+      setSourceStoreId((current) => current || requested?.id || list[0]?.id || "");
     }).catch((reason: unknown) => {
-      if (active) setError(reason instanceof Error ? reason.message : "Stores could not be loaded.");
-    }).finally(() => { if (active) setLoading(false); });
-    return () => { active = false; };
-  }, []);
+      setStoreError(reason instanceof Error ? reason.message : "Stores could not be loaded.");
+    }).finally(() => setLoading(false));
+  }
+
+  useEffect(() => { loadStoreList(); }, []);
 
   useEffect(() => {
     if (!sourceStoreId) {
@@ -85,7 +93,7 @@ export default function StockTransferPage() {
     setLots([]);
     setLotId("");
     setLoadingLots(true);
-    setError("");
+    setLotError("");
     loadLots(sourceStoreId).then((result) => {
       if (!active) return;
       setLots(result);
@@ -96,10 +104,10 @@ export default function StockTransferPage() {
         if (destination) setDestinationStoreId(destination.id);
       }
     }).catch((reason: unknown) => {
-      if (active) setError(reason instanceof Error ? reason.message : "Source stock could not be loaded.");
+      if (active) setLotError(reason instanceof Error ? reason.message : "Source stock could not be loaded.");
     }).finally(() => { if (active) setLoadingLots(false); });
     return () => { active = false; };
-  }, [sourceStoreId]);
+  }, [sourceStoreId, lotReload]);
 
   const sourceStore = stores.find((store) => store.id === sourceStoreId);
   const destinations = useMemo(
@@ -137,7 +145,6 @@ export default function StockTransferPage() {
   }
 
   if (loading) return <LoadingState label="Loading stores" />;
-  if (error && stores.length === 0) return <ErrorState body={error} />;
 
   return (
     <div className="flex min-h-[calc(100vh-var(--topbar-h))] flex-col">
@@ -147,29 +154,32 @@ export default function StockTransferPage() {
       <h1 className="mt-4 text-lg font-bold text-[var(--text)]">Move stock between sites</h1>
       <p className="mt-1 text-sm text-[var(--text-2)]">Available stock is deducted when dispatched and added to the destination when received.</p>
       <form className="mt-5 space-y-4 rounded-xl border p-5" style={{ borderColor: "var(--border)", background: "var(--surface)" }} onSubmit={(event) => void submit(event)}>
-        <label className="block text-sm font-medium">
+        <div className="block text-sm font-medium">
           Source store
-          <select className="eoss-input mt-1 w-full" required value={sourceStoreId} onChange={(event) => { setSourceStoreId(event.target.value); setDestinationStoreId(""); }}>
-            {stores.map((store) => <option key={store.id} value={store.id}>{storeLabel(store)}</option>)}
-          </select>
-        </label>
-        <label className="block text-sm font-medium">
+          <CreatableSelect label="store" ariaLabel="Source store" value={sourceStoreId} error={storeError} onRetry={loadStoreList} creatable={canCreateStore} options={stores.map((store) => ({ id: store.id, label: storeLabel(store) }))} prepare={storeFields} onChange={(id) => { setSourceStoreId(id); setDestinationStoreId(""); }} onCreate={async (values) => {
+            const created = await createStore(values);
+            setStores((current) => [...current.filter((store) => store.id !== created.id), created]);
+            return { id: created.id, label: storeLabel(created) };
+          }} />
+        </div>
+        <div className="block text-sm font-medium">
           Destination store
-          <select className="eoss-input mt-1 w-full" required value={destinationStoreId} onChange={(event) => setDestinationStoreId(event.target.value)}>
-            <option value="">Select a different site</option>
-            {destinations.map((store) => <option key={store.id} value={store.id}>{storeLabel(store)}</option>)}
-          </select>
-        </label>
+          <CreatableSelect label="store" ariaLabel="Destination store" value={destinationStoreId} placeholder="Select a different site" error={storeError} onRetry={loadStoreList} creatable={canCreateStore} options={destinations.map((store) => ({ id: store.id, label: storeLabel(store) }))} prepare={storeFields} onChange={setDestinationStoreId} onCreate={async (values) => {
+            const created = await createStore(values);
+            setStores((current) => [...current.filter((store) => store.id !== created.id), created]);
+            return { id: created.id, label: storeLabel(created) };
+          }} />
+        </div>
         {loadingLots ? <LoadingState label="Loading source lots" />
-          : <label className="block text-sm font-medium">
+          : <div className="block text-sm font-medium">
             Lot
-            <select className="eoss-input mt-1 w-full" required value={lotId} onChange={(event) => { setLotId(event.target.value); setQty(""); }}>
-              <option value="">Select a lot</option>
-              {lots.map((lot) => <option key={lot.id} value={lot.id}>
-                {lot.itemCode} · {lot.itemName}{(lot.lotNumber || lot.batchRef) ? ` · ${lot.lotNumber || lot.batchRef}` : ""} · {lot.availableQty} {lot.uomSymbol} available
-              </option>)}
-            </select>
-          </label>}
+            <CreatableSelect label="lot" ariaLabel="Lot" value={lotId} placeholder="Select a lot" error={lotError} onRetry={() => setLotReload((current) => current + 1)} creatable={canCreateLot && !!sourceStoreId} options={lots.map((lot) => ({ id: lot.id, label: `${lot.itemCode} · ${lot.itemName}${(lot.lotNumber || lot.batchRef) ? ` · ${lot.lotNumber || lot.batchRef}` : ""} · ${lot.availableQty} ${lot.uomSymbol} available` }))} prepare={() => lotFields({ storeId: sourceStoreId })} onChange={(id) => { setLotId(id); setQty(""); }} onCreate={async (values) => {
+              const created = await createLot(values, { storeId: sourceStoreId });
+              const option = { id: created.id, itemCode: created.itemCode, itemName: created.itemName, batchRef: created.batchRef ?? null, lotNumber: created.lotNumber, qty: created.qty, availableQty: created.availableQty, uomSymbol: created.uomSymbol, status: created.status };
+              setLots((current) => [...current.filter((lot) => lot.id !== created.id), option]);
+              return { id: created.id, label: `${option.itemCode} · ${option.itemName}` };
+            }} />
+          </div>}
         <label className="block text-sm font-medium">
           Quantity {selectedLot && <span className="font-normal text-[var(--text-2)]">(up to {selectedLot.availableQty} {selectedLot.uomSymbol})</span>}
           <input className="eoss-input mt-1 w-full" type="number" min="0.001" max={selectedLot?.availableQty} step="0.001" required value={qty} onChange={(event) => setQty(event.target.value)} />

@@ -1,13 +1,19 @@
 import { useEffect, useState } from "react";
+import { useCustomer } from "../auth/CustomerState";
+import CreatableSelect, { roleAllowed } from "../components/shared/CreatableSelect";
 import ErrorState from "../components/shared/ErrorState";
 import LoadingState from "../components/shared/LoadingState";
 import { loadLots, loadPositions, loadStores, mutate, quantity, type Lot, type Position, type Store } from "./api";
+import { createStore, storeFields } from "./inlineCreate";
 import StockNav from "./stockNav";
 
 type Line = Position & { counted: string };
 
 export default function CycleCountPage() {
+  const { user } = useCustomer();
+  const canCreateStore = roleAllowed(user?.roles, ["OWNER"]);
   const [stores, setStores] = useState<Store[]>([]);
+  const [storeError, setStoreError] = useState("");
   const [positions, setPositions] = useState<Position[]>([]);
   const [storeId, setStoreId] = useState("all");
   const [lines, setLines] = useState<Line[] | null>(null);
@@ -16,12 +22,17 @@ export default function CycleCountPage() {
   const [notice, setNotice] = useState("");
   const [saving, setSaving] = useState(false);
 
-  useEffect(() => {
+  function load() {
+    setLoading(true);
+    setStoreError("");
+    setError("");
     Promise.all([loadStores(), loadPositions()])
       .then(([nextStores, nextPositions]) => { setStores(nextStores); setPositions(nextPositions); })
-      .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "Stock could not be loaded."))
+      .catch((reason: unknown) => setStoreError(reason instanceof Error ? reason.message : "Stock could not be loaded."))
       .finally(() => setLoading(false));
-  }, []);
+  }
+
+  useEffect(() => { load(); }, []);
 
   const locations = stores.length > 0 ? stores : uniqueStores(positions);
 
@@ -67,12 +78,13 @@ export default function CycleCountPage() {
         {loading ? <LoadingState label="Loading stock for count" /> : error && !lines ? <ErrorState body={error} /> : !lines ? (
           <div className="max-w-md space-y-4 rounded-2xl border p-6" style={{ borderColor: "var(--border)" }}>
             <h2 className="font-semibold">Start count session</h2>
-            <label className="block text-xs font-semibold">Store location
-              <select aria-label="Store location" className="eoss-input mt-1 w-full" value={storeId} onChange={(event) => setStoreId(event.target.value)}>
-                <option value="all">All locations</option>
-                {locations.map((store) => <option key={store.id} value={store.id}>{store.name}</option>)}
-              </select>
-            </label>
+            <div className="block text-xs font-semibold">Store location
+              <CreatableSelect label="store" ariaLabel="Store location" value={storeId} onChange={setStoreId} pinned={[{ id: "all", label: "All locations" }]} error={storeError} onRetry={load} creatable={canCreateStore} options={locations.map((store) => ({ id: store.id, label: store.name }))} prepare={storeFields} onCreate={async (values) => {
+                const created = await createStore(values);
+                setStores((current) => [...current.filter((store) => store.id !== created.id), created]);
+                return { id: created.id, label: created.name };
+              }} />
+            </div>
             <button type="button" onClick={begin} className="w-full rounded-lg py-2.5 text-sm font-semibold text-white" style={{ background: "var(--brand-fill)" }}>Begin count</button>
           </div>
         ) : (

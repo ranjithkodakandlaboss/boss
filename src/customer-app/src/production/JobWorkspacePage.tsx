@@ -3,7 +3,9 @@ import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { ArrowLeft, ExternalLink } from "lucide-react";
 import { useCustomer } from "../auth/CustomerState";
 import { ApiError } from "../auth/api";
+import CreatableSelect, { roleAllowed } from "../components/shared/CreatableSelect";
 import StatusChip from "../components/shared/StatusChip";
+import { createLot, lotFields } from "../inventory/inlineCreate";
 import {
   addCost, cancelJob, concede, displayDate, featureFlags, getJob, issueMaterial, money, openInspection, readinessLabel,
   recordInspection, releaseHold, returnMaterial, skipStage, usableLots,
@@ -203,8 +205,11 @@ function Materials({ job, canIssue, canReturn, onIssue, onReturn }: {
 }
 
 function MaterialRow({ job, row, canIssue, onIssue }: { job: ProductionJob; row: NonNullable<ProductionJob["materials"]>[number]; canIssue: boolean; onIssue: (requirementId: string, lotId: string, qty: number, note: string) => void }) {
+  const { user } = useCustomer();
+  const canCreateLot = roleAllowed(user?.roles, ["OWNER", "OPS_MANAGER", "STORE_KEEPER"]);
   const [lots, setLots] = useState<LotOption[]>([]);
   const [lotError, setLotError] = useState("");
+  const [lotReload, setLotReload] = useState(0);
   const [lotId, setLotId] = useState("");
   const [qty, setQty] = useState(String(Math.max(row.requiredQty - row.netIssuedQty, 0)));
   useEffect(() => {
@@ -215,14 +220,21 @@ function MaterialRow({ job, row, canIssue, onIssue }: { job: ProductionJob; row:
         setLots([]);
         setLotError(cause instanceof Error ? cause.message : "Lots could not be loaded.");
       });
-  }, [canIssue, row.itemId, job.siteId, job.id]);
+  }, [canIssue, row.itemId, job.siteId, job.id, lotReload]);
   return (
     <div className="rounded-xl border p-3" style={{ borderColor: "var(--border)" }}>
       <div className="flex justify-between text-sm"><strong>{row.itemCode} {row.itemName}</strong><StatusChip status={row.readiness} label={readinessLabel(row.readiness)} size="sm" /></div>
       <p className="text-xs mt-1" style={{ color: "var(--text-2)" }}>Required {row.requiredQty} · Issued {row.issuedQty} · Returned {row.returnedQty} {row.uomSymbol}</p>
       {canIssue && row.netIssuedQty < row.requiredQty && (
         <div className="mt-2 flex flex-wrap gap-2 items-end">
-          <label className="text-xs">Lot<select className="eoss-input mt-1" aria-label={`Lot for ${row.itemCode}`} value={lotId} onChange={(event) => setLotId(event.target.value)}><option value="">Select lot</option>{lots.map((lot) => <option key={lot.id} value={lot.id}>{lotChoice(lot)}</option>)}</select></label>
+          <div className="text-xs">Lot
+            <CreatableSelect label="lot" ariaLabel={`Lot for ${row.itemCode}`} value={lotId} onChange={setLotId} placeholder="Select lot" error={lotError} onRetry={() => setLotReload((current) => current + 1)} creatable={canCreateLot} options={lots.map((lot) => ({ id: lot.id, label: lotChoice(lot) }))} prepare={() => lotFields({ itemId: row.itemId, siteId: job.siteId })} onCreate={async (values) => {
+              const created = await createLot(values, { itemId: row.itemId });
+              const option: LotOption = { id: created.id, itemId: created.itemId, lotNumber: created.lotNumber, batchRef: created.batchRef, qty: created.qty, reservedQty: created.reservedQty, availableQty: created.availableQty, uomSymbol: created.uomSymbol, status: created.status, siteId: created.siteId, storeName: created.storeName };
+              setLots((current) => [...current.filter((lot) => lot.id !== option.id), option]);
+              return { id: created.id, label: lotChoice(option) };
+            }} />
+          </div>
           <label className="text-xs">Qty<input className="eoss-input mt-1 w-24" aria-label={`Issue quantity for ${row.itemCode}`} value={qty} onChange={(event) => setQty(event.target.value)} /></label>
           <button type="button" className="px-3 py-1.5 rounded-lg text-xs font-semibold text-white" style={{ background: "var(--brand-fill)" }} disabled={!lotId || Number(qty) <= 0} onClick={() => onIssue(row.id, lotId, Number(qty), "Issued to job")}>Issue</button>
         </div>

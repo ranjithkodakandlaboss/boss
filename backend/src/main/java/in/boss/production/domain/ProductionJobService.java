@@ -3,6 +3,8 @@ package in.boss.production.domain;
 import in.boss.inventory.domain.InventoryService;
 import in.boss.masterdata.domain.BomExplosionService;
 import in.boss.production.api.ProductionApiDtos.CreateJobRequest;
+import in.boss.production.api.ProductionApiDtos.CreateRoutingTemplateRequest;
+import in.boss.production.api.ProductionApiDtos.RoutingTemplateOption;
 import in.boss.production.api.ProductionApiDtos.ProductionJobResponse;
 import in.boss.production.api.ProductionApiDtos.ReasonRequest;
 import in.boss.shared.audit.AuditService;
@@ -49,6 +51,32 @@ public class ProductionJobService {
         this.audit = audit;
         this.outbox = outbox;
         this.inventory = inventory;
+    }
+
+    @PreAuthorize(PRODUCTION_WRITE)
+    public RoutingTemplateOption createRoutingTemplate(CreateRoutingTemplateRequest request) {
+        BossContext context = support.requireContext();
+        String name = request.name().trim();
+        String stageName = request.stageName().trim();
+        Integer existing = jdbc.queryForObject("""
+                SELECT COUNT(*) FROM routing_templates
+                WHERE tenant_id = ? AND status = 'active' AND lower(name) = lower(?)
+                """, Integer.class, context.tenantId(), name);
+        if (existing != null && existing > 0) {
+            throw ProductionSupport.conflict("A workflow with this name already exists");
+        }
+        UUID id = UUID.randomUUID();
+        jdbc.update("""
+                INSERT INTO routing_templates (id, tenant_id, name, version, is_default, status)
+                VALUES (?, ?, ?, 'v1', false, 'active')
+                """, id, context.tenantId(), name);
+        jdbc.update("""
+                INSERT INTO routing_template_stages (tenant_id, routing_id, seq_no, name, stage_type)
+                VALUES (?, ?, 1, ?, 'production')
+                """, context.tenantId(), id, stageName);
+        audit.record("routing_templates", id, "CREATE", null,
+                "{\"name\":\"" + name.replace("\\", "\\\\").replace("\"", "\\\"") + "\"}");
+        return new RoutingTemplateOption(id, name, "v1", null, 1);
     }
 
     @PreAuthorize(PRODUCTION_WRITE)

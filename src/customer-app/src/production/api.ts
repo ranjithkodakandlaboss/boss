@@ -194,6 +194,10 @@ export function routingTemplates(itemId: string) {
   return api<RoutingTemplate[]>(`/api/v1/jobs/routing-templates?itemId=${itemId}`);
 }
 
+export function createRoutingTemplate(name: string, stageName: string) {
+  return post<RoutingTemplate>("/api/v1/jobs/routing-templates", { name, stageName });
+}
+
 export function createJob(body: {
   cpoId: string;
   cpoLineId: string;
