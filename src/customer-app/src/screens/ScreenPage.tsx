@@ -26,6 +26,7 @@ import SiteNeed from "../inventory/SiteNeed";
 import StockTransferPage from "../inventory/StockTransferPage";
 import { api } from "../auth/api";
 import type { CompanyRecord } from "../auth/types";
+import ConfigOptionsAdmin from "../config/ConfigOptionsAdmin";
 
 const SALES_TABS: Record<string, { title: string; columns: string[]; placeholder: string; statuses?: string[]; action?: { label: string; to: string } }> = {
   pos: {
@@ -201,7 +202,8 @@ function Workspace({ screen }: { screen: ScreenDef }) {
       )}
       {screen.path === "admin" && tab === "company" && <CompanyPanel />}
       {screen.path === "admin" && (tab === "sites" || tab === "users") && <AdminDirectory tab={tab} />}
-      {(screen.kind === "record" || screen.kind === "admin") && !screen.columns && !(screen.path === "admin" && ["company", "sites", "users"].includes(tab)) && (
+      {screen.path === "admin" && tab === "master-data" && <ConfigOptionsAdmin />}
+      {(screen.kind === "record" || screen.kind === "admin") && !screen.columns && !(screen.path === "admin" && ["company", "sites", "users", "master-data"].includes(tab)) && (
         <StateBody state={state} title="No records" />
       )}
       {screen.kind === "record" && screen.columns && <DataTable columns={screen.columns} state={state} emptyTitle="No lines" />}

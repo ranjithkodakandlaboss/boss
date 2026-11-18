@@ -26,6 +26,7 @@ import java.util.Set;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * CI-gated test verifying Row-Level Security on tenant_config_options and
@@ -148,5 +149,64 @@ class ConfigOptionsRlsTest {
                 Integer.class,
                 tenantA);
         assertThat(itemCatCount).isEqualTo(1);
+    }
+
+    @Test
+    void tenantOptionsCanBeEditedReorderedAndDeactivatedSafely() {
+        setTenant(tenantA);
+        ConfigOptionDto first = configService.createOption("PAYMENT_MODES", "CUSTOM_CARD", "Card", 10);
+        ConfigOptionDto second = configService.createOption("PAYMENT_MODES", "CUSTOM_WIRE", "Wire", 20);
+
+        List<UUID> reordered = new java.util.ArrayList<>(configService.getOptions("PAYMENT_MODES").stream()
+                .filter(option -> !option.isSystem()).map(ConfigOptionDto::id).toList());
+        reordered.remove(first.id());
+        reordered.remove(second.id());
+        reordered.add(second.id());
+        reordered.add(first.id());
+        configService.reorderOptions("PAYMENT_MODES", reordered);
+        configService.updateOption("PAYMENT_MODES", first.id(), "Card payment");
+        configService.setOptionActive("PAYMENT_MODES", second.id(), false);
+
+        List<ConfigOptionDto> options = configService.getOptions("PAYMENT_MODES", true);
+        assertThat(options).filteredOn(option -> option.id().equals(first.id())).singleElement()
+                .extracting(ConfigOptionDto::label).isEqualTo("Card payment");
+        assertThat(options).filteredOn(option -> option.id().equals(second.id())).singleElement()
+                .extracting(ConfigOptionDto::isActive).isEqualTo(false);
+        assertThat(options.stream().filter(option -> !option.isSystem()).map(ConfigOptionDto::id).toList())
+                .containsExactlyElementsOf(reordered);
+    }
+
+    @Test
+    void tenantCannotDeactivateSystemControlledOption() {
+        setTenant(tenantA);
+        industryTemplateService.seedTenantDefaults(tenantA, "FABRICATION_STEEL");
+        ConfigOptionDto protectedOption = configService.getOptions("PRODUCTION_STAGES").get(0);
+
+        assertThat(protectedOption.isSystem()).isTrue();
+        assertThatThrownBy(() -> configService.setOptionActive(
+                "PRODUCTION_STAGES", protectedOption.id(), false))
+                .isInstanceOf(org.springframework.web.server.ResponseStatusException.class)
+                .hasMessageContaining("System-controlled options");
+    }
+
+    @Test
+    void referencedItemCategoryCannotBeRenamedOrDeactivated() {
+        setTenant(tenantB);
+        ConfigOptionDto category = configService.createOption("ITEM_CATEGORY", "USED_CATEGORY", "Used Category", 10);
+        UUID uomId = UUID.fromString(jdbc.queryForObject(
+                "INSERT INTO units_of_measure (tenant_id, name, symbol, uom_type) "
+                        + "VALUES (?, 'Each', 'EA_CONFIG_TEST', 'quantity') RETURNING id::text",
+                String.class, tenantB));
+        jdbc.update("""
+                INSERT INTO items (tenant_id, code, name, item_type, base_uom_id, category_id)
+                VALUES (?, 'CONFIG_TEST_ITEM', 'Config test item', 'raw_material', ?, ?)
+                """, tenantB, uomId, category.id());
+
+        assertThatThrownBy(() -> configService.updateOption("ITEM_CATEGORY", category.id(), "Renamed"))
+                .isInstanceOf(org.springframework.web.server.ResponseStatusException.class)
+                .hasMessageContaining("referenced by business records");
+        assertThatThrownBy(() -> configService.setOptionActive("ITEM_CATEGORY", category.id(), false))
+                .isInstanceOf(org.springframework.web.server.ResponseStatusException.class)
+                .hasMessageContaining("referenced by business records");
     }
 }

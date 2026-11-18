@@ -31,6 +31,8 @@ beforeEach(() => {
     if (url.includes("/tenant/info")) return json({ id: "t", name: "North Works", status: "active" });
     if (url.includes("/onboarding")) return json({ industryType: "GENERAL_MANUFACTURING", completed: true, company: { companyName: "North Works", legalName: "North Works Pvt Ltd", sites: [], stores: [] } });
     if (url.includes("/company")) return json({ companyName: "North Works", legalName: "North Works Pvt Ltd", sites: [], stores: [] });
+    if (url.includes("/config/categories")) return json([{ code: "PAYMENT_MODES", name: "Payment modes", scope: "tenant", tenantEditable: true, supportsOrdering: true }]);
+    if (url.includes("/config/options/")) return json([]);
     return json({});
   }));
 });
@@ -54,6 +56,12 @@ describe("customer app shell", () => {
     expect(await screen.findByRole("heading", { name: "Customer POs" })).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Customer Directory" }));
     expect(screen.getByRole("heading", { name: "Customer Directory" })).toBeInTheDocument();
+  });
+
+  it("opens master-data configuration under Admin & Settings", async () => {
+    renderAt("/admin?tab=master-data");
+    expect(await screen.findByRole("heading", { name: "Master Data & Business Configuration" })).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Reference data category" })).toHaveValue("PAYMENT_MODES");
   });
 
   it("shows an empty table instead of seeded rows", async () => {

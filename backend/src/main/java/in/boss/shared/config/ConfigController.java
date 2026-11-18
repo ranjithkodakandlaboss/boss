@@ -5,6 +5,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 /**
  * Config options REST endpoint (issue #90).
@@ -22,9 +23,15 @@ public class ConfigController {
         this.configService = configService;
     }
 
+    @GetMapping("/categories")
+    public List<ConfigCategoryDto> getCategories() {
+        return configService.getCategories();
+    }
+
     @GetMapping("/{category}")
-    public List<ConfigOptionDto> getOptions(@PathVariable String category) {
-        return configService.getOptions(category.toUpperCase());
+    public List<ConfigOptionDto> getOptions(@PathVariable String category,
+                                            @RequestParam(defaultValue = "false") boolean includeInactive) {
+        return configService.getOptions(category.toUpperCase(), includeInactive);
     }
 
     @PostMapping("/{category}")
@@ -38,11 +45,41 @@ public class ConfigController {
 
     public record CreateOptionRequest(String code, String label, int sortOrder) {}
 
+    @PutMapping("/{category}/{optionId}")
+    public ConfigOptionDto updateOption(@PathVariable String category,
+                                        @PathVariable UUID optionId,
+                                        @RequestBody UpdateOptionRequest req) {
+        return configService.updateOption(category.toUpperCase(), optionId, req.label());
+    }
+
+    public record UpdateOptionRequest(String label) {}
+
+    @PutMapping("/{category}/order")
+    public ResponseEntity<Map<String, String>> reorderOptions(
+            @PathVariable String category,
+            @RequestBody ReorderOptionsRequest req) {
+        configService.reorderOptions(category.toUpperCase(), req.optionIds());
+        return ResponseEntity.ok(Map.of("status", "reordered"));
+    }
+
+    public record ReorderOptionsRequest(List<UUID> optionIds) {}
+
+    @PatchMapping("/{category}/{optionId}/status")
+    public ResponseEntity<Map<String, String>> setOptionStatus(
+            @PathVariable String category,
+            @PathVariable UUID optionId,
+            @RequestBody SetOptionStatusRequest req) {
+        configService.setOptionActive(category.toUpperCase(), optionId, req.active());
+        return ResponseEntity.ok(Map.of("status", req.active() ? "active" : "deactivated"));
+    }
+
+    public record SetOptionStatusRequest(boolean active) {}
+
     @DeleteMapping("/{category}/{optionId}")
     public ResponseEntity<Map<String, String>> deactivateOption(
             @PathVariable String category,
-            @PathVariable java.util.UUID optionId) {
-        configService.deactivateOption(optionId);
+            @PathVariable UUID optionId) {
+        configService.setOptionActive(category.toUpperCase(), optionId, false);
         return ResponseEntity.ok(Map.of("status", "deactivated"));
     }
 }
