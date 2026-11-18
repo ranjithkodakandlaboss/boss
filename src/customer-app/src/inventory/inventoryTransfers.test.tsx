@@ -34,7 +34,10 @@ describe("inventory transfers", () => {
 
     render(<MemoryRouter><InventoryTransfers /></MemoryRouter>);
     expect(await screen.findByText("TRF-0001")).toBeInTheDocument();
-    expect(screen.getByText("in transit")).toBeInTheDocument();
+    // Open the detail modal by clicking the row
+    fireEvent.click(screen.getByText("TRF-0001"));
+    // Receive button is in the modal
+    expect(await screen.findByRole("button", { name: "Receive" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Receive" }));
 
     await waitFor(() => expect(api).toHaveBeenCalledWith(

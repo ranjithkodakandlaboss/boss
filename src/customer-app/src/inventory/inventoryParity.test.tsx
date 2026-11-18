@@ -49,8 +49,15 @@ describe("inventory prototype screens", () => {
       return { content: [], totalElements: 0 };
     });
     render(<MemoryRouter initialEntries={["/inventory/item/item-1"]}><Routes><Route path="/inventory/item/:id" element={<ItemDetail />} /></Routes></MemoryRouter>);
+    // Overview tab is default — verify heading and tabs are visible
+    expect(await screen.findByRole("heading", { name: "Copper Wire" })).toBeInTheDocument();
+    expect(screen.getByText("Lots & Locations")).toBeInTheDocument();
+    // Click the lots tab to see lot rows
+    fireEvent.click(screen.getByRole("button", { name: "Lots & Locations" }));
     expect(await screen.findByText("LOT-1")).toBeInTheDocument();
-    expect(screen.getByText("J-1")).toBeInTheDocument();
+    // Click the jobs tab to see job usage
+    fireEvent.click(screen.getByRole("button", { name: "Jobs" }));
+    expect(await screen.findByText("J-1")).toBeInTheDocument();
     expect(screen.getByText("Used by jobs")).toBeInTheDocument();
   });
 
