@@ -117,7 +117,7 @@ components:
         customerPoRef: { type: string, nullable: true }
         status:
           type: string
-          enum: [pending_feasibility, feasibility_approved, in_production, completed, cancelled]
+          enum: [open, on_hold, partial, feasibility_pending, feasibility_approved, fulfilled, cancelled]
         lines:
           type: array
           items: { $ref: '#/components/schemas/CPOLine' }
@@ -138,18 +138,29 @@ components:
 
     FeasibilityResult:
       type: object
+      required: [cpoId, feasible, materials]
       properties:
         cpoId: { type: string, format: uuid }
-        status: { type: string, enum: [FEASIBLE, INFEASIBLE] }
-        lines:
+        feasible: { type: boolean }
+        materials:
           type: array
           items:
             type: object
+            required: [itemId, requested, reserved, shortfall, allocations]
             properties:
               itemId: { type: string, format: uuid }
-              required: { type: number }
-              available: { type: number }
+              storeId: { type: string, format: uuid, nullable: true }
+              requested: { type: number }
+              reserved: { type: number }
               shortfall: { type: number }
+              allocations:
+                type: array
+                items:
+                  type: object
+                  required: [lotId, qty]
+                  properties:
+                    lotId: { type: string, format: uuid }
+                    qty: { type: number }
 
     ProblemDetail:
       type: object
@@ -637,10 +648,47 @@ paths:
               schema: { $ref: '#/components/schemas/CPO' }
         '404': { description: CPO not found }
 
+  /cpos/{cpoId}/status:
+    patch:
+      operationId: updateCPOStatus
+      summary: Submit, approve, or cancel a Customer Purchase Order
+      description: Requires OWNER or SALES_MANAGER access.
+      tags: [CPO]
+      parameters:
+        - name: cpoId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  enum: [open, on_hold, feasibility_pending, feasibility_approved, cancelled]
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CPO' }
+        '409': { description: Invalid transition or required materials unavailable }
+
   /cpos/{cpoId}/feasibility:
     post:
       operationId: checkFeasibility
       summary: Run feasibility check and reserve inventory for CPO
+      description: |
+        Requires OWNER or SALES_MANAGER access. Runs only for an open CPO.
+        Inventory is reserved atomically and the CPO advances to feasibility_approved when feasible.
+        On shortage, the CPO remains feasibility_pending and no partial reservation is written.
       tags: [CPO]
       parameters:
         - name: cpoId

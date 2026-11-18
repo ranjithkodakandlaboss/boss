@@ -178,7 +178,6 @@ class ProductionLifecycleIntegrationTest extends BaseMasterDataIntegrationTest {
         assertThat(jdbc.queryForObject(
                 "SELECT unit_price FROM cpo_lines WHERE tenant_id = ? AND id = ?",
                 BigDecimal.class, tenantId, lineId)).isEqualByComparingTo("100.00");
-
         jdbc.update("UPDATE tenant_config_options SET label = 'Sawing' WHERE id = ?", stageOptionId);
         jdbc.update("UPDATE routing_template_stages SET name = 'Changed' WHERE routing_id = ?", routingId);
         assertThat(query.get(job.id()).stages().get(0).stageName()).isEqualTo("Cutting");
@@ -237,6 +236,16 @@ class ProductionLifecycleIntegrationTest extends BaseMasterDataIntegrationTest {
         assertThat(query.businessMetrics().materialConsumedQty()).isEqualByComparingTo("16");
         assertThat(query.list(cpoId, "completed", 0, 20).totalElements()).isEqualTo(1);
         assertThat(query.features()).containsEntry("production.job.create", true);
+    }
+
+    @Test
+    void feasibilityApprovedCustomerPoCanStartProduction() {
+        jdbc.update("UPDATE cpos SET status = 'feasibility_approved' WHERE tenant_id = ? AND id = ?",
+                tenantId, cpoId);
+
+        assertThat(query.eligibleLines()).extracting(line -> line.cpoLineId()).contains(lineId);
+        assertThat(jobs.create(new CreateJobRequest(
+                cpoId, lineId, routingId, null, null, null)).cpoId()).isEqualTo(cpoId);
     }
 
     @Test
