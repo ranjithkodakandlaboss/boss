@@ -30,6 +30,7 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
@@ -158,6 +159,7 @@ public class ItemServiceImpl implements ItemService {
     }
 
     @Override
+    @Transactional(isolation = Isolation.READ_COMMITTED)
     public ItemDto updateItem(UUID id, UpdateItemRequest request) {
         UUID tenantId = getTenantId();
         ItemEntity entity = itemRepository.findLockedByIdAndTenantId(id, tenantId)
@@ -182,6 +184,10 @@ public class ItemServiceImpl implements ItemService {
         }
 
         if (request.getStatus() != null) {
+            if (!"active".equalsIgnoreCase(request.getStatus())
+                    && !"inactive".equalsIgnoreCase(request.getStatus())) {
+                throw new ValidationException("Invalid item status: " + request.getStatus());
+            }
             boolean newActive = "active".equalsIgnoreCase(request.getStatus());
             if (!newActive && entity.isActive()) {
                 checkNoActiveBomReference(tenantId, id, "deactivate");
@@ -230,6 +236,7 @@ public class ItemServiceImpl implements ItemService {
     }
 
     @Override
+    @Transactional(isolation = Isolation.READ_COMMITTED)
     public void deleteItem(UUID id) {
         UUID tenantId = getTenantId();
         ItemEntity entity = itemRepository.findLockedByIdAndTenantId(id, tenantId)

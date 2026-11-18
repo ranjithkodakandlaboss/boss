@@ -611,6 +611,20 @@ class ProductionLifecycleIntegrationTest extends BaseMasterDataIntegrationTest {
     }
 
     @Test
+    void inactiveItemProducesActionableConflictWhenCreatingJob() throws Exception {
+        jdbc.update("UPDATE items SET is_active = false WHERE tenant_id = ? AND id = ?", tenantId, finishedItemId);
+        String body = objectMapper.writeValueAsString(new CreateJobRequest(cpoId, lineId, routingId, null, null, null));
+        mockMvc.perform(post("/api/v1/jobs")
+                        .with(user("owner").roles("OWNER"))
+                        .header("Idempotency-Key", "job-" + UUID.randomUUID())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.detail").value(
+                        "The selected item is inactive or unavailable. Reactivate it before using it in an active record."));
+    }
+
+    @Test
     void repeatedCreateWithTheSameIdempotencyKeyReturnsTheOriginalJob() throws Exception {
         String body = objectMapper.writeValueAsString(new CreateJobRequest(cpoId, lineId, routingId, null, null, null));
         String key = "job-" + UUID.randomUUID();

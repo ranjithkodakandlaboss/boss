@@ -126,4 +126,13 @@ class ItemLifecycleTest {
         assertThatThrownBy(() -> itemService.updateItem(itemId, UpdateItemRequest.builder().hsnCode("1234").build()))
                 .isInstanceOf(LifecycleException.class).hasMessageContaining("BOM");
     }
+
+    @Test
+    void invalidStatusDoesNotDeactivateTheItem() {
+        UUID itemId = UUID.randomUUID();
+        ItemEntity item = ItemEntity.builder().id(itemId).tenantId(tenantId).isActive(true).build();
+        when(itemRepo.findLockedByIdAndTenantId(itemId, tenantId)).thenReturn(Optional.of(item));
+        assertThatThrownBy(() -> itemService.updateItem(itemId, UpdateItemRequest.builder().status("unknown").build()))
+                .isInstanceOf(ValidationException.class).hasMessageContaining("Invalid item status");
+    }
 }
