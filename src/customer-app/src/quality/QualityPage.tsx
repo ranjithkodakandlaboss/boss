@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { AlertTriangle, Plus, Search } from "lucide-react";
+import RecordSheet from "../components/shared/RecordSheet";
 import { useCustomer } from "../auth/CustomerState";
 import SortableHeader from "../components/shared/SortableHeader";
 import StatusChip from "../components/shared/StatusChip";
@@ -140,8 +141,8 @@ export default function QualityPage() {
   const openNcrCount = ncrs.filter((n) => n.status === "open").length;
   const openInspCount = inspections.filter((i) => ["pending", "in_progress"].includes(i.status)).length;
 
-  async function handleCreateInspection(e: React.FormEvent) {
-    e.preventDefault();
+  async function handleCreateInspection(e?: React.FormEvent) {
+    if (e) e.preventDefault();
     setSaving(true);
     setSaveError("");
     try {
@@ -162,8 +163,8 @@ export default function QualityPage() {
     }
   }
 
-  async function handleCreateNcr(e: React.FormEvent) {
-    e.preventDefault();
+  async function handleCreateNcr(e?: React.FormEvent) {
+    if (e) e.preventDefault();
     setSaving(true);
     setNcrSaveError("");
     try {
@@ -327,198 +328,94 @@ export default function QualityPage() {
         />
       )}
 
-      {/* New Inspection dialog */}
       {showNewInspection && (
-        <div className="fixed inset-0 z-[70] bg-black/40 flex items-center justify-center p-4">
-          <div
-            className="bg-[var(--bg)] rounded-xl shadow-2xl w-full max-w-md p-6"
-            role="dialog"
-            aria-modal="true"
-            aria-label="New Inspection"
-          >
-            <h2 className="text-base font-semibold mb-4">New Inspection</h2>
-            <form onSubmit={handleCreateInspection} className="space-y-3">
-              <label className="block text-sm">
-                <span className="text-[var(--text-2)] font-medium">Workflow type</span>
-                <select
-                  className="mt-1 w-full rounded-lg border px-3 py-2 text-sm bg-[var(--surface)]"
-                  style={{ borderColor: "var(--border)" }}
-                  value={newInspWorkflowType}
-                  onChange={(e) => setNewInspWorkflowType(e.target.value)}
-                >
-                  <option value="incoming">Incoming</option>
-                  <option value="in_process">In-process</option>
-                  <option value="final">Final</option>
-                  <option value="customer">Customer</option>
-                  <option value="dispatch_readiness">Dispatch readiness</option>
-                </select>
-              </label>
-              <label className="block text-sm">
-                <span className="text-[var(--text-2)] font-medium">Inspection category</span>
-                <select
-                  className="mt-1 w-full rounded-lg border px-3 py-2 text-sm bg-[var(--surface)]"
-                  style={{ borderColor: "var(--border)" }}
-                  value={newInspType}
-                  onChange={(e) => setNewInspType(e.target.value)}
-                >
-                  {inspectionTypes.map((opt) => (
-                    <option key={opt.id} value={opt.id}>{opt.label}</option>
-                  ))}
-                </select>
-              </label>
-              <label className="block text-sm">
-                <span className="text-[var(--text-2)] font-medium">Reference type</span>
-                <select
-                  className="mt-1 w-full rounded-lg border px-3 py-2 text-sm bg-[var(--surface)]"
-                  style={{ borderColor: "var(--border)" }}
-                  value={newInspRefType}
-                  onChange={(e) => setNewInspRefType(e.target.value)}
-                >
-                  <option value="job">Job</option>
-                  <option value="job_stage">Job Stage</option>
-                  <option value="lot">Lot</option>
-                </select>
-              </label>
-              <label className="block text-sm">
-                <span className="text-[var(--text-2)] font-medium">Reference number</span>
-                <input
-                  required
-                  className="mt-1 w-full rounded-lg border px-3 py-2 text-sm bg-[var(--surface)]"
-                  style={{ borderColor: "var(--border)" }}
-                  placeholder="e.g. J-200 or LOT-2024-001"
-                  value={newInspRefId}
-                  onChange={(e) => setNewInspRefId(e.target.value)}
-                />
-              </label>
-              <label className="block text-sm">
-                <span className="text-[var(--text-2)] font-medium">Quantity inspected</span>
-                <input
-                  type="number"
-                  min="0"
-                  step="any"
-                  className="mt-1 w-full rounded-lg border px-3 py-2 text-sm bg-[var(--surface)]"
-                  style={{ borderColor: "var(--border)" }}
-                  value={newInspQty}
-                  onChange={(e) => setNewInspQty(e.target.value)}
-                />
-              </label>
-              <label className="block text-sm">
-                <span className="text-[var(--text-2)] font-medium">Notes</span>
-                <textarea
-                  rows={2}
-                  className="mt-1 w-full rounded-lg border px-3 py-2 text-sm bg-[var(--surface)] resize-none"
-                  style={{ borderColor: "var(--border)" }}
-                  value={newInspNotes}
-                  onChange={(e) => setNewInspNotes(e.target.value)}
-                />
-              </label>
-              {saveError && <p className="text-xs text-red-600">{saveError}</p>}
-              <div className="flex justify-end gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setShowNewInspection(false)}
-                  className="rounded-lg border px-4 py-2 text-sm font-medium"
-                  style={{ borderColor: "var(--border)" }}
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={saving}
-                  className="rounded-lg bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
-                >
-                  {saving ? "Creating…" : "Create"}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
+        <RecordSheet
+          title="New Inspection"
+          onClose={() => setShowNewInspection(false)}
+          primary={{ label: saving ? "Creating…" : "Create", onClick: () => { const fakeEvt = { preventDefault: () => {} } as React.FormEvent; void handleCreateInspection(fakeEvt); }, disabled: saving }}
+          secondary={{ label: "Cancel", onClick: () => setShowNewInspection(false) }}
+        >
+          <form onSubmit={handleCreateInspection} className="space-y-3">
+            <label className="block text-sm">
+              <span className="text-[var(--text-2)] font-medium">Workflow type</span>
+              <select className="mt-1 w-full eoss-input" value={newInspWorkflowType} onChange={(e) => setNewInspWorkflowType(e.target.value)}>
+                <option value="incoming">Incoming</option>
+                <option value="in_process">In-process</option>
+                <option value="final">Final</option>
+                <option value="customer">Customer</option>
+                <option value="dispatch_readiness">Dispatch readiness</option>
+              </select>
+            </label>
+            <label className="block text-sm">
+              <span className="text-[var(--text-2)] font-medium">Inspection category</span>
+              <select className="mt-1 w-full eoss-input" value={newInspType} onChange={(e) => setNewInspType(e.target.value)}>
+                {inspectionTypes.map((opt) => (
+                  <option key={opt.id} value={opt.id}>{opt.label}</option>
+                ))}
+              </select>
+            </label>
+            <label className="block text-sm">
+              <span className="text-[var(--text-2)] font-medium">Reference type</span>
+              <select className="mt-1 w-full eoss-input" value={newInspRefType} onChange={(e) => setNewInspRefType(e.target.value)}>
+                <option value="job">Job</option>
+                <option value="job_stage">Job Stage</option>
+                <option value="lot">Lot</option>
+              </select>
+            </label>
+            <label className="block text-sm">
+              <span className="text-[var(--text-2)] font-medium">Reference number</span>
+              <input required className="mt-1 w-full eoss-input" placeholder="e.g. J-200 or LOT-2024-001" value={newInspRefId} onChange={(e) => setNewInspRefId(e.target.value)} />
+            </label>
+            <label className="block text-sm">
+              <span className="text-[var(--text-2)] font-medium">Quantity inspected</span>
+              <input type="number" min="0" step="any" className="mt-1 w-full eoss-input" value={newInspQty} onChange={(e) => setNewInspQty(e.target.value)} />
+            </label>
+            <label className="block text-sm">
+              <span className="text-[var(--text-2)] font-medium">Notes</span>
+              <textarea rows={2} className="mt-1 w-full eoss-input resize-none" value={newInspNotes} onChange={(e) => setNewInspNotes(e.target.value)} />
+            </label>
+            {saveError && <p className="text-xs text-red-600">{saveError}</p>}
+          </form>
+        </RecordSheet>
       )}
 
-      {/* New NCR dialog */}
       {showNewNcr && (
-        <div className="fixed inset-0 z-[70] bg-black/40 flex items-center justify-center p-4">
-          <div
-            className="bg-[var(--bg)] rounded-xl shadow-2xl w-full max-w-md p-6"
-            role="dialog"
-            aria-modal="true"
-            aria-label="Raise NCR"
-          >
-            <h2 className="text-base font-semibold mb-4">Raise NCR</h2>
-            <form onSubmit={handleCreateNcr} className="space-y-3">
-              <label className="block text-sm">
-                <span className="text-[var(--text-2)] font-medium">Defect category</span>
-                <select
-                  required
-                  className="mt-1 w-full rounded-lg border px-3 py-2 text-sm bg-[var(--surface)]"
-                  style={{ borderColor: "var(--border)" }}
-                  value={ncrDefectCategoryId}
-                  onChange={(e) => setNcrDefectCategoryId(e.target.value)}
-                >
-                  <option value="">— Select category —</option>
-                  {defectCategories.map((opt) => (
-                    <option key={opt.id} value={opt.id}>{opt.label}</option>
-                  ))}
-                </select>
-              </label>
-              <label className="block text-sm">
-                <span className="text-[var(--text-2)] font-medium">Description</span>
-                <textarea
-                  required
-                  rows={3}
-                  className="mt-1 w-full rounded-lg border px-3 py-2 text-sm bg-[var(--surface)] resize-none"
-                  style={{ borderColor: "var(--border)" }}
-                  value={ncrDefectDesc}
-                  onChange={(e) => setNcrDefectDesc(e.target.value)}
-                />
-              </label>
-              <label className="block text-sm">
-                <span className="text-[var(--text-2)] font-medium">Severity</span>
-                <select
-                  className="mt-1 w-full rounded-lg border px-3 py-2 text-sm bg-[var(--surface)]"
-                  style={{ borderColor: "var(--border)" }}
-                  value={ncrSeverity}
-                  onChange={(e) => setNcrSeverity(e.target.value)}
-                >
-                  <option value="">— Select severity —</option>
-                  {severityOptions.map((opt) => (
-                    <option key={opt.id} value={opt.id}>{opt.label}</option>
-                  ))}
-                </select>
-              </label>
-              <label className="block text-sm">
-                <span className="text-[var(--text-2)] font-medium">Quantity</span>
-                <input
-                  type="number"
-                  min="0"
-                  step="any"
-                  className="mt-1 w-full rounded-lg border px-3 py-2 text-sm bg-[var(--surface)]"
-                  style={{ borderColor: "var(--border)" }}
-                  value={ncrQty}
-                  onChange={(e) => setNcrQty(e.target.value)}
-                />
-              </label>
-              {ncrSaveError && <p className="text-xs text-red-600">{ncrSaveError}</p>}
-              <div className="flex justify-end gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => { setShowNewNcr(false); setNcrInspectionId(""); }}
-                  className="rounded-lg border px-4 py-2 text-sm font-medium"
-                  style={{ borderColor: "var(--border)" }}
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={saving}
-                  className="rounded-lg bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
-                >
-                  {saving ? "Raising…" : "Raise NCR"}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
+        <RecordSheet
+          title="Raise NCR"
+          onClose={() => { setShowNewNcr(false); setNcrInspectionId(""); }}
+          primary={{ label: saving ? "Raising…" : "Raise NCR", onClick: () => { const fakeEvt = { preventDefault: () => {} } as React.FormEvent; void handleCreateNcr(fakeEvt); }, disabled: saving }}
+          secondary={{ label: "Cancel", onClick: () => { setShowNewNcr(false); setNcrInspectionId(""); } }}
+        >
+          <form onSubmit={handleCreateNcr} className="space-y-3">
+            <label className="block text-sm">
+              <span className="text-[var(--text-2)] font-medium">Defect category</span>
+              <select required className="mt-1 w-full eoss-input" value={ncrDefectCategoryId} onChange={(e) => setNcrDefectCategoryId(e.target.value)}>
+                <option value="">— Select category —</option>
+                {defectCategories.map((opt) => (
+                  <option key={opt.id} value={opt.id}>{opt.label}</option>
+                ))}
+              </select>
+            </label>
+            <label className="block text-sm">
+              <span className="text-[var(--text-2)] font-medium">Description</span>
+              <textarea required rows={3} className="mt-1 w-full eoss-input resize-none" value={ncrDefectDesc} onChange={(e) => setNcrDefectDesc(e.target.value)} />
+            </label>
+            <label className="block text-sm">
+              <span className="text-[var(--text-2)] font-medium">Severity</span>
+              <select className="mt-1 w-full eoss-input" value={ncrSeverity} onChange={(e) => setNcrSeverity(e.target.value)}>
+                <option value="">— Select severity —</option>
+                {severityOptions.map((opt) => (
+                  <option key={opt.id} value={opt.id}>{opt.label}</option>
+                ))}
+              </select>
+            </label>
+            <label className="block text-sm">
+              <span className="text-[var(--text-2)] font-medium">Quantity</span>
+              <input type="number" min="0" step="any" className="mt-1 w-full eoss-input" value={ncrQty} onChange={(e) => setNcrQty(e.target.value)} />
+            </label>
+            {ncrSaveError && <p className="text-xs text-red-600">{ncrSaveError}</p>}
+          </form>
+        </RecordSheet>
       )}
     </div>
   );

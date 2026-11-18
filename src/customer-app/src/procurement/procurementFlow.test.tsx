@@ -99,7 +99,7 @@ it("lists suppliers and filters by trading name", async () => {
 it("rejects an invalid GSTIN before calling the supplier API", async () => {
   renderSuppliers();
   await userEvent.click(await screen.findByRole("button", { name: "Add Supplier" }));
-  const dialog = screen.getByRole("heading", { name: "Add Supplier" }).closest("div")!.parentElement!;
+  const dialog = screen.getByRole("dialog", { name: "Add Supplier" });
   const fields = within(dialog).getAllByRole("textbox");
   await userEvent.type(fields[0], "Steel House Pvt Ltd");
   await userEvent.type(fields[2], "Pune");
@@ -112,7 +112,7 @@ it("rejects an invalid GSTIN before calling the supplier API", async () => {
 it("creates a supplier and shows the API error when the save is rejected", async () => {
   renderSuppliers();
   await userEvent.click(await screen.findByRole("button", { name: "Add Supplier" }));
-  const dialog = screen.getByRole("heading", { name: "Add Supplier" }).closest("div")!.parentElement!;
+  const dialog = screen.getByRole("dialog", { name: "Add Supplier" });
   const fields = within(dialog).getAllByRole("textbox");
   await userEvent.type(fields[0], "Steel House Pvt Ltd");
   await userEvent.type(fields[2], "Pune");
@@ -128,7 +128,7 @@ it("creates a supplier and shows the API error when the save is rejected", async
     return procurementFetch(url, init);
   });
   await userEvent.click(screen.getByRole("button", { name: "Add Supplier" }));
-  const again = screen.getByRole("heading", { name: "Add Supplier" }).closest("div")!.parentElement!;
+  const again = screen.getByRole("dialog", { name: "Add Supplier" });
   const retryFields = within(again).getAllByRole("textbox");
   await userEvent.type(retryFields[0], "Steel House Pvt Ltd");
   await userEvent.type(retryFields[2], "Pune");
