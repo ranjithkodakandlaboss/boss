@@ -35,7 +35,9 @@ describe("inventory prototype screens", () => {
     expect(screen.getByRole("link", { name: "Stock on hand" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Returns" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Site need" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Cycle count" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Cycle count" })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Bills of materials" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Remnants" })).not.toBeInTheDocument();
   });
 
   it("shows lot stock and the jobs that use an item", async () => {

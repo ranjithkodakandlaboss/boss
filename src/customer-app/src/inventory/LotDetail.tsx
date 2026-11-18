@@ -63,19 +63,24 @@ export default function LotDetail() {
         <section className="overflow-hidden rounded-xl border" style={{ borderColor: "var(--border)" }}>
           <h2 className="border-b px-4 py-3 text-sm font-bold" style={{ borderColor: "var(--border)" }}>Stock movement ledger</h2>
           <table className="w-full text-sm">
-            <thead><tr>{["Timestamp", "Movement", "Qty", "Balance", "Reference", "Note"].map((label) => <th key={label} className="px-3 py-2 text-left text-xs">{label}</th>)}</tr></thead>
+            <thead><tr>{["Timestamp", "Movement", "Qty", "Balance", "From", "To", "Reference", "By"].map((label) => <th key={label} className="px-3 py-2 text-left text-xs">{label}</th>)}</tr></thead>
             <tbody>
-              {ledger.length === 0 && <tr><td colSpan={6} className="px-3 py-6 text-center text-sm text-[var(--text-3)]">No movements recorded</td></tr>}
-              {ledger.map((movement) => (
-                <tr key={movement.id}>
-                  <td className="px-3 py-2 text-xs">{movement.createdAt ? new Date(movement.createdAt).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "—"}</td>
-                  <td className="px-3 py-2 text-xs">{movement.movementType.replaceAll("_", " ")}</td>
-                  <td className="px-3 py-2 font-mono text-xs">{Number(movement.qty) > 0 ? "+" : ""}{quantity(movement.qty, lot.uomSymbol)}</td>
-                  <td className="px-3 py-2 font-mono text-xs">{quantity(movement.balance, lot.uomSymbol)}</td>
-                  <td className="px-3 py-2 text-xs">{movement.referenceType ? `${movement.referenceType}` : "—"}</td>
-                  <td className="px-3 py-2 text-xs">{movement.note || "—"}</td>
-                </tr>
-              ))}
+              {ledger.length === 0 && <tr><td colSpan={8} className="px-3 py-6 text-center text-sm text-[var(--text-3)]">No movements recorded</td></tr>}
+              {ledger.map((movement) => {
+                const m = movement as typeof movement & { fromLocation?: string; toLocation?: string; performedBy?: string };
+                return (
+                  <tr key={movement.id}>
+                    <td className="px-3 py-2 text-xs">{movement.createdAt ? new Date(movement.createdAt).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "—"}</td>
+                    <td className="px-3 py-2 text-xs">{movement.movementType.replaceAll("_", " ")}</td>
+                    <td className="px-3 py-2 font-mono text-xs">{Number(movement.qty) > 0 ? "+" : ""}{quantity(movement.qty, lot.uomSymbol)}</td>
+                    <td className="px-3 py-2 font-mono text-xs">{quantity(movement.balance, lot.uomSymbol)}</td>
+                    <td className="px-3 py-2 text-xs">{m.fromLocation || "—"}</td>
+                    <td className="px-3 py-2 text-xs">{m.toLocation || "—"}</td>
+                    <td className="px-3 py-2 text-xs">{movement.referenceType ? `${movement.referenceType}` : "—"}</td>
+                    <td className="px-3 py-2 text-xs">{m.performedBy || "—"}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
           {ledger.length > 0 && (
