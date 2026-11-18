@@ -22,6 +22,7 @@ export default function QuotationDetail() {
   const [reviseModal, setReviseModal] = useState(false);
   const [reviseDiscount, setReviseDiscount] = useState('0');
   const [reviseNotes, setReviseNotes] = useState('');
+  const [reviseLines, setReviseLines] = useState<{ id: string; productName: string; uom: string; orderedQty: string; unitPrice: string }[]>([]);
   const [overrideReason, setOverrideReason] = useState('');
 
   const quotation = quotations.find(q => q.id === id);
@@ -48,8 +49,16 @@ export default function QuotationDetail() {
 
   const handleReviseQuotation = async () => {
     const disc = Number(reviseDiscount) || 0;
-    const nextQ: CustomerQuotation = { ...quotation, discountAmount: disc, notes: reviseNotes.trim() || quotation.notes, status: 'draft' };
-    const saved = await reviseQuotation(quotation.id, nextQ, lines);
+    const revisedLines: CustomerQuotationLine[] = lines.map(l => {
+      const edit = reviseLines.find(r => r.id === l.id);
+      if (!edit) return l;
+      const qty = Number(edit.orderedQty) || l.orderedQty;
+      const price = Number(edit.unitPrice) ?? l.unitPrice;
+      return { ...l, orderedQty: qty, unitPrice: price, value: qty * price };
+    });
+    const totalValue = revisedLines.reduce((s, l) => s + l.value, 0) - disc;
+    const nextQ: CustomerQuotation = { ...quotation, discountAmount: disc, notes: reviseNotes.trim() || quotation.notes, status: 'draft', totalValue };
+    const saved = await reviseQuotation(quotation.id, nextQ, revisedLines);
     setReviseModal(false);
     if (saved) navigate(`/sales/quotation/${saved.id}`, { state: { from: originUrl } });
   };
@@ -96,10 +105,14 @@ export default function QuotationDetail() {
               <div className="flex items-center gap-2">
                 <span className="font-mono text-sm font-bold text-[var(--brand)]">{quotation.quotationNumber}</span>
                 <StatusChip status={quotation.status} size="sm" />
+                {childRevisions.length === 0 && quotation.status !== 'superseded' && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-100 text-blue-700 font-semibold border border-blue-200">Latest</span>
+                )}
               </div>
               <h1 className="text-lg font-bold text-[var(--text)] mt-0.5">{quotation.customerName}</h1>
               <p className="text-xs text-[var(--text-2)]">
-                Quoted {fmt(quotation.quotationDate)} · Valid until {fmt(quotation.validUntil)} · Rev {quotation.revision}
+                Quoted {fmt(quotation.quotationDate)} · Valid until {fmt(quotation.validUntil)} · Rev {quotation.revision ?? 1}
+                {quotation.parentQuotationId && <span className="ml-2 text-[var(--text-3)]">↑ Revised from {parentQuote?.quotationNumber ?? 'prior version'}</span>}
               </p>
             </div>
           </div>
@@ -139,7 +152,7 @@ export default function QuotationDetail() {
               </>
             )}
             {canRevise && (
-              <button onClick={() => { setReviseDiscount(String(quotation.discountAmount ?? 0)); setReviseNotes(quotation.notes ?? ''); setReviseModal(true); }} className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-semibold border border-[var(--border)] text-[var(--text)] hover:bg-[var(--surface-2)]">
+              <button onClick={() => { setReviseDiscount(String(quotation.discountAmount ?? 0)); setReviseNotes(quotation.notes ?? ''); setReviseLines(lines.map(l => ({ id: l.id, productName: l.productName, uom: l.uom, orderedQty: String(l.orderedQty), unitPrice: String(l.unitPrice) }))); setReviseModal(true); }} className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-semibold border border-[var(--border)] text-[var(--text)] hover:bg-[var(--surface-2)]">
                 <Copy size={14} /> Revise Quotation
               </button>
             )}
@@ -170,17 +183,65 @@ export default function QuotationDetail() {
         </div>
 
         {reviseModal && (
-          <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
-            <div className="bg-[var(--surface)] rounded-2xl border p-6 max-w-md w-full shadow-2xl space-y-4 border-[var(--border)]">
-              <h3 className="text-base font-bold text-[var(--text)]">Revise {quotation.quotationNumber}</h3>
+          <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4 overflow-y-auto">
+            <div className="bg-[var(--surface)] rounded-2xl border p-6 max-w-2xl w-full shadow-2xl space-y-4 border-[var(--border)] my-auto">
+              <div className="flex items-center justify-between">
+                <h3 className="text-base font-bold text-[var(--text)]">Revise {quotation.quotationNumber}</h3>
+                <span className="text-[11px] text-[var(--text-3)]">Rev {quotation.revision ?? 1} → Rev {(quotation.revision ?? 1) + 1}</span>
+              </div>
               <p className="text-xs text-[var(--text-2)]">Creates a new linked revision and marks {quotation.quotationNumber} as <span className="font-mono">superseded</span>.</p>
+              {/* Line items */}
               <div>
-                <label className="block text-xs font-medium text-[var(--text-2)] mb-1">Revised Discount (₹)</label>
-                <input type="number" min={0} className="eoss-input w-full font-mono" value={reviseDiscount} onChange={e => setReviseDiscount(e.target.value)} />
+                <div className="text-xs font-semibold text-[var(--text-2)] mb-2">Line Items — edit quantity or unit price</div>
+                <div className="overflow-x-auto rounded-lg border border-[var(--border)]">
+                  <table className="w-full text-xs">
+                    <thead className="bg-[var(--surface-2)]">
+                      <tr>
+                        <th className="text-left p-2 text-[var(--text-3)]">#</th>
+                        <th className="text-left p-2 text-[var(--text-3)]">Product</th>
+                        <th className="text-right p-2 text-[var(--text-3)]">Qty</th>
+                        <th className="text-left p-2 text-[var(--text-3)]">UOM</th>
+                        <th className="text-right p-2 text-[var(--text-3)]">Unit Price (₹)</th>
+                        <th className="text-right p-2 text-[var(--text-3)]">Line Total</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {reviseLines.map((rl, i) => {
+                        const qty = Number(rl.orderedQty) || 0;
+                        const price = Number(rl.unitPrice) || 0;
+                        return (
+                          <tr key={rl.id} className="border-t border-[var(--border)]">
+                            <td className="p-2 text-[var(--text-3)]">{i + 1}</td>
+                            <td className="p-2 font-medium text-[var(--text)]">{rl.productName}</td>
+                            <td className="p-2 text-right">
+                              <input type="number" min={0.01} step={0.01} className="eoss-input w-20 text-right font-mono text-xs" value={rl.orderedQty} onChange={e => setReviseLines(prev => prev.map(r => r.id === rl.id ? { ...r, orderedQty: e.target.value } : r))} />
+                            </td>
+                            <td className="p-2 text-[var(--text-2)]">{rl.uom}</td>
+                            <td className="p-2 text-right">
+                              <input type="number" min={0} step={0.01} className="eoss-input w-28 text-right font-mono text-xs" value={rl.unitPrice} onChange={e => setReviseLines(prev => prev.map(r => r.id === rl.id ? { ...r, unitPrice: e.target.value } : r))} />
+                            </td>
+                            <td className="p-2 text-right font-mono font-semibold text-[var(--text)]">₹{(qty * price).toLocaleString('en-IN')}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-[var(--text-2)] mb-1">Revised Discount (₹)</label>
+                  <input type="number" min={0} className="eoss-input w-full font-mono" value={reviseDiscount} onChange={e => setReviseDiscount(e.target.value)} />
+                </div>
+                <div className="flex items-end pb-0.5">
+                  <div className="text-xs text-[var(--text-2)]">
+                    Net Total: <span className="font-mono font-semibold text-[var(--text)]">₹{(reviseLines.reduce((s, r) => s + (Number(r.orderedQty) || 0) * (Number(r.unitPrice) || 0), 0) - (Number(reviseDiscount) || 0)).toLocaleString('en-IN')}</span>
+                  </div>
+                </div>
               </div>
               <div>
                 <label className="block text-xs font-medium text-[var(--text-2)] mb-1">Revision Summary / Notes</label>
-                <textarea className="eoss-input w-full" rows={2} value={reviseNotes} onChange={e => setReviseNotes(e.target.value)} />
+                <textarea className="eoss-input w-full" rows={2} value={reviseNotes} onChange={e => setReviseNotes(e.target.value)} placeholder="Describe what changed in this revision…" />
               </div>
               <div className="flex gap-2 justify-end">
                 <button type="button" onClick={() => setReviseModal(false)} className="px-4 py-2 rounded-lg text-xs border border-[var(--border)]">Cancel</button>

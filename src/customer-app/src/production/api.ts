@@ -276,19 +276,26 @@ export type JobLotReservation = {
 };
 
 export async function usableLots(itemId: string, jobId: string) {
-  const query = `/api/v1/inventory/lots?itemId=${encodeURIComponent(itemId)}&page=0&size=200&status=`;
-  const [available, reserved, owned] = await Promise.all([
-    api<Page<LotOption>>(`${query}available`),
-    api<Page<LotOption>>(`${query}reserved`),
+  const base = `/api/v1/inventory/lots?itemId=${encodeURIComponent(itemId)}&page=0&size=200`;
+  const byStatus = `${base}&status=`;
+  const [all, available, reserved, owned] = await Promise.all([
+    api<Page<LotOption>>(base).catch(() => ({ content: [] as LotOption[] })),
+    api<Page<LotOption>>(`${byStatus}available`).catch(() => ({ content: [] as LotOption[] })),
+    api<Page<LotOption>>(`${byStatus}reserved`).catch(() => ({ content: [] as LotOption[] })),
     api<JobLotReservation[]>(`/api/v1/inventory/reservations/lots?jobId=${encodeURIComponent(jobId)}`),
   ]);
   const ownedIds = new Set((Array.isArray(owned) ? owned : [])
     .filter((row) => row.itemId === itemId)
     .map((row) => row.lotId));
   const seen = new Set<string>();
-  const content = [...(available.content ?? []), ...(reserved.content ?? [])].filter((lot) => {
+  // Merge all fetched lots; prefer the richer record (all-lots query may have more detail)
+  const content = [...(all.content ?? []), ...(available.content ?? []), ...(reserved.content ?? [])].filter((lot) => {
     if (seen.has(lot.id)) return false;
-    if (lot.status === "reserved" && !ownedIds.has(lot.id)) return false;
+    const status = (lot.status || "").toLowerCase();
+    // Exclude lots that are explicitly blocked
+    if (["quarantine", "rejected", "hold", "qc_hold"].includes(status)) return false;
+    // Reserved lots are only usable if this job owns the reservation
+    if (status === "reserved" && !ownedIds.has(lot.id)) return false;
     seen.add(lot.id);
     return true;
   });

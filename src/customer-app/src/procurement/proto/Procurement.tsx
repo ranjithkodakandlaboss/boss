@@ -398,7 +398,7 @@ export default function Procurement() {
           );
           const canCompareSelected = selectedQuoteObjs.length >= 2 && !crossPrBlocked && !materialMismatchBlocked;
           const toggleQuoteSelect = (id: string) =>
-            setSelectedQuoteIds(prev => (prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]));
+            setSelectedQuoteIds(prev => (prev.includes(id) ? prev.filter(x => x !== id) : prev.length >= 3 ? prev : [...prev, id]));
 
           const prFilteredInvs = supplierInvitations.filter(inv => {
             if (!search.trim()) return true;
@@ -463,7 +463,7 @@ export default function Procurement() {
                     Supplier Quotations ({filteredQuotes.length})
                   </h3>
                   <span className="text-[11px] text-[var(--text-3)]">
-                    Check 2+ quotes on the same PR to run side-by-side comparison
+                    Check 2–3 quotes on the same PR to run side-by-side comparison (max 3)
                   </span>
                 </div>
                 <div className="md:hidden space-y-2">
