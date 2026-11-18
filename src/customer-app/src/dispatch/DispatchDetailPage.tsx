@@ -8,8 +8,7 @@ import {
   Box,
   FileText,
   Plus,
-  AlertTriangle,
-  Download,
+  History,
 } from "lucide-react";
 import { useCustomer } from "../auth/CustomerState";
 import StatusChip from "../components/shared/StatusChip";
@@ -240,21 +239,13 @@ export default function DispatchDetailPage() {
               {dispatch.dispatchDate && (
                 <Field
                   label="Dispatch Date"
-                  value={new Date(dispatch.dispatchDate).toLocaleDateString("en-IN", {
-                    day: "numeric",
-                    month: "short",
-                    year: "numeric",
-                  })}
+                  value={new Date(dispatch.dispatchDate).toLocaleDateString("en-IN")}
                 />
               )}
               {dispatch.expectedDelivery && (
                 <Field
                   label="Expected Delivery"
-                  value={new Date(dispatch.expectedDelivery).toLocaleDateString("en-IN", {
-                    day: "numeric",
-                    month: "short",
-                    year: "numeric",
-                  })}
+                  value={new Date(dispatch.expectedDelivery).toLocaleDateString("en-IN")}
                 />
               )}
             </dl>
@@ -341,7 +332,7 @@ export default function DispatchDetailPage() {
           {isQCGateBlocked && (
             <div className="p-4 rounded-xl border border-rose-300 bg-rose-50 text-rose-900 space-y-2.5 shadow-sm">
               <div className="flex items-center gap-2 font-bold text-sm text-rose-800">
-                <AlertTriangle size={16} className="text-rose-600" /> Dispatch Blocked — Quality Inspection Gate Active
+                <Box size={16} className="text-rose-600" /> Dispatch Blocked — Quality Inspection Gate Active
               </div>
               <p className="text-xs leading-relaxed text-rose-700">
                 Dispatch execution is locked because final inspection{" "}
@@ -385,14 +376,13 @@ export default function DispatchDetailPage() {
                 >
                   <Truck size={14} /> Mark Dispatched
                 </button>
-                <a
-                  href={`/api/v1/dispatches/${dispatch.id}/challan`}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="w-full py-2 border border-[var(--border)] text-[var(--text)] rounded-lg text-sm flex items-center justify-center gap-1.5 hover:bg-[var(--surface-2)] transition-colors"
+                <button
+                  disabled={updating || isQCGateBlocked}
+                  onClick={() => window.open(`/api/v1/dispatches/${dispatch.id}/challan`, "_blank")}
+                  className="w-full py-2 border border-[var(--border)] text-[var(--text)] rounded-lg text-sm disabled:opacity-40 flex items-center justify-center gap-1.5 hover:bg-[var(--surface-2)] transition-colors"
                 >
-                  <Download size={14} /> Download Delivery Challan
-                </a>
+                  Generate E-Way Bill
+                </button>
               </div>
             </div>
           )}
@@ -590,36 +580,48 @@ export default function DispatchDetailPage() {
         </div>
       </div>
 
-      {/* Record History Timeline */}
-      <div className="mt-6 bg-[var(--surface)] border border-[var(--border)] rounded-xl p-4 shadow-sm">
-        <h3 className="font-semibold text-sm text-[var(--text)] mb-1">Dispatch &amp; Delivery Activity History</h3>
-        <p className="text-xs text-[var(--text-3)] mb-4">
-          Dispatch creation, status updates, PoD confirmation, and billing events
-        </p>
-
-        {dispatch.history.length === 0 ? (
-          <p className="text-xs text-[var(--text-3)]">No activity recorded yet.</p>
-        ) : (
-          <div className="relative pl-6 space-y-4 before:absolute before:left-2 before:top-2 before:bottom-2 before:w-0.5 before:bg-[var(--border)]">
-            {dispatch.history.map((h) => (
-              <div key={h.id} className="relative">
-                <div className="absolute -left-6 top-1.5 w-2.5 h-2.5 rounded-full bg-[var(--brand, #7048F5)] border-2 border-[var(--surface)]" />
-                <div className="flex items-center justify-between">
-                  <div className="text-xs font-bold text-[var(--text)]">{h.title}</div>
-                  <div className="text-[10px] text-[var(--text-3)]">
-                    {new Date(h.timestamp).toLocaleString("en-IN", {
-                      day: "2-digit",
-                      month: "short",
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    })}
-                  </div>
-                </div>
-                <div className="text-xs text-[var(--text-2)] mt-0.5">{h.description}</div>
-              </div>
-            ))}
+      {/* Activity History Panel */}
+      <div className="mt-6 bg-[var(--surface)] border border-[var(--border)] rounded-xl overflow-hidden shadow-sm">
+        <div className="px-4 py-3 border-b border-[var(--border)] bg-[var(--surface-2)] flex items-center justify-between gap-3 flex-wrap">
+          <div>
+            <h3 className="text-sm font-semibold text-[var(--text)] flex items-center gap-2">
+              <History size={15} style={{ color: "var(--brand, #7048F5)" }} />
+              Dispatch &amp; Delivery Activity History
+              <span className="text-xs font-mono px-1.5 py-0.5 rounded bg-[var(--surface)] border border-[var(--border)] text-[var(--text-2)]">
+                {dispatch.history.length}
+              </span>
+            </h3>
+            <p className="text-xs text-[var(--text-3)] mt-0.5">
+              Dispatch creation, status updates, PoD confirmation, and customer billing events
+            </p>
           </div>
-        )}
+        </div>
+
+        <div className="p-4">
+          {dispatch.history.length === 0 ? (
+            <p className="text-xs text-[var(--text-3)]">No activity recorded yet.</p>
+          ) : (
+            <div className="relative pl-6 space-y-4 before:absolute before:left-2 before:top-2 before:bottom-2 before:w-0.5 before:bg-[var(--border)]">
+              {dispatch.history.map((h) => (
+                <div key={h.id} className="relative">
+                  <div className="absolute -left-6 top-1.5 w-2.5 h-2.5 rounded-full bg-[var(--brand, #7048F5)] border-2 border-[var(--surface)]" />
+                  <div className="flex items-center justify-between">
+                    <div className="text-xs font-bold text-[var(--text)]">{h.title}</div>
+                    <div className="text-[10px] text-[var(--text-3)]">
+                      {new Date(h.timestamp).toLocaleString("en-IN", {
+                        day: "2-digit",
+                        month: "short",
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}
+                    </div>
+                  </div>
+                  <div className="text-xs text-[var(--text-2)] mt-0.5">{h.description}</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

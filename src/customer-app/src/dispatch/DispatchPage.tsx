@@ -352,11 +352,10 @@ export default function DispatchPage() {
           <button
             type="button"
             onClick={() => setStatusFocus(statusFocus === "ready" ? null : "ready")}
-            className="px-3 py-1.5 rounded-lg text-xs font-semibold transition-opacity hover:opacity-90"
-            style={{
-              background: statusFocus === "ready" ? "var(--success,#16A34A)" : "var(--success-bg,#F0FDF4)",
-              color: statusFocus === "ready" ? "#fff" : "var(--success,#16A34A)",
-            }}
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold ${
+              statusFocus === "ready" ? "ring-2 ring-[var(--success,#16A34A)]" : ""
+            }`}
+            style={{ background: "var(--success-bg,#F0FDF4)", color: "var(--success,#16A34A)" }}
           >
             {readyCount} ready
           </button>
@@ -366,11 +365,10 @@ export default function DispatchPage() {
           <button
             type="button"
             onClick={() => setStatusFocus(statusFocus === "pending_docs" ? null : "pending_docs")}
-            className="px-3 py-1.5 rounded-lg text-xs font-semibold transition-opacity hover:opacity-90"
-            style={{
-              background: statusFocus === "pending_docs" ? "var(--warning,#D97706)" : "var(--warning-bg,#FFFBEB)",
-              color: statusFocus === "pending_docs" ? "#fff" : "var(--warning,#D97706)",
-            }}
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold ${
+              statusFocus === "pending_docs" ? "ring-2 ring-[var(--warning,#D97706)]" : ""
+            }`}
+            style={{ background: "var(--warning-bg,#FFFBEB)", color: "var(--warning,#D97706)" }}
           >
             {pendingDocs} pending docs
           </button>
@@ -380,11 +378,10 @@ export default function DispatchPage() {
           <button
             type="button"
             onClick={() => setStatusFocus(statusFocus === "dispatched" ? null : "dispatched")}
-            className="px-3 py-1.5 rounded-lg text-xs font-semibold transition-opacity hover:opacity-90"
-            style={{
-              background: statusFocus === "dispatched" ? "var(--info,#2563EB)" : "var(--info-bg,#EFF6FF)",
-              color: statusFocus === "dispatched" ? "#fff" : "var(--info,#2563EB)",
-            }}
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold ${
+              statusFocus === "dispatched" ? "ring-2 ring-[var(--info,#2563EB)]" : ""
+            }`}
+            style={{ background: "var(--info-bg,#EFF6FF)", color: "var(--info,#2563EB)" }}
           >
             {dispatched} in transit
           </button>
@@ -493,8 +490,8 @@ export default function DispatchPage() {
                     <td className="px-4 py-3 text-xs" style={{ color: "var(--text-2)" }}>
                       {displayDate(d.expectedDelivery)}
                     </td>
-                    <td className="px-4 py-3 text-xs text-center font-medium" style={{ color: "var(--text-2)" }}>
-                      {d.totalQty != null && d.totalQty > 0 ? d.totalQty : "—"}
+                    <td className="px-4 py-3 text-xs text-center" style={{ color: "var(--text-2)" }}>
+                      {d.totalQty ?? "—"}
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-1 flex-wrap">
@@ -514,7 +511,7 @@ export default function DispatchPage() {
                               e.stopPropagation();
                               setPodDispatchId(d.id);
                             }}
-                            className="flex items-center gap-1 text-xs px-2 py-1 rounded-lg border font-medium transition-colors hover:bg-purple-50"
+                            className="flex items-center gap-1 text-xs px-2 py-1 rounded-lg border font-medium transition-colors"
                             style={{ borderColor: "var(--brand, #7048F5)", color: "var(--brand, #7048F5)" }}
                             title="Record Proof of Delivery"
                           >
@@ -524,10 +521,10 @@ export default function DispatchPage() {
                         {canManage && d.status !== "delivered" && (
                           <button
                             onClick={(e) => handleDeleteDispatch(d.id, e)}
-                            className="p-1 rounded hover:bg-[var(--surface-2)] text-red-500"
+                            className="p-1 rounded hover:bg-[var(--surface-2)]"
                             title="Remove dispatch"
                           >
-                            <Trash2 size={13} />
+                            <Trash2 size={12} style={{ color: "var(--error,#DC2626)" }} />
                           </button>
                         )}
                       </div>
