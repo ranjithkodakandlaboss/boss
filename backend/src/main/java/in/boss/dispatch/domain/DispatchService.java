@@ -27,6 +27,13 @@ import java.util.*;
 @Service
 public class DispatchService {
 
+    private static final Map<String, String> HISTORY_TITLES = Map.of(
+            "create", "Dispatch Created",
+            "status_change", "Status Updated",
+            "pod_recorded", "Proof of Delivery Confirmed",
+            "packing_recorded", "Packing Recorded"
+    );
+
     private final JdbcTemplate jdbc;
     private final QualityService qualityService;
     private final AuditService auditService;
@@ -439,13 +446,7 @@ public class DispatchService {
                 ORDER BY a.created_at DESC
                 """, (rs, i) -> {
             String act = rs.getString("action");
-            String title = switch (act) {
-                case "create" -> "Dispatch Created";
-                case "status_change" -> "Status Updated";
-                case "pod_recorded" -> "Proof of Delivery Confirmed";
-                case "packing_recorded" -> "Packing Recorded";
-                default -> "Dispatch Updated (" + act + ")";
-            };
+            String title = HISTORY_TITLES.getOrDefault(act, "Dispatch Updated (" + act + ")");
             return new DispatchHistoryDto(
                     (UUID) rs.getObject("id"),
                     act,
@@ -525,18 +526,7 @@ public class DispatchService {
             return current;
         }
 
-        // Validate state transitions
-        boolean valid = switch (oldStatus) {
-            case "draft" -> List.of("pending_docs", "dispatched", "cancelled").contains(nextStatus);
-            case "pending", "pending_docs" -> List.of("dispatched", "cancelled").contains(nextStatus);
-            case "packed" -> List.of("dispatched", "cancelled").contains(nextStatus);
-            case "dispatched" -> List.of("in_transit", "delivered", "delayed").contains(nextStatus);
-            case "in_transit" -> List.of("delivered", "delayed").contains(nextStatus);
-            case "delayed" -> List.of("in_transit", "delivered").contains(nextStatus);
-            default -> false;
-        };
-
-        if (!valid) {
+        if (!DispatchStatusMachine.allows(oldStatus, nextStatus)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                     "Invalid status transition from " + oldStatus + " to " + nextStatus);
         }
@@ -550,37 +540,7 @@ public class DispatchService {
             }
         }
 
-        // Update dispatches
-        if ("dispatched".equals(nextStatus)) {
-            jdbc.update("""
-                    UPDATE dispatches
-                    SET status = ?, dispatched_at = NOW(), updated_at = NOW()
-                    WHERE tenant_id = ? AND id = ?
-                    """, nextStatus, tenantId, dispatchId);
-
-            // Update CPO lines delivered_qty
-            for (var line : current.lines()) {
-                if (line.cpoLineId() != null) {
-                    jdbc.update("""
-                            UPDATE cpo_lines
-                            SET delivered_qty = delivered_qty + ?
-                            WHERE tenant_id = ? AND id = ?
-                            """, line.quantity(), tenantId, line.cpoLineId());
-                }
-            }
-        } else if ("delivered".equals(nextStatus)) {
-            jdbc.update("""
-                    UPDATE dispatches
-                    SET status = ?, actual_delivery_date = COALESCE(actual_delivery_date, CURRENT_DATE), updated_at = NOW()
-                    WHERE tenant_id = ? AND id = ?
-                    """, nextStatus, tenantId, dispatchId);
-        } else {
-            jdbc.update("""
-                    UPDATE dispatches
-                    SET status = ?, updated_at = NOW()
-                    WHERE tenant_id = ? AND id = ?
-                    """, nextStatus, tenantId, dispatchId);
-        }
+        DispatchStatusMachine.apply(jdbc, tenantId, dispatchId, nextStatus, current.lines());
 
         // Record Audit and Outbox
         auditService.record("dispatch", dispatchId, "status_change",
@@ -694,177 +654,6 @@ public class DispatchService {
 
         auditService.record("dispatch", dispatchId, "delete",
                 toJson(Map.of("dispatchNumber", dispatch.dispatchNumber())), null);
-    }
-
-    // ==========================================
-    // PACKING SPECIFICATIONS & RECORDING
-    // ==========================================
-
-    public PagedPackingSpecs listPackingSpecs(UUID itemId, Boolean isActive, int page, int size) {
-        BossContext ctx = requireContext();
-        UUID tenantId = ctx.tenantId();
-
-        StringBuilder sql = new StringBuilder("""
-                SELECT ps.id, ps.item_id, it.code AS item_code, it.name AS item_name,
-                       ps.name, ps.packing_type, ps.units_per_pack, ps.gross_weight_kg,
-                       ps.dimensions_cm, ps.notes, ps.created_at
-                FROM packing_specifications ps
-                LEFT JOIN items it ON it.id = ps.item_id AND it.tenant_id = ps.tenant_id
-                WHERE ps.tenant_id = ?
-                """);
-        List<Object> params = new ArrayList<>();
-        params.add(tenantId);
-
-        if (itemId != null) {
-            params.add(itemId);
-            sql.append(" AND ps.item_id = ?");
-        }
-
-        sql.append(" ORDER BY ps.created_at DESC");
-
-        List<PackingSpecDto> all = jdbc.query(sql.toString(), (rs, i) -> mapPackingSpec(rs), params.toArray());
-        int total = all.size();
-        int from = Math.min(page * size, total);
-        int to = Math.min(from + size, total);
-        List<PackingSpecDto> paged = all.subList(from, to);
-        int totalPages = size > 0 ? (int) Math.ceil((double) total / size) : 1;
-
-        return new PagedPackingSpecs(paged, total, totalPages, page, size);
-    }
-
-    @Transactional
-    public PackingSpecDto createPackingSpec(CreatePackingSpecRequest req) {
-        BossContext ctx = requireContext();
-        UUID tenantId = ctx.tenantId();
-
-        if (req.itemId() == null) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Item ID is required");
-        }
-
-        UUID specId = UUID.randomUUID();
-        String name = req.packingTypeLabel() != null ? req.packingTypeLabel() : "Standard Packaging";
-        String dimJson = null;
-        if (req.packDimensions() != null) {
-            try {
-                dimJson = objectMapper.writeValueAsString(req.packDimensions());
-            } catch (JsonProcessingException ignored) {}
-        }
-
-        jdbc.update("""
-                INSERT INTO packing_specifications (
-                  id, tenant_id, item_id, name, packing_type, units_per_pack,
-                  gross_weight_kg, dimensions_cm, notes, created_at
-                ) VALUES (
-                  ?, ?, ?, ?, ?, ?,
-                  ?, ?::jsonb, ?, NOW()
-                )
-                """,
-                specId, tenantId, req.itemId(), name, req.packingTypeLabel(),
-                req.unitsPerPack(), req.packWeight(), dimJson, req.handlingInstructions()
-        );
-
-        return getPackingSpec(specId);
-    }
-
-    public PackingSpecDto getPackingSpec(UUID id) {
-        BossContext ctx = requireContext();
-        UUID tenantId = ctx.tenantId();
-
-        List<PackingSpecDto> list = jdbc.query("""
-                SELECT ps.id, ps.item_id, it.code AS item_code, it.name AS item_name,
-                       ps.name, ps.packing_type, ps.units_per_pack, ps.gross_weight_kg,
-                       ps.dimensions_cm, ps.notes, ps.created_at
-                FROM packing_specifications ps
-                LEFT JOIN items it ON it.id = ps.item_id AND it.tenant_id = ps.tenant_id
-                WHERE ps.tenant_id = ? AND ps.id = ?
-                """, (rs, i) -> mapPackingSpec(rs), tenantId, id);
-
-        if (list.isEmpty()) {
-            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Packing spec not found");
-        }
-        return list.get(0);
-    }
-
-    @Transactional
-    public PackingSpecDto updatePackingSpec(UUID id, CreatePackingSpecRequest req) {
-        BossContext ctx = requireContext();
-        UUID tenantId = ctx.tenantId();
-
-        String dimJson = null;
-        if (req.packDimensions() != null) {
-            try {
-                dimJson = objectMapper.writeValueAsString(req.packDimensions());
-            } catch (JsonProcessingException ignored) {}
-        }
-
-        jdbc.update("""
-                UPDATE packing_specifications
-                SET packing_type = COALESCE(?, packing_type),
-                    units_per_pack = COALESCE(?, units_per_pack),
-                    gross_weight_kg = COALESCE(?, gross_weight_kg),
-                    dimensions_cm = COALESCE(?::jsonb, dimensions_cm),
-                    notes = COALESCE(?, notes)
-                WHERE tenant_id = ? AND id = ?
-                """,
-                req.packingTypeLabel(), req.unitsPerPack(), req.packWeight(),
-                dimJson, req.handlingInstructions(), tenantId, id
-        );
-
-        return getPackingSpec(id);
-    }
-
-    @Transactional
-    public DispatchPackingRecordDto recordDispatchPacking(UUID dispatchId, RecordPackingRequest req) {
-        BossContext ctx = requireContext();
-        UUID tenantId = ctx.tenantId();
-
-        var dispatch = getDispatch(dispatchId);
-        if (!"pending".equalsIgnoreCase(dispatch.status()) && !"pending_docs".equalsIgnoreCase(dispatch.status()) && !"draft".equalsIgnoreCase(dispatch.status())) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "Packing can only be recorded for pending or draft dispatches");
-        }
-
-        UUID pkgId = UUID.randomUUID();
-        String pkgCode = "PKG-" + (dispatch.packages().size() + 1);
-        String pkgType = req.packingTypeLabel() != null ? req.packingTypeLabel() : "Standard Pack";
-
-        jdbc.update("""
-                INSERT INTO dispatch_packages (
-                  id, tenant_id, dispatch_id, package_code, package_type, product_description,
-                  quantity, uom, weight_kg, packing_notes, created_at
-                ) VALUES (
-                  ?, ?, ?, ?, ?, ?,
-                  ?, 'units', ?, ?, NOW()
-                )
-                """,
-                pkgId, tenantId, dispatchId, pkgCode, pkgType,
-                "Packed consignment for " + dispatch.dispatchNumber(),
-                req.actualPacksCount() != null ? BigDecimal.valueOf(req.actualPacksCount()) : BigDecimal.ONE,
-                req.actualGrossWeight(), req.packingNote()
-        );
-
-        // Update dispatch line packing_spec_id if provided
-        if (req.packingSpecId() != null) {
-            jdbc.update("""
-                    UPDATE dispatch_lines
-                    SET packing_spec_id = ?
-                    WHERE tenant_id = ? AND dispatch_id = ?
-                    """, req.packingSpecId(), tenantId, dispatchId);
-        }
-
-        auditService.record("dispatch", dispatchId, "packing_recorded", null,
-                toJson(Map.of("packageCode", pkgCode, "packsCount", req.actualPacksCount() != null ? req.actualPacksCount() : 1)));
-
-        return new DispatchPackingRecordDto(
-                pkgId,
-                dispatchId,
-                req.packingSpecId(),
-                req.packingTypeId(),
-                pkgType,
-                req.actualPacksCount() != null ? req.actualPacksCount() : 1,
-                req.actualGrossWeight(),
-                req.packingNote(),
-                Instant.now()
-        );
     }
 
     // ==========================================
@@ -1023,34 +812,6 @@ public class DispatchService {
         } catch (JsonProcessingException e) {
             return "{}";
         }
-    }
-
-    private PackingSpecDto mapPackingSpec(ResultSet rs) throws SQLException {
-        Dimensions dims = null;
-        String dimStr = rs.getString("dimensions_cm");
-        if (dimStr != null && !dimStr.isBlank()) {
-            try {
-                dims = objectMapper.readValue(dimStr, Dimensions.class);
-            } catch (Exception ignored) {}
-        }
-
-        return new PackingSpecDto(
-                (UUID) rs.getObject("id"),
-                getUuid(rs, "item_id"),
-                rs.getString("item_code"),
-                rs.getString("item_name"),
-                null,
-                rs.getString("packing_type"),
-                rs.getInt("units_per_pack"),
-                rs.getBigDecimal("gross_weight_kg"),
-                "kg",
-                dims,
-                null,
-                rs.getString("notes"),
-                true,
-                rs.getTimestamp("created_at").toInstant(),
-                rs.getTimestamp("created_at").toInstant()
-        );
     }
 
     private static UUID getUuid(ResultSet rs, String col) throws SQLException {

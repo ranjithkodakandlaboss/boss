@@ -2,6 +2,7 @@ package in.boss.dispatch;
 
 import in.boss.dispatch.api.DispatchDtos.*;
 import in.boss.dispatch.domain.DispatchService;
+import in.boss.dispatch.domain.PackingSpecService;
 import in.boss.masterdata.BaseMasterDataIntegrationTest;
 import in.boss.quality.domain.QualityService;
 import in.boss.shared.context.BossContext;
@@ -28,6 +29,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class DispatchModuleIntegrationTest extends BaseMasterDataIntegrationTest {
 
     @Autowired DispatchService dispatchService;
+    @Autowired PackingSpecService packingSpecService;
     @Autowired QualityService qualityService;
     @Autowired MockMvc mockMvc;
 
@@ -399,7 +401,7 @@ class DispatchModuleIntegrationTest extends BaseMasterDataIntegrationTest {
                 "Top arrow up",
                 "Keep dry"
         );
-        PackingSpecDto spec = dispatchService.createPackingSpec(specReq);
+        PackingSpecDto spec = packingSpecService.createPackingSpec(specReq);
         assertThat(spec).isNotNull();
         assertThat(spec.id()).isNotNull();
         assertThat(spec.packingTypeLabel()).isEqualTo("Reinforced Wooden Box");
@@ -428,7 +430,7 @@ class DispatchModuleIntegrationTest extends BaseMasterDataIntegrationTest {
         );
         DispatchDetail d = dispatchService.createDispatch(dReq);
 
-        DispatchPackingRecordDto packRecord = dispatchService.recordDispatchPacking(d.id(), new RecordPackingRequest(
+        DispatchPackingRecordDto packRecord = packingSpecService.recordDispatchPacking(d.id(), new RecordPackingRequest(
                 spec.id(),
                 null,
                 "Reinforced Wooden Box",

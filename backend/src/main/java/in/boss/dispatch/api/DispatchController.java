@@ -2,6 +2,7 @@ package in.boss.dispatch.api;
 
 import in.boss.dispatch.api.DispatchDtos.*;
 import in.boss.dispatch.domain.DispatchService;
+import in.boss.dispatch.domain.PackingSpecService;
 import in.boss.shared.security.BossPermissions;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -18,9 +19,11 @@ import java.util.UUID;
 public class DispatchController {
 
     private final DispatchService service;
+    private final PackingSpecService packingSpecs;
 
-    public DispatchController(DispatchService service) {
+    public DispatchController(DispatchService service, PackingSpecService packingSpecs) {
         this.service = service;
+        this.packingSpecs = packingSpecs;
     }
 
     // ==========================================
@@ -111,20 +114,20 @@ public class DispatchController {
             @RequestParam(required = false) Boolean isActive,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size) {
-        return service.listPackingSpecs(itemId, isActive, page, size);
+        return packingSpecs.listPackingSpecs(itemId, isActive, page, size);
     }
 
     @PostMapping("/packing-specs")
     @ResponseStatus(HttpStatus.CREATED)
     @PreAuthorize(BossPermissions.DISPATCH_WRITE)
     public PackingSpecDto createPackingSpec(@RequestBody CreatePackingSpecRequest request) {
-        return service.createPackingSpec(request);
+        return packingSpecs.createPackingSpec(request);
     }
 
     @GetMapping("/packing-specs/{id}")
     @PreAuthorize(BossPermissions.DISPATCH_VIEW)
     public PackingSpecDto getPackingSpec(@PathVariable UUID id) {
-        return service.getPackingSpec(id);
+        return packingSpecs.getPackingSpec(id);
     }
 
     @PutMapping("/packing-specs/{id}")
@@ -132,7 +135,7 @@ public class DispatchController {
     public PackingSpecDto updatePackingSpec(
             @PathVariable UUID id,
             @RequestBody CreatePackingSpecRequest request) {
-        return service.updatePackingSpec(id, request);
+        return packingSpecs.updatePackingSpec(id, request);
     }
 
     @PostMapping("/dispatches/{dispatchId}/packing")
@@ -141,6 +144,6 @@ public class DispatchController {
     public DispatchPackingRecordDto recordDispatchPacking(
             @PathVariable UUID dispatchId,
             @RequestBody RecordPackingRequest request) {
-        return service.recordDispatchPacking(dispatchId, request);
+        return packingSpecs.recordDispatchPacking(dispatchId, request);
     }
 }
