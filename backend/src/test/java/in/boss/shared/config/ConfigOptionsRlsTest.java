@@ -26,6 +26,7 @@ import java.util.Set;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * CI-gated test verifying Row-Level Security on tenant_config_options and
@@ -86,10 +87,21 @@ class ConfigOptionsRlsTest {
     }
 
     private void setTenant(UUID tenantId) {
-        BossContextHolder.set(new BossContext(
-                tenantId, UUID.randomUUID(), Set.of("OWNER"), null, "uid-" + tenantId));
+        setTenant(tenantId, Set.of("OWNER"));
+    }
+
+    private void setTenant(UUID tenantId, Set<String> roles) {
+        String firebaseUid = "uid-" + tenantId + "-" + UUID.randomUUID();
+        BossContextHolder.set(new BossContext(tenantId, null, roles, null, firebaseUid));
+        UUID userId = UUID.fromString(jdbc.queryForObject(
+                "INSERT INTO app_users (tenant_id, firebase_uid, email, display_name) "
+                        + "VALUES (?, ?, ?, 'Config test user') RETURNING id::text",
+                String.class, tenantId, firebaseUid, firebaseUid + "@example.test"));
+        BossContextHolder.set(new BossContext(tenantId, userId, roles, null, firebaseUid));
         var auth = new UsernamePasswordAuthenticationToken(
-                "uid-" + tenantId, null, List.of(new SimpleGrantedAuthority("ROLE_OWNER")));
+                firebaseUid, null, roles.stream()
+                        .map(role -> new SimpleGrantedAuthority("ROLE_" + role))
+                        .toList());
         SecurityContextHolder.getContext().setAuthentication(auth);
     }
 
@@ -148,5 +160,140 @@ class ConfigOptionsRlsTest {
                 Integer.class,
                 tenantA);
         assertThat(itemCatCount).isEqualTo(1);
+    }
+
+    @Test
+    void tenantOptionsCanBeEditedReorderedAndDeactivatedSafely() {
+        setTenant(tenantA);
+        ConfigOptionDto first = configService.createOption("PAYMENT_MODES", "CUSTOM_CARD", "Card", 10);
+        ConfigOptionDto second = configService.createOption("PAYMENT_MODES", "CUSTOM_WIRE", "Wire", 20);
+
+        List<UUID> reordered = new java.util.ArrayList<>(configService.getOptions("PAYMENT_MODES").stream()
+                .filter(option -> !option.isSystem()).map(ConfigOptionDto::id).toList());
+        reordered.remove(first.id());
+        reordered.remove(second.id());
+        reordered.add(second.id());
+        reordered.add(first.id());
+        configService.reorderOptions("PAYMENT_MODES", reordered);
+        assertThat(jdbc.queryForObject("""
+                SELECT COUNT(*) FROM tenant_config_option_history
+                WHERE tenant_id = ? AND option_id = ? AND change_type = 'REORDERED'
+                  AND old_sort_order = 10 AND new_sort_order > old_sort_order
+                """, Integer.class, tenantA, first.id())).isEqualTo(1);
+        configService.updateOption("PAYMENT_MODES", first.id(), "Card payment");
+        configService.setOptionActive("PAYMENT_MODES", second.id(), false);
+
+        assertThat(jdbc.queryForObject("""
+                SELECT COUNT(*) FROM tenant_config_option_history
+                WHERE tenant_id = ? AND option_id = ? AND change_type = 'update'
+                  AND old_label = 'Card' AND new_label = 'Card payment'
+                """, Integer.class, tenantA, first.id())).isEqualTo(1);
+        assertThat(jdbc.queryForObject("""
+                SELECT COUNT(*) FROM tenant_config_option_history
+                WHERE tenant_id = ? AND option_id = ? AND change_type IN ('deactivate', 'reactivate')
+                """, Integer.class, tenantA, second.id())).isEqualTo(1);
+
+        List<ConfigOptionDto> options = configService.getOptions("PAYMENT_MODES", true);
+        assertThat(options).filteredOn(option -> option.id().equals(first.id())).singleElement()
+                .extracting(ConfigOptionDto::label).isEqualTo("Card payment");
+        assertThat(options).filteredOn(option -> option.id().equals(second.id())).singleElement()
+                .extracting(ConfigOptionDto::isActive).isEqualTo(false);
+        assertThat(options.stream().filter(option -> !option.isSystem()).map(ConfigOptionDto::id).toList())
+                .containsExactlyElementsOf(reordered);
+
+        configService.setOptionActive("PAYMENT_MODES", second.id(), true);
+        assertThat(jdbc.queryForObject("""
+                SELECT COUNT(*) FROM tenant_config_option_history
+                WHERE tenant_id = ? AND option_id = ? AND change_type = 'reactivate'
+                """, Integer.class, tenantA, second.id())).isEqualTo(1);
+    }
+
+    @Test
+    void optionReadsDoNotKeepStaleProcessLocalValues() {
+        setTenant(tenantA);
+        ConfigOptionDto option = configService.createOption("PAYMENT_MODES", "LIVE_OPTION", "Live option", 10);
+        assertThat(configService.getOptions("PAYMENT_MODES"))
+                .anyMatch(value -> value.id().equals(option.id()));
+
+        jdbc.update("UPDATE tenant_config_options SET is_active = FALSE WHERE tenant_id = ? AND id = ?",
+                tenantA, option.id());
+
+        assertThat(configService.getOptions("PAYMENT_MODES"))
+                .noneMatch(value -> value.id().equals(option.id()));
+    }
+
+    @Test
+    void dispatchRolesCanCreateOnlyDispatchOptionsAndCannotEditLabels() {
+        jdbc.update("""
+                INSERT INTO config_categories (code, name, scope) VALUES
+                  ('CARRIER', 'Carriers', 'tenant'),
+                  ('VEHICLE', 'Vehicles', 'tenant')
+                ON CONFLICT (code) DO NOTHING
+                """);
+
+        setTenant(tenantA, Set.of("OPS_MANAGER"));
+        ConfigOptionDto carrier = configService.createOption("CARRIER", "LOCAL_CARRIER", "Local carrier", 10);
+        assertThat(carrier.label()).isEqualTo("Local carrier");
+        assertThatThrownBy(() -> configService.createOption("PAYMENT_MODES",
+                "UNAUTHORIZED_MODE", "Unauthorized mode", 10))
+                .isInstanceOf(org.springframework.web.server.ResponseStatusException.class)
+                .hasMessageContaining("Only owners");
+        assertThatThrownBy(() -> configService.updateOption("CARRIER", carrier.id(), "Renamed carrier"))
+                .isInstanceOf(org.springframework.web.server.ResponseStatusException.class)
+                .hasMessageContaining("Only owners");
+        assertThatThrownBy(() -> configService.setOptionActive("CARRIER", carrier.id(), false))
+                .isInstanceOf(org.springframework.web.server.ResponseStatusException.class)
+                .hasMessageContaining("Only owners");
+        assertThatThrownBy(() -> configService.reorderOptions("CARRIER", List.of(carrier.id())))
+                .isInstanceOf(org.springframework.web.server.ResponseStatusException.class)
+                .hasMessageContaining("Only owners");
+
+        setTenant(tenantB, Set.of("STORE_KEEPER"));
+        ConfigOptionDto vehicle = configService.createOption("VEHICLE", "LOCAL_VEHICLE", "Local vehicle", 10);
+        assertThat(vehicle.label()).isEqualTo("Local vehicle");
+    }
+
+    @Test
+    void tenantCanDeactivateAndReactivateSystemOptionWithoutChangingItsDefinition() {
+        setTenant(tenantA);
+        industryTemplateService.seedTenantDefaults(tenantA, "FABRICATION_STEEL");
+        ConfigOptionDto protectedOption = configService.getOptions("PRODUCTION_STAGES").get(0);
+
+        assertThat(protectedOption.isSystem()).isTrue();
+        configService.setOptionActive("PRODUCTION_STAGES", protectedOption.id(), false);
+        ConfigOptionDto deactivated = configService.getOptions("PRODUCTION_STAGES", true).stream()
+                .filter(option -> option.id().equals(protectedOption.id())).findFirst().orElseThrow();
+        assertThat(deactivated.isActive()).isFalse();
+        assertThat(deactivated.isSystem()).isTrue();
+        assertThat(deactivated.label()).isEqualTo(protectedOption.label());
+
+        configService.setOptionActive("PRODUCTION_STAGES", protectedOption.id(), true);
+        assertThat(configService.getOptions("PRODUCTION_STAGES").stream()
+                .filter(option -> option.id().equals(protectedOption.id())).findFirst().orElseThrow().isActive()).isTrue();
+    }
+
+    @Test
+    void referencedItemCategoryCanBeDeactivatedButCannotBeRenamed() {
+        setTenant(tenantB);
+        ConfigOptionDto category = configService.createOption("ITEM_CATEGORY", "USED_CATEGORY", "Used Category", 10);
+        UUID uomId = UUID.fromString(jdbc.queryForObject(
+                "INSERT INTO units_of_measure (tenant_id, name, symbol, uom_type) "
+                        + "VALUES (?, 'Each', 'EA_CONFIG_TEST', 'quantity') RETURNING id::text",
+                String.class, tenantB));
+        jdbc.update("""
+                INSERT INTO items (tenant_id, code, name, item_type, base_uom_id, category_id)
+                VALUES (?, 'CONFIG_TEST_ITEM', 'Config test item', 'raw_material', ?, ?)
+                """, tenantB, uomId, category.id());
+
+        assertThatThrownBy(() -> configService.updateOption("ITEM_CATEGORY", category.id(), "Renamed"))
+                .isInstanceOf(org.springframework.web.server.ResponseStatusException.class)
+                .hasMessageContaining("Item-category labels cannot be changed");
+        configService.setOptionActive("ITEM_CATEGORY", category.id(), false);
+        ConfigOptionDto deactivated = configService.getOptions("ITEM_CATEGORY", true).stream()
+                .filter(option -> option.id().equals(category.id())).findFirst().orElseThrow();
+        assertThat(deactivated.isActive()).isFalse();
+        assertThat(deactivated.label()).isEqualTo("Used Category");
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM items WHERE tenant_id = ? AND category_id = ?",
+                Integer.class, tenantB, category.id())).isEqualTo(1);
     }
 }

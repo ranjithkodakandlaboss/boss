@@ -42,7 +42,9 @@ public class QualityService {
     public List<InspectionSummary> listInspections(String type, String status, String q) {
         BossContext ctx = requireContext();
         return jdbc.query("""
-                SELECT qi.id, qi.inspection_number, qi.inspection_type, qi.reference_type, qi.reference_id,
+                SELECT qi.id, qi.inspection_number, qi.inspection_type, qi.inspection_type_option_id,
+                       COALESCE(qi.inspection_type_label_snapshot, qi.inspection_type) AS inspection_type_label,
+                       qi.reference_type, qi.reference_id,
                        qi.item_id, i.code AS item_code, i.name AS item_name, qi.lot_id,
                        qi.quantity_inspected, qi.quantity_accepted, qi.quantity_rejected,
                        qi.result, qi.status, qi.inspector_id,
@@ -80,7 +82,9 @@ public class QualityService {
     public InspectionDetail getInspection(UUID inspectionId) {
         BossContext ctx = requireContext();
         List<InspectionDetail> rows = jdbc.query("""
-                SELECT qi.id, qi.inspection_number, qi.inspection_type, qi.reference_type, qi.reference_id,
+                SELECT qi.id, qi.inspection_number, qi.inspection_type, qi.inspection_type_option_id,
+                       COALESCE(qi.inspection_type_label_snapshot, qi.inspection_type) AS inspection_type_label,
+                       qi.reference_type, qi.reference_id,
                        qi.item_id, i.code AS item_code, i.name AS item_name, qi.lot_id,
                        qi.quantity_inspected, qi.quantity_accepted, qi.quantity_rejected,
                        qi.result, qi.status, qi.inspector_id,
@@ -107,6 +111,8 @@ public class QualityService {
                             id,
                             rs.getString("inspection_number"),
                             rs.getString("inspection_type"),
+                            rs.getObject("inspection_type_option_id", UUID.class),
+                            rs.getString("inspection_type_label"),
                             rs.getString("reference_type"),
                             rs.getObject("reference_id", UUID.class),
                             rs.getString("reference_label"),
@@ -143,6 +149,8 @@ public class QualityService {
         validateInspectionReference(ctx.tenantId(), request.referenceType(), request.referenceId(),
                 request.inspectionType());
         validateItem(ctx.tenantId(), request.itemId());
+        ConfigOption inspectionTypeOption = resolveConfigOption(
+                ctx.tenantId(), request.inspectionTypeOptionId(), "INSPECTION_TYPES");
 
         UUID id = UUID.randomUUID();
         String number = "INSP-" + LocalDate.now().toString().replace("-", "")
@@ -155,13 +163,17 @@ public class QualityService {
 
         jdbc.update("""
                 INSERT INTO quality_inspections
-                  (id, tenant_id, inspection_number, inspection_type, reference_type, reference_id,
+                  (id, tenant_id, inspection_number, inspection_type, inspection_type_option_id,
+                   inspection_type_label_snapshot, reference_type, reference_id,
                    item_id, lot_id, quantity_inspected, status, inspector_id, inspection_date,
                    notes, inspection_template_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)
                 """,
                 id, ctx.tenantId(), number,
-                request.inspectionType(), request.referenceType(), request.referenceId(),
+                request.inspectionType(),
+                inspectionTypeOption == null ? null : inspectionTypeOption.id(),
+                inspectionTypeOption == null ? request.inspectionType() : inspectionTypeOption.label(),
+                request.referenceType(), request.referenceId(),
                 request.itemId(), request.lotId(),
                 request.quantityInspected(),
                 request.inspectorId() != null ? request.inspectorId() : ctx.userId(),
@@ -246,7 +258,8 @@ public class QualityService {
         return jdbc.query("""
                 SELECT n.id, n.ncr_number, n.inspection_id, n.item_id,
                        i.code AS item_code, i.name AS item_name,
-                       n.lot_id, n.job_id, n.defect_category_id, co.label AS defect_category_label,
+                       n.lot_id, n.job_id, n.defect_category_id,
+                       COALESCE(n.defect_category_label_snapshot, co.label) AS defect_category_label,
                        n.defect_description, n.severity, n.quantity, n.status, n.disposition,
                        n.raised_by, au.display_name AS raised_by_name,
                        n.created_at,
@@ -279,7 +292,8 @@ public class QualityService {
                 SELECT n.id, n.ncr_number, n.inspection_id, qi.inspection_number,
                        n.item_id, i.code AS item_code, i.name AS item_name,
                        n.lot_id, n.job_id, pj.job_number,
-                       n.defect_category_id, co.label AS defect_category_label,
+                       n.defect_category_id,
+                       COALESCE(n.defect_category_label_snapshot, co.label) AS defect_category_label,
                        n.defect_description, n.severity, n.quantity,
                        n.root_cause, n.status, n.disposition, n.resolution,
                        n.raised_by, ru.display_name AS raised_by_name,
@@ -344,6 +358,8 @@ public class QualityService {
             throw notFound("Inspection not found");
         }
         validateItem(ctx.tenantId(), request.itemId());
+        ConfigOption defectCategory = resolveConfigOption(
+                ctx.tenantId(), request.defectCategoryId(), "DEFECT_CATEGORY");
 
         UUID id = UUID.randomUUID();
         String number = "NCR-" + id.toString().substring(0, 8).toUpperCase(Locale.ROOT);
@@ -351,14 +367,16 @@ public class QualityService {
         jdbc.update("""
                 INSERT INTO ncrs
                   (id, tenant_id, ncr_number, inspection_id, item_id, lot_id, job_id,
-                   quantity, defect_category_id, defect_description, severity, root_cause,
+                   quantity, defect_category_id, defect_category_label_snapshot,
+                   defect_description, severity, root_cause,
                    status, raised_by)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?)
                 """,
                 id, ctx.tenantId(), number,
                 request.inspectionId(), request.itemId(), request.lotId(), request.jobId(),
                 request.quantity() != null ? request.quantity() : BigDecimal.ONE,
-                request.defectCategoryId(),
+                defectCategory == null ? null : defectCategory.id(),
+                defectCategory == null ? null : defectCategory.label(),
                 request.defectDescription(),
                 request.severity(),
                 request.rootCause(),
@@ -684,7 +702,8 @@ public class QualityService {
         return jdbc.query("""
                 SELECT n.id, n.ncr_number, n.inspection_id, n.item_id,
                        i.code AS item_code, i.name AS item_name,
-                       n.lot_id, n.job_id, n.defect_category_id, co.label AS defect_category_label,
+                       n.lot_id, n.job_id, n.defect_category_id,
+                       COALESCE(n.defect_category_label_snapshot, co.label) AS defect_category_label,
                        n.defect_description, n.severity, n.quantity, n.status, n.disposition,
                        n.raised_by, au.display_name AS raised_by_name,
                        n.created_at,
@@ -926,6 +945,27 @@ public class QualityService {
         if (found == null || found == 0) throw notFound("Item not found");
     }
 
+    private ConfigOption resolveConfigOption(UUID tenantId, UUID optionId, String categoryCode) {
+        if (optionId == null) {
+            return null;
+        }
+        List<ConfigOption> options = jdbc.query("""
+                SELECT o.id, o.label
+                FROM tenant_config_options o
+                JOIN config_categories c ON c.id = o.category_id
+                WHERE o.tenant_id = ? AND o.id = ? AND c.code = ? AND o.is_active
+                """,
+                (rs, row) -> new ConfigOption(
+                        rs.getObject("id", UUID.class), rs.getString("label")),
+                tenantId, optionId, categoryCode);
+        if (options.isEmpty()) {
+            throw badRequest("Selected " + categoryCode + " option is not active for this tenant");
+        }
+        return options.get(0);
+    }
+
+    private record ConfigOption(UUID id, String label) {}
+
     private void validateTemplate(UUID tenantId, UUID templateId, String inspectionType) {
         Boolean active = jdbc.queryForObject("""
                 SELECT is_active FROM inspection_parameter_templates
@@ -959,6 +999,8 @@ public class QualityService {
                 rs.getObject("id", UUID.class),
                 rs.getString("inspection_number"),
                 rs.getString("inspection_type"),
+                rs.getObject("inspection_type_option_id", UUID.class),
+                rs.getString("inspection_type_label"),
                 rs.getString("reference_type"),
                 rs.getObject("reference_id", UUID.class),
                 rs.getString("reference_label"),

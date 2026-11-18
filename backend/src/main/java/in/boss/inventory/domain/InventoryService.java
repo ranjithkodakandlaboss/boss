@@ -35,6 +35,8 @@ public interface InventoryService {
     CustomerPoReservationResponse reserveForCustomerPo(
             CustomerPoReservationRequest request, boolean allowPartial);
 
+    in.boss.inventory.api.InventoryApiDtos.FeasibilityResponse checkAndReserveForCustomerPo(UUID cpoId);
+
     void releaseJobReservations(UUID jobId);
 
     void releaseCustomerPoReservations(UUID cpoId);

@@ -90,6 +90,12 @@ public final class InventoryApiDtos {
             List<CustomerPoReservationLineResponse> lines
     ) {}
 
+    public record FeasibilityResponse(
+            UUID cpoId,
+            boolean feasible,
+            List<ReservationLineResponse> materials
+    ) {}
+
     public record IssueMaterialRequest(
             @NotNull UUID jobId,
             @NotNull UUID lotId,

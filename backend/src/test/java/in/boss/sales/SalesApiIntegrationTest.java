@@ -4,6 +4,8 @@ import in.boss.masterdata.BaseMasterDataIntegrationTest;
 import in.boss.sales.api.SalesApiDtos.CreateQuotationLineRequest;
 import in.boss.sales.api.SalesApiDtos.CreateQuotationRequest;
 import in.boss.sales.api.SalesApiDtos.CreateRfqRequest;
+import in.boss.sales.api.SalesApiDtos.CostRate;
+import in.boss.sales.api.SalesApiDtos.QuotationCostingConfigRequest;
 import in.boss.sales.api.SalesApiDtos.CounterOfferRequest;
 import in.boss.sales.api.SalesApiDtos.OfferedUnitPrice;
 import in.boss.sales.api.SalesApiDtos.ReviseQuotationRequest;
@@ -12,6 +14,7 @@ import in.boss.sales.api.SalesApiDtos.RfqResponse;
 import in.boss.sales.api.SalesApiDtos.UpdateRfqRequest;
 import in.boss.sales.api.SalesApiDtos.AcceptQuotationRequest;
 import in.boss.sales.domain.CustomerPoService;
+import in.boss.sales.domain.QuotationCostingService;
 import in.boss.sales.domain.SalesService;
 import in.boss.shared.context.BossContext;
 import in.boss.shared.context.BossContextHolder;
@@ -43,6 +46,7 @@ import java.util.UUID;
 
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -60,6 +64,9 @@ class SalesApiIntegrationTest extends BaseMasterDataIntegrationTest {
     private CustomerPoService customerPoService;
 
     @Autowired
+    private QuotationCostingService quotationCostingService;
+
+    @Autowired
     private MockMvc mockMvc;
 
     @Autowired
@@ -68,6 +75,7 @@ class SalesApiIntegrationTest extends BaseMasterDataIntegrationTest {
     private UUID tenantId;
     private UUID customerId;
     private UUID siteId;
+    private UUID storeId;
     private UUID uomId;
     private UUID materialItemId;
     private UUID finishedItemId;
@@ -85,6 +93,10 @@ class SalesApiIntegrationTest extends BaseMasterDataIntegrationTest {
                 INSERT INTO physical_sites (tenant_id, legal_entity_id, name, code)
                 VALUES (?, ?, 'Sales Test Site', ?) RETURNING id
                 """, tenantId, legalEntityId, "SITE-" + UUID.randomUUID().toString().substring(0, 8));
+        storeId = insert("""
+                INSERT INTO stores (tenant_id, site_id, name, code, store_type)
+                VALUES (?, ?, 'Raw Material Store', ?, 'raw_material') RETURNING id
+                """, tenantId, siteId, "RM-" + UUID.randomUUID().toString().substring(0, 8));
         BossContextHolder.set(new BossContext(tenantId, userId, Set.of("OWNER"), siteId, null));
         uomId = insert("""
                 INSERT INTO units_of_measure (tenant_id, name, symbol, is_base)
@@ -98,6 +110,10 @@ class SalesApiIntegrationTest extends BaseMasterDataIntegrationTest {
                 INSERT INTO items (tenant_id, code, name, item_type, base_uom_id, std_cost)
                 VALUES (?, ?, 'Raw Material', 'raw_material', ?, 2.50) RETURNING id
                 """, tenantId, "MAT-" + UUID.randomUUID().toString().substring(0, 8), uomId);
+        jdbc.update("""
+                INSERT INTO material_lots (tenant_id, item_id, store_id, quantity, unit_cost, status)
+                VALUES (?, ?, ?, 10, 2.50, 'available')
+                """, tenantId, materialItemId, storeId);
         finishedItemId = insert("""
                 INSERT INTO items (tenant_id, code, name, item_type, base_uom_id)
                 VALUES (?, ?, 'Finished Item', 'finished_goods', ?) RETURNING id
@@ -198,6 +214,112 @@ class SalesApiIntegrationTest extends BaseMasterDataIntegrationTest {
         assertThat(jdbc.queryForObject(
                 "SELECT COUNT(*) FROM quotation_revisions WHERE tenant_id = ? AND quotation_id = ?",
                 Integer.class, tenantId, created.id())).isEqualTo(1);
+    }
+
+    @Test
+    void quotationCostingUsesWeightedAverageSnapshotsAndRequiresReasonedApproval() {
+        jdbc.update("DELETE FROM material_lots WHERE tenant_id = ? AND item_id = ?", tenantId, materialItemId);
+        assertThat(quotationCostingService.materialCostPerUnit(tenantId, finishedItemId, uomId)).isNull();
+        jdbc.update("""
+                INSERT INTO material_lots (tenant_id, item_id, store_id, quantity, unit_cost, status)
+                VALUES (?, ?, ?, 10, 2.50, 'available')
+                """, tenantId, materialItemId, storeId);
+        jdbc.update("""
+                INSERT INTO material_lots (tenant_id, item_id, store_id, quantity, unit_cost, status)
+                VALUES (?, ?, ?, 30, 3.50, 'available')
+                """, tenantId, materialItemId, storeId);
+        jdbc.update("UPDATE material_lots SET unit_cost = NULL WHERE tenant_id = ? AND item_id = ? AND quantity = 10",
+                tenantId, materialItemId);
+        assertThat(quotationCostingService.materialCostPerUnit(tenantId, finishedItemId, uomId)).isNull();
+        jdbc.update("UPDATE material_lots SET unit_cost = 2.50 WHERE tenant_id = ? AND item_id = ? AND quantity = 10",
+                tenantId, materialItemId);
+        jdbc.update("UPDATE items SET std_cost = 99.00 WHERE tenant_id = ? AND id = ?",
+                tenantId, materialItemId);
+        assertThatThrownBy(() -> quotationCostingService.saveConfig(new QuotationCostingConfigRequest(
+                List.of(new CostRate("Machining", BigDecimal.ONE),
+                        new CostRate("machining", BigDecimal.TEN)),
+                List.of(), BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO,
+                new BigDecimal("20.00"), new BigDecimal("10.00"), new BigDecimal("15.00"))))
+                .isInstanceOfSatisfying(ResponseStatusException.class, error ->
+                        assertThat(error.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST));
+        var savedConfig = quotationCostingService.saveConfig(new QuotationCostingConfigRequest(
+                List.of(new CostRate("Machining", new BigDecimal("100.00"))),
+                List.of(new CostRate("Turning", new BigDecimal("80.00"))),
+                new BigDecimal("2.00"), new BigDecimal("1.00"), new BigDecimal("3.00"),
+                new BigDecimal("4.00"), new BigDecimal("35.00"), new BigDecimal("20.00"),
+                new BigDecimal("25.00")));
+        assertThat(savedConfig.labourRates()).hasSize(1);
+        assertThat(quotationCostingService.calculate(tenantId,
+                List.of(new CreateQuotationLineRequest(finishedItemId, BigDecimal.ONE, uomId, BigDecimal.ZERO, null)),
+                BigDecimal.ZERO).requiresApproval()).isTrue();
+
+        var quotation = salesService.createQuotation(new CreateQuotationRequest(
+                customerId, null, null,
+                List.of(new CreateQuotationLineRequest(finishedItemId, new BigDecimal("3"), uomId,
+                        new BigDecimal("20.00"), null, null, null, "DRW-AVG", null, null, null,
+                        java.util.Map.of("Machining", new BigDecimal("2.00")),
+                        java.util.Map.of("Turning", new BigDecimal("1.50"))))));
+        assertThat(quotation.costing().materialCost()).isEqualByComparingTo("19.50");
+        assertThat(quotation.costing().labourCost()).isEqualByComparingTo("200.00");
+        assertThat(quotation.costing().machineCost()).isEqualByComparingTo("120.00");
+        assertThat(quotation.costing().totalCost()).isEqualByComparingTo("369.50");
+        assertThat(quotation.costing().grossProfit()).isEqualByComparingTo("-309.50");
+        assertThat(quotation.costing().grossMarginPct()).isEqualByComparingTo("-515.8333");
+        assertThat(quotation.costing().requiresApproval()).isTrue();
+        assertThat(jdbc.queryForObject("""
+                SELECT estimated_material_cost_per_unit FROM quotation_lines
+                WHERE tenant_id = ? AND quotation_id = ?
+                """, BigDecimal.class, tenantId, quotation.id())).isEqualByComparingTo("6.50");
+
+        BossContextHolder.set(new BossContext(tenantId, BossContextHolder.get().userId(),
+                Set.of("SALES_MANAGER"), siteId, null));
+        assertThatThrownBy(() -> salesService.updateQuotationStatus(quotation.id(), "sent", "discount approved"))
+                .isInstanceOfSatisfying(ResponseStatusException.class, error ->
+                        assertThat(error.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN));
+
+        setTenantContext(tenantId, "OWNER");
+        BossContextHolder.set(new BossContext(tenantId, BossContextHolder.get().userId(),
+                Set.of("OWNER"), siteId, null));
+        assertThatThrownBy(() -> salesService.updateQuotationStatus(quotation.id(), "sent"))
+                .isInstanceOfSatisfying(ResponseStatusException.class, error ->
+                        assertThat(error.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST));
+        var issued = salesService.updateQuotationStatus(quotation.id(), "sent", "Approved strategic order");
+        assertThat(issued.costOverrideReason()).isEqualTo("Approved strategic order");
+        assertThat(jdbc.queryForObject("""
+                SELECT COUNT(*) FROM audit_events
+                WHERE tenant_id = ? AND entity_type = 'QUOTATION' AND entity_id = ?
+                  AND action = 'STATUS_SENT'
+                  AND new_data ->> 'costOverrideReason' = 'Approved strategic order'
+                """, Integer.class, tenantId, quotation.id())).isEqualTo(1);
+
+        jdbc.update("UPDATE material_lots SET unit_cost = 500 WHERE tenant_id = ? AND item_id = ?",
+                tenantId, materialItemId);
+        quotationCostingService.saveConfig(new QuotationCostingConfigRequest(
+                List.of(new CostRate("Machining", new BigDecimal("900.00"))),
+                List.of(new CostRate("Turning", new BigDecimal("700.00"))),
+                new BigDecimal("20.00"), new BigDecimal("10.00"), new BigDecimal("30.00"),
+                new BigDecimal("40.00"), new BigDecimal("35.00"), new BigDecimal("20.00"),
+                new BigDecimal("25.00")));
+        assertThat(salesService.getQuotation(quotation.id()).costing().materialCost()).isEqualByComparingTo("19.50");
+        assertThat(salesService.getQuotation(quotation.id()).costing().totalCost()).isEqualByComparingTo("369.50");
+
+        UUID anotherTenant = provisionTenant("sales-costing-other");
+        setTenantContext(anotherTenant, "OWNER");
+        assertThat(quotationCostingService.getConfig().labourRates()).isEmpty();
+    }
+
+    @Test
+    @org.springframework.security.test.context.support.WithMockUser(roles = "SALES_MANAGER")
+    void salesManagerCannotChangeTenantCostingConfiguration() throws Exception {
+        QuotationCostingConfigRequest request = new QuotationCostingConfigRequest(
+                List.of(new CostRate("Machining", new BigDecimal("100.00"))), List.of(),
+                BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO,
+                new BigDecimal("20.00"), new BigDecimal("10.00"), new BigDecimal("15.00"));
+        mockMvc.perform(put("/api/v1/quotations/costing-config")
+                        .header("Idempotency-Key", UUID.randomUUID().toString())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isForbidden());
     }
 
     @Test

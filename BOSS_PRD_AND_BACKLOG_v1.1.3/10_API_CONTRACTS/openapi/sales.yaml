@@ -6,7 +6,8 @@ info:
     RFQ, Quotation (with negotiation history), Customer Purchase Orders (CPO), and Feasibility.
 
     **Quotation negotiation:** Each counter-offer round is stored in quotation_negotiation_history.
-    Material cost and margin data are retained internally and are not serialized in customer-facing responses.
+    Material cost and margin data are included only in tenant sales API responses authorized for
+    OWNER, OPS_MANAGER, or SALES_MANAGER. They are never exposed in customer-facing responses.
 
     **Selling price lock:** Once a CPO is confirmed, the selling price from the quotation is locked.
     Job costing shows variance against this price. It must never be modified.
@@ -74,6 +75,89 @@ components:
           type: array
           items: { $ref: '#/components/schemas/NegotiationEntry' }
         createdAt: { type: string, format: date-time }
+        costing:
+          allOf:
+            - $ref: '#/components/schemas/QuotationCostingSnapshot'
+          nullable: true
+        costOverrideReason: { type: string, nullable: true }
+        costOverrideBy: { type: string, format: uuid, nullable: true }
+        costOverrideAt: { type: string, format: date-time, nullable: true }
+
+    CostRate:
+      type: object
+      required: [name, ratePerHour]
+      properties:
+        name: { type: string, maxLength: 100 }
+        ratePerHour: { type: number, minimum: 0 }
+
+    QuotationCostingConfig:
+      type: object
+      required:
+        - labourRates
+        - machineRates
+        - overheadPerUnit
+        - consumablesPerUnit
+        - packagingPerUnit
+        - transportPerUnit
+        - targetMarginPct
+        - minimumMarginPct
+        - approvalThresholdPct
+      properties:
+        labourRates:
+          type: array
+          items: { $ref: '#/components/schemas/CostRate' }
+        machineRates:
+          type: array
+          items: { $ref: '#/components/schemas/CostRate' }
+        overheadPerUnit: { type: number, minimum: 0 }
+        consumablesPerUnit: { type: number, minimum: 0 }
+        packagingPerUnit: { type: number, minimum: 0 }
+        transportPerUnit: { type: number, minimum: 0 }
+        targetMarginPct: { type: number, minimum: 0, maximum: 100 }
+        minimumMarginPct: { type: number, minimum: 0, maximum: 100 }
+        approvalThresholdPct: { type: number, minimum: 0, maximum: 100 }
+
+    QuotationCostingSnapshot:
+      type: object
+      required: [available, requiresApproval]
+      properties:
+        available: { type: boolean }
+        valuationBasis: { type: string, nullable: true }
+        materialCost: { type: number, nullable: true }
+        labourCost: { type: number, nullable: true }
+        machineCost: { type: number, nullable: true }
+        overheadCost: { type: number, nullable: true }
+        consumablesCost: { type: number, nullable: true }
+        packagingCost: { type: number, nullable: true }
+        transportCost: { type: number, nullable: true }
+        totalCost: { type: number, nullable: true }
+        netRevenue: { type: number, nullable: true }
+        grossProfit: { type: number, nullable: true }
+        grossMarginPct: { type: number, nullable: true }
+        targetMarginPct: { type: number }
+        minimumMarginPct: { type: number }
+        approvalThresholdPct: { type: number }
+        requiresApproval: { type: boolean }
+        unavailableReasons:
+          type: array
+          items: { type: string }
+        lines:
+          type: array
+          items: { $ref: '#/components/schemas/QuotationLineCosting' }
+
+    QuotationLineCosting:
+      type: object
+      properties:
+        lineNumber: { type: integer }
+        materialCost: { type: number, nullable: true }
+        labourCost: { type: number }
+        machineCost: { type: number }
+        overheadCost: { type: number }
+        consumablesCost: { type: number }
+        packagingCost: { type: number }
+        transportCost: { type: number }
+        labourHours: { type: object, additionalProperties: { type: number } }
+        machineHours: { type: object, additionalProperties: { type: number } }
 
     QuotationLine:
       type: object
@@ -208,6 +292,38 @@ components:
               uomId: { type: string, format: uuid, nullable: true }
 
 paths:
+  /quotations/costing-config:
+    get:
+      operationId: getQuotationCostingConfig
+      summary: Get the tenant's quotation costing and margin controls
+      description: Requires OWNER, OPS_MANAGER, or SALES_MANAGER access.
+      tags: [Quotations]
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/QuotationCostingConfig' }
+    put:
+      operationId: updateQuotationCostingConfig
+      summary: Update the tenant's quotation costing and margin controls
+      description: Requires OWNER, OPS_MANAGER, or SALES_MANAGER access.
+      tags: [Quotations]
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/QuotationCostingConfig' }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/QuotationCostingConfig' }
+
   /rfqs:
     get:
       operationId: listRFQs

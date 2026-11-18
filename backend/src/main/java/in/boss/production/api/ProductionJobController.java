@@ -15,6 +15,7 @@ import in.boss.production.api.ProductionApiDtos.PageResponse;
 import in.boss.production.api.ProductionApiDtos.ProductionJobResponse;
 import in.boss.production.api.ProductionApiDtos.ReasonRequest;
 import in.boss.production.api.ProductionApiDtos.ReturnMaterialRequest;
+import in.boss.production.api.ProductionApiDtos.ReviseRoutingTemplateRequest;
 import in.boss.production.api.ProductionApiDtos.RoutingTemplateOption;
 import in.boss.production.api.ProductionApiDtos.StageActionRequest;
 import in.boss.production.domain.JobCostingService;
@@ -84,9 +85,17 @@ public class ProductionJobController {
 
     @PostMapping("/routing-templates")
     @ResponseStatus(HttpStatus.CREATED)
-    @PreAuthorize(BossPermissions.PRODUCTION_WRITE)
+    @PreAuthorize(BossPermissions.OWNER_OR_OPS)
     public RoutingTemplateOption createRoutingTemplate(@Valid @RequestBody CreateRoutingTemplateRequest request) {
         return jobs.createRoutingTemplate(request);
+    }
+
+    @PostMapping("/routing-templates/{routingId}/revisions")
+    @ResponseStatus(HttpStatus.CREATED)
+    @PreAuthorize(BossPermissions.OWNER_OR_OPS)
+    public RoutingTemplateOption reviseRoutingTemplate(@PathVariable UUID routingId,
+            @Valid @RequestBody ReviseRoutingTemplateRequest request) {
+        return jobs.reviseRoutingTemplate(routingId, request);
     }
 
     @GetMapping("/features")

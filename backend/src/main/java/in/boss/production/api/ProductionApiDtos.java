@@ -3,6 +3,7 @@ package in.boss.production.api;
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.Pattern;
 
 import java.math.BigDecimal;
@@ -224,8 +225,13 @@ public final class ProductionApiDtos {
             @NotBlank String name,
             String workCentre,
             UUID assetId,
-            UUID stageConfigOptionId
-    ) {}
+            UUID stageConfigOptionId,
+            UUID inspectionTemplateId
+    ) {
+        public RoutingStageRequest(String name, String workCentre, UUID assetId, UUID stageConfigOptionId) {
+            this(name, workCentre, assetId, stageConfigOptionId, null);
+        }
+    }
 
     public record CreateRoutingTemplateRequest(
             @NotBlank String name,
@@ -236,6 +242,10 @@ public final class ProductionApiDtos {
             this(name, stageName, null);
         }
     }
+
+    public record ReviseRoutingTemplateRequest(
+            @NotEmpty List<@jakarta.validation.Valid RoutingStageRequest> stages
+    ) {}
 
     public record PageResponse<T>(List<T> content, int page, int size, long totalElements) {}
 

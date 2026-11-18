@@ -1248,6 +1248,10 @@ export interface CustomerQuotation {
   lines?: any[];
   sentDate?: string;
   apiStatus?: string;
+  costing?: import("../api").QuotationCostingSnapshot;
+  costOverrideReason?: string;
+  costOverrideBy?: string;
+  costOverrideAt?: string;
 }
 
 export interface CustomerQuotationLine {
@@ -1262,6 +1266,8 @@ export interface CustomerQuotationLine {
   unitPrice: number;
   value: number;
   requiredDate: string;
+  labourHours?: Record<string, number>;
+  machineHours?: Record<string, number>;
 }
 
 // ── Site Allocation ──

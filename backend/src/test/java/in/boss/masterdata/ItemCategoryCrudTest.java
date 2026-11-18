@@ -139,6 +139,32 @@ class ItemCategoryCrudTest extends BaseMasterDataIntegrationTest {
     }
 
     @Test
+    void itemCategoryLabelRemainsStableAfterCategoryRenameAndDeactivation() {
+        UomDto uom = uomService.createUom(CreateUomRequest.builder()
+                .name("Kilogram")
+                .symbol("KG-" + UUID.randomUUID().toString().substring(0, 4))
+                .uomType("weight")
+                .build());
+        ItemCategoryDto category = categoryService.createCategory(CreateItemCategoryRequest.builder()
+                .code("SNAPSHOT-" + UUID.randomUUID().toString().substring(0, 6))
+                .name("Raw Steel")
+                .build());
+
+        ItemDto item = itemService.createItem(CreateItemRequest.builder()
+                .code("ITEM-" + UUID.randomUUID().toString().substring(0, 6))
+                .name("Steel Bar")
+                .itemType("RAW_MATERIAL")
+                .uomId(uom.getId())
+                .categoryId(category.getId())
+                .build());
+
+        jdbc.update("UPDATE item_categories SET name = ?, is_active = FALSE WHERE id = ?",
+                "Metal Stock", category.getId());
+
+        assertThat(itemService.getItem(item.getId()).getCategoryLabel()).isEqualTo("Raw Steel");
+    }
+
+    @Test
     void deleteCategory_whenHasActiveChildSubcategory_throwsLifecycleException() {
         String parentCode = "PARENT-" + UUID.randomUUID().toString().substring(0, 4);
         ItemCategoryDto parent = categoryService.createCategory(CreateItemCategoryRequest.builder()

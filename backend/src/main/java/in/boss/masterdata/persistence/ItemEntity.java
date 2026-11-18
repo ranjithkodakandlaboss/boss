@@ -45,6 +45,9 @@ public class ItemEntity {
     @Column(name = "category_id")
     private UUID categoryId;
 
+    @Column(name = "category_label_snapshot")
+    private String categoryLabelSnapshot;
+
     @Column(name = "base_uom_id", nullable = false)
     private UUID baseUomId;
 

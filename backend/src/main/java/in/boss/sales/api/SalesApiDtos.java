@@ -142,11 +142,22 @@ public final class SalesApiDtos {
             @Size(max = 80) String drawingNumber,
             @Size(max = 20) String drawingRevision,
             @Size(max = 500) String description,
-            java.time.LocalDate requiredBy) {
+            java.time.LocalDate requiredBy,
+            Map<String, @DecimalMin("0.00") BigDecimal> labourHours,
+            Map<String, @DecimalMin("0.00") BigDecimal> machineHours) {
         @JsonIgnore
         public CreateQuotationLineRequest(UUID itemId, BigDecimal qty, UUID uomId,
                                            BigDecimal unitPrice, Integer deliveryWeeks) {
-            this(itemId, qty, uomId, unitPrice, deliveryWeeks, null, null, null, null, null, null);
+            this(itemId, qty, uomId, unitPrice, deliveryWeeks, null, null, null, null, null, null, Map.of(), Map.of());
+        }
+
+        @JsonIgnore
+        public CreateQuotationLineRequest(UUID itemId, BigDecimal qty, UUID uomId,
+                                           BigDecimal unitPrice, Integer deliveryWeeks,
+                                           BigDecimal gstRate, BigDecimal discountPct, String drawingNumber,
+                                           String drawingRevision, String description, java.time.LocalDate requiredBy) {
+            this(itemId, qty, uomId, unitPrice, deliveryWeeks, gstRate, discountPct, drawingNumber,
+                    drawingRevision, description, requiredBy, Map.of(), Map.of());
         }
     }
 
@@ -260,16 +271,94 @@ public final class SalesApiDtos {
             String cpoNumber,
             String rfqNumber,
             List<RevisionLink> revisions,
-            String paymentTermsText) {
+            String paymentTermsText,
+            QuotationCostingSnapshot costing,
+            String costOverrideReason,
+            UUID costOverrideBy,
+            Instant costOverrideAt) {
         @JsonIgnore
         public QuotationResponse(UUID id, String quotationNumber, UUID rfqId, UUID customerId,
                                  String customerName, int revision, String status, LocalDate validUntil,
                                  List<QuotationLineResponse> lines, List<NegotiationEntryResponse> negotiationHistory,
                                  Instant createdAt) {
             this(id, quotationNumber, rfqId, customerId, customerName, revision, status, validUntil, lines,
-                    negotiationHistory, createdAt, null, null, null, null, null, null, null, null, null, null, null, List.of(), null);
+                    negotiationHistory, createdAt, null, null, null, null, null, null, null, null, null, null, null,
+                    List.of(), null, null, null, null, null);
+        }
+
+        @JsonIgnore
+        public QuotationResponse(UUID id, String quotationNumber, UUID rfqId, UUID customerId,
+                                 String customerName, int revision, String status, LocalDate validUntil,
+                                 List<QuotationLineResponse> lines, List<NegotiationEntryResponse> negotiationHistory,
+                                 Instant createdAt, Integer paymentTerms, String deliveryTerms, String notes,
+                                 BigDecimal discountAmount, String decisionChannel, String decisionNote,
+                                 UUID decidedBy, Instant decidedAt, UUID cpoId, String cpoNumber, String rfqNumber,
+                                 List<RevisionLink> revisions, String paymentTermsText) {
+            this(id, quotationNumber, rfqId, customerId, customerName, revision, status, validUntil, lines,
+                    negotiationHistory, createdAt, paymentTerms, deliveryTerms, notes, discountAmount, decisionChannel,
+                    decisionNote, decidedBy, decidedAt, cpoId, cpoNumber, rfqNumber, revisions, paymentTermsText,
+                    null, null, null, null);
         }
     }
+
+    public record CostRate(
+            @NotBlank @Size(max = 100) String name,
+            @NotNull @DecimalMin("0.00") BigDecimal ratePerHour) {}
+
+    public record QuotationCostingConfigRequest(
+            @NotNull List<@Valid CostRate> labourRates,
+            @NotNull List<@Valid CostRate> machineRates,
+            @NotNull @DecimalMin("0.00") BigDecimal overheadPerUnit,
+            @NotNull @DecimalMin("0.00") BigDecimal consumablesPerUnit,
+            @NotNull @DecimalMin("0.00") BigDecimal packagingPerUnit,
+            @NotNull @DecimalMin("0.00") BigDecimal transportPerUnit,
+            @NotNull @DecimalMin("0.00") @DecimalMax("100.00") BigDecimal targetMarginPct,
+            @NotNull @DecimalMin("0.00") @DecimalMax("100.00") BigDecimal minimumMarginPct,
+            @NotNull @DecimalMin("0.00") @DecimalMax("100.00") BigDecimal approvalThresholdPct) {}
+
+    public record QuotationCostingConfigResponse(
+            List<CostRate> labourRates,
+            List<CostRate> machineRates,
+            BigDecimal overheadPerUnit,
+            BigDecimal consumablesPerUnit,
+            BigDecimal packagingPerUnit,
+            BigDecimal transportPerUnit,
+            BigDecimal targetMarginPct,
+            BigDecimal minimumMarginPct,
+            BigDecimal approvalThresholdPct) {}
+
+    public record QuotationLineCosting(
+            int lineNumber,
+            BigDecimal materialCost,
+            BigDecimal labourCost,
+            BigDecimal machineCost,
+            BigDecimal overheadCost,
+            BigDecimal consumablesCost,
+            BigDecimal packagingCost,
+            BigDecimal transportCost,
+            Map<String, BigDecimal> labourHours,
+            Map<String, BigDecimal> machineHours) {}
+
+    public record QuotationCostingSnapshot(
+            boolean available,
+            String valuationBasis,
+            BigDecimal materialCost,
+            BigDecimal labourCost,
+            BigDecimal machineCost,
+            BigDecimal overheadCost,
+            BigDecimal consumablesCost,
+            BigDecimal packagingCost,
+            BigDecimal transportCost,
+            BigDecimal totalCost,
+            BigDecimal netRevenue,
+            BigDecimal grossProfit,
+            BigDecimal grossMarginPct,
+            BigDecimal targetMarginPct,
+            BigDecimal minimumMarginPct,
+            BigDecimal approvalThresholdPct,
+            boolean requiresApproval,
+            List<String> unavailableReasons,
+            List<QuotationLineCosting> lines) {}
 
     public record AcceptQuotationRequest(
             @Size(max = 120) String customerPoRef,

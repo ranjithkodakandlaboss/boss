@@ -63,6 +63,7 @@ public class InventoryServiceImpl implements InventoryService {
     private final InventoryReservationReleaseService reservationReleaseService;
     private final InventoryReplenishmentService replenishmentService;
     private final CustomerPoReservationService customerPoReservationService;
+    private final in.boss.inventory.domain.FeasibilityCheckService feasibilityCheckService;
 
     public InventoryServiceImpl(InventoryRepository repository,
                                 InventoryReservationRepository reservationRepository,
@@ -73,7 +74,8 @@ public class InventoryServiceImpl implements InventoryService {
                                 InventoryMaterialIssueService materialIssueService,
                                 InventoryReservationReleaseService reservationReleaseService,
                                 InventoryReplenishmentService replenishmentService,
-                                CustomerPoReservationService customerPoReservationService) {
+                                CustomerPoReservationService customerPoReservationService,
+                                in.boss.inventory.domain.FeasibilityCheckService feasibilityCheckService) {
         this.repository = repository;
         this.reservationRepository = reservationRepository;
         this.auditService = auditService;
@@ -84,6 +86,7 @@ public class InventoryServiceImpl implements InventoryService {
         this.reservationReleaseService = reservationReleaseService;
         this.replenishmentService = replenishmentService;
         this.customerPoReservationService = customerPoReservationService;
+        this.feasibilityCheckService = feasibilityCheckService;
     }
 
     @Override
@@ -170,6 +173,11 @@ public class InventoryServiceImpl implements InventoryService {
     public CustomerPoReservationResponse reserveForCustomerPo(
             CustomerPoReservationRequest request, boolean allowPartial) {
         return customerPoReservationService.reserve(request, allowPartial);
+    }
+
+    @Override
+    public in.boss.inventory.api.InventoryApiDtos.FeasibilityResponse checkAndReserveForCustomerPo(UUID cpoId) {
+        return feasibilityCheckService.checkAndReserve(cpoId);
     }
 
     @Override

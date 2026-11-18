@@ -16,6 +16,8 @@ public final class QualityDtos {
             UUID id,
             String inspectionNumber,
             String inspectionType,
+            UUID inspectionTypeOptionId,
+            String inspectionTypeLabel,
             String referenceType,
             UUID referenceId,
             String referenceLabel,
@@ -41,6 +43,8 @@ public final class QualityDtos {
             UUID id,
             String inspectionNumber,
             String inspectionType,
+            UUID inspectionTypeOptionId,
+            String inspectionTypeLabel,
             String referenceType,
             UUID referenceId,
             String referenceLabel,
@@ -87,8 +91,25 @@ public final class QualityDtos {
             UUID templateId,
             UUID inspectorId,
             LocalDate inspectionDate,
-            String notes
-    ) {}
+            String notes,
+            UUID inspectionTypeOptionId
+    ) {
+        public CreateInspectionRequest(
+                String inspectionType,
+                String referenceType,
+                UUID referenceId,
+                UUID itemId,
+                UUID lotId,
+                BigDecimal quantityInspected,
+                UUID templateId,
+                UUID inspectorId,
+                LocalDate inspectionDate,
+                String notes
+        ) {
+            this(inspectionType, referenceType, referenceId, itemId, lotId, quantityInspected,
+                    templateId, inspectorId, inspectionDate, notes, null);
+        }
+    }
 
     public record RecordResultRequest(
             String result,
