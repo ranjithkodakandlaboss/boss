@@ -53,6 +53,7 @@ export default function QualityPage() {
   // New Inspection dialog
   const [showNewInspection, setShowNewInspection] = useState(false);
   const [newInspType, setNewInspType] = useState("");
+  const [newInspWorkflowType, setNewInspWorkflowType] = useState("final");
   const [newInspRefType, setNewInspRefType] = useState("job");
   const [newInspRefId, setNewInspRefId] = useState("");
   const [newInspQty, setNewInspQty] = useState("1");
@@ -84,7 +85,7 @@ export default function QualityPage() {
   }
 
   useEffect(() => {
-    listConfigOptions("INSPECTION_TYPE").then((opts) => {
+    listConfigOptions("INSPECTION_TYPES").then((opts) => {
       setInspectionTypes(opts);
       if (opts.length > 0 && !newInspType) setNewInspType(opts[0].id);
     }).catch(() => {});
@@ -115,7 +116,7 @@ export default function QualityPage() {
     if (statusFilter !== "all") rows = rows.filter((i) => i.status === statusFilter || i.result === statusFilter);
     return sortRows(rows, inspSortKey, inspSortDir, (i, k) => ({
       number: i.inspectionNumber,
-      type: i.inspectionType,
+      type: i.inspectionTypeLabel ?? inspectionTypeLabel(i.inspectionType),
       job: i.referenceLabel ?? "",
       inspected: i.inspectionDate ?? i.createdAt ?? "",
       inspector: i.inspectorName ?? "",
@@ -145,7 +146,8 @@ export default function QualityPage() {
     setSaveError("");
     try {
       const insp = await createInspection({
-        inspectionType: newInspType,
+        inspectionType: newInspWorkflowType,
+        inspectionTypeOptionId: newInspType || undefined,
         referenceType: newInspRefType,
         referenceId: newInspRefId,
         quantityInspected: parseFloat(newInspQty) || 1,
@@ -337,7 +339,22 @@ export default function QualityPage() {
             <h2 className="text-base font-semibold mb-4">New Inspection</h2>
             <form onSubmit={handleCreateInspection} className="space-y-3">
               <label className="block text-sm">
-                <span className="text-[var(--text-2)] font-medium">Type</span>
+                <span className="text-[var(--text-2)] font-medium">Workflow type</span>
+                <select
+                  className="mt-1 w-full rounded-lg border px-3 py-2 text-sm bg-[var(--surface)]"
+                  style={{ borderColor: "var(--border)" }}
+                  value={newInspWorkflowType}
+                  onChange={(e) => setNewInspWorkflowType(e.target.value)}
+                >
+                  <option value="incoming">Incoming</option>
+                  <option value="in_process">In-process</option>
+                  <option value="final">Final</option>
+                  <option value="customer">Customer</option>
+                  <option value="dispatch_readiness">Dispatch readiness</option>
+                </select>
+              </label>
+              <label className="block text-sm">
+                <span className="text-[var(--text-2)] font-medium">Inspection category</span>
                 <select
                   className="mt-1 w-full rounded-lg border px-3 py-2 text-sm bg-[var(--surface)]"
                   style={{ borderColor: "var(--border)" }}
@@ -543,7 +560,7 @@ function InspectionsTable({
             </div>
             <div className="text-sm mt-1">{insp.itemName ?? insp.referenceLabel ?? "—"}</div>
             <div className="text-xs mt-0.5" style={{ color: "var(--text-3)" }}>
-              {inspectionTypeLabel(insp.inspectionType)} · {displayDate(insp.inspectionDate)}
+              {insp.inspectionTypeLabel ?? inspectionTypeLabel(insp.inspectionType)} · {displayDate(insp.inspectionDate)}
             </div>
           </button>
         ))}
@@ -580,7 +597,7 @@ function InspectionsTable({
                   onClick={() => onSelect(insp.id)}
                 >
                   <td className="px-4 py-3 font-mono text-xs font-bold" style={{ color: "var(--accent)" }}>{insp.inspectionNumber}</td>
-                  <td className="px-4 py-3 text-sm">{inspectionTypeLabel(insp.inspectionType)}</td>
+                  <td className="px-4 py-3 text-sm">{insp.inspectionTypeLabel ?? inspectionTypeLabel(insp.inspectionType)}</td>
                   <td className="px-4 py-3">
                     {insp.referenceLabel ? (
                       <span
