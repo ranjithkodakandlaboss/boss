@@ -7,6 +7,7 @@ import in.boss.masterdata.persistence.BomLineRepository;
 import in.boss.masterdata.persistence.HsnCodeRepository;
 import in.boss.masterdata.persistence.ItemCategoryRepository;
 import in.boss.masterdata.persistence.ItemEntity;
+import in.boss.masterdata.persistence.ItemOperationalDependencies;
 import in.boss.masterdata.persistence.ItemRepository;
 import in.boss.masterdata.persistence.UnitOfMeasureRepository;
 import in.boss.shared.audit.AuditService;
@@ -20,6 +21,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.Optional;
+import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 
@@ -35,6 +37,7 @@ class ItemLifecycleTest {
     @Mock HsnCodeRepository hsnCodeRepo;
     @Mock BomHeaderRepository bomHeaderRepo;
     @Mock BomLineRepository bomLineRepo;
+    @Mock ItemOperationalDependencies operationalDependencies;
     @Mock AuditService auditService;
 
     private ItemService itemService;
@@ -43,7 +46,8 @@ class ItemLifecycleTest {
     @BeforeEach
     void setUp() {
         itemService = new ItemServiceImpl(
-                itemRepo, uomRepo, categoryRepo, hsnCodeRepo, bomHeaderRepo, bomLineRepo, auditService, null, null);
+                itemRepo, uomRepo, categoryRepo, hsnCodeRepo, bomHeaderRepo, bomLineRepo,
+                operationalDependencies, auditService, null, null);
         BossContextHolder.set(new BossContext(tenantId, UUID.randomUUID(), Set.of("OWNER"), null, null));
     }
 
@@ -90,5 +94,20 @@ class ItemLifecycleTest {
         assertThatThrownBy(() -> itemService.updateItem(itemId, updateReq))
                 .isInstanceOf(LifecycleException.class)
                 .hasMessageContaining("referenced as component in active BOM");
+    }
+
+    @Test
+    void operationalDependenciesBlockDeleteAndDeactivation() {
+        UUID itemId = UUID.randomUUID();
+        ItemEntity item = ItemEntity.builder().id(itemId).tenantId(tenantId).isActive(true).build();
+        when(itemRepo.findByIdAndTenantId(itemId, tenantId)).thenReturn(Optional.of(item));
+        when(operationalDependencies.findActive(tenantId, itemId)).thenReturn(List.of("production job", "dispatch"));
+
+        assertThatThrownBy(() -> itemService.deleteItem(itemId))
+                .isInstanceOf(LifecycleException.class)
+                .hasMessageContaining("production job, dispatch");
+        assertThatThrownBy(() -> itemService.updateItem(itemId, UpdateItemRequest.builder().status("inactive").build()))
+                .isInstanceOf(LifecycleException.class)
+                .hasMessageContaining("production job, dispatch");
     }
 }

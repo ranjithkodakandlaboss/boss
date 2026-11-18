@@ -16,6 +16,7 @@ import in.boss.masterdata.persistence.HsnCodeRepository;
 import in.boss.masterdata.persistence.ItemCategoryEntity;
 import in.boss.masterdata.persistence.ItemCategoryRepository;
 import in.boss.masterdata.persistence.ItemEntity;
+import in.boss.masterdata.persistence.ItemOperationalDependencies;
 import in.boss.masterdata.persistence.ItemRepository;
 import in.boss.masterdata.persistence.UnitOfMeasureEntity;
 import in.boss.masterdata.persistence.UnitOfMeasureRepository;
@@ -49,6 +50,7 @@ public class ItemServiceImpl implements ItemService {
     private final HsnCodeRepository hsnCodeRepository;
     private final BomHeaderRepository bomHeaderRepository;
     private final BomLineRepository bomLineRepository;
+    private final ItemOperationalDependencies operationalDependencies;
     private final AuditService auditService;
     private final MasterDataEventPublisher eventPublisher;
     private final ObjectMapper objectMapper;
@@ -59,6 +61,7 @@ public class ItemServiceImpl implements ItemService {
                            HsnCodeRepository hsnCodeRepository,
                            BomHeaderRepository bomHeaderRepository,
                            BomLineRepository bomLineRepository,
+                           ItemOperationalDependencies operationalDependencies,
                            AuditService auditService,
                            MasterDataEventPublisher eventPublisher,
                            ObjectMapper objectMapper) {
@@ -68,6 +71,7 @@ public class ItemServiceImpl implements ItemService {
         this.hsnCodeRepository = hsnCodeRepository;
         this.bomHeaderRepository = bomHeaderRepository;
         this.bomLineRepository = bomLineRepository;
+        this.operationalDependencies = operationalDependencies;
         this.auditService = auditService;
         this.eventPublisher = eventPublisher;
         this.objectMapper = objectMapper;
@@ -163,6 +167,7 @@ public class ItemServiceImpl implements ItemService {
             boolean newActive = "active".equalsIgnoreCase(request.getStatus());
             if (!newActive && entity.isActive()) {
                 checkNoActiveBomReference(tenantId, id, "deactivate");
+                checkNoOperationalDependencies(tenantId, id, "deactivate");
             }
             entity.setActive(newActive);
         }
@@ -212,6 +217,7 @@ public class ItemServiceImpl implements ItemService {
                 .orElseThrow(() -> new EntityNotFoundException("Item not found: " + id));
 
         checkNoActiveBomReference(tenantId, id, "delete");
+        checkNoOperationalDependencies(tenantId, id, "delete");
 
         ItemDto oldDto = loadFullDto(entity, tenantId);
         entity.setActive(false);
@@ -281,6 +287,14 @@ public class ItemServiceImpl implements ItemService {
         boolean isComponentInActiveBom = bomLineRepository.isComponentInActiveBom(tenantId, itemId);
         if (isComponentInActiveBom) {
             throw new LifecycleException("Cannot " + operation + " item: referenced as component in active BOM");
+        }
+    }
+
+    private void checkNoOperationalDependencies(UUID tenantId, UUID itemId, String operation) {
+        List<String> dependencies = operationalDependencies.findActive(tenantId, itemId);
+        if (!dependencies.isEmpty()) {
+            throw new LifecycleException("Cannot " + operation + " item: active dependencies: "
+                    + String.join(", ", dependencies));
         }
     }
 
