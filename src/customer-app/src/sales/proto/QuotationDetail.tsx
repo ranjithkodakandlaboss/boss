@@ -17,52 +17,18 @@ export default function QuotationDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { quotations, quotationLines, rfqs, customerPos, currentUser, updateQuotation, reviseQuotation, convertQuotationToPO, updateRfq, showToast, boms } = useStore();
+  const { quotations, quotationLines, rfqs, customerPos, currentUser, updateQuotation, reviseQuotation, convertQuotationToPO, updateRfq, showToast } = useStore();
   const [confirming, setConfirming] = useState<'submit' | 'accept' | 'convert' | null>(null);
   const [reviseModal, setReviseModal] = useState(false);
   const [reviseDiscount, setReviseDiscount] = useState('0');
   const [reviseNotes, setReviseNotes] = useState('');
+  const [overrideReason, setOverrideReason] = useState('');
 
   const quotation = quotations.find(q => q.id === id);
   const rfq = rfqs.find(r => r.id === quotation?.rfqId);
   const { goBack, originUrl } = useReturnNavigation(rfq ? `/sales/rfq/${rfq.id}` : '/sales?tab=rfqs');
 
   const lines = useMemo(() => quotationLines.filter(l => l.quotationId === id), [quotationLines, id]);
-
-  const bomStats = useMemo(() => {
-    let totalBomCost = 0;
-    let allLinesHaveBom = lines.length > 0;
-    const lineDetails = lines.map(l => {
-      const match = boms.find(b =>
-        (l.productId && b.productId === l.productId) ||
-        (l.drawingNumber && b.productCode && b.productCode.trim().toLowerCase() === l.drawingNumber.trim().toLowerCase()) ||
-        (l.productName && b.productName && b.productName.trim().toLowerCase() === l.productName.trim().toLowerCase())
-      );
-      if (!match) {
-        allLinesHaveBom = false;
-        return { lineId: l.id, hasBom: false, unitCost: 0, lineCost: 0 };
-      }
-      const unitCost = match.totalMaterialCost;
-      const lineCost = unitCost * (l.orderedQty || 1);
-      totalBomCost += lineCost;
-      return { lineId: l.id, hasBom: true, unitCost, lineCost };
-    });
-
-    const sub = quotation?.subtotal ?? lines.reduce((s, l) => s + l.value, 0);
-    const disc = quotation?.discountAmount ?? 0;
-    const commercialBase = Math.max(0, sub - disc);
-    const estMargin = commercialBase - totalBomCost;
-    const marginPct = commercialBase > 0 ? Math.round((estMargin / commercialBase) * 100) : 0;
-    return {
-      totalBomCost,
-      estMargin,
-      marginPct,
-      isLow: allLinesHaveBom && marginPct < 20,
-      bomAvailable: allLinesHaveBom,
-      commercialBase,
-      lineDetails,
-    };
-  }, [lines, quotation?.subtotal, quotation?.discountAmount, boms]);
 
   if (!quotation) return (
     <div className="p-8 text-center text-sm text-[var(--text-2)]">
@@ -89,7 +55,7 @@ export default function QuotationDetail() {
   };
 
   const handleSubmit = async () => {
-    await updateQuotation(quotation.id, { status: 'submitted' });
+    await updateQuotation(quotation.id, { status: 'submitted', notes: overrideReason });
     setConfirming(null);
   };
 
@@ -157,7 +123,7 @@ export default function QuotationDetail() {
             />
             <p className="text-[11px] text-[var(--text-2)] max-w-[220px]">BOSS does not send email or WhatsApp. Download the PDF and send it outside BOSS.</p>
             {canSubmit && (
-              <button onClick={() => setConfirming('submit')} className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-semibold border" style={{ borderColor: 'var(--brand)', color: 'var(--brand)' }}>
+              <button onClick={() => { setOverrideReason(''); setConfirming('submit'); }} className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-semibold border" style={{ borderColor: 'var(--brand)', color: 'var(--brand)' }}>
                 <Send size={14} /> Submit to Customer
               </button>
             )}
@@ -282,80 +248,71 @@ export default function QuotationDetail() {
           </table>
         </div>
 
-        {/* Commercial Costing & Estimated Material Margin Analysis */}
+        {/* Persisted server-side costing snapshot */}
         <div className="mt-4 rounded-xl border p-4 space-y-3" style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}>
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
               <h4 className="text-xs font-bold uppercase tracking-wider text-[var(--text)] flex items-center gap-1.5">
-                <Layers size={14} className="text-blue-500" /> Commercial Intelligence & BOM Material Margin Analysis
+                <Layers size={14} className="text-blue-500" /> Estimated Cost and Gross Margin
               </h4>
               <p className="text-[11px] text-[var(--text-3)]">
-                {bomStats.bomAvailable ? 'BOM material rollup against net commercial price' : 'No engineering BOM found matching line items'}
+                {quotation.costing?.available
+                  ? `Saved estimate · ${quotation.costing.valuationBasis}`
+                  : 'Cost estimate unavailable; an approved BOM and valued inventory are required before submission.'}
               </p>
             </div>
-            {bomStats.bomAvailable ? (
+            {quotation.costing?.available ? (
               <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold border ${
-                bomStats.isLow ? 'bg-amber-100 text-amber-900 border-amber-300' : 'bg-emerald-100 text-emerald-900 border-emerald-300'
+                quotation.costing.requiresApproval ? 'bg-amber-100 text-amber-900 border-amber-300' : 'bg-emerald-100 text-emerald-900 border-emerald-300'
               }`}>
-                {bomStats.marginPct}% Material Margin
+                {quotation.costing.grossMarginPct?.toFixed(2) ?? '—'}% Gross Margin
               </span>
-            ) : (
-              <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold border bg-slate-100 text-slate-700 border-slate-300">
-                BOM Cost Not Available
-              </span>
-            )}
+            ) : null}
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 p-3 rounded-xl bg-[var(--surface-2)] text-xs">
-            <div>
-              <span className="text-[10px] text-[var(--text-3)] uppercase tracking-wider block">Net Commercial Base</span>
-              <span className="font-mono font-bold text-sm text-[var(--text)]">
-                {fmtMoney(bomStats.commercialBase)}
-              </span>
-              {(quotation.discountAmount ?? 0) > 0 && (
-                <span className="text-[10px] text-[var(--text-3)] block mt-0.5">
-                  Subtotal {fmtMoney(quotation.subtotal ?? 0)} - Disc {fmtMoney(quotation.discountAmount ?? 0)}
-                </span>
-              )}
+          {quotation.costing?.available && (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 p-3 rounded-xl bg-[var(--surface-2)] text-xs">
+              {[
+                ['Net Revenue', quotation.costing.netRevenue],
+                ['Material', quotation.costing.materialCost],
+                ['Labour', quotation.costing.labourCost],
+                ['Machine', quotation.costing.machineCost],
+                ['Overhead', quotation.costing.overheadCost],
+                ['Consumables', quotation.costing.consumablesCost],
+                ['Packaging', quotation.costing.packagingCost],
+                ['Transport', quotation.costing.transportCost],
+                ['Estimated Total Cost', quotation.costing.totalCost],
+                ['Gross Profit', quotation.costing.grossProfit],
+              ].map(([label, amount]) => (
+                <div key={label as string}>
+                  <span className="text-[10px] text-[var(--text-3)] uppercase tracking-wider block">{label}</span>
+                  <span className="font-mono font-bold text-sm text-[var(--text)]">{fmtMoney(amount as number)}</span>
+                </div>
+              ))}
+              <div>
+                <span className="text-[10px] text-[var(--text-3)] uppercase tracking-wider block">Target Margin</span>
+                <span className="font-mono font-bold text-sm text-[var(--text)]">{quotation.costing.targetMarginPct}%</span>
+              </div>
             </div>
-            <div>
-              <span className="text-[10px] text-[var(--text-3)] uppercase tracking-wider block">Est. BOM Material Cost</span>
-              {bomStats.bomAvailable ? (
-                <span className="font-mono font-bold text-sm text-slate-600">
-                  {fmtMoney(bomStats.totalBomCost)}
-                </span>
-              ) : (
-                <span className="text-xs font-semibold text-[var(--text-3)] italic">
-                  BOM Cost Not Available
-                </span>
-              )}
-            </div>
-            <div>
-              <span className="text-[10px] text-[var(--text-3)] uppercase tracking-wider block">Est. Material Margin</span>
-              {bomStats.bomAvailable ? (
-                <span className={`font-mono font-bold text-sm ${bomStats.isLow ? 'text-amber-600' : 'text-emerald-600'}`}>
-                  {fmtMoney(bomStats.estMargin)} ({bomStats.marginPct}%)
-                </span>
-              ) : (
-                <span className="text-xs font-semibold text-[var(--text-3)] italic">
-                  Margin Not Available (BOM missing)
-                </span>
-              )}
-            </div>
-          </div>
+          )}
 
-          {bomStats.bomAvailable && bomStats.isLow && (
+          {quotation.costing?.unavailableReasons.map((reason) => (
+            <p key={reason} className="text-xs text-amber-700">{reason}</p>
+          ))}
+          {quotation.costing?.requiresApproval && (
             <div className="p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-900 text-xs flex items-center gap-2">
               <AlertTriangle size={15} className="text-amber-600 flex-shrink-0" />
               <span>
-                <strong>Low Margin Alert (&lt; 20%):</strong> Quoted price leaves narrow buffer for machining and factory overheads.
+                Margin is below the configured approval threshold. An owner or operations manager must provide a reason to submit.
               </span>
             </div>
           )}
 
-          <p className="text-[11px] text-[var(--text-3)] italic pt-1 border-t border-[var(--border)]">
-            * Estimated material margin — excludes labour, overhead, machine cost and other unconfigured expenses.
-          </p>
+          {quotation.costOverrideReason && (
+            <p className="text-xs text-[var(--text-2)] border-t pt-2" style={{ borderColor: 'var(--border)' }}>
+              Approved override: {quotation.costOverrideReason}
+            </p>
+          )}
         </div>
 
         {quotation.notes && (
@@ -404,10 +361,18 @@ export default function QuotationDetail() {
                   ? `${quotation.quotationNumber} will be submitted to ${quotation.customerName}. This does not accept the quotation.`
                   : `${quotation.quotationNumber} will be marked as accepted by ${quotation.customerName}.`}
             </p>
+            {confirming === 'submit' && quotation.costing?.requiresApproval && (
+              <div className="mb-5">
+                <label htmlFor="override-reason" className="block text-xs font-medium text-[var(--text-2)] mb-1">Reason for below-threshold approval *</label>
+                <textarea id="override-reason" className="eoss-input w-full" rows={3} value={overrideReason}
+                  onChange={(event) => setOverrideReason(event.target.value)} />
+              </div>
+            )}
             <div className="flex gap-3 justify-end">
               <button onClick={() => setConfirming(null)} className="px-4 py-2 rounded-lg text-sm border" style={{ borderColor: 'var(--border)', color: 'var(--text-2)' }}>Cancel</button>
               <button
                 onClick={confirming === 'convert' ? handleConvertToPO : confirming === 'submit' ? handleSubmit : handleAccept}
+                disabled={confirming === 'submit' && quotation.costing?.requiresApproval && !overrideReason.trim()}
                 className="px-4 py-2 rounded-lg text-sm font-semibold text-white"
                 style={{ background: confirming === 'convert' ? 'var(--brand)' : '#16a34a' }}
               >

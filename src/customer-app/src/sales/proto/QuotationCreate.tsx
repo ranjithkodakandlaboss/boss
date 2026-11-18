@@ -1,12 +1,12 @@
 // @ts-nocheck
-import React, { useState, useMemo } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Plus, Trash2, Check, AlertTriangle, Layers } from 'lucide-react';
-import clsx from 'clsx';
+import { ArrowLeft, Plus, Trash2, Check } from 'lucide-react';
 import { useStore } from './runtime';
 import AddIfEmpty from './AddIfEmpty';
 import { newCustomer, saveCatalogItem, saveUnit } from './quickMasters';
 import type { CustomerQuotation, CustomerQuotationLine } from './types';
+import { salesApi, type QuotationCostingConfig } from '../api';
 
 const DEMO_NOW = new Date().toISOString().slice(0, 10);
 const addDays = (d: string, n: number) => {
@@ -26,6 +26,8 @@ interface QLine {
   unitPrice: number;
   requiredDate: string;
   gstRate?: number;
+  labourHours: Record<string, number>;
+  machineHours: Record<string, number>;
 }
 
 function newLine(n: number, rfqLine?: any): QLine {
@@ -39,13 +41,15 @@ function newLine(n: number, rfqLine?: any): QLine {
     uom: rfqLine?.uom ?? 'Nos',
     unitPrice: rfqLine?.targetPrice ?? 0,
     requiredDate: rfqLine?.requiredBy ?? '',
+    labourHours: {},
+    machineHours: {},
   };
 }
 
 export default function QuotationCreate() {
   const { rfqId } = useParams<{ rfqId: string }>();
   const navigate = useNavigate();
-  const { rfqs, customers, addCustomer, addQuotation, createDirectQuotation, currentUser, boms, catalog, uoms, reload } = useStore();
+  const { rfqs, customers, addCustomer, addQuotation, createDirectQuotation, currentUser, catalog, uoms, reload } = useStore();
 
   const rfq = rfqs.find(r => r.id === rfqId) as (typeof rfqs[0] & Record<string, any>) | undefined;
   const rfqLines: any[] = rfq?.lines ?? [];
@@ -58,9 +62,25 @@ export default function QuotationCreate() {
   const [discountAmount, setDiscountAmount] = useState(0);
   const [taxRatePct, setTaxRatePct] = useState(18);
   const [notes, setNotes] = useState('');
+  const [costingConfig, setCostingConfig] = useState<QuotationCostingConfig>();
+  const [labourRatesText, setLabourRatesText] = useState('');
+  const [machineRatesText, setMachineRatesText] = useState('');
+  const [costConfigMessage, setCostConfigMessage] = useState('');
+  const [savingCostConfig, setSavingCostConfig] = useState(false);
   const [lines, setLines] = useState<QLine[]>(
     rfqLines.length > 0 ? rfqLines.map((l, i) => newLine(i + 1, l)) : [newLine(1)]
   );
+  const canConfigureCosting = ['owner', 'OWNER'].includes(currentUser.role);
+
+  useEffect(() => {
+    salesApi.quotationCostingConfig().then((config) => {
+      setCostingConfig(config);
+      setLabourRatesText(config.labourRates.map((rate) => `${rate.name}, ${rate.ratePerHour}`).join('\n'));
+      setMachineRatesText(config.machineRates.map((rate) => `${rate.name}, ${rate.ratePerHour}`).join('\n'));
+    }).catch((error) => {
+      setCostConfigMessage(error instanceof Error ? error.message : 'Costing configuration could not be loaded.');
+    });
+  }, []);
 
   if (rfqId && !rfq) return <div className="p-8 text-sm text-[var(--text-2)]">RFQ not found.</div>;
 
@@ -80,37 +100,39 @@ export default function QuotationCreate() {
   const fmtMoney = (n: number) => `₹${n.toLocaleString('en-IN')}`;
   const validUntil = addDays(DEMO_NOW, parseInt(validDays) || 30);
 
-  const bomCostDetails = useMemo(() => {
-    let totalBomCost = 0;
-    let allLinesHaveBom = lines.length > 0;
-    const lineBreakdowns = lines.map(l => {
-      const matchingBom = boms.find(b =>
-        (b.productId && l.drawingNumber && b.productId === l.drawingNumber) ||
-        (l.drawingNumber && b.productCode && b.productCode.trim().toLowerCase() === l.drawingNumber.trim().toLowerCase()) ||
-        (l.productName && b.productName && b.productName.trim().toLowerCase() === l.productName.trim().toLowerCase())
-      );
-      if (!matchingBom) {
-        allLinesHaveBom = false;
-        return { lineId: l.id, hasBom: false, unitBomCost: 0, lineCost: 0 };
-      }
-      const unitBomCost = matchingBom.totalMaterialCost;
-      const lineCost = unitBomCost * (l.orderedQty || 1);
-      totalBomCost += lineCost;
-      return { lineId: l.id, hasBom: true, matchingBom, unitBomCost, lineCost };
-    });
-    const commercialBase = Math.max(0, subtotal - (discountAmount || 0));
-    const estMargin = commercialBase - totalBomCost;
-    const marginPct = commercialBase > 0 ? Math.round((estMargin / commercialBase) * 100) : 0;
-    return {
-      totalBomCost,
-      lineBreakdowns,
-      estMargin,
-      marginPct,
-      commercialBase,
-      bomAvailable: allLinesHaveBom,
-      isLow: allLinesHaveBom && marginPct < 20,
-    };
-  }, [lines, subtotal, discountAmount, boms]);
+  const updateHours = (id: string, field: 'labourHours' | 'machineHours', name: string, value: string) => {
+    const hours = value === '' ? 0 : Math.max(0, Number(value) || 0);
+    setLines(current => current.map(line => line.id === id
+      ? { ...line, [field]: { ...line[field], [name]: hours } }
+      : line));
+  };
+
+  const parseRates = (value: string) => value.split('\n').map((entry) => entry.trim()).filter(Boolean).map((entry) => {
+    const [name, rawRate] = entry.split(',').map((part) => part.trim());
+    if (!name || !rawRate || !Number.isFinite(Number(rawRate)) || Number(rawRate) < 0) {
+      throw new Error('Enter rates one per line as “Activity, hourly rate”.');
+    }
+    return { name, ratePerHour: Number(rawRate) };
+  });
+
+  const saveCostingConfig = async () => {
+    if (!costingConfig) return;
+    setSavingCostConfig(true);
+    setCostConfigMessage('');
+    try {
+      const saved = await salesApi.saveQuotationCostingConfig({
+        ...costingConfig,
+        labourRates: parseRates(labourRatesText),
+        machineRates: parseRates(machineRatesText),
+      });
+      setCostingConfig(saved);
+      setCostConfigMessage('Costing configuration saved.');
+    } catch (error) {
+      setCostConfigMessage(error instanceof Error ? error.message : 'Costing configuration could not be saved.');
+    } finally {
+      setSavingCostConfig(false);
+    }
+  };
 
   const handleSubmit = async () => {
     const quotation: CustomerQuotation = {
@@ -150,6 +172,8 @@ export default function QuotationCreate() {
       unitPrice: l.unitPrice,
       value: l.orderedQty * l.unitPrice,
       requiredDate: l.requiredDate,
+      labourHours: l.labourHours,
+      machineHours: l.machineHours,
     }));
 
     const saved = isDirect ? await createDirectQuotation(quotation, qLines) : await addQuotation(quotation, qLines);
@@ -329,6 +353,22 @@ export default function QuotationCreate() {
                     <input value={fmtMoney(l.orderedQty * l.unitPrice)} disabled className="eoss-input opacity-60 cursor-not-allowed font-mono" />
                   </Field>
                 </div>
+                {(costingConfig?.labourRates.length || costingConfig?.machineRates.length) ? (
+                  <div className="grid md:grid-cols-2 gap-3 mt-3">
+                    {costingConfig.labourRates.map((rate) => (
+                      <Field key={`labour-${rate.name}`} label={`${rate.name} hours`}>
+                        <input type="number" min={0} step="0.1" value={l.labourHours[rate.name] ?? 0}
+                          onChange={(event) => updateHours(l.id, 'labourHours', rate.name, event.target.value)} className="eoss-input w-full" />
+                      </Field>
+                    ))}
+                    {costingConfig.machineRates.map((rate) => (
+                      <Field key={`machine-${rate.name}`} label={`${rate.name} machine hours`}>
+                        <input type="number" min={0} step="0.1" value={l.machineHours[rate.name] ?? 0}
+                          onChange={(event) => updateHours(l.id, 'machineHours', rate.name, event.target.value)} className="eoss-input w-full" />
+                      </Field>
+                    ))}
+                  </div>
+                ) : null}
               </div>
             ))}
 
@@ -340,67 +380,43 @@ export default function QuotationCreate() {
             </div>
           </Card>
 
-          {/* BOM Material Costing & Margin Analysis */}
-          <Card title="Commercial Intelligence & Material Margin Analysis">
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <p className="text-xs text-[var(--text-3)]">
-                  {bomCostDetails.bomAvailable
-                    ? 'BOM material cost rollup from engineering master specs'
-                    : 'No matching engineering BOM found for line items'}
-                </p>
-                {bomCostDetails.bomAvailable ? (
-                  <span className={clsx(
-                    'px-2.5 py-0.5 rounded-full text-xs font-bold border',
-                    bomCostDetails.isLow ? 'bg-amber-100 text-amber-900 border-amber-300' : 'bg-emerald-100 text-emerald-900 border-emerald-300'
-                  )}>
-                    {bomCostDetails.marginPct}% Material Margin
-                  </span>
-                ) : (
-                  <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold border bg-slate-100 text-slate-700 border-slate-300">
-                    BOM Cost Not Available
-                  </span>
-                )}
-              </div>
-
-              <div className="grid grid-cols-3 gap-3 p-3 rounded-xl bg-[var(--surface-2)] text-xs">
-                <div>
-                  <span className="text-[10px] text-[var(--text-3)] uppercase tracking-wider block">Net Commercial Base</span>
-                  <span className="font-mono font-bold text-sm text-[var(--text)]">{fmtMoney(bomCostDetails.commercialBase)}</span>
+          <Card title="Estimated Costing">
+            <p className="text-xs text-[var(--text-2)]">
+              BOSS calculates the estimate from the approved BOM, weighted-average on-hand inventory valuation,
+              configured rates, and the hours entered for each activity. The saved estimate and margin appear on
+              the quotation before it can be submitted.
+            </p>
+            {canConfigureCosting && costingConfig && (
+              <details className="mt-4 border-t pt-3" style={{ borderColor: 'var(--border)' }}>
+                <summary className="cursor-pointer text-xs font-semibold text-[var(--brand)]">Configure costing and margin controls</summary>
+                <div className="grid md:grid-cols-2 gap-3 mt-3">
+                  <Field label="Labour rates (one per line: activity, rate/hour)">
+                    <textarea value={labourRatesText} onChange={(event) => setLabourRatesText(event.target.value)} className="eoss-input w-full font-mono" rows={4} />
+                  </Field>
+                  <Field label="Machine rates (one per line: stage, rate/hour)">
+                    <textarea value={machineRatesText} onChange={(event) => setMachineRatesText(event.target.value)} className="eoss-input w-full font-mono" rows={4} />
+                  </Field>
+                  {([
+                    ['overheadPerUnit', 'Overhead per unit'],
+                    ['consumablesPerUnit', 'Consumables per unit'],
+                    ['packagingPerUnit', 'Packaging per unit'],
+                    ['transportPerUnit', 'Transport per unit'],
+                    ['targetMarginPct', 'Target margin (%)'],
+                    ['minimumMarginPct', 'Minimum margin (%)'],
+                    ['approvalThresholdPct', 'Approval threshold (%)'],
+                  ] as const).map(([field, label]) => (
+                    <Field key={field} label={label}>
+                      <input type="number" min={0} step="0.01" value={costingConfig[field]} className="eoss-input w-full"
+                        onChange={(event) => setCostingConfig({ ...costingConfig, [field]: Number(event.target.value) || 0 })} />
+                    </Field>
+                  ))}
                 </div>
-                <div>
-                  <span className="text-[10px] text-[var(--text-3)] uppercase tracking-wider block">Est. BOM Material Cost</span>
-                  {bomCostDetails.bomAvailable ? (
-                    <span className="font-mono font-bold text-sm text-slate-600">{fmtMoney(bomCostDetails.totalBomCost)}</span>
-                  ) : (
-                    <span className="text-xs font-semibold text-[var(--text-3)] italic">BOM Cost Not Available</span>
-                  )}
-                </div>
-                <div>
-                  <span className="text-[10px] text-[var(--text-3)] uppercase tracking-wider block">Est. Material Margin</span>
-                  {bomCostDetails.bomAvailable ? (
-                    <span className={clsx('font-mono font-bold text-sm', bomCostDetails.isLow ? 'text-amber-600' : 'text-emerald-600')}>
-                      {fmtMoney(bomCostDetails.estMargin)} ({bomCostDetails.marginPct}%)
-                    </span>
-                  ) : (
-                    <span className="text-xs font-semibold text-[var(--text-3)] italic">Margin Not Available (BOM missing)</span>
-                  )}
-                </div>
-              </div>
-
-              {bomCostDetails.bomAvailable && bomCostDetails.isLow && (
-                <div className="p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-900 text-xs flex items-center gap-2">
-                  <AlertTriangle size={15} className="text-amber-600 flex-shrink-0" />
-                  <span>
-                    <strong>Low Margin Alert (&lt; 20%):</strong> Quoted price leaves limited headroom for machining and conversion overheads. Consider revising unit rate or optimizing raw material grade.
-                  </span>
-                </div>
-              )}
-
-              <p className="text-[11px] text-[var(--text-3)] italic pt-1 border-t border-[var(--border)]">
-                * Estimated material margin — excludes labour, overhead, machine cost and other unconfigured expenses.
-              </p>
-            </div>
+                {costConfigMessage && <p className="mt-2 text-xs text-[var(--text-2)]">{costConfigMessage}</p>}
+                <button type="button" onClick={saveCostingConfig} disabled={savingCostConfig} className="mt-3 btn-primary text-xs disabled:opacity-50">
+                  {savingCostConfig ? 'Saving…' : 'Save costing controls'}
+                </button>
+              </details>
+            )}
           </Card>
 
           {/* Notes */}

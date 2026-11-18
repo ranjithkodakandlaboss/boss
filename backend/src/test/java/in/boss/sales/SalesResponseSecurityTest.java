@@ -24,7 +24,7 @@ class SalesResponseSecurityTest {
     private final ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
 
     @Test
-    void quotationResponseOmitsStandardCostMarginsAndBomDetails() throws Exception {
+    void quotationResponseOmitsRawStandardCostAndBomDetails() throws Exception {
         QuotationResponse response = new QuotationResponse(
                 UUID.randomUUID(),
                 "QT-20261116-ABCD1234",
@@ -57,12 +57,10 @@ class SalesResponseSecurityTest {
         JsonNode json = objectMapper.valueToTree(response);
 
         assertThat(json.has("estimatedMaterialCost")).isFalse();
-        assertThat(json.toString()).doesNotContain(
-                "estimatedMaterialCostPerUnit", "materialCostAtTime", "materialCost");
         assertThat(json.has("standardCost")).isFalse();
         assertThat(json.has("marginPct")).isFalse();
         assertThat(json.has("flatMaterials")).isFalse();
-        assertThat(json.toString()).doesNotContain("rawBomQuantities", "std_cost", "marginPct");
+        assertThat(json.toString()).doesNotContain("rawBomQuantities", "std_cost");
     }
 
     @Test

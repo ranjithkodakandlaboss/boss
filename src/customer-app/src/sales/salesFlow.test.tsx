@@ -21,6 +21,27 @@ const quotation = {
   revisions: [{ id: "q0", revision: 1, status: "superseded" }, { id: "q1", revision: 2, status: "sent" }],
   paymentTerms: 30,
   createdAt: "2026-11-17T00:00:00Z",
+  costing: {
+    available: true,
+    valuationBasis: "weighted-average on-hand inventory valuation",
+    materialCost: 12,
+    labourCost: 0,
+    machineCost: 0,
+    overheadCost: 0,
+    consumablesCost: 0,
+    packagingCost: 0,
+    transportCost: 0,
+    totalCost: 12,
+    netRevenue: 40,
+    grossProfit: 28,
+    grossMarginPct: 70,
+    targetMarginPct: 20,
+    minimumMarginPct: 10,
+    approvalThresholdPct: 15,
+    requiresApproval: false,
+    unavailableReasons: [],
+    lines: [],
+  },
 };
 
 function page(content: unknown[]) {
@@ -34,6 +55,7 @@ function installFetch(handler: (url: string, init?: RequestInit) => Response | P
 beforeEach(() => {
   signIn("test-session");
   quotation.status = "sent";
+  quotation.costing.requiresApproval = false;
   installFetch((url, init) => {
     if (url.includes("/accept")) return new Response(JSON.stringify({ id: "po1", cpoNumber: "CPO-1", customerId: "c1", customerName: "North Works", status: "open", lines: [] }), { status: 201 });
     if (url.includes("/quotations")) return new Response(page([quotation]), { status: 200 });
@@ -87,4 +109,27 @@ it("keeps submit on the quotation when the status response includes an empty Cus
   await userEvent.click(screen.getByRole("button", { name: "Submit" }));
   expect(await screen.findByText("Submitted")).toBeInTheDocument();
   expect(screen.queryByText("PO opened")).not.toBeInTheDocument();
+});
+
+it("requires a reason before submitting a below-threshold quotation and sends it for audit", async () => {
+  quotation.status = "draft";
+  quotation.costing.requiresApproval = true;
+  installFetch((url) => {
+    if (url.includes("/status")) return new Response(JSON.stringify({ ...quotation, status: "sent" }), { status: 200 });
+    if (url.includes("/quotations")) return new Response(page([{ ...quotation, status: "draft" }]), { status: 200 });
+    if (url.includes("/customers") || url.includes("/rfqs") || url.includes("/cpos") || url.includes("/items") || url.includes("/uoms")) return new Response(page([]), { status: 200 });
+    if (url.includes("/history")) return new Response("[]", { status: 200 });
+    return new Response("{}", { status: 200 });
+  });
+  renderQuote();
+  await userEvent.click(await screen.findByRole("button", { name: "Submit to Customer" }));
+  const submitButton = screen.getByRole("button", { name: "Submit" });
+  expect(submitButton).toBeDisabled();
+  await userEvent.type(screen.getByLabelText("Reason for below-threshold approval *"), "Strategic customer commitment");
+  await userEvent.click(submitButton);
+  const statusCall = vi.mocked(fetch).mock.calls.find((call) => String(call[0]).includes("/status"));
+  expect(JSON.parse(String(statusCall?.[1]?.body))).toEqual({
+    status: "sent",
+    note: "Strategic customer commitment",
+  });
 });
