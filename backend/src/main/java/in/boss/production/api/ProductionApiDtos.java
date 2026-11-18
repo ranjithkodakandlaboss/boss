@@ -5,6 +5,7 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.Min;
 
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -236,25 +237,45 @@ public final class ProductionApiDtos {
             int stageCount
     ) {}
 
+    public record RoutingTemplateDetail(
+            UUID id, String name, String version, UUID finishedItemId, int stageCount,
+            List<RoutingStageRequest> stages
+    ) {}
+
     public record RoutingStageRequest(
             @NotBlank String name,
             String workCentre,
             UUID assetId,
             UUID stageConfigOptionId,
-            UUID inspectionTemplateId
+            UUID inspectionTemplateId,
+            Boolean requiresInspection,
+            Boolean isOptional,
+            @Pattern(regexp = "production|inspection|rework|hold") String stageType,
+            @Min(0) Integer setupTimeMin,
+            @Min(0) Integer runTimeMin
     ) {
         public RoutingStageRequest(String name, String workCentre, UUID assetId, UUID stageConfigOptionId) {
             this(name, workCentre, assetId, stageConfigOptionId, null);
+        }
+
+        public RoutingStageRequest(String name, String workCentre, UUID assetId, UUID stageConfigOptionId,
+                                   UUID inspectionTemplateId) {
+            this(name, workCentre, assetId, stageConfigOptionId, inspectionTemplateId, null, null, null, null, null);
         }
     }
 
     public record CreateRoutingTemplateRequest(
             @NotBlank String name,
             String stageName,
-            java.util.List<@jakarta.validation.Valid RoutingStageRequest> stages
+            java.util.List<@jakarta.validation.Valid RoutingStageRequest> stages,
+            UUID finishedItemId
     ) {
         public CreateRoutingTemplateRequest(String name, String stageName) {
-            this(name, stageName, null);
+            this(name, stageName, null, null);
+        }
+
+        public CreateRoutingTemplateRequest(String name, String stageName, List<RoutingStageRequest> stages) {
+            this(name, stageName, stages, null);
         }
     }
 

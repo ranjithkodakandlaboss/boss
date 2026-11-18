@@ -17,6 +17,7 @@ import in.boss.production.api.ProductionApiDtos.ReasonRequest;
 import in.boss.production.api.ProductionApiDtos.ReturnMaterialRequest;
 import in.boss.production.api.ProductionApiDtos.ReviseRoutingTemplateRequest;
 import in.boss.production.api.ProductionApiDtos.RoutingTemplateOption;
+import in.boss.production.api.ProductionApiDtos.RoutingTemplateDetail;
 import in.boss.production.api.ProductionApiDtos.StageActionRequest;
 import in.boss.production.domain.JobCostingService;
 import in.boss.production.domain.JobInspectionService;
@@ -81,6 +82,11 @@ public class ProductionJobController {
     @GetMapping("/routing-templates")
     public List<RoutingTemplateOption> routingTemplates(@RequestParam(required = false) UUID itemId) {
         return query.routingTemplates(itemId);
+    }
+
+    @GetMapping("/routing-templates/{routingId}")
+    public RoutingTemplateDetail routingTemplate(@PathVariable UUID routingId) {
+        return query.routingTemplate(routingId);
     }
 
     @PostMapping("/routing-templates")

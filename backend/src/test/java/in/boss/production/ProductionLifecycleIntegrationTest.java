@@ -52,6 +52,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -335,6 +336,88 @@ class ProductionLifecycleIntegrationTest extends BaseMasterDataIntegrationTest {
                 .containsExactly("Cutting", "Inspect", "Pack");
         assertThat(query.routingTemplates(finishedItemId)).extracting(template -> template.id())
                 .contains(revised.id()).doesNotContain(routingId);
+    }
+
+    @Test
+    void productRouteCanBeInspectedAndRevisedWithoutLosingStageSettings() {
+        var created = jobs.createRoutingTemplate(new CreateRoutingTemplateRequest("Product route", null,
+                List.of(new RoutingStageRequest("Cutting", "Shop", null, stageOptionId, null,
+                        true, true, "inspection", 12, 34),
+                        new RoutingStageRequest("Pack", null, null, null)), finishedItemId));
+
+        assertThat(created.finishedItemId()).isEqualTo(finishedItemId);
+        assertThat(query.routingTemplates(finishedItemId)).extracting(template -> template.id()).contains(created.id());
+        assertThat(query.routingTemplates(materialItemId)).extracting(template -> template.id()).doesNotContain(created.id());
+        var detail = query.routingTemplate(created.id());
+        assertThat(detail.stages()).extracting(stage -> stage.name()).containsExactly("Cutting", "Pack");
+        var revised = jobs.reviseRoutingTemplate(created.id(), new ReviseRoutingTemplateRequest(detail.stages()));
+        assertThat(revised.finishedItemId()).isEqualTo(finishedItemId);
+        assertThat(query.routingTemplate(revised.id()).stages()).containsExactlyElementsOf(detail.stages());
+    }
+
+    @Test
+    void productRouteRequiresAnActiveTenantFinishedProduct() {
+        UUID otherTenant = provisionTenant("other-product");
+        setTenantContext(otherTenant, "OWNER");
+        assertThatThrownBy(() -> jobs.createRoutingTemplate(new CreateRoutingTemplateRequest(
+                "Foreign product", null, List.of(new RoutingStageRequest("Cutting", null, null, null)), finishedItemId)))
+                .isInstanceOf(ResponseStatusException.class).hasMessageContaining("active finished product");
+        setTenantContext(tenantId, "OWNER");
+        assertThatThrownBy(() -> jobs.createRoutingTemplate(new CreateRoutingTemplateRequest(
+                "Material route", null, List.of(new RoutingStageRequest("Cutting", null, null, null)), materialItemId)))
+                .isInstanceOf(ResponseStatusException.class).hasMessageContaining("active finished product");
+        jdbc.update("UPDATE items SET is_active = FALSE WHERE id = ?", finishedItemId);
+        assertThatThrownBy(() -> jobs.createRoutingTemplate(new CreateRoutingTemplateRequest(
+                "Inactive product", null, List.of(new RoutingStageRequest("Cutting", null, null, null)), finishedItemId)))
+                .isInstanceOf(ResponseStatusException.class).hasMessageContaining("active finished product");
+    }
+
+    @Test
+    void routeDetailIsTenantScopedAndIncludesOrderedStages() throws Exception {
+        mockMvc.perform(get("/api/v1/jobs/routing-templates/{routingId}", routingId)
+                        .with(user("owner").roles("OWNER")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.finishedItemId").value(finishedItemId.toString()))
+                .andExpect(jsonPath("$.stages[0].name").value("Template cutting"))
+                .andExpect(jsonPath("$.stages[1].requiresInspection").value(true))
+                .andExpect(jsonPath("$.stages[2].isOptional").value(true));
+        setTenantContext(provisionTenant("other-detail"), "OWNER");
+        assertThatThrownBy(() -> query.routingTemplate(routingId))
+                .isInstanceOf(ResponseStatusException.class).hasMessageContaining("not found");
+    }
+
+    @Test
+    void productRouteCreationEndpointEnforcesAdminRole() throws Exception {
+        String body = objectMapper.writeValueAsString(new CreateRoutingTemplateRequest(
+                "API product route", null, List.of(new RoutingStageRequest("Cutting", null, null, stageOptionId)),
+                finishedItemId));
+        mockMvc.perform(post("/api/v1/jobs/routing-templates")
+                        .with(user("supervisor").roles("PRODUCTION_SUPERVISOR"))
+                        .header("Idempotency-Key", UUID.randomUUID().toString())
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isForbidden());
+        setTenantContext(tenantId, "OWNER");
+        mockMvc.perform(post("/api/v1/jobs/routing-templates")
+                        .with(user("owner").roles("OWNER"))
+                        .header("Idempotency-Key", UUID.randomUUID().toString())
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.finishedItemId").value(finishedItemId.toString()));
+    }
+
+    @Test
+    void legacyInspectionTypeCannotBeSilentlyLostDuringRevision() {
+        UUID legacyId = insert("""
+                INSERT INTO routing_templates (tenant_id, name) VALUES (?, 'Legacy route') RETURNING id
+                """, tenantId);
+        jdbc.update("""
+                INSERT INTO routing_operations (tenant_id, routing_id, seq_no, name, inspection_type)
+                VALUES (?, ?, 1, 'Inspect', 'final')
+                """, tenantId, legacyId);
+        assertThatThrownBy(() -> jobs.reviseRoutingTemplate(legacyId,
+                new ReviseRoutingTemplateRequest(query.routingTemplate(legacyId).stages())))
+                .isInstanceOf(ResponseStatusException.class).hasMessageContaining("cannot be preserved");
+        assertThat(query.routingTemplates(null)).extracting(template -> template.id()).contains(legacyId);
     }
 
     @Test

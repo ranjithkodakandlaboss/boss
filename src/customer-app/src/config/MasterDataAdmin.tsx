@@ -4,11 +4,13 @@ import ItemMaster from "../inventory/ItemMaster";
 import BomPage from "../inventory/BomPage";
 import ConfigOptionsAdmin from "./ConfigOptionsAdmin";
 import CostingConfigAdmin from "./CostingConfigAdmin";
+import RoutingTemplatesAdmin from "./RoutingTemplatesAdmin";
 
 const sections = [
   { id: "reference-data", label: "Dropdown & Reference Data" },
   { id: "items", label: "Product & Material Master" },
   { id: "bom", label: "Bill of Materials" },
+  { id: "routes", label: "Manufacturing Routes" },
   { id: "costing", label: "Costing & Pricing" },
 ];
 
@@ -29,6 +31,7 @@ export default function MasterDataAdmin() {
       {active === "reference-data" && <ConfigOptionsAdmin />}
       {active === "items" && <ItemMaster embedded />}
       {active === "bom" && <BomPage embedded />}
+      {active === "routes" && <RoutingTemplatesAdmin />}
       {active === "costing" && <CostingConfigAdmin />}
     </div>
   );
