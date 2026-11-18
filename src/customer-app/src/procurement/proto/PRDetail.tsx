@@ -204,7 +204,7 @@ export default function PRDetail() {
                 <Pencil size={13} /> Edit PR
               </button>
             )}
-            {pr.apiStatus === 'draft' && (
+            {(pr.apiStatus === 'draft' || pr.status === 'draft') && (
               <button type="button" onClick={() => updatePurchaseReq(pr.id, { status: 'submitted' })} className="px-3 py-1.5 rounded-lg text-xs font-semibold text-white" style={{ background: "var(--brand-fill)" }}>Submit</button>
             )}
             {pr.status === 'pending' && canApprove && (

@@ -14,7 +14,6 @@ import {
 
 type Tab = "inspections" | "ncrs";
 type InspSortKey = "number" | "type" | "job" | "inspected" | "inspector" | "sample" | "result";
-type NcrSortKey = "number" | "item" | "severity" | "status" | "raised";
 
 function sortRows<T>(rows: T[], key: string, dir: "asc" | "desc", getValue: (row: T, key: string) => unknown): T[] {
   return [...rows].sort((a, b) => {
@@ -43,8 +42,6 @@ export default function QualityPage() {
 
   const [inspSortKey, setInspSortKey] = useState<InspSortKey>("number");
   const [inspSortDir, setInspSortDir] = useState<"asc" | "desc">("desc");
-  const [ncrSortKey, setNcrSortKey] = useState<NcrSortKey>("raised");
-  const [ncrSortDir, setNcrSortDir] = useState<"asc" | "desc">("desc");
 
   // Config options (CLAUDE.md Rule #10)
   const [inspectionTypes, setInspectionTypes] = useState<ConfigOption[]>([]);
@@ -79,10 +76,6 @@ export default function QualityPage() {
   function handleSort(key: InspSortKey) {
     if (inspSortKey === key) setInspSortDir((d) => d === "asc" ? "desc" : "asc");
     else { setInspSortKey(key); setInspSortDir("asc"); }
-  }
-  function handleNcrSort(key: NcrSortKey) {
-    if (ncrSortKey === key) setNcrSortDir((d) => d === "asc" ? "desc" : "asc");
-    else { setNcrSortKey(key); setNcrSortDir("asc"); }
   }
 
   useEffect(() => {
@@ -129,14 +122,8 @@ export default function QualityPage() {
   const filteredNcrs = useMemo(() => {
     let rows = ncrs;
     if (statusFilter !== "all") rows = rows.filter((n) => n.status === statusFilter);
-    return sortRows(rows, ncrSortKey, ncrSortDir, (n, k) => ({
-      number: n.ncrNumber,
-      item: n.itemName ?? "",
-      severity: n.severity ?? "",
-      status: n.status,
-      raised: n.createdAt ?? "",
-    }[k] ?? ""));
-  }, [ncrs, statusFilter, ncrSortKey, ncrSortDir]);
+    return [...rows].sort((a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? ""));
+  }, [ncrs, statusFilter]);
 
   const openNcrCount = ncrs.filter((n) => n.status === "open").length;
   const openInspCount = inspections.filter((i) => ["pending", "in_progress"].includes(i.status)).length;
@@ -229,31 +216,32 @@ export default function QualityPage() {
         </div>
 
         {/* Result count filter */}
-        <select
-          className="px-3 py-1.5 text-sm rounded-lg border bg-[var(--bg)] outline-none"
-          style={{ borderColor: "var(--border)" }}
-          value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value)}
-        >
-          <option value="all">All Results ({activeRows})</option>
-          {tab === "inspections" ? (
-            <>
-              <option value="pending">Pending</option>
-              <option value="in_progress">In Progress</option>
-              <option value="completed">Completed</option>
-              <option value="pass">Pass</option>
-              <option value="fail">Fail</option>
-            </>
-          ) : (
-            <>
-              <option value="open">Open</option>
-              <option value="concession_requested">Concession Requested</option>
-              <option value="concession_granted">Concession Granted</option>
-              <option value="rework">Rework</option>
-              <option value="closed">Closed</option>
-            </>
-          )}
-        </select>
+        {tab === "inspections" ? (
+          <select
+            className="px-3 py-1.5 text-sm rounded-lg border bg-[var(--bg)] outline-none"
+            style={{ borderColor: "var(--border)" }}
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value)}
+          >
+            <option value="all">All Results ({activeRows})</option>
+            <option value="pending">Pending</option>
+            <option value="in_progress">In Progress</option>
+            <option value="completed">Completed</option>
+            <option value="pass">Pass</option>
+            <option value="fail">Fail</option>
+          </select>
+        ) : (
+          <div className="flex gap-1.5 flex-wrap">
+            {(["all", "open", "rework", "concession_requested", "closed"] as const).map((key) => {
+              const labels: Record<string, string> = { all: `All (${filteredNcrs.length})`, open: "Open", rework: "Rework", concession_requested: "Concession", closed: "Closed" };
+              return (
+                <button key={key} type="button" onClick={() => setStatusFilter(key)} className="px-3 py-1 rounded-full text-xs font-semibold border whitespace-nowrap" style={{ background: statusFilter === key ? "var(--brand-fill)" : "var(--surface)", color: statusFilter === key ? "#fff" : "var(--text-2)", borderColor: statusFilter === key ? "var(--brand-fill)" : "var(--border)" }}>
+                  {labels[key]}
+                </button>
+              );
+            })}
+          </div>
+        )}
 
         <div className="flex-1" />
 
@@ -271,7 +259,7 @@ export default function QualityPage() {
             <button
               type="button"
               onClick={() => setShowNewInspection(true)}
-              className="inline-flex items-center gap-1 rounded-lg bg-[var(--accent)] px-3 py-1.5 text-sm font-semibold text-white"
+              className="inline-flex items-center gap-1 rounded-lg bg-[var(--brand-fill)] px-3 py-1.5 text-sm font-semibold text-white"
             >
               <Plus size={14} /> New Inspection
             </button>
@@ -291,8 +279,8 @@ export default function QualityPage() {
             onClick={() => setTab(t)}
             className={`relative px-4 py-3 text-sm font-medium transition-colors whitespace-nowrap ${
               tab === t
-                ? "text-[var(--accent)] after:absolute after:bottom-0 after:inset-x-0 after:h-0.5 after:bg-[var(--accent)]"
-                : "text-[var(--text-2)] hover:text-[var(--text-1)]"
+                ? "text-[var(--brand)] after:absolute after:bottom-0 after:inset-x-0 after:h-0.5 after:bg-[var(--brand-fill)]"
+                : "text-[var(--text-3)] hover:text-[var(--text)]"
             }`}
           >
             {t === "ncrs"
@@ -321,9 +309,6 @@ export default function QualityPage() {
       ) : (
         <NcrsTable
           ncrs={filteredNcrs}
-          sortKey={ncrSortKey}
-          sortDir={ncrSortDir}
-          onSort={handleNcrSort}
           onSelect={(id) => navigate(`/quality/ncr/${id}`)}
         />
       )}
@@ -382,6 +367,7 @@ export default function QualityPage() {
       {showNewNcr && (
         <RecordSheet
           title="Raise NCR"
+          danger
           onClose={() => { setShowNewNcr(false); setNcrInspectionId(""); }}
           primary={{ label: saving ? "Raising…" : "Raise NCR", onClick: () => { const fakeEvt = { preventDefault: () => {} } as React.FormEvent; void handleCreateNcr(fakeEvt); }, disabled: saving }}
           secondary={{ label: "Cancel", onClick: () => { setShowNewNcr(false); setNcrInspectionId(""); } }}
@@ -452,7 +438,7 @@ function InspectionsTable({
             style={{ borderColor: "var(--border)" }}
           >
             <div className="flex items-center justify-between gap-2">
-              <span className="font-mono text-xs font-bold" style={{ color: "var(--accent)" }}>{insp.inspectionNumber}</span>
+              <span className="font-mono text-xs font-bold" style={{ color: "var(--brand)" }}>{insp.inspectionNumber}</span>
               <ResultCell result={insp.result} status={insp.status} />
             </div>
             <div className="text-sm mt-1">{insp.itemName ?? insp.referenceLabel ?? "—"}</div>
@@ -493,7 +479,7 @@ function InspectionsTable({
                   style={{ borderColor: "var(--border)" }}
                   onClick={() => onSelect(insp.id)}
                 >
-                  <td className="px-4 py-3 font-mono text-xs font-bold" style={{ color: "var(--accent)" }}>{insp.inspectionNumber}</td>
+                  <td className="px-4 py-3 font-mono text-xs font-bold" style={{ color: "var(--brand)" }}>{insp.inspectionNumber}</td>
                   <td className="px-4 py-3 text-sm">{insp.inspectionTypeLabel ?? inspectionTypeLabel(insp.inspectionType)}</td>
                   <td className="px-4 py-3">
                     {insp.referenceLabel ? (
@@ -527,7 +513,7 @@ function InspectionsTable({
                       <button
                         type="button"
                         onClick={() => onSelect(insp.id)}
-                        className="rounded-lg bg-[var(--accent)] px-2.5 py-1 text-xs font-semibold text-white whitespace-nowrap"
+                        className="rounded-lg bg-[var(--brand-fill)] px-2.5 py-1 text-xs font-semibold text-white whitespace-nowrap"
                       >
                         Record
                       </button>
@@ -536,7 +522,8 @@ function InspectionsTable({
                       <button
                         type="button"
                         onClick={() => onRaiseNcr(insp.id)}
-                        className="rounded-lg bg-[var(--accent)] px-2.5 py-1 text-xs font-semibold text-white whitespace-nowrap"
+                        className="rounded-lg border border-[var(--error)] px-2.5 py-1 text-xs font-semibold whitespace-nowrap"
+                        style={{ color: "var(--error)" }}
                       >
                         Raise NCR
                       </button>
@@ -560,17 +547,11 @@ function ResultCell({ result, status }: { result?: string; status: string }) {
 }
 
 function NcrsTable({
-  ncrs, sortKey, sortDir, onSort, onSelect,
+  ncrs, onSelect,
 }: {
   ncrs: NcrSummary[];
-  sortKey: NcrSortKey;
-  sortDir: "asc" | "desc";
-  onSort: (key: NcrSortKey) => void;
   onSelect: (id: string) => void;
 }) {
-  const thCls = "text-left px-4 py-2.5 text-xs font-semibold";
-  const thStyle = { color: "var(--text-3)", borderBottom: "1px solid var(--border)" };
-
   if (ncrs.length === 0) {
     return <p className="px-5 py-10 text-sm text-center" style={{ color: "var(--text-3)" }}>No NCRs found.</p>;
   }
@@ -588,54 +569,47 @@ function NcrsTable({
             style={{ borderColor: "var(--border)" }}
           >
             <div className="flex items-center justify-between gap-2">
-              <span className="font-mono text-xs font-bold" style={{ color: "var(--accent)" }}>{ncr.ncrNumber}</span>
+              <span className="font-mono text-xs font-bold" style={{ color: "var(--brand)" }}>{ncr.ncrNumber}</span>
               <StatusChip status={ncr.status} size="sm" />
             </div>
             <div className="text-sm mt-1 truncate">{ncr.defectDescription ?? "—"}</div>
             <div className="text-xs mt-0.5" style={{ color: "var(--text-3)" }}>
-              {ncr.itemCode} · {severityLabel(ncr.severity)} · {displayDate(ncr.createdAt)}
+              {ncr.itemCode ? `${ncr.itemCode} · ` : ""}{severityLabel(ncr.severity)} · {displayDate(ncr.createdAt)}
             </div>
           </button>
         ))}
       </div>
 
-      {/* Desktop table */}
-      <div className="hidden md:block">
-        <table className="w-full text-sm">
-          <thead>
-            <tr style={{ background: "var(--surface)" }}>
-              <SortableHeader label="NCR #" active={sortKey === "number"} direction={sortDir} onSort={() => onSort("number")} className={thCls} style={thStyle} />
-              <SortableHeader label="Item" active={sortKey === "item"} direction={sortDir} onSort={() => onSort("item")} className={thCls} style={thStyle} />
-              <th className={thCls} style={thStyle}>Defect</th>
-              <SortableHeader label="Severity" active={sortKey === "severity"} direction={sortDir} onSort={() => onSort("severity")} className={thCls} style={thStyle} />
-              <th className={`${thCls} text-right`} style={thStyle}>Qty</th>
-              <SortableHeader label="Status" active={sortKey === "status"} direction={sortDir} onSort={() => onSort("status")} className={thCls} style={thStyle} />
-              <SortableHeader label="Raised" active={sortKey === "raised"} direction={sortDir} onSort={() => onSort("raised")} className={thCls} style={thStyle} />
-            </tr>
-          </thead>
-          <tbody>
-            {ncrs.map((ncr) => (
-              <tr
-                key={ncr.id}
-                className="border-b cursor-pointer hover:bg-[var(--surface)] transition-colors"
-                style={{ borderColor: "var(--border)" }}
-                onClick={() => onSelect(ncr.id)}
-              >
-                <td className="px-4 py-3 font-mono text-xs font-bold" style={{ color: "var(--accent)" }}>{ncr.ncrNumber}</td>
-                <td className="px-4 py-3">{ncr.itemCode ? `${ncr.itemCode} — ${ncr.itemName}` : "—"}</td>
-                <td className="px-4 py-3 max-w-[220px] truncate" style={{ color: "var(--text-2)" }}>{ncr.defectDescription ?? "—"}</td>
-                <td className="px-4 py-3">
-                  <span className={`font-medium text-sm ${ncr.severity === "critical" ? "text-red-600" : ncr.severity === "major" ? "text-orange-600" : ""}`}>
-                    {severityLabel(ncr.severity)}
-                  </span>
-                </td>
-                <td className="px-4 py-3 text-right tabular-nums">{ncr.quantity ?? "—"}</td>
-                <td className="px-4 py-3"><StatusChip status={ncr.status} /></td>
-                <td className="px-4 py-3 text-xs" style={{ color: "var(--text-2)" }}>{displayDate(ncr.createdAt)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      {/* Desktop cards */}
+      <div className="hidden md:block p-4 space-y-2">
+        {ncrs.map((ncr) => {
+          const sevColor = ncr.severity === "critical" ? "var(--error)" : ncr.severity === "major" ? "var(--warning)" : "var(--text-2)";
+          return (
+            <button
+              key={ncr.id}
+              type="button"
+              onClick={() => onSelect(ncr.id)}
+              className="w-full text-left rounded-xl border p-4 hover:bg-[var(--surface-2)] transition-colors"
+              style={{ borderColor: "var(--border)", background: "var(--surface)" }}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-mono text-xs font-bold" style={{ color: "var(--brand)" }}>{ncr.ncrNumber}</span>
+                    <StatusChip status={ncr.status} size="sm" />
+                    {ncr.severity && <span className="text-xs font-semibold" style={{ color: sevColor }}>{severityLabel(ncr.severity)}</span>}
+                  </div>
+                  <p className="text-sm mt-1 truncate" style={{ color: "var(--text)" }}>{ncr.defectDescription ?? "—"}</p>
+                  <div className="flex items-center gap-3 mt-1 text-xs" style={{ color: "var(--text-3)" }}>
+                    {ncr.itemCode && <span>{ncr.itemCode}{ncr.itemName ? ` — ${ncr.itemName}` : ""}</span>}
+                    {ncr.quantity && <span>Qty: {ncr.quantity}</span>}
+                    <span>{displayDate(ncr.createdAt)}</span>
+                  </div>
+                </div>
+              </div>
+            </button>
+          );
+        })}
       </div>
     </div>
   );

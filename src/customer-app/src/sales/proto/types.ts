@@ -71,6 +71,7 @@ export interface Party {
   panNumber: string;
   gstin: string;
   state: string;
+  address?: string;
   paymentTerms: string;
   creditLimit?: number;
   currency: string;

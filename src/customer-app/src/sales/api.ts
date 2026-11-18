@@ -147,6 +147,7 @@ export type Quotation = {
   costOverrideReason?: string;
   costOverrideBy?: string;
   costOverrideAt?: string;
+  ownerName?: string;
 };
 export type CpoLine = {
   id: string;

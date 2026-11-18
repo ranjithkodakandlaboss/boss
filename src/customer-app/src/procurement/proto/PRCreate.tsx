@@ -260,7 +260,7 @@ export default function PRCreate() {
           <h1 className="text-lg font-bold text-[var(--text)]">
             {isEditing && editingPr ? `Edit ${editingPr.prNumber}` : 'New Purchase Requisition'}
           </h1>
-          <p className="text-xs text-[var(--text-2)]">Deliver to {header.deliverToSiteName} · {header.deliverToStoreName}</p>
+          <p className="text-xs text-[var(--text-2)]">Deliver to {header.deliverToSiteName}{header.deliverToStoreName ? ` · ${header.deliverToStoreName}` : ''}</p>
         </div>
         <div className="ml-auto flex items-center gap-1">
           {steps.map((s, i) => (
@@ -311,7 +311,7 @@ export default function PRCreate() {
                   <SiteStoreField
                     siteId={header.deliverToSiteId}
                     storeId={header.deliverToStoreId}
-                    label="Receiving site *"
+                    label="Receiving site"
                     storeLabel="Receiving store"
                     onChange={next => setHeader(h => ({
                       ...h,

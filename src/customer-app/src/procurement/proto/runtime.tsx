@@ -670,7 +670,12 @@ export function ProcurementProvider({ children }: { children?: ReactNode }) {
           })),
         });
         showToast({ type: "success", title: "Purchase Requisition updated" });
-        return mapPr(saved, sites);
+        const result = mapPr(saved, sites);
+        // D-12: backend may not echo requiredDate; fall back to what we submitted
+        if (!result.requiredBy && (patch.requiredBy || current.requiredBy)) {
+          result.requiredBy = patch.requiredBy || current.requiredBy;
+        }
+        return result;
       }),
       sendSupplierInvitations: async (input: { prId: string; supplierIds: string[] }) => guard(async () => {
         const created = [];
@@ -761,6 +766,8 @@ export function ProcurementProvider({ children }: { children?: ReactNode }) {
             supplierId: quote.supplierId,
             prId: quote.prId,
             supplierQuotationId: quote.id,
+            paymentTerms: quote.paymentTerms != null ? Number(quote.paymentTerms) : undefined,
+            paymentTermsText: quote.paymentTermsText || undefined,
             lines,
           }, `spo-from:${quote.id}`);
           await reload();

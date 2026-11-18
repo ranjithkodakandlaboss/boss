@@ -10,7 +10,7 @@ import StatusChip from '../../components/shared/StatusChip';
 import RecordHistoryPanel from './workflow/RecordHistoryPanel';
 import type { CustomerRFQ } from './types';
 
-const fmt = (d: string) => d ? new Date(d).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : '—';
+const fmt = (d: string | null | undefined) => { if (!d) return '—'; const dt = new Date(d); return isNaN(dt.getTime()) ? '—' : dt.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }); };
 const fmtMoney = (n: number) => `₹${n.toLocaleString('en-IN')}`;
 
 type Tab = 'overview' | 'lines' | 'technical' | 'commercial' | 'documents' | 'clarifications' | 'history';
@@ -19,7 +19,7 @@ export default function RFQDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { rfqs, quotations, customerPos, currentUser } = useStore();
+  const { rfqs, quotations, customerPos, currentUser, copyRfq } = useStore();
   const [tab, setTab] = useState<Tab>('lines');
 
   const rfq = rfqs.find(r => r.id === id) as (CustomerRFQ & Record<string, any>) | undefined;
@@ -91,6 +91,9 @@ export default function RFQDetail() {
             </div>
           </div>
           <div className="flex items-center gap-2 flex-shrink-0">
+            {['owner', 'sales'].includes(currentUser.role) && (
+              <button onClick={async () => { const copy = await copyRfq(rfq.id); if (copy) navigate(`/sales/rfq/${copy.id}`); }} className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-semibold border" style={{ borderColor: 'var(--border)', color: 'var(--text-2)' }}>Copy RFQ</button>
+            )}
             {['owner', 'sales'].includes(currentUser.role) && !['converted', 'cancelled'].includes(rfq.status) && <button onClick={() => navigate(`/sales/rfq/${rfq.id}/edit`)} className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-semibold border" style={{ borderColor: 'var(--border)', color: 'var(--text-2)' }}>Edit RFQ</button>}
             {canQuote && (
               <button

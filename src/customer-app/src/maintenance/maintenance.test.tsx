@@ -93,10 +93,10 @@ it("creates an asset and shows API errors", async () => {
   await waitFor(() => expect(within(dialog).getByRole("option", { name: "Plant" })).toBeTruthy());
   await userEvent.selectOptions(within(dialog).getByLabelText("Site"), siteId);
   failCreate = true;
-  await userEvent.click(within(dialog).getByRole("button", { name: "Save asset" }));
+  await userEvent.click(within(dialog).getByRole("button", { name: "Save Asset" }));
   expect((await within(dialog).findByRole("alert")).textContent).toContain("Asset code already exists");
   failCreate = false;
-  await userEvent.click(within(dialog).getByRole("button", { name: "Save asset" }));
+  await userEvent.click(within(dialog).getByRole("button", { name: "Save Asset" }));
   await waitFor(() => expect(posted).toHaveLength(1));
   expect(posted[0].body).toMatchObject({ assetCode: "PRESS-9", siteId });
 });

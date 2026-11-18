@@ -132,7 +132,7 @@ export default function ChecklistTemplatesPage() {
           <button
             type="button"
             onClick={openNew}
-            className="inline-flex items-center gap-1 rounded-lg bg-[var(--accent)] px-3 py-1.5 text-sm font-semibold text-white"
+            className="inline-flex items-center gap-1 rounded-lg bg-[var(--brand-fill)] px-3 py-1.5 text-sm font-semibold text-white"
           >
             <Plus size={15} /> New Template
           </button>
@@ -154,7 +154,7 @@ export default function ChecklistTemplatesPage() {
                 <div
                   key={t.id}
                   className={`rounded-lg border p-3 cursor-pointer transition-colors ${
-                    selected?.id === t.id ? "border-[var(--accent)] bg-[var(--surface)]" : "hover:bg-[var(--surface)]"
+                    selected?.id === t.id ? "border-[var(--brand)] bg-[var(--surface)]" : "hover:bg-[var(--surface)]"
                   }`}
                   style={{ borderColor: selected?.id === t.id ? undefined : "var(--border)" }}
                   onClick={() => selectTemplate(t)}
@@ -314,7 +314,7 @@ export default function ChecklistTemplatesPage() {
                   <button
                     type="button"
                     onClick={addItem}
-                    className="inline-flex items-center gap-1 text-xs text-[var(--accent)] font-medium"
+                    className="inline-flex items-center gap-1 text-xs text-[var(--brand)] font-medium"
                   >
                     <Plus size={13} /> Add item
                   </button>
@@ -413,7 +413,7 @@ export default function ChecklistTemplatesPage() {
                 <button
                   type="submit"
                   disabled={saving}
-                  className="rounded-lg bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+                  className="rounded-lg bg-[var(--brand-fill)] px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
                 >
                   {saving ? "Saving…" : editingId ? "Save Changes" : "Create"}
                 </button>

@@ -117,7 +117,7 @@ export default function JobsPage() {
     hold: jobs.filter((job) => match(job, "hold")).length,
     complete: jobs.filter((job) => match(job, "complete")).length,
   };
-  const readinessOptions = ["pending", "available", "partial", "shortage", "awaiting_procurement", "awaiting_grn", "quality_hold", "reserved"];
+  const readinessOptions = ["pending", "not_assessed", "available", "partial", "shortage", "awaiting_procurement", "awaiting_grn", "quality_hold", "reserved"];
   const scoped = jobs.filter((job) => match(job, "all", "all") && (siteFilter === "all" || job.siteId === siteFilter));
   const riskCounts = {
     late: scoped.filter(isLate).length,
@@ -202,7 +202,7 @@ export default function JobsPage() {
                     <td className="px-4 py-3">{job.customerName}<div className="text-[11px]" style={{ color: "var(--text-3)" }}>{job.siteName}</div></td>
                     <td className="px-4 py-3 text-xs">{job.currentStage}</td>
                     <td className="px-4 py-3"><StatusChip status={job.status} size="sm" /></td>
-                    <td className="px-4 py-3 text-xs">{displayDate(job.plannedEnd)}</td>
+                    <td className="px-4 py-3 text-xs" style={isLate(job) ? { color: "var(--error)" } : {}}>{displayDate(job.plannedEnd)}</td>
                     <td className="px-4 py-3 text-xs" title={job.projectionBasis}>{displayDate(job.projectedCompletion)}</td>
                     <td className="px-4 py-3 relative" onClick={(event) => event.stopPropagation()}>
                       <button type="button" aria-label={`Actions for ${job.jobNumber}`} onClick={() => setMenuJobId(menuJobId === job.id ? null : job.id)} className="p-1.5 rounded-lg"><MoreVertical size={14} /></button>

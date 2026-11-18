@@ -53,7 +53,7 @@ export default function SupplierDetail() {
           </button>
           <div>
             <div className="flex items-center gap-2 flex-wrap">
-              <span className="font-mono text-xs text-[var(--text-3)]">{supplier.id}</span>
+              <span className="font-mono text-xs text-[var(--text-3)]">{(supplier as any).code || supplier.tradingName}</span>
               <StatusChip status={supplier.status} />
             </div>
             <h1 className="text-lg font-bold text-[var(--text)]">{supplier.tradingName}</h1>

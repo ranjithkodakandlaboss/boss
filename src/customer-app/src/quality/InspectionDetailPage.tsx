@@ -93,7 +93,7 @@ export default function InspectionDetailPage() {
       <button
         type="button"
         onClick={() => navigate("/quality")}
-        className="inline-flex items-center gap-1 text-sm text-[var(--text-2)] hover:text-[var(--text-1)] mb-4"
+        className="inline-flex items-center gap-1 text-sm text-[var(--text-2)] hover:text-[var(--text)] mb-4"
       >
         <ArrowLeft size={15} /> Back to Quality
       </button>
@@ -117,7 +117,7 @@ export default function InspectionDetailPage() {
           <button
             type="button"
             onClick={() => setShowResultForm(true)}
-            className="rounded-lg bg-[var(--accent)] px-3 py-1.5 text-sm font-semibold text-white"
+            className="rounded-lg bg-[var(--brand-fill)] px-3 py-1.5 text-sm font-semibold text-white"
           >
             Record Result
           </button>
@@ -276,7 +276,7 @@ export default function InspectionDetailPage() {
                 <button
                   type="submit"
                   disabled={saving}
-                  className="rounded-lg bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+                  className="rounded-lg bg-[var(--brand-fill)] px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
                 >
                   {saving ? "Saving…" : "Save Result"}
                 </button>
@@ -293,7 +293,7 @@ function Field({ label, value, span }: { label: string; value: React.ReactNode; 
   return (
     <div className={span ? "col-span-full" : ""}>
       <dt className="text-xs text-[var(--text-3)] font-medium mb-0.5">{label}</dt>
-      <dd className="text-sm text-[var(--text-1)]">{value}</dd>
+      <dd className="text-sm text-[var(--text)]">{value}</dd>
     </div>
   );
 }
