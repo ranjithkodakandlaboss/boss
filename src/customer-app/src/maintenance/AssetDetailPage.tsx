@@ -152,7 +152,7 @@ export function AssetDetailPage() {
             <tr key={e.id} className="border-t border-[var(--border)]">
               <td className="p-2"><Link className="underline" to={`/assets/me/${e.id}`}>{e.eventNumber}</Link></td>
               <td className="p-2">{e.eventType}</td><td className="p-2">{displayDate(e.plannedDate)}</td><td className="p-2">{displayDate(e.completionDate)}</td>
-              <td className="p-2">{e.downtimeHours != null ? `${e.downtimeHours} h` : "—"}</td><td className="p-2">{e.technicianName || "—"}</td><td className="p-2"><StatusChip status={e.status} /></td>
+              <td className="p-2">{e.downtimeHours != null ? `${e.downtimeHours} h` : (e.downtimeStart && e.completionDate ? `${((new Date(e.completionDate).getTime() - new Date(e.downtimeStart).getTime()) / 3600000).toFixed(2)} h` : "—")}</td><td className="p-2">{e.technicianName || "—"}</td><td className="p-2"><StatusChip status={e.status} /></td>
             </tr>))}</tbody>
         </table>
       ))}
@@ -185,6 +185,7 @@ export function AssetDetailPage() {
           <Field label="Type">
             <select aria-label="Reading type" className="eoss-input w-full" value={readingForm.readingType} onChange={(e) => setReadingForm({ ...readingForm, readingType: e.target.value })}>
               <option value="routine">Routine</option>
+              <option value="manual">Manual</option>
               <option value="shift-end">Shift end</option>
               <option value="post-maintenance">Post maintenance</option>
               <option value="correction">Correction</option>
@@ -233,7 +234,7 @@ export function MaintenanceEventDetailPage() {
         <Info label="Asset" value={<Link className="underline" to={`/assets/${event.assetId}`}>{event.assetCode} — {event.assetName}</Link>} />
         <Info label="Type" value={event.eventType} /><Info label="Severity" value={event.severity} /><Info label="Technician" value={event.technicianName} />
         <Info label="Planned" value={displayDate(event.plannedDate)} /><Info label="Downtime start" value={displayDateTime(event.downtimeStart)} />
-        <Info label="Completed" value={displayDateTime(event.completionDate)} /><Info label="Downtime" value={event.downtimeHours != null ? `${event.downtimeHours} h` : null} />
+        <Info label="Completed" value={displayDateTime(event.completionDate)} /><Info label="Downtime" value={(() => { if (event.downtimeHours != null) return `${event.downtimeHours} h`; if (event.downtimeStart && event.completionDate) { const h = (new Date(event.completionDate).getTime() - new Date(event.downtimeStart).getTime()) / 3600000; return `${h.toFixed(2)} h (computed)`; } return null; })()} />
         <Info label="Affected jobs" value={event.affectedJobs.map((j) => j.jobNumber).join(", ")} />
         <Info label="Description" value={event.symptom} /><Info label="Corrective action" value={event.correctiveAction} /><Info label="Notes" value={event.notes} />
         {event.status === "closed" && <><Info label="Root cause" value={event.rootCause} /><Info label="Work done" value={event.workDone} /><Info label="Resolution" value={event.resolutionNotes} /><Info label="Parts used" value={event.partsUsed} /></>}

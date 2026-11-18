@@ -343,7 +343,10 @@ export default function AssetsPage() {
   const statusLabel = (code: string) => options.ASSET_STATUS?.find((o) => o.code === code)?.label ?? code;
   const counts = useMemo(() => {
     const c: Record<string, number> = {};
-    assets.forEach((a) => { c[a.status] = (c[a.status] ?? 0) + 1; });
+    assets.forEach((a) => {
+      const effectiveStatus = a.archivedAt ? "retired" : a.status;
+      c[effectiveStatus] = (c[effectiveStatus] ?? 0) + 1;
+    });
     return c;
   }, [assets]);
   const kpi = useMemo(() => ({
@@ -355,8 +358,8 @@ export default function AssetsPage() {
   const visibleAssets = useMemo(() => {
     const q = search.trim().toLowerCase();
     return assets
-      .filter((a) => showArchived || status === "retired" || a.status !== "retired")
-      .filter((a) => status === "all" || a.status === status)
+      .filter((a) => { const isRetired = a.archivedAt || a.status === "retired"; return showArchived || status === "retired" || !isRetired; })
+      .filter((a) => { const effectiveStatus = a.archivedAt ? "retired" : a.status; return status === "all" || effectiveStatus === status; })
       .filter((a) => focus === "all" || (focus === "breakdown" ? a.status === "breakdown" : focus === "overdue" ? computeDue(a).status === "overdue" : ["due", "upcoming"].includes(computeDue(a).status)))
       .filter((a) => !q || [a.assetCode, a.name, a.category, a.workCentre, a.manufacturer, a.model].some((v) => v?.toLowerCase().includes(q)))
       .sort((a, b) => String(a[sortKey] ?? "").localeCompare(String(b[sortKey] ?? "")));
@@ -461,7 +464,7 @@ export default function AssetsPage() {
                     <td className="p-2">{a.currentReading != null ? `${a.currentReading} ${a.meterType}` : "—"}</td>
                     <td className="p-2">{displayDate(a.lastServiceDate)}</td>
                     <td className="p-2">{nextServiceLabel(a)}</td>
-                    <td className="p-2"><StatusChip status={a.status} label={statusLabel(a.status)} /></td>
+                    <td className="p-2">{due.status === "overdue" && a.status !== "breakdown" ? <StatusChip status="warning" label="PM Overdue" /> : <StatusChip status={a.status} label={statusLabel(a.status)} />}</td>
                     {canManage && (
                       <td className="p-2 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
                         {a.status !== "retired" && <>
