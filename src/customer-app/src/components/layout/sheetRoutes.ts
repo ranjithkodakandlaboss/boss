@@ -16,6 +16,7 @@ export function sheetParent(pathname: string): string | null {
   if (/^\/jobs\/[^/]+\/stage\//.test(pathname)) return pathname.replace(/\/stage\/.*$/, "");
   if (JOB_WORKSPACE.test(pathname)) return null;
   if (pathname.startsWith("/quality/")) return "/quality";
+  if (/^\/assets\/me\/[^/]+/.test(pathname)) return "/assets?tab=maintenance";
   if (pathname.startsWith("/assets/")) return "/assets";
   if (/^\/dispatch\/[^/]+/.test(pathname)) return "/dispatch";
   if (pathname.startsWith("/finance/")) return "/finance";

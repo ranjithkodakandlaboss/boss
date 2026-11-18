@@ -1,5 +1,5 @@
 import { useEffect, type ReactNode } from "react";
-import { Navigate, Route, Routes, useLocation, useNavigate, type Location } from "react-router-dom";
+import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { X } from "lucide-react";
 import AppShell from "./components/layout/AppShell";
 import { sheetParent } from "./components/layout/sheetRoutes";
@@ -35,7 +35,6 @@ import SupplierPoPage from "./procurement/proto/SupplierPODetail";
 import SupplierPoAmendPage from "./procurement/proto/SupplierPOAmend";
 import GrnCreatePage from "./procurement/proto/GRNCreate";
 import GrnRecordPage from "./procurement/proto/GRNDetail";
-import IncomingInspectionPage from "./procurement/proto/IncomingInspection";
 import SupplierReturnPage from "./procurement/proto/SupplierReturn";
 import JobsPage from "./production/JobsPage";
 import QualityPage from "./quality/QualityPage";
@@ -106,62 +105,24 @@ function RoutedScreen() {
   );
 }
 
-function recordBackground(location: Location) {
-  return (location.state as { background?: Location } | null)?.background;
-}
-
-function SalesRecordModal({ children }: { children: ReactNode }) {
-  const location = useLocation();
-  const navigate = useNavigate();
-  const background = recordBackground(location);
-  const close = () => navigate(background ? `${background.pathname}${background.search}` : "/sales");
-  return (
-    <div className="fixed inset-0 z-[70] bg-black/40 p-3 md:p-6">
-      <button type="button" aria-label="Close" className="absolute inset-0" onClick={close} />
-      <div role="dialog" aria-modal="true" className="relative mx-auto flex h-full w-full max-w-6xl flex-col overflow-hidden rounded-xl bg-[var(--bg)] shadow-2xl">
-        <div className="min-h-0 flex-1 overflow-auto">{children}</div>
-      </div>
-    </div>
-  );
-}
-
 function SalesFrame() {
-  const location = useLocation();
-  const background = recordBackground(location);
-  const pages = [
-    <Route key="home" index element={<SalesHome />} />,
-    <Route key="customer-new" path="customers/new" element={<CustomerCreate />} />,
-    <Route key="customer-edit" path="customers/:id/edit" element={<CustomerEdit />} />,
-    <Route key="customer" path="customers/:id" element={<CustomerDetailPage />} />,
-    <Route key="rfq-new" path="rfq/new" element={<RfqFormPage />} />,
-    <Route key="rfq-edit" path="rfq/:id/edit" element={<RfqEditPage />} />,
-    <Route key="quote-from-rfq" path="rfq/:rfqId/quotation/new" element={<QuotationFormPage />} />,
-    <Route key="rfq" path="rfq/:id" element={<RfqDetailPage />} />,
-    <Route key="quote-new" path="quotation/new" element={<QuotationFormPage />} />,
-    <Route key="quote" path="quotation/:id" element={<QuotationDetailPage />} />,
-    <Route key="po-new" path="po/new" element={<PoCreatePage />} />,
-    <Route key="po-amend" path="po/:id/amend" element={<PoAmendPage />} />,
-    <Route key="po" path="po/:id" element={<PoDetailPage />} />,
-  ];
   return (
     <SalesProvider>
-      <Routes location={background || location}>{pages}</Routes>
-      {background && (
-        <Routes>
-          <Route path="customers/new" element={<SalesRecordModal><CustomerCreate /></SalesRecordModal>} />
-          <Route path="customers/:id/edit" element={<SalesRecordModal><CustomerEdit /></SalesRecordModal>} />
-          <Route path="customers/:id" element={<SalesRecordModal><CustomerDetailPage /></SalesRecordModal>} />
-          <Route path="rfq/new" element={<SalesRecordModal><RfqFormPage /></SalesRecordModal>} />
-          <Route path="rfq/:id/edit" element={<SalesRecordModal><RfqEditPage /></SalesRecordModal>} />
-          <Route path="rfq/:rfqId/quotation/new" element={<SalesRecordModal><QuotationFormPage /></SalesRecordModal>} />
-          <Route path="rfq/:id" element={<SalesRecordModal><RfqDetailPage /></SalesRecordModal>} />
-          <Route path="quotation/new" element={<SalesRecordModal><QuotationFormPage /></SalesRecordModal>} />
-          <Route path="quotation/:id" element={<SalesRecordModal><QuotationDetailPage /></SalesRecordModal>} />
-          <Route path="po/new" element={<SalesRecordModal><PoCreatePage /></SalesRecordModal>} />
-          <Route path="po/:id/amend" element={<SalesRecordModal><PoAmendPage /></SalesRecordModal>} />
-          <Route path="po/:id" element={<SalesRecordModal><PoDetailPage /></SalesRecordModal>} />
-        </Routes>
-      )}
+      <Routes>
+        <Route index element={<SalesHome />} />
+        <Route path="customers/new" element={<SheetLayout><CustomerCreate /></SheetLayout>} />
+        <Route path="customers/:id/edit" element={<SheetLayout><CustomerEdit /></SheetLayout>} />
+        <Route path="customers/:id" element={<SheetLayout><CustomerDetailPage /></SheetLayout>} />
+        <Route path="rfq/new" element={<SheetLayout><RfqFormPage /></SheetLayout>} />
+        <Route path="rfq/:id/edit" element={<SheetLayout><RfqEditPage /></SheetLayout>} />
+        <Route path="rfq/:rfqId/quotation/new" element={<SheetLayout><QuotationFormPage /></SheetLayout>} />
+        <Route path="rfq/:id" element={<SheetLayout><RfqDetailPage /></SheetLayout>} />
+        <Route path="quotation/new" element={<SheetLayout><QuotationFormPage /></SheetLayout>} />
+        <Route path="quotation/:id" element={<SheetLayout><QuotationDetailPage /></SheetLayout>} />
+        <Route path="po/new" element={<SheetLayout><PoCreatePage /></SheetLayout>} />
+        <Route path="po/:id/amend" element={<SheetLayout><PoAmendPage /></SheetLayout>} />
+        <Route path="po/:id" element={<SheetLayout><PoDetailPage /></SheetLayout>} />
+      </Routes>
     </SalesProvider>
   );
 }
@@ -184,32 +145,31 @@ function Guard() {
         <Route path="sales/*" element={<SalesFrame />} />
         <Route element={<ProcurementProvider />}>
           <Route path="suppliers" element={<SupplierDirectory />} />
-          <Route path="suppliers/:id" element={<SupplierRecord />} />
+          <Route path="suppliers/:id" element={<SheetLayout><SupplierRecord /></SheetLayout>} />
           <Route path="procurement" element={<ProcurementHome />} />
           <Route path="procurement/pr/new" element={<PrCreatePage />} />
           <Route path="procurement/pr/:id/edit" element={<PrCreatePage />} />
-          <Route path="procurement/pr/:id" element={<PrRecordPage />} />
+          <Route path="procurement/pr/:id" element={<SheetLayout><PrRecordPage /></SheetLayout>} />
           <Route path="procurement/supplier-rfq/new" element={<SupplierRfqPage />} />
-          <Route path="procurement/quote/:id" element={<SupplierQuotePage />} />
+          <Route path="procurement/quote/:id" element={<SheetLayout><SupplierQuotePage /></SheetLayout>} />
           <Route path="procurement/spo/:id/amend" element={<SupplierPoAmendPage />} />
-          <Route path="procurement/spo/:id" element={<SupplierPoPage />} />
+          <Route path="procurement/spo/:id" element={<SheetLayout><SupplierPoPage /></SheetLayout>} />
           <Route path="procurement/grn/new" element={<GrnCreatePage />} />
-          <Route path="procurement/grn/:id" element={<GrnRecordPage />} />
-          <Route path="quality/inspection/:id" element={<IncomingInspectionPage />} />
+          <Route path="procurement/grn/:id" element={<SheetLayout><GrnRecordPage /></SheetLayout>} />
           <Route path="procurement/supplier-return" element={<SupplierReturnPage />} />
         </Route>
         <Route path="quality" element={<QualityPage />} />
-        <Route path="quality/inspection/:id" element={<InspectionDetailPage />} />
-        <Route path="quality/ncr/:id" element={<NcrDetailPage />} />
+        <Route path="quality/inspection/:id" element={<SheetLayout><InspectionDetailPage /></SheetLayout>} />
+        <Route path="quality/ncr/:id" element={<SheetLayout><NcrDetailPage /></SheetLayout>} />
         <Route path="quality/checklist-templates" element={<ChecklistTemplatesPage />} />
         <Route path="assets" element={<AssetsPage />} />
-        <Route path="assets/me/:id" element={<MaintenanceEventDetailPage />} />
-        <Route path="assets/:id" element={<AssetDetailPage />} />
+        <Route path="assets/me/:id" element={<SheetLayout><MaintenanceEventDetailPage /></SheetLayout>} />
+        <Route path="assets/:id" element={<SheetLayout><AssetDetailPage /></SheetLayout>} />
         <Route path="dispatch" element={<DispatchPage />} />
         <Route path="dispatch/:id" element={<DispatchDetailPage />} />
         <Route path="bom" element={<BomPage />} />
-        <Route path="inventory/item/:id" element={<ItemDetail />} />
-        <Route path="inventory/lot/:id" element={<LotDetail />} />
+        <Route path="inventory/item/:id" element={<SheetLayout><ItemDetail /></SheetLayout>} />
+        <Route path="inventory/lot/:id" element={<SheetLayout><LotDetail /></SheetLayout>} />
         <Route path="jobs" element={<JobsPage />} />
         <Route path="jobs/:id/stage/:stageId" element={<StageUpdatePage />} />
         <Route path="jobs/:id" element={<JobWorkspacePage />} />

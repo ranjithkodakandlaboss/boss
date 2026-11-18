@@ -397,7 +397,7 @@ export default function AssetsPage() {
       <div className="flex flex-wrap items-center gap-2">
         <div className="relative">
           <Search size={13} className="absolute left-2.5 top-2.5 text-[var(--text-3)]" />
-          <input aria-label="Search" placeholder={tab === "assets" ? "Search assets" : "Search events"} className="eoss-input pl-8" value={search} onChange={(e) => setSearch(e.target.value)} />
+          <input aria-label="Search" placeholder={tab === "assets" ? "Search assets" : "Search events"} className="eoss-input pl-9" value={search} onChange={(e) => setSearch(e.target.value)} />
         </div>
         {tab === "assets" ? (
           <>

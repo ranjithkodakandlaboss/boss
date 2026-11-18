@@ -16,6 +16,8 @@ export default function RecordSheet({
   primary,
   secondary,
   width = "md",
+  pinnedFooter = false,
+  danger = false,
 }: {
   title: string;
   subtitle?: string;
@@ -24,6 +26,8 @@ export default function RecordSheet({
   primary?: Action;
   secondary?: Action;
   width?: "md" | "lg";
+  pinnedFooter?: boolean;
+  danger?: boolean;
 }) {
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
@@ -32,6 +36,14 @@ export default function RecordSheet({
   }, [onClose]);
 
   const panel = width === "lg" ? "md:w-[min(760px,92vw)]" : "md:w-[min(520px,92vw)]";
+  const primaryBg = danger ? "var(--error, #DC2626)" : "var(--brand-fill)";
+  const footer = (primary || secondary) ? (
+    <footer className="flex-shrink-0 px-4 py-3 border-t flex items-center gap-2" style={{ borderColor: "var(--border)", background: "var(--surface)" }}>
+      {secondary && <button type="button" onClick={secondary.onClick} className="px-4 py-2 rounded-xl border text-sm" style={{ borderColor: "var(--border)", color: "var(--text-2)" }}>{secondary.label}</button>}
+      <div className="flex-1" />
+      {primary && <button type="button" onClick={primary.onClick} disabled={primary.disabled} className="px-4 py-2 rounded-xl text-sm font-semibold text-white disabled:opacity-50" style={{ background: primaryBg }}>{primary.label}</button>}
+    </footer>
+  ) : null;
   return createPortal(
     <div className="fixed inset-0 z-[70] flex justify-end bg-black/40" role="presentation">
       <button type="button" className="absolute inset-0 cursor-default" aria-label="Close panel" onClick={onClose} />
@@ -45,14 +57,11 @@ export default function RecordSheet({
             <X size={16} />
           </button>
         </header>
-        <div className="flex-1 min-h-0 overflow-auto px-4 py-4">{children}</div>
-        {(primary || secondary) && (
-          <footer className="flex-shrink-0 px-4 py-3 border-t flex items-center gap-2" style={{ borderColor: "var(--border)", background: "var(--surface)" }}>
-            {secondary && <button type="button" onClick={secondary.onClick} className="px-4 py-2 rounded-xl border text-sm" style={{ borderColor: "var(--border)", color: "var(--text-2)" }}>{secondary.label}</button>}
-            <div className="flex-1" />
-            {primary && <button type="button" onClick={primary.onClick} disabled={primary.disabled} className="px-4 py-2 rounded-xl text-sm font-semibold text-white disabled:opacity-50" style={{ background: "var(--brand-fill)" }}>{primary.label}</button>}
-          </footer>
-        )}
+        <div className="flex-1 min-h-0 overflow-auto px-4 py-4">
+          {children}
+          {!pinnedFooter && footer}
+        </div>
+        {pinnedFooter && footer}
       </div>
     </div>,
     document.body,

@@ -270,15 +270,20 @@ function Quality({ job, enabled, canQuality, canConcede, onOpen, onResult, onCon
   onOpen: (stageId: string) => void; onResult: (inspectionId: string, result: "pass" | "fail", note: string) => void; onConcede: (inspectionId: string, note: string) => void;
 }) {
   if (!enabled) return <p className="text-sm">In-process inspection is turned off for this company.</p>;
+  const inspectionStages = (job.stages ?? []).filter((stage) => stage.requiresInspection);
+  const inspections = job.inspections ?? [];
+  if (inspectionStages.length === 0 && inspections.length === 0) {
+    return <p className="text-sm" style={{ color: "var(--text-3)" }}>No quality inspections are configured for this job.</p>;
+  }
   return (
     <div className="space-y-3">
-      {(job.stages ?? []).filter((stage) => stage.requiresInspection).map((stage) => (
+      {inspectionStages.map((stage) => (
         <div key={stage.id} className="rounded-xl border p-3 text-sm" style={{ borderColor: "var(--border)" }}>
           <div className="flex justify-between"><span>{stage.stageName}</span><StatusChip status={stage.inspectionStatus} size="sm" /></div>
           {canQuality && stage.inspectionStatus === "pending" && <button type="button" className="text-xs font-semibold mt-2" onClick={() => onOpen(stage.id)}>Open inspection</button>}
         </div>
       ))}
-      {(job.inspections ?? []).map((inspection) => (
+      {inspections.map((inspection) => (
         <div key={inspection.id} className="rounded-xl border p-3 text-sm space-y-2" style={{ borderColor: "var(--border)" }}>
           <div>{inspection.inspectionNumber} · {inspection.inspectionType} · {inspection.result || inspection.status}</div>
           {canQuality && !inspection.result && (
