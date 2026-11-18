@@ -70,7 +70,7 @@ export default function CycleCountPage() {
   const variances = (lines ?? []).filter((line) => line.counted !== "" && Number(line.counted) !== Number(line.totalQty));
   const hasCountEntry = (lines ?? []).some((line) => line.counted !== "");
   const countedCount = (lines ?? []).filter((line) => line.counted !== "").length;
-  const userName = user?.name || user?.email || "Unknown";
+  const userName = user?.displayName || user?.email || "Unknown";
   const today = new Date().toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
 
   return (
