@@ -1,5 +1,13 @@
 import { api, safeRandomUUID } from "../auth/api";
 
+// ---- Config options (loaded from /api/v1/config/options/{category}) ----
+
+export type ConfigOption = { id: string; code: string; label: string };
+
+export function listConfigOptions(category: string) {
+  return api<ConfigOption[]>(`/api/v1/config/options/${category}`);
+}
+
 // ---- Types ----
 
 export type InspectionSummary = {
@@ -48,7 +56,8 @@ export type NcrSummary = {
   itemName?: string;
   lotId?: string;
   jobId?: string;
-  defectType?: string;
+  defectCategoryId?: string;
+  defectCategoryLabel?: string;
   defectDescription?: string;
   severity?: string;
   quantity?: number;
@@ -63,7 +72,7 @@ export type NcrSummary = {
 export type Concession = {
   id: string;
   ncrId: string;
-  concessionType: string;
+  justification?: string;
   approvedBy?: string;
   approvedByName?: string;
   approvalNotes?: string;
@@ -226,7 +235,7 @@ export function createNcr(body: {
   itemId?: string;
   lotId?: string;
   jobId?: string;
-  defectType?: string;
+  defectCategoryId?: string;
   defectDescription?: string;
   severity?: string;
   quantity?: number;
@@ -245,7 +254,6 @@ export function updateNcr(id: string, body: {
 }
 
 export function createConcession(ncrId: string, body: {
-  concessionType: string;
   justification: string;
 }) {
   return post<NcrDetail>(`/api/v1/quality/ncrs/${ncrId}/concession`, body);
@@ -339,8 +347,6 @@ const STATUS_LABELS: Record<string, string> = {
   scrapped: "Scrapped",
   closed: "Closed",
   issued: "Issued",
-  expired: "Expired",
-  revoked: "Revoked",
 };
 
 export function statusLabel(status?: string) {

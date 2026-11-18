@@ -209,7 +209,7 @@ class QualityModuleIntegrationTest extends BaseMasterDataIntegrationTest {
                 BigDecimal.TEN, null, null, LocalDate.now(), null)).id();
 
         NcrDetail ncr = qualityService.createNcr(new CreateNcrRequest(
-                inspectionId, itemId, null, jobId, "surface_defect",
+                inspectionId, itemId, null, jobId, null,
                 "Surface roughness out of spec", "major", new BigDecimal("2"), "Machine wear"));
 
         assertThat(ncr.ncrNumber()).startsWith("NCR-");
@@ -224,7 +224,7 @@ class QualityModuleIntegrationTest extends BaseMasterDataIntegrationTest {
         UUID fakeInspectionId = UUID.randomUUID();
 
         assertThatThrownBy(() -> qualityService.createNcr(new CreateNcrRequest(
-                fakeInspectionId, itemId, null, null, "defect", "desc", "minor",
+                fakeInspectionId, itemId, null, null, null, "desc", "minor",
                 BigDecimal.ONE, null)))
                 .isInstanceOf(ResponseStatusException.class)
                 .hasMessageContaining("Inspection not found");
@@ -238,7 +238,7 @@ class QualityModuleIntegrationTest extends BaseMasterDataIntegrationTest {
                 BigDecimal.TEN, null, null, LocalDate.now(), null)).id();
 
         assertThatThrownBy(() -> qualityService.createNcr(new CreateNcrRequest(
-                inspectionId, UUID.randomUUID(), null, null, "defect", "desc", "minor",
+                inspectionId, UUID.randomUUID(), null, null, null, "desc", "minor",
                 BigDecimal.ONE, null)))
                 .isInstanceOf(ResponseStatusException.class)
                 .hasMessageContaining("Item not found");
@@ -253,12 +253,12 @@ class QualityModuleIntegrationTest extends BaseMasterDataIntegrationTest {
                 "final", "production_job", jobId, itemId, null,
                 BigDecimal.TEN, null, null, LocalDate.now(), null)).id();
         NcrDetail ncr = qualityService.createNcr(new CreateNcrRequest(
-                inspectionId, itemId, null, jobId, "defect", "Failed", "major",
+                inspectionId, itemId, null, jobId, null, "Failed", "major",
                 BigDecimal.ONE, null));
 
         setRole("QUALITY_INSPECTOR"); // not authorised to approve
         assertThatThrownBy(() -> qualityService.createConcession(ncr.id(),
-                new CreateConcessionRequest("use_as_is", "Justified")))
+                new CreateConcessionRequest("Justified")))
                 .isInstanceOf(AccessDeniedException.class);
     }
 
@@ -269,11 +269,11 @@ class QualityModuleIntegrationTest extends BaseMasterDataIntegrationTest {
                 "final", "production_job", jobId, itemId, null,
                 BigDecimal.TEN, null, null, LocalDate.now(), null)).id();
         NcrDetail ncr = qualityService.createNcr(new CreateNcrRequest(
-                inspectionId, itemId, null, jobId, "defect", "Failed", "major",
+                inspectionId, itemId, null, jobId, null, "Failed", "major",
                 BigDecimal.ONE, null));
 
         NcrDetail updated = qualityService.createConcession(ncr.id(),
-                new CreateConcessionRequest("use_as_is", "Customer approved deviation"));
+                new CreateConcessionRequest("Customer approved deviation"));
 
         assertThat(updated.concessions()).hasSize(1);
         assertThat(updated.concessions().get(0).status()).isEqualTo("approved");
@@ -287,11 +287,11 @@ class QualityModuleIntegrationTest extends BaseMasterDataIntegrationTest {
                 "final", "production_job", jobId, itemId, null,
                 BigDecimal.TEN, null, null, LocalDate.now(), null)).id();
         NcrDetail ncr = qualityService.createNcr(new CreateNcrRequest(
-                inspectionId, itemId, null, jobId, "defect", "Failed", "major",
+                inspectionId, itemId, null, jobId, null, "Failed", "major",
                 BigDecimal.ONE, null));
 
         assertThatThrownBy(() -> qualityService.createConcession(ncr.id(),
-                new CreateConcessionRequest("use_as_is", "")))
+                new CreateConcessionRequest("")))
                 .isInstanceOf(ResponseStatusException.class)
                 .hasMessageContaining("Justification");
     }
@@ -337,7 +337,7 @@ class QualityModuleIntegrationTest extends BaseMasterDataIntegrationTest {
                 .filter(n -> inspId.equals(n.inspectionId())).findFirst().map(NcrSummary::id)
                 .map(id -> qualityService.getNcr(id)).orElseThrow();
         qualityService.createConcession(ncr.id(),
-                new CreateConcessionRequest("use_as_is", "Customer approved use-as-is"));
+                new CreateConcessionRequest("Customer approved use-as-is"));
 
         DispatchEligibilityResponse eligibility = qualityService.checkDispatchEligibility(jobId);
         assertThat(eligibility.eligible()).isTrue();
@@ -354,7 +354,7 @@ class QualityModuleIntegrationTest extends BaseMasterDataIntegrationTest {
                 new RecordResultRequest("pass", BigDecimal.TEN, BigDecimal.ZERO, null, null));
         // Manually create an open NCR without concession
         qualityService.createNcr(new CreateNcrRequest(
-                inspId, itemId, null, jobId, "cosmetic", "Scratched surface",
+                inspId, itemId, null, jobId, null, "Scratched surface",
                 "minor", BigDecimal.ONE, null));
 
         DispatchEligibilityResponse eligibility = qualityService.checkDispatchEligibility(jobId);
@@ -416,7 +416,7 @@ class QualityModuleIntegrationTest extends BaseMasterDataIntegrationTest {
 
         NcrDetail ncr = listNcrsForInspection(inspId);
         qualityService.createConcession(ncr.id(),
-                new CreateConcessionRequest("use_as_is", "Approved for this batch"));
+                new CreateConcessionRequest("Approved for this batch"));
 
         // Should pass with concession
         var job = jobStageService.complete(jobId, stageId,
@@ -590,7 +590,7 @@ class QualityModuleIntegrationTest extends BaseMasterDataIntegrationTest {
                 "final", "production_job", jobId, itemId, null,
                 BigDecimal.TEN, null, null, LocalDate.now(), null)).id();
         NcrDetail ncr = qualityService.createNcr(new CreateNcrRequest(
-                inspId, itemId, null, jobId, "defect", "desc", "minor", BigDecimal.ONE, null));
+                inspId, itemId, null, jobId, null, "desc", "minor", BigDecimal.ONE, null));
 
         UUID otherTenant = provisionTenant("quality-other2");
         setTenantContext(otherTenant, "OWNER");

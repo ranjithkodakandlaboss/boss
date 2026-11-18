@@ -5,8 +5,9 @@ import { useCustomer } from "../auth/CustomerState";
 import StatusChip from "../components/shared/StatusChip";
 import {
   listInspections, listNcrs, createInspection, createNcr,
-  statusLabel, inspectionTypeLabel, severityLabel, displayDate,
-  type InspectionSummary, type NcrSummary,
+  listConfigOptions,
+  statusLabel, inspectionTypeLabel, displayDate,
+  type InspectionSummary, type NcrSummary, type ConfigOption,
 } from "./api";
 
 function statusVariant(status: string): "default" | "success" | "warning" | "error" | "info" {
@@ -45,9 +46,14 @@ export default function QualityPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
+  // Config options loaded from API
+  const [inspectionTypes, setInspectionTypes] = useState<ConfigOption[]>([]);
+  const [defectCategories, setDefectCategories] = useState<ConfigOption[]>([]);
+  const [severityOptions, setSeverityOptions] = useState<ConfigOption[]>([]);
+
   // New Inspection dialog state
   const [showNewInspection, setShowNewInspection] = useState(false);
-  const [newInspType, setNewInspType] = useState("final");
+  const [newInspType, setNewInspType] = useState("");
   const [newInspRefType, setNewInspRefType] = useState("job");
   const [newInspRefId, setNewInspRefId] = useState("");
   const [newInspQty, setNewInspQty] = useState("1");
@@ -57,15 +63,30 @@ export default function QualityPage() {
 
   // New NCR dialog state
   const [showNewNcr, setShowNewNcr] = useState(false);
-  const [ncrDefectType, setNcrDefectType] = useState("");
+  const [ncrDefectCategoryId, setNcrDefectCategoryId] = useState("");
   const [ncrDefectDesc, setNcrDefectDesc] = useState("");
-  const [ncrSeverity, setNcrSeverity] = useState("medium");
+  const [ncrSeverity, setNcrSeverity] = useState("");
   const [ncrQty, setNcrQty] = useState("1");
   const [ncrSaveError, setNcrSaveError] = useState("");
 
   function setTab(t: Tab) {
     setSearchParams((prev) => { prev.set("tab", t); return prev; }, { replace: true });
   }
+
+  useEffect(() => {
+    listConfigOptions("INSPECTION_TYPE").then((opts) => {
+      setInspectionTypes(opts);
+      if (opts.length > 0 && !newInspType) setNewInspType(opts[0].id);
+    }).catch(() => {});
+    listConfigOptions("DEFECT_CATEGORY").then((opts) => {
+      setDefectCategories(opts);
+      if (opts.length > 0) setNcrDefectCategoryId(opts[0].id);
+    }).catch(() => {});
+    listConfigOptions("DEFECT_SEVERITY").then((opts) => {
+      setSeverityOptions(opts);
+      if (opts.length > 0) setNcrSeverity(opts[0].id);
+    }).catch(() => {});
+  }, []);
 
   useEffect(() => {
     setLoading(true);
@@ -134,9 +155,9 @@ export default function QualityPage() {
     setNcrSaveError("");
     try {
       const ncr = await createNcr({
-        defectType: ncrDefectType,
+        defectCategoryId: ncrDefectCategoryId || undefined,
         defectDescription: ncrDefectDesc,
-        severity: ncrSeverity,
+        severity: ncrSeverity || undefined,
         quantity: parseFloat(ncrQty) || 1,
       });
       setShowNewNcr(false);
@@ -212,11 +233,9 @@ export default function QualityPage() {
             onChange={(e) => setTypeFilter(e.target.value)}
           >
             <option value="all">All types</option>
-            <option value="incoming">Incoming</option>
-            <option value="in_process">In-Process</option>
-            <option value="final">Final</option>
-            <option value="dispatch_readiness">Dispatch Readiness</option>
-            <option value="customer">Customer</option>
+            {inspectionTypes.map((opt) => (
+              <option key={opt.id} value={opt.id}>{opt.label}</option>
+            ))}
           </select>
         )}
         <select
@@ -276,10 +295,9 @@ export default function QualityPage() {
                   value={newInspType}
                   onChange={(e) => setNewInspType(e.target.value)}
                 >
-                  <option value="in_process">In-Process</option>
-                  <option value="final">Final</option>
-                  <option value="dispatch_readiness">Dispatch Readiness</option>
-                  <option value="customer">Customer</option>
+                  {inspectionTypes.map((opt) => (
+                    <option key={opt.id} value={opt.id}>{opt.label}</option>
+                  ))}
                 </select>
               </label>
               <label className="block text-sm">
@@ -363,15 +381,19 @@ export default function QualityPage() {
             <h2 className="text-base font-semibold mb-4">Raise NCR</h2>
             <form onSubmit={handleCreateNcr} className="space-y-3">
               <label className="block text-sm">
-                <span className="text-[var(--text-2)] font-medium">Defect type</span>
-                <input
+                <span className="text-[var(--text-2)] font-medium">Defect category</span>
+                <select
                   required
                   className="mt-1 w-full rounded-lg border px-3 py-2 text-sm bg-[var(--surface)]"
                   style={{ borderColor: "var(--border)" }}
-                  placeholder="e.g. Dimensional, Surface, Material"
-                  value={ncrDefectType}
-                  onChange={(e) => setNcrDefectType(e.target.value)}
-                />
+                  value={ncrDefectCategoryId}
+                  onChange={(e) => setNcrDefectCategoryId(e.target.value)}
+                >
+                  <option value="">— Select category —</option>
+                  {defectCategories.map((opt) => (
+                    <option key={opt.id} value={opt.id}>{opt.label}</option>
+                  ))}
+                </select>
               </label>
               <label className="block text-sm">
                 <span className="text-[var(--text-2)] font-medium">Description</span>
@@ -392,10 +414,10 @@ export default function QualityPage() {
                   value={ncrSeverity}
                   onChange={(e) => setNcrSeverity(e.target.value)}
                 >
-                  <option value="critical">Critical</option>
-                  <option value="major">Major</option>
-                  <option value="medium">Medium</option>
-                  <option value="minor">Minor</option>
+                  <option value="">— Select severity —</option>
+                  {severityOptions.map((opt) => (
+                    <option key={opt.id} value={opt.id}>{opt.label}</option>
+                  ))}
                 </select>
               </label>
               <label className="block text-sm">

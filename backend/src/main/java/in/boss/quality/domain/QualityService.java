@@ -252,14 +252,15 @@ public class QualityService {
         return jdbc.query("""
                 SELECT n.id, n.ncr_number, n.inspection_id, n.item_id,
                        i.code AS item_code, i.name AS item_name,
-                       n.lot_id, n.job_id, n.defect_type, n.defect_description,
-                       n.severity, n.quantity, n.status, n.disposition,
+                       n.lot_id, n.job_id, n.defect_category_id, co.label AS defect_category_label,
+                       n.defect_description, n.severity, n.quantity, n.status, n.disposition,
                        n.raised_by, au.display_name AS raised_by_name,
                        n.created_at,
                        c.status AS concession_status
                 FROM ncrs n
                 LEFT JOIN items i ON i.id = n.item_id AND i.tenant_id = n.tenant_id
                 LEFT JOIN app_users au ON au.id = n.raised_by
+                LEFT JOIN config_options co ON co.id = n.defect_category_id
                 LEFT JOIN concessions c ON c.ncr_id = n.id AND c.tenant_id = n.tenant_id
                 WHERE n.tenant_id = ?
                   AND (? IS NULL OR n.status = ?)
@@ -284,7 +285,8 @@ public class QualityService {
                 SELECT n.id, n.ncr_number, n.inspection_id, qi.inspection_number,
                        n.item_id, i.code AS item_code, i.name AS item_name,
                        n.lot_id, n.job_id, pj.job_number,
-                       n.defect_type, n.defect_description, n.severity, n.quantity,
+                       n.defect_category_id, co.label AS defect_category_label,
+                       n.defect_description, n.severity, n.quantity,
                        n.root_cause, n.status, n.disposition, n.resolution,
                        n.raised_by, ru.display_name AS raised_by_name,
                        n.resolved_by, rv.display_name AS resolved_by_name,
@@ -293,6 +295,7 @@ public class QualityService {
                 LEFT JOIN quality_inspections qi ON qi.id = n.inspection_id AND qi.tenant_id = n.tenant_id
                 LEFT JOIN items i ON i.id = n.item_id AND i.tenant_id = n.tenant_id
                 LEFT JOIN production_jobs pj ON pj.id = n.job_id AND pj.tenant_id = n.tenant_id
+                LEFT JOIN config_options co ON co.id = n.defect_category_id
                 LEFT JOIN app_users ru ON ru.id = n.raised_by
                 LEFT JOIN app_users rv ON rv.id = n.resolved_by
                 WHERE n.tenant_id = ? AND n.id = ?
@@ -309,7 +312,9 @@ public class QualityService {
                             rs.getObject("lot_id", UUID.class),
                             rs.getObject("job_id", UUID.class),
                             rs.getString("job_number"),
-                            rs.getString("defect_type"), rs.getString("defect_description"),
+                            rs.getObject("defect_category_id", UUID.class),
+                            rs.getString("defect_category_label"),
+                            rs.getString("defect_description"),
                             rs.getString("severity"), rs.getBigDecimal("quantity"),
                             rs.getString("root_cause"), rs.getString("status"),
                             rs.getString("disposition"), rs.getString("resolution"),
@@ -352,16 +357,16 @@ public class QualityService {
         jdbc.update("""
                 INSERT INTO ncrs
                   (id, tenant_id, ncr_number, inspection_id, item_id, lot_id, job_id,
-                   quantity, defect_type, defect_description, severity, root_cause,
+                   quantity, defect_category_id, defect_description, severity, root_cause,
                    status, raised_by)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?)
                 """,
                 id, ctx.tenantId(), number,
                 request.inspectionId(), request.itemId(), request.lotId(), request.jobId(),
                 request.quantity() != null ? request.quantity() : BigDecimal.ONE,
-                request.defectType() != null ? request.defectType() : "non_conforming",
+                request.defectCategoryId(),
                 request.defectDescription(),
-                request.severity() != null ? request.severity() : "medium",
+                request.severity(),
                 request.rootCause(),
                 ctx.userId());
 
@@ -414,15 +419,14 @@ public class QualityService {
             throw badRequest("Justification is required for concession approval");
         }
 
-        String concessionType = request.concessionType() != null ? request.concessionType() : "use_as_is";
         UUID concessionId = UUID.randomUUID();
         jdbc.update("""
                 INSERT INTO concessions
-                  (id, tenant_id, ncr_id, concession_type, approved_by, approval_notes, status)
-                VALUES (?, ?, ?, ?, ?, ?, 'approved')
+                  (id, tenant_id, ncr_id, approval_notes, approved_by, status)
+                VALUES (?, ?, ?, ?, ?, 'approved')
                 """,
                 concessionId, ctx.tenantId(), ncrId,
-                concessionType, ctx.userId(), request.justification().trim());
+                request.justification().trim(), ctx.userId());
 
         jdbc.update("""
                 UPDATE ncrs SET status = 'under_review', updated_at = NOW()
@@ -430,7 +434,7 @@ public class QualityService {
                 """, ctx.tenantId(), ncrId);
 
         audit.record("concessions", concessionId, "APPROVED", null,
-                "{\"ncrId\":\"" + ncrId + "\",\"type\":\"" + concessionType + "\"}");
+                "{\"ncrId\":\"" + ncrId + "\"}");
         return getNcr(ncrId);
     }
 
@@ -679,14 +683,15 @@ public class QualityService {
         return jdbc.query("""
                 SELECT n.id, n.ncr_number, n.inspection_id, n.item_id,
                        i.code AS item_code, i.name AS item_name,
-                       n.lot_id, n.job_id, n.defect_type, n.defect_description,
-                       n.severity, n.quantity, n.status, n.disposition,
+                       n.lot_id, n.job_id, n.defect_category_id, co.label AS defect_category_label,
+                       n.defect_description, n.severity, n.quantity, n.status, n.disposition,
                        n.raised_by, au.display_name AS raised_by_name,
                        n.created_at,
                        c.status AS concession_status
                 FROM ncrs n
                 LEFT JOIN items i ON i.id = n.item_id AND i.tenant_id = n.tenant_id
                 LEFT JOIN app_users au ON au.id = n.raised_by
+                LEFT JOIN config_options co ON co.id = n.defect_category_id
                 LEFT JOIN concessions c ON c.ncr_id = n.id AND c.tenant_id = n.tenant_id
                 WHERE n.tenant_id = ? AND n.inspection_id = ?
                 ORDER BY n.created_at
@@ -697,8 +702,8 @@ public class QualityService {
 
     private List<ConcessionDto> listConcessionsForNcr(UUID tenantId, UUID ncrId) {
         return jdbc.query("""
-                SELECT c.id, c.ncr_id, c.concession_type, c.approved_by,
-                       au.display_name AS approved_by_name, c.approval_notes, c.status, c.created_at
+                SELECT c.id, c.ncr_id, c.approval_notes, c.approved_by,
+                       au.display_name AS approved_by_name, c.status, c.created_at
                 FROM concessions c
                 LEFT JOIN app_users au ON au.id = c.approved_by
                 WHERE c.tenant_id = ? AND c.ncr_id = ?
@@ -707,7 +712,7 @@ public class QualityService {
                 (rs, row) -> new ConcessionDto(
                         rs.getObject("id", UUID.class),
                         rs.getObject("ncr_id", UUID.class),
-                        rs.getString("concession_type"),
+                        rs.getString("approval_notes"),
                         rs.getObject("approved_by", UUID.class),
                         rs.getString("approved_by_name"),
                         rs.getString("approval_notes"),
@@ -943,8 +948,8 @@ public class QualityService {
         jdbc.update("""
                 INSERT INTO ncrs
                   (id, tenant_id, ncr_number, inspection_id, item_id, lot_id,
-                   quantity, defect_type, defect_description, severity, status, raised_by)
-                VALUES (?, ?, ?, ?, ?, ?, ?, 'in_process', ?, 'major', 'open', ?)
+                   quantity, defect_description, severity, status, raised_by)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'major', 'open', ?)
                 """,
                 ncrId, ctx.tenantId(), ncrNumber,
                 inspection.id(), inspection.itemId(), inspection.lotId(),
@@ -988,7 +993,8 @@ public class QualityService {
                 rs.getString("item_name"),
                 rs.getObject("lot_id", UUID.class),
                 rs.getObject("job_id", UUID.class),
-                rs.getString("defect_type"),
+                rs.getObject("defect_category_id", UUID.class),
+                rs.getString("defect_category_label"),
                 rs.getString("defect_description"),
                 rs.getString("severity"),
                 rs.getBigDecimal("quantity"),

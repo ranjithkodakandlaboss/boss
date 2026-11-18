@@ -116,7 +116,8 @@ public final class QualityDtos {
             String itemName,
             UUID lotId,
             UUID jobId,
-            String defectType,
+            UUID defectCategoryId,
+            String defectCategoryLabel,
             String defectDescription,
             String severity,
             BigDecimal quantity,
@@ -139,7 +140,8 @@ public final class QualityDtos {
             UUID lotId,
             UUID jobId,
             String jobNumber,
-            String defectType,
+            UUID defectCategoryId,
+            String defectCategoryLabel,
             String defectDescription,
             String severity,
             BigDecimal quantity,
@@ -162,7 +164,7 @@ public final class QualityDtos {
             UUID itemId,
             UUID lotId,
             UUID jobId,
-            String defectType,
+            UUID defectCategoryId,
             String defectDescription,
             String severity,
             BigDecimal quantity,
@@ -181,7 +183,7 @@ public final class QualityDtos {
     public record ConcessionDto(
             UUID id,
             UUID ncrId,
-            String concessionType,
+            String justification,
             UUID approvedBy,
             String approvedByName,
             String approvalNotes,
@@ -190,7 +192,6 @@ public final class QualityDtos {
     ) {}
 
     public record CreateConcessionRequest(
-            String concessionType,
             String justification
     ) {}
 

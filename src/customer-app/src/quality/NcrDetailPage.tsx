@@ -32,7 +32,6 @@ export default function NcrDetailPage() {
 
   // Concession form
   const [showConcession, setShowConcession] = useState(false);
-  const [concessionType, setConcessionType] = useState("use_as_is");
   const [justification, setJustification] = useState("");
   const [concessionError, setConcessionError] = useState("");
 
@@ -78,7 +77,6 @@ export default function NcrDetailPage() {
     setConcessionError("");
     try {
       const updated = await createConcession(ncr.id, {
-        concessionType,
         justification,
       });
       setNcr(updated);
@@ -115,7 +113,7 @@ export default function NcrDetailPage() {
               variant={isClosed ? "success" : ncr.status === "open" ? "error" : "warning"}
             />
           </div>
-          <h1 className="text-lg font-bold">{ncr.defectType ?? "Non-Conformance Report"}</h1>
+          <h1 className="text-lg font-bold">{ncr.defectCategoryLabel ?? "Non-Conformance Report"}</h1>
           <p className="text-sm text-[var(--text-2)] mt-0.5">{ncr.defectDescription}</p>
         </div>
         <div className="flex gap-2">
@@ -177,7 +175,7 @@ export default function NcrDetailPage() {
             {ncr.concessions.map((c) => (
               <div key={c.id} className="rounded-lg border p-3" style={{ borderColor: "var(--border)" }}>
                 <div className="flex items-center justify-between mb-1">
-                  <span className="text-sm font-medium capitalize">{c.concessionType.replace(/_/g, " ")}</span>
+                  <span className="text-sm font-medium">Concession</span>
                   <StatusChip
                     label={statusLabel(c.status)}
                     variant={c.status === "approved" ? "success" : "warning"}
@@ -286,19 +284,6 @@ export default function NcrDetailPage() {
           >
             <h2 className="text-base font-semibold mb-4">Grant Concession</h2>
             <form onSubmit={handleConcession} className="space-y-3">
-              <label className="block text-sm">
-                <span className="text-[var(--text-2)] font-medium">Concession type</span>
-                <select
-                  className="mt-1 w-full rounded-lg border px-3 py-2 text-sm bg-[var(--surface)]"
-                  style={{ borderColor: "var(--border)" }}
-                  value={concessionType}
-                  onChange={(e) => setConcessionType(e.target.value)}
-                >
-                  <option value="use_as_is">Use As-Is</option>
-                  <option value="rework">Rework</option>
-                  <option value="conditional">Conditional</option>
-                </select>
-              </label>
               <label className="block text-sm">
                 <span className="text-[var(--text-2)] font-medium">Justification *</span>
                 <textarea
