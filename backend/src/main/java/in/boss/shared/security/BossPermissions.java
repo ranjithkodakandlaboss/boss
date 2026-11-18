@@ -101,6 +101,14 @@ public final class BossPermissions {
     public static final String PRODUCTION_COMPLETE =
             "hasAnyRole('OWNER','OPS_MANAGER','PRODUCTION_SUPERVISOR','QUALITY_INSPECTOR')";
 
+    /** Read assets and maintenance events. */
+    public static final String MAINTENANCE_VIEW =
+            "hasAnyRole('OWNER','OPS_MANAGER','PRODUCTION_SUPERVISOR','FIELD_WORKER','QUALITY_INSPECTOR')";
+
+    /** Manage assets and maintenance events. */
+    public static final String MAINTENANCE_WRITE =
+            "hasAnyRole('OWNER','OPS_MANAGER','PRODUCTION_SUPERVISOR')";
+
     /** Anyone who can touch stock or warehouse records. */
     public static final String INVENTORY_WRITE =
             "hasAnyRole('OWNER','OPS_MANAGER','STORE_KEEPER')";

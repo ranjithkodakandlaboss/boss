@@ -38,6 +38,8 @@ import GrnRecordPage from "./procurement/proto/GRNDetail";
 import IncomingInspectionPage from "./procurement/proto/IncomingInspection";
 import SupplierReturnPage from "./procurement/proto/SupplierReturn";
 import JobsPage from "./production/JobsPage";
+import AssetsPage from "./maintenance/AssetsPage";
+import { AssetDetailPage, MaintenanceEventDetailPage } from "./maintenance/AssetDetailPage";
 import JobWorkspacePage from "./production/JobWorkspacePage";
 import StageUpdatePage from "./production/StageUpdatePage";
 
@@ -187,6 +189,9 @@ function Guard() {
           <Route path="quality/inspection/:id" element={<IncomingInspectionPage />} />
           <Route path="procurement/supplier-return" element={<SupplierReturnPage />} />
         </Route>
+        <Route path="assets" element={<AssetsPage />} />
+        <Route path="assets/me/:id" element={<MaintenanceEventDetailPage />} />
+        <Route path="assets/:id" element={<AssetDetailPage />} />
         <Route path="jobs" element={<JobsPage />} />
         <Route path="jobs/:id/stage/:stageId" element={<StageUpdatePage />} />
         <Route path="jobs/:id" element={<JobWorkspacePage />} />
