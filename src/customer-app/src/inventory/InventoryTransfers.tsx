@@ -93,7 +93,7 @@ export default function InventoryTransfers() {
                     <div>
                       <div className="flex items-center gap-2">
                         <span className="font-semibold font-mono text-sm">{row.transferNumber}</span>
-                        <span className="text-xs px-2 py-0.5 rounded-full font-medium" style={{ background: row.status === 'in_transit' ? 'var(--warning-bg,#FEF3C7)' : 'var(--success-bg,#DCFCE7)', color: row.status === 'in_transit' ? 'var(--warning,#D97706)' : 'var(--success,#16A34A)' }}>{row.status.replace(/_/g, ' ')}</span>
+                        <StatusChip status={row.status} size="sm" />
                       </div>
                       <div className="mt-1 text-sm">
                         <span className="font-medium">{row.fromStoreName}</span>
@@ -108,7 +108,7 @@ export default function InventoryTransfers() {
                       <span className="text-xs text-[var(--text-3)]">{row.transferDate}</span>
                       {row.status === "in_transit" && (
                         <button type="button" className="rounded-lg px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50" style={{ background: "var(--brand-fill)" }} disabled={receiving === row.id} onClick={() => void receive(row)}>
-                          {receiving === row.id ? "Receiving…" : "Receive"}
+                          {receiving === row.id ? "Receiving…" : "Receive at destination"}
                         </button>
                       )}
                     </div>
