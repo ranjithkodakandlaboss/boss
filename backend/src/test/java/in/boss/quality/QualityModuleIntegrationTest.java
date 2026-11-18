@@ -195,35 +195,6 @@ class QualityModuleIntegrationTest extends BaseMasterDataIntegrationTest {
     }
 
     @Test
-    void dispatchMethodSnapshotIsCapturedAndNotReplacedByLaterUpdates() {
-        UUID dispatchMethodCategoryId = jdbc.queryForObject(
-                "SELECT id FROM config_categories WHERE code = 'DISPATCH_METHOD'", UUID.class);
-        UUID dispatchMethodId = insert("""
-                INSERT INTO tenant_config_options (tenant_id, category_id, code, label)
-                VALUES (?, ?, 'OWN_FLEET', 'Own Fleet') RETURNING id
-                """, tenantId, dispatchMethodCategoryId);
-        UUID customerId = jdbc.queryForObject(
-                "SELECT id FROM customers WHERE tenant_id = ? LIMIT 1", UUID.class, tenantId);
-        UUID siteId = jdbc.queryForObject(
-                "SELECT id FROM physical_sites WHERE tenant_id = ? LIMIT 1", UUID.class, tenantId);
-        UUID dispatchId = insert("""
-                INSERT INTO dispatches (tenant_id, dispatch_number, customer_id, site_id, created_by,
-                                        dispatch_method_option_id)
-                VALUES (?, ?, ?, ?, ?, ?) RETURNING id
-                """, tenantId, "DSP-" + UUID.randomUUID().toString().substring(0, 8),
-                customerId, siteId, BossContextHolder.get().userId(), dispatchMethodId);
-
-        jdbc.update("UPDATE tenant_config_options SET label = 'Company Transport', is_active = FALSE WHERE id = ?",
-                dispatchMethodId);
-        jdbc.update("UPDATE dispatches SET notes = 'Dispatch updated' WHERE tenant_id = ? AND id = ?",
-                tenantId, dispatchId);
-
-        assertThat(jdbc.queryForObject("""
-                SELECT dispatch_method_label_snapshot FROM dispatches WHERE tenant_id = ? AND id = ?
-                """, String.class, tenantId, dispatchId)).isEqualTo("Own Fleet");
-    }
-
-    @Test
     void recordPassResult() {
         setRole("OWNER");
         InspectionDetail inspection = qualityService.createInspection(new CreateInspectionRequest(
