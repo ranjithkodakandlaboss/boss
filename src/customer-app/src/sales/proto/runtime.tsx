@@ -234,6 +234,8 @@ function lineRequests(lines: Array<Record<string, unknown>>, catalog: CatalogIte
       unitPrice: Number(line.unitPrice ?? line.rate ?? 0),
       gstRate: line.gstRate == null ? item?.gstRate ?? null : Number(line.gstRate),
       discountPct: line.discountPct == null ? null : Number(line.discountPct),
+      labourHours: (line.labourHours ?? {}) as Record<string, number>,
+      machineHours: (line.machineHours ?? {}) as Record<string, number>,
     };
   });
 }
@@ -301,6 +303,8 @@ function mapQuote(quote: Quotation): CustomerQuotation {
     gstRate: line.gstRate == null ? undefined : Number(line.gstRate),
     discountPct: line.discountPct == null ? undefined : Number(line.discountPct),
     description: line.description || "",
+    labourHours: quote.costing?.lines[index]?.labourHours ?? {},
+    machineHours: quote.costing?.lines[index]?.machineHours ?? {},
   }));
   const totals = quoteMoney(lines, money(quote.discountAmount));
   return {
@@ -332,6 +336,10 @@ function mapQuote(quote: Quotation): CustomerQuotation {
     cpoNumber: quote.cpoNumber,
     negotiationHistory: quote.negotiationHistory ?? [],
     revisions: quote.revisions ?? [],
+    costing: quote.costing,
+    costOverrideReason: quote.costOverrideReason,
+    costOverrideBy: quote.costOverrideBy,
+    costOverrideAt: quote.costOverrideAt,
   } as CustomerQuotation;
 }
 
@@ -675,7 +683,7 @@ export function SalesProvider({ children }: { children?: ReactNode }) {
       createDirectQuotation: (quotation, lines) => saveQuotation(quotation, lines, catalog, uoms, guard),
       updateQuotation: async (id, patch) => {
         if (patch.status === "submitted") {
-          const saved = await guard(() => salesApi.quotationStatus(id, "sent"), { title: "Quotation submitted", body: "Download the PDF and send it to the customer outside BOSS." });
+          const saved = await guard(() => salesApi.quotationStatus(id, "sent", patch.notes), { title: "Quotation submitted", body: "Download the PDF and send it to the customer outside BOSS." });
           return saved ? mapQuote(saved as Quotation) : null;
         }
         if (patch.status === "accepted") {
@@ -862,6 +870,8 @@ function quoteBody(quotation: CustomerQuotation, lines: CustomerQuotationLine[],
       drawingRevision: line.drawingRevision,
       description: line.description,
       requiredBy: line.requiredBy,
+      labourHours: line.labourHours,
+      machineHours: line.machineHours,
     })),
   };
 }

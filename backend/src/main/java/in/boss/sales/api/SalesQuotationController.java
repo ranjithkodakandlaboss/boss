@@ -1,6 +1,7 @@
 package in.boss.sales.api;
 
 import in.boss.sales.domain.CustomerPoService;
+import in.boss.sales.domain.QuotationCostingService;
 import in.boss.sales.domain.SalesService;
 import in.boss.shared.security.BossPermissions;
 import jakarta.validation.Valid;
@@ -24,6 +25,8 @@ import java.util.UUID;
 
 import static in.boss.sales.api.SalesApiDtos.AcceptQuotationRequest;
 import static in.boss.sales.api.SalesApiDtos.CreateQuotationRequest;
+import static in.boss.sales.api.SalesApiDtos.QuotationCostingConfigRequest;
+import static in.boss.sales.api.SalesApiDtos.QuotationCostingConfigResponse;
 import static in.boss.sales.api.SalesApiDtos.CounterOfferRequest;
 import static in.boss.sales.api.SalesApiDtos.CpoResponse;
 import static in.boss.sales.api.SalesApiDtos.PageResponse;
@@ -39,10 +42,24 @@ public class SalesQuotationController {
 
     private final SalesService salesService;
     private final CustomerPoService customerPoService;
+    private final QuotationCostingService costingService;
 
-    public SalesQuotationController(SalesService salesService, CustomerPoService customerPoService) {
+    public SalesQuotationController(SalesService salesService, CustomerPoService customerPoService,
+                                    QuotationCostingService costingService) {
         this.salesService = salesService;
         this.customerPoService = customerPoService;
+        this.costingService = costingService;
+    }
+
+    @GetMapping("/costing-config")
+    public QuotationCostingConfigResponse costingConfig() {
+        return costingService.getConfig();
+    }
+
+    @PutMapping("/costing-config")
+    public QuotationCostingConfigResponse updateCostingConfig(
+            @Valid @RequestBody QuotationCostingConfigRequest request) {
+        return costingService.saveConfig(request);
     }
 
     @GetMapping

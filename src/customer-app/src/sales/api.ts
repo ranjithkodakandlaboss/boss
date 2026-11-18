@@ -69,6 +69,52 @@ export type QuoteLine = {
   drawingRevision?: string;
   description?: string;
   requiredBy?: string;
+  labourHours?: Record<string, number>;
+  machineHours?: Record<string, number>;
+};
+export type CostRate = { name: string; ratePerHour: number };
+export type QuotationCostingConfig = {
+  labourRates: CostRate[];
+  machineRates: CostRate[];
+  overheadPerUnit: number;
+  consumablesPerUnit: number;
+  packagingPerUnit: number;
+  transportPerUnit: number;
+  targetMarginPct: number;
+  minimumMarginPct: number;
+  approvalThresholdPct: number;
+};
+export type QuotationCostingSnapshot = {
+  available: boolean;
+  valuationBasis: string;
+  materialCost: number;
+  labourCost: number;
+  machineCost: number;
+  overheadCost: number;
+  consumablesCost: number;
+  packagingCost: number;
+  transportCost: number;
+  totalCost: number;
+  netRevenue: number;
+  grossProfit: number;
+  grossMarginPct?: number;
+  targetMarginPct: number;
+  minimumMarginPct: number;
+  approvalThresholdPct: number;
+  requiresApproval: boolean;
+  unavailableReasons: string[];
+  lines: Array<{
+    lineNumber: number;
+    materialCost: number;
+    labourCost: number;
+    machineCost: number;
+    overheadCost: number;
+    consumablesCost: number;
+    packagingCost: number;
+    transportCost: number;
+    labourHours: Record<string, number>;
+    machineHours: Record<string, number>;
+  }>;
 };
 export type RevisionLink = { id: string; revision: number; status: string };
 export type Negotiation = { id: string; round: number; partyType: string; note?: string; createdAt: string };
@@ -97,6 +143,10 @@ export type Quotation = {
   cpoId?: string;
   cpoNumber?: string;
   revisions?: RevisionLink[];
+  costing?: QuotationCostingSnapshot;
+  costOverrideReason?: string;
+  costOverrideBy?: string;
+  costOverrideAt?: string;
 };
 export type CpoLine = {
   id: string;
@@ -187,6 +237,12 @@ function key() {
 }
 
 export const salesApi = {
+  quotationCostingConfig: () => api<QuotationCostingConfig>("/api/v1/quotations/costing-config"),
+  saveQuotationCostingConfig: (body: QuotationCostingConfig) => api<QuotationCostingConfig>("/api/v1/quotations/costing-config", {
+    method: "PUT",
+    headers: { "Idempotency-Key": key() },
+    body: JSON.stringify(body),
+  }),
   customers: (q = "") => api<Page<Customer>>(`/api/v1/customers?size=100${q ? `&q=${encodeURIComponent(q)}` : ""}`).then(rows),
   customer: (id: string) => api<Customer>(`/api/v1/customers/${id}`),
   saveCustomer: (body: unknown, id?: string) => api<Customer>(id ? `/api/v1/customers/${id}` : "/api/v1/customers", {

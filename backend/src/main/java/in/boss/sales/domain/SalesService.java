@@ -4,11 +4,9 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import in.boss.masterdata.api.dto.BOMExplosionMaterialDto;
 import in.boss.masterdata.api.dto.CustomerDto;
 import in.boss.masterdata.api.dto.ItemDto;
 import in.boss.masterdata.api.dto.UomDto;
-import in.boss.masterdata.domain.BomExplosionService;
 import in.boss.masterdata.domain.CustomerService;
 import in.boss.masterdata.domain.EntityNotFoundException;
 import in.boss.masterdata.domain.ItemService;
@@ -23,6 +21,7 @@ import in.boss.sales.api.SalesApiDtos.NegotiationEntryResponse;
 import in.boss.sales.api.SalesApiDtos.OfferedUnitPrice;
 import in.boss.sales.api.SalesApiDtos.PageResponse;
 import in.boss.sales.api.SalesApiDtos.QuotationLineResponse;
+import in.boss.sales.api.SalesApiDtos.QuotationCostingSnapshot;
 import in.boss.sales.api.SalesApiDtos.QuotationResponse;
 import in.boss.sales.api.SalesApiDtos.RevisionLink;
 import in.boss.sales.api.SalesApiDtos.ReviseQuotationRequest;
@@ -69,7 +68,7 @@ public class SalesService {
     private final CustomerService customerService;
     private final ItemService itemService;
     private final UomService uomService;
-    private final BomExplosionService bomExplosionService;
+    private final QuotationCostingService quotationCostingService;
     private final AuditService auditService;
     private final ObjectMapper objectMapper;
 
@@ -77,14 +76,14 @@ public class SalesService {
                         CustomerService customerService,
                         ItemService itemService,
                         UomService uomService,
-                        BomExplosionService bomExplosionService,
+                        QuotationCostingService quotationCostingService,
                         AuditService auditService,
                         ObjectMapper objectMapper) {
         this.jdbc = jdbc;
         this.customerService = customerService;
         this.itemService = itemService;
         this.uomService = uomService;
-        this.bomExplosionService = bomExplosionService;
+        this.quotationCostingService = quotationCostingService;
         this.auditService = auditService;
         this.objectMapper = objectMapper;
     }
@@ -246,6 +245,7 @@ public class SalesService {
         BigDecimal estimatedTotal = replaceQuotationLines(tenantId, quotationId, request.lines());
         jdbc.update("UPDATE quotations SET estimated_material_cost = ? WHERE tenant_id = ? AND id = ?",
                 estimatedTotal, tenantId, quotationId);
+        saveCostingSnapshot(tenantId, quotationId, request.lines(), request.discountAmount());
 
         QuotationResponse result = readQuotation(tenantId, quotationId);
         auditService.record("QUOTATION", quotationId, "CREATE", null, toJson(result));
@@ -328,6 +328,8 @@ public class SalesService {
         BigDecimal estimatedTotal = replaceQuotationLines(tenantId, quotationId, request.lines());
         jdbc.update("UPDATE quotations SET estimated_material_cost = ? WHERE tenant_id = ? AND id = ?",
                 estimatedTotal, tenantId, quotationId);
+        saveCostingSnapshot(tenantId, quotationId, request.lines(),
+                request.discountAmount() == null ? before.discountAmount() : request.discountAmount());
         QuotationResponse result = readQuotation(tenantId, quotationId);
         auditService.record("QUOTATION", quotationId, "UPDATE", toJson(before), toJson(result));
         return result;
@@ -395,6 +397,20 @@ public class SalesService {
             if (missingDrawing != null && missingDrawing > 0) {
                 throw badRequest("Drawing number is required on every line before the quotation is submitted");
             }
+            QuotationResponse draft = readQuotation(tenantId, quotationId);
+            QuotationCostingSnapshot costing = draft.costing();
+            if (costing == null || !costing.available()) {
+                throw conflict("A complete quotation cost estimate is required before submission");
+            }
+            if (costing.requiresApproval()) {
+                if (!context.hasAnyRole("OWNER", "OPS_MANAGER")) {
+                    throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+                            "An owner or operations manager must approve a below-threshold quotation");
+                }
+                if (note == null || note.isBlank()) {
+                    throw badRequest("A reason is required to approve a below-threshold quotation");
+                }
+            }
         }
         QuotationResponse before = readQuotation(tenantId, quotationId);
         if ("rejected".equals(nextStatus)) {
@@ -405,6 +421,13 @@ public class SalesService {
                      WHERE tenant_id = ? AND id = ?
                     """,
                     nextStatus, note, context.userId(), tenantId, quotationId);
+        } else if ("sent".equals(nextStatus) && before.costing() != null && before.costing().requiresApproval()) {
+            jdbc.update("""
+                    UPDATE quotations
+                       SET status = ?, cost_override_reason = ?, cost_override_by = ?,
+                           cost_override_at = NOW(), updated_at = NOW()
+                     WHERE tenant_id = ? AND id = ?
+                    """, nextStatus, note.trim(), context.userId(), tenantId, quotationId);
         } else {
             jdbc.update("UPDATE quotations SET status = ?, updated_at = NOW() WHERE tenant_id = ? AND id = ?",
                     nextStatus, tenantId, quotationId);
@@ -501,6 +524,7 @@ public class SalesService {
         BigDecimal estimatedTotal = replaceQuotationLines(tenantId, revisedId, request.lines());
         jdbc.update("UPDATE quotations SET estimated_material_cost = ? WHERE tenant_id = ? AND id = ?",
                 estimatedTotal, tenantId, revisedId);
+        saveCostingSnapshot(tenantId, revisedId, request.lines(), discount);
 
         QuotationResponse result = readQuotation(tenantId, revisedId);
         auditService.record("QUOTATION", quotationId, "SUPERSEDED", snapshot, toJson(result));
@@ -531,7 +555,7 @@ public class SalesService {
         int lineNo = 1;
         for (CreateQuotationLineRequest line : lines) {
             requireItemAndUom(line.itemId(), line.uomId());
-            BigDecimal costPerUnit = estimateMaterialCostPerUnit(line.itemId(), line.uomId());
+            BigDecimal costPerUnit = quotationCostingService.materialCostPerUnit(tenantId, line.itemId(), line.uomId());
             if (costPerUnit == null) {
                 allCostsKnown = false;
             } else {
@@ -542,41 +566,29 @@ public class SalesService {
                     INSERT INTO quotation_lines
                       (id, tenant_id, quotation_id, line_no, item_id, quantity, uom_id,
                        unit_price, delivery_days, estimated_material_cost_per_unit,
-                       gst_rate, discount_pct, drawing_number, drawing_revision, description, required_by)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, 0), ?, ?, ?, ?)
+                       gst_rate, discount_pct, drawing_number, drawing_revision, description, required_by,
+                       labour_hours, machine_hours)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, 0), ?, ?, ?, ?, ?::jsonb, ?::jsonb)
                     """,
                     UUID.randomUUID(), tenantId, quotationId, lineNo++, line.itemId(), line.qty(),
                     line.uomId(), line.unitPrice(), deliveryDays, costPerUnit, line.gstRate(),
                     line.discountPct(), line.drawingNumber(), line.drawingRevision(), line.description(),
-                    line.requiredBy());
+                    line.requiredBy(), jsonOrNull(line.labourHours() == null ? Map.of() : line.labourHours()),
+                    jsonOrNull(line.machineHours() == null ? Map.of() : line.machineHours()));
         }
         return allCostsKnown ? totalCost.setScale(2, RoundingMode.HALF_UP) : null;
     }
 
-    private BigDecimal estimateMaterialCostPerUnit(UUID finishedItemId, UUID quoteUomId) {
-        ItemDto finishedItem = itemService.getItem(finishedItemId);
-        String quoteUomSymbol = uomSymbol(quoteUomId);
-        if (finishedItem.getUomSymbol() == null || !finishedItem.getUomSymbol().equals(quoteUomSymbol)) {
-            return null;
-        }
-
-        List<BOMExplosionMaterialDto> materials =
-                bomExplosionService.explodeBOM(finishedItemId, BigDecimal.ONE).getFlatMaterials();
-        if (materials == null || materials.isEmpty()) {
-            return null;
-        }
-
-        BigDecimal total = BigDecimal.ZERO;
-        for (BOMExplosionMaterialDto material : materials) {
-            ItemDto materialItem = itemService.getItem(material.getItemId());
-            if (materialItem.getStandardCost() == null
-                    || materialItem.getUomSymbol() == null
-                    || !materialItem.getUomSymbol().equals(material.getUomSymbol())) {
-                return null;
-            }
-            total = total.add(material.getQty().multiply(materialItem.getStandardCost()));
-        }
-        return total.setScale(2, RoundingMode.HALF_UP);
+    private void saveCostingSnapshot(UUID tenantId, UUID quotationId,
+                                    List<CreateQuotationLineRequest> lines, BigDecimal discountAmount) {
+        QuotationCostingSnapshot costing = quotationCostingService.calculate(tenantId, lines, discountAmount);
+        jdbc.update("""
+                UPDATE quotations
+                   SET estimated_total_cost = ?, estimated_gross_profit = ?,
+                       estimated_gross_margin_pct = ?, costing_snapshot = ?::jsonb
+                 WHERE tenant_id = ? AND id = ?
+                """, costing.totalCost(), costing.grossProfit(), costing.grossMarginPct(),
+                toJson(costing), tenantId, quotationId);
     }
 
     private RfqResponse readRfq(UUID tenantId, UUID rfqId) {
@@ -652,6 +664,8 @@ public class SalesService {
                 SELECT q.id, q.quotation_number, q.rfq_id, q.customer_id, q.revision, q.status,
                        q.valid_until, q.created_at, q.payment_terms, q.payment_terms_text, q.delivery_terms, q.notes,
                        q.discount_amount, q.decision_channel, q.decision_note, q.decided_by, q.decided_at,
+                       q.costing_snapshot::text AS costing_snapshot, q.cost_override_reason,
+                       q.cost_override_by, q.cost_override_at,
                        r.rfq_number, cpo.id AS cpo_id, cpo.cpo_number
                   FROM quotations q
                   LEFT JOIN rfqs r ON r.tenant_id = q.tenant_id AND r.id = q.rfq_id
@@ -675,6 +689,10 @@ public class SalesService {
                 rs.getString("decision_note"),
                 rs.getObject("decided_by", UUID.class),
                 instant(rs, "decided_at"),
+                rs.getString("costing_snapshot"),
+                rs.getString("cost_override_reason"),
+                rs.getObject("cost_override_by", UUID.class),
+                instant(rs, "cost_override_at"),
                 rs.getString("rfq_number"),
                 rs.getObject("cpo_id", UUID.class),
                 rs.getString("cpo_number")), tenantId, quotationId);
@@ -725,7 +743,9 @@ public class SalesService {
                 header.validUntil(), lines, history, header.createdAt(), header.paymentTerms(),
                 header.deliveryTerms(), header.notes(), header.discountAmount(), header.decisionChannel(),
                 header.decisionNote(), header.decidedBy(), header.decidedAt(), header.cpoId(),
-                header.cpoNumber(), header.rfqNumber(), revisions, header.paymentTermsText());
+                header.cpoNumber(), header.rfqNumber(), revisions, header.paymentTermsText(),
+                parseCostingSnapshot(header.costingSnapshot()), header.costOverrideReason(),
+                header.costOverrideBy(), header.costOverrideAt());
     }
 
     private List<NegotiationEntryResponse> readNegotiationHistory(UUID tenantId, UUID quotationId) {
@@ -880,10 +900,6 @@ public class SalesService {
         if (!"active".equalsIgnoreCase(item.getStatus()) || uom.getId() == null) {
             throw badRequest("Active item and unit of measure must belong to this tenant");
         }
-    }
-
-    private String uomSymbol(UUID uomId) {
-        return uomService.getUom(uomId).getSymbol();
     }
 
     private long count(String sql, Object... args) {
@@ -1062,6 +1078,15 @@ public class SalesService {
         }
     }
 
+    private QuotationCostingSnapshot parseCostingSnapshot(String json) {
+        if (json == null || json.isBlank()) return null;
+        try {
+            return objectMapper.readValue(json, QuotationCostingSnapshot.class);
+        } catch (JsonProcessingException exception) {
+            throw new IllegalStateException("Could not read quotation costing snapshot", exception);
+        }
+    }
+
     private String toJson(Object value) {
         try {
             return objectMapper.writeValueAsString(value);
@@ -1106,7 +1131,8 @@ public class SalesService {
                                    int revision, String status, LocalDate validUntil, Instant createdAt,
                                    Integer paymentTerms, String paymentTermsText, String deliveryTerms, String notes,
                                    BigDecimal discountAmount, String decisionChannel, String decisionNote,
-                                   UUID decidedBy, Instant decidedAt, String rfqNumber, UUID cpoId,
+                                   UUID decidedBy, Instant decidedAt, String costingSnapshot, String costOverrideReason,
+                                   UUID costOverrideBy, Instant costOverrideAt, String rfqNumber, UUID cpoId,
                                    String cpoNumber) {}
 
     private record QuotationLineData(UUID id, UUID itemId, BigDecimal quantity, UUID uomId,
