@@ -128,6 +128,14 @@ public final class BossPermissions {
     public static final String ACCOUNTS_ACCESS =
             "hasAnyRole('OWNER','OPS_MANAGER','ACCOUNTS_STAFF')";
 
+    /** Read dispatch records. */
+    public static final String DISPATCH_VIEW =
+            "hasAnyRole('OWNER','OPS_MANAGER','STORE_KEEPER','SALES_MANAGER','PRODUCTION_SUPERVISOR','FIELD_WORKER')";
+
+    /** Create, pack, dispatch, and record delivery for dispatches. */
+    public static final String DISPATCH_WRITE =
+            "hasAnyRole('OWNER','OPS_MANAGER','STORE_KEEPER')";
+
     /** Any authenticated tenant user (minimum bar). */
     public static final String ANY_TENANT_USER =
             "isAuthenticated()";
