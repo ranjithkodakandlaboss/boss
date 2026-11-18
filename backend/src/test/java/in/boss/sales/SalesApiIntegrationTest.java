@@ -207,7 +207,8 @@ class SalesApiIntegrationTest extends BaseMasterDataIntegrationTest {
                 null,
                 null,
                 List.of(new CreateQuotationLineRequest(
-                        finishedItemId, new BigDecimal("3"), uomId, new BigDecimal("20.00"), 2))));
+                        finishedItemId, new BigDecimal("3"), uomId, new BigDecimal("20.00"), 2,
+                        null, null, "DRW-14", null, null, null))));
         UUID lineId = created.lines().get(0).id();
 
         assertThatThrownBy(() -> salesService.updateQuotationStatus(created.id(), "expired"))
@@ -451,7 +452,9 @@ class SalesApiIntegrationTest extends BaseMasterDataIntegrationTest {
                 List.of(new RfqLineRequest(finishedItemId, new BigDecimal("2"), uomId, null))));
         var draft = salesService.createQuotation(new CreateQuotationRequest(
                 customerId, rfq.id(), null,
-                List.of(new CreateQuotationLineRequest(finishedItemId, new BigDecimal("2"), uomId, price, 1))));
+                List.of(new CreateQuotationLineRequest(
+                        finishedItemId, new BigDecimal("2"), uomId, price, 1,
+                        null, null, "DRW-14", null, null, null))));
         return salesService.updateQuotationStatus(draft.id(), "sent");
     }
 
