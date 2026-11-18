@@ -256,6 +256,7 @@ public class ProductionJobService {
 
     private ProductionJobResponse changeStatus(UUID jobId, String target, String reason, boolean hold) {
         BossContext context = support.requireContext();
+        support.denyForeignJob(jdbc, jobId);
         flags.require(context.tenantId(), ProductionFeatureFlags.STAGE_TRANSITION);
         String current = jdbc.query("""
                 SELECT status FROM production_jobs WHERE tenant_id = ? AND id = ? FOR UPDATE

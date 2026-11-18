@@ -40,6 +40,7 @@ public class JobCostingService {
     @PreAuthorize(COMMERCIAL_DATA_READ)
     public CostingResponse get(UUID jobId) {
         BossContext context = support.requireContext();
+        support.denyForeignJob(jdbc, jobId);
         flags.require(context.tenantId(), ProductionFeatureFlags.JOB_COSTING);
         return load(context.tenantId(), jobId);
     }
@@ -47,6 +48,7 @@ public class JobCostingService {
     @PreAuthorize(COMMERCIAL_DATA_READ)
     public CostEntryResponse addEntry(UUID jobId, AddCostRequest request) {
         BossContext context = support.requireContext();
+        support.denyForeignJob(jdbc, jobId);
         flags.require(context.tenantId(), ProductionFeatureFlags.JOB_COSTING);
         requireJob(context.tenantId(), jobId);
         UUID costingId = costingId(context.tenantId(), jobId);

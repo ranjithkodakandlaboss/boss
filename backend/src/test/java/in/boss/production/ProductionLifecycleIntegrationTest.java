@@ -24,6 +24,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
@@ -313,6 +314,55 @@ class ProductionLifecycleIntegrationTest extends BaseMasterDataIntegrationTest {
 
         scope(null);
         assertThat(query.list(null, null, 0, 20).content()).extracting(job -> job.id()).contains(jobA.id(), jobB.id());
+    }
+
+    @Test
+    void siteScopedUserCannotReadOrExecuteAnotherSitesJob() {
+        UUID legalEntityId = jdbc.queryForObject(
+                "SELECT legal_entity_id FROM physical_sites WHERE id = ?", UUID.class, siteId);
+        UUID siteB = insert("""
+                INSERT INTO physical_sites (tenant_id, legal_entity_id, name, code)
+                VALUES (?, ?, 'Plant B', ?) RETURNING id
+                """, tenantId, legalEntityId, "SX-" + UUID.randomUUID().toString().substring(0, 6));
+        ProductionJobResponse job = jobs.create(new CreateJobRequest(cpoId, lineId, routingId, null, null, null));
+        UUID stageId = job.stages().get(0).id();
+        UUID requirementId = job.materials().get(0).id();
+
+        scope(siteB);
+        assertForbidden(() -> costing.get(job.id()));
+        assertForbidden(() -> costing.addEntry(job.id(), new AddCostRequest("LABOUR", "Fit", BigDecimal.TEN, null, null)));
+        assertForbidden(() -> jobs.hold(job.id(), new ReasonRequest("tooling")));
+        assertForbidden(() -> jobs.releaseHold(job.id()));
+        assertForbidden(() -> jobs.cancel(job.id(), new ReasonRequest("stop")));
+        assertForbidden(() -> stages.start(job.id(), stageId, null));
+        assertForbidden(() -> stages.complete(job.id(), stageId, null));
+        assertForbidden(() -> stages.skip(job.id(), stageId, new ReasonRequest("skip")));
+        assertForbidden(() -> materials.issue(job.id(), new IssueMaterialRequest(requirementId, lotId, BigDecimal.ONE, null)));
+        assertForbidden(() -> materials.returnMaterial(job.id(), new ReturnMaterialRequest(UUID.randomUUID(), BigDecimal.ONE, null)));
+        assertForbidden(() -> inspections.open(job.id(), stageId));
+        assertForbidden(() -> inspections.record(job.id(), UUID.randomUUID(),
+                new InspectionResultRequest("pass", BigDecimal.ONE, BigDecimal.ZERO, null)));
+        assertForbidden(() -> inspections.concede(job.id(), UUID.randomUUID(), new ConcessionRequest("use_as_is", "waive")));
+        assertThat(jdbc.queryForObject(
+                "SELECT status FROM production_jobs WHERE tenant_id = ? AND id = ?",
+                String.class, tenantId, job.id())).isEqualTo("planned");
+
+        scope(siteId);
+        assertThat(costing.get(job.id()).jobId()).isEqualTo(job.id());
+        assertThatThrownBy(() -> stages.start(job.id(), stageId, null))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("cannot execute a stage");
+
+        scope(null);
+        assertThat(costing.get(job.id()).jobId()).isEqualTo(job.id());
+        assertThat(jobs.cancel(job.id(), new ReasonRequest("customer stopped the order")).status()).isEqualTo("cancelled");
+    }
+
+    private void assertForbidden(org.assertj.core.api.ThrowableAssert.ThrowingCallable call) {
+        assertThatThrownBy(call)
+                .isInstanceOf(ResponseStatusException.class)
+                .extracting(error -> ((ResponseStatusException) error).getStatusCode())
+                .isEqualTo(HttpStatus.FORBIDDEN);
     }
 
     @Test

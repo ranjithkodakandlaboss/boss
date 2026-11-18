@@ -48,6 +48,7 @@ public class JobStageService {
     @PreAuthorize(PRODUCTION_EXECUTE)
     public ProductionJobResponse start(UUID jobId, UUID stageId, StageActionRequest request) {
         BossContext context = support.requireContext();
+        support.denyForeignJob(jdbc, jobId);
         flags.require(context.tenantId(), ProductionFeatureFlags.STAGE_TRANSITION);
         StageRow stage = lockStage(context.tenantId(), jobId, stageId);
         String jobStatus = lockJobStatus(context.tenantId(), jobId);
@@ -68,6 +69,7 @@ public class JobStageService {
     @PreAuthorize(PRODUCTION_COMPLETE)
     public ProductionJobResponse complete(UUID jobId, UUID stageId, StageActionRequest request) {
         BossContext context = support.requireContext();
+        support.denyForeignJob(jdbc, jobId);
         flags.require(context.tenantId(), ProductionFeatureFlags.STAGE_TRANSITION);
         StageRow stage = lockStage(context.tenantId(), jobId, stageId);
         String jobStatus = lockJobStatus(context.tenantId(), jobId);
@@ -97,6 +99,7 @@ public class JobStageService {
     @PreAuthorize(OWNER_OR_OPS)
     public ProductionJobResponse skip(UUID jobId, UUID stageId, ReasonRequest request) {
         BossContext context = support.requireContext();
+        support.denyForeignJob(jdbc, jobId);
         flags.require(context.tenantId(), ProductionFeatureFlags.STAGE_TRANSITION);
         StageRow stage = lockStage(context.tenantId(), jobId, stageId);
         String jobStatus = lockJobStatus(context.tenantId(), jobId);

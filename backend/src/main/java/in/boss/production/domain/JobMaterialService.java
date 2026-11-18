@@ -81,6 +81,7 @@ public class JobMaterialService {
 
     private MaterialMovementResponse issueStock(UUID jobId, IssueMaterialRequest request, boolean[] inventoryCall) {
         BossContext context = support.requireContext();
+        support.denyForeignJob(jdbc, jobId);
         flags.require(context.tenantId(), ProductionFeatureFlags.MATERIAL_ISSUE);
         JobRow job = lockJob(context.tenantId(), jobId);
         rejectClosed(job.status());
@@ -112,6 +113,7 @@ public class JobMaterialService {
 
     private MaterialMovementResponse returnStock(UUID jobId, ReturnMaterialRequest request, boolean[] inventoryCall) {
         BossContext context = support.requireContext();
+        support.denyForeignJob(jdbc, jobId);
         flags.require(context.tenantId(), ProductionFeatureFlags.MATERIAL_RETURN);
         JobRow job = lockJob(context.tenantId(), jobId);
         rejectClosed(job.status());

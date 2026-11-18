@@ -41,6 +41,7 @@ public class JobInspectionService {
     @PreAuthorize(QUALITY_WRITE)
     public ProductionJobResponse open(UUID jobId, UUID stageId) {
         BossContext context = support.requireContext();
+        support.denyForeignJob(jdbc, jobId);
         flags.require(context.tenantId(), ProductionFeatureFlags.INSPECTION_GATE);
         StageRef stage = requireStage(context.tenantId(), jobId, stageId);
         if (!stage.inspection()) {
@@ -70,6 +71,7 @@ public class JobInspectionService {
     @PreAuthorize(QUALITY_WRITE)
     public ProductionJobResponse record(UUID jobId, UUID inspectionId, InspectionResultRequest request) {
         BossContext context = support.requireContext();
+        support.denyForeignJob(jdbc, jobId);
         flags.require(context.tenantId(), ProductionFeatureFlags.INSPECTION_GATE);
         InspectionRef inspection = requireInspection(context.tenantId(), jobId, inspectionId);
         if (!"pending".equals(inspection.status()) && !"in_progress".equals(inspection.status())) {
@@ -94,6 +96,7 @@ public class JobInspectionService {
     @PreAuthorize(CONCESSION_APPROVE)
     public ProductionJobResponse concede(UUID jobId, UUID inspectionId, ConcessionRequest request) {
         BossContext context = support.requireContext();
+        support.denyForeignJob(jdbc, jobId);
         flags.require(context.tenantId(), ProductionFeatureFlags.INSPECTION_GATE);
         InspectionRef inspection = requireInspection(context.tenantId(), jobId, inspectionId);
         UUID ncrId = jdbc.query("""
