@@ -242,7 +242,7 @@ function CancelJob({ job, onClose, onDone }: { job: ProductionJob; onClose: () =
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60">
       <div className="w-full max-w-lg rounded-xl border p-5 space-y-4" style={{ background: "var(--surface)", borderColor: "var(--border)" }}>
         <h2 className="text-sm font-bold">Cancel {job.jobNumber}</h2>
-        <p className="text-xs" style={{ color: "var(--text-2)" }}>The record and audit history will be preserved. Issued material stays issued until it is returned from the job.</p>
+        <p className="text-xs" style={{ color: "var(--text-2)" }}>The record and audit history will be preserved. Reserved but unissued quantities will be released. Issued material stays issued until it is returned from the job.</p>
         <div className="rounded-lg p-3 text-xs" style={{ background: "var(--surface-2)" }}>Current status: <strong>{job.status}</strong> · Current stage: <strong>{job.currentStage}</strong> · Issued: <strong>{issued}</strong></div>
         <label className="block text-xs font-semibold">Cancellation reason *<textarea value={reason} onChange={(event) => setReason(event.target.value)} rows={3} className="eoss-input w-full mt-1" /></label>
         {error && <p role="alert" className="text-xs" style={{ color: "var(--error)" }}>{error}</p>}

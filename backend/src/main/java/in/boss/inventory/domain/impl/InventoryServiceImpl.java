@@ -7,6 +7,7 @@ import in.boss.inventory.api.InventoryApiDtos.CreateLotRequest;
 import in.boss.inventory.api.InventoryApiDtos.CustomerPoReservationRequest;
 import in.boss.inventory.api.InventoryApiDtos.CustomerPoReservationResponse;
 import in.boss.inventory.api.InventoryApiDtos.InventoryPage;
+import in.boss.inventory.api.InventoryApiDtos.JobReservationResponse;
 import in.boss.inventory.api.InventoryApiDtos.InventoryPositionResponse;
 import in.boss.inventory.api.InventoryApiDtos.IssueMaterialRequest;
 import in.boss.inventory.api.InventoryApiDtos.MaterialLotResponse;
@@ -28,6 +29,7 @@ import in.boss.inventory.domain.MovementType;
 import in.boss.inventory.events.InventoryEventPublisher;
 import in.boss.inventory.persistence.GrnLineRef;
 import in.boss.inventory.persistence.InventoryRepository;
+import in.boss.inventory.persistence.InventoryReservationRepository;
 import in.boss.inventory.persistence.LotRow;
 import in.boss.inventory.persistence.MovementRow;
 import in.boss.shared.audit.AuditService;
@@ -52,6 +54,7 @@ public class InventoryServiceImpl implements InventoryService {
     private static final BigDecimal MIN_QTY = new BigDecimal("0.001");
 
     private final InventoryRepository repository;
+    private final InventoryReservationRepository reservationRepository;
     private final AuditService auditService;
     private final InventoryEventPublisher events;
     private final ObjectMapper objectMapper;
@@ -62,6 +65,7 @@ public class InventoryServiceImpl implements InventoryService {
     private final CustomerPoReservationService customerPoReservationService;
 
     public InventoryServiceImpl(InventoryRepository repository,
+                                InventoryReservationRepository reservationRepository,
                                 AuditService auditService,
                                 InventoryEventPublisher events,
                                 ObjectMapper objectMapper,
@@ -71,6 +75,7 @@ public class InventoryServiceImpl implements InventoryService {
                                 InventoryReplenishmentService replenishmentService,
                                 CustomerPoReservationService customerPoReservationService) {
         this.repository = repository;
+        this.reservationRepository = reservationRepository;
         this.auditService = auditService;
         this.events = events;
         this.objectMapper = objectMapper;
@@ -245,6 +250,17 @@ public class InventoryServiceImpl implements InventoryService {
 
     @Override
     @Transactional(readOnly = true)
+    public List<JobReservationResponse> listActiveJobReservations() {
+        BossContext ctx = requireContext();
+        UUID siteId = ctx.isSiteScoped() ? ctx.siteId() : null;
+        return reservationRepository.activeProductionReservations(ctx.tenantId(), siteId).stream()
+                .map(row -> new JobReservationResponse(row.jobId(), row.jobNumber(), row.siteId(),
+                        row.itemId(), row.itemCode(), row.itemName(), row.reservedQty()))
+                .toList();
+    }
+
+    @Override
+    @Transactional(readOnly = true)
     public InventoryPage<StockMovementResponse> getLotMovements(
             UUID lotId, LocalDate from, LocalDate to, int page, int size) {
         BossContext ctx = requireContext();
@@ -369,6 +385,7 @@ public class InventoryServiceImpl implements InventoryService {
                 lot.storeName(),
                 lot.siteId(),
                 lot.batchNumber(),
+                lot.lotNumber(),
                 lot.grnLineId(),
                 lot.quantity(),
                 lot.reservedQty(),

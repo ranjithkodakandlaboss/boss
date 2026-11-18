@@ -29,7 +29,7 @@ public class InventoryRepository {
     private static final String LOT_SELECT = """
             SELECT ml.id, ml.item_id, i.code AS item_code, i.name AS item_name,
                    ml.store_id, s.name AS store_name, s.site_id,
-                   ml.batch_number,
+                   ml.batch_number, ml.lot_number,
                    (SELECT sm.reference_id FROM stock_movements sm
                      WHERE sm.lot_id = ml.id AND sm.tenant_id = ml.tenant_id
                        AND sm.reference_type = 'GRN'
@@ -315,6 +315,7 @@ public class InventoryRepository {
                 rs.getString("store_name"),
                 uuid(rs, "site_id"),
                 rs.getString("batch_number"),
+                rs.getString("lot_number"),
                 uuid(rs, "grn_line_id"),
                 rs.getBigDecimal("quantity"),
                 rs.getBigDecimal("reserved_qty"),

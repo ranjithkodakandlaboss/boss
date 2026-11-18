@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { api, safeRandomUUID } from "../auth/api";
 import Button from "../components/shared/Button";
 import ErrorState from "../components/shared/ErrorState";
 import LoadingState from "../components/shared/LoadingState";
+import StockNav from "./stockNav";
 
 type Store = { id: string; siteId: string; name: string };
 type Company = { stores: Store[] };
@@ -37,12 +38,18 @@ async function loadLots(storeId: string): Promise<Lot[]> {
 
 export default function StockTransferPage() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const requestedFrom = searchParams.get("from") ?? "";
+  const requestedTo = searchParams.get("to") ?? "";
+  const requestedMaterial = searchParams.get("material") ?? "";
+  const requestedQty = searchParams.get("qty") ?? "";
   const [stores, setStores] = useState<Store[]>([]);
   const [sourceStoreId, setSourceStoreId] = useState("");
   const [destinationStoreId, setDestinationStoreId] = useState("");
   const [lots, setLots] = useState<Lot[]>([]);
   const [lotId, setLotId] = useState("");
-  const [qty, setQty] = useState("");
+  const [qty, setQty] = useState(requestedQty);
+  const [note, setNote] = useState("");
   const [loading, setLoading] = useState(true);
   const [loadingLots, setLoadingLots] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -53,7 +60,8 @@ export default function StockTransferPage() {
     api<Company>("/api/v1/company").then((company) => {
       if (!active) return;
       setStores(company.stores);
-      setSourceStoreId(company.stores[0]?.id ?? "");
+      const requested = company.stores.find((store) => store.name === requestedFrom);
+      setSourceStoreId(requested?.id ?? company.stores[0]?.id ?? "");
     }).catch((reason: unknown) => {
       if (active) setError(reason instanceof Error ? reason.message : "Stores could not be loaded.");
     }).finally(() => { if (active) setLoading(false); });
@@ -74,7 +82,12 @@ export default function StockTransferPage() {
     loadLots(sourceStoreId).then((result) => {
       if (!active) return;
       setLots(result);
-      setLotId(result[0]?.id ?? "");
+      const match = result.find((lot) => lot.itemCode === requestedMaterial) ?? result[0];
+      setLotId(match?.id ?? "");
+      if (requestedTo) {
+        const destination = stores.find((store) => store.name === requestedTo && store.id !== sourceStoreId);
+        if (destination) setDestinationStoreId(destination.id);
+      }
     }).catch((reason: unknown) => {
       if (active) setError(reason instanceof Error ? reason.message : "Source stock could not be loaded.");
     }).finally(() => { if (active) setLoadingLots(false); });
@@ -104,6 +117,7 @@ export default function StockTransferPage() {
           fromStoreId: sourceStoreId,
           toStoreId: destinationStoreId,
           transferDate: new Date().toISOString().slice(0, 10),
+          note: note.trim() || undefined,
           lines: [{ lotId, qty: Number(qty) }],
         }),
       });
@@ -119,6 +133,8 @@ export default function StockTransferPage() {
   if (error && stores.length === 0) return <ErrorState body={error} />;
 
   return (
+    <div className="flex min-h-[calc(100vh-var(--topbar-h))] flex-col">
+      <StockNav />
     <div className="mx-auto w-full max-w-3xl px-6 py-6">
       <Link to="/inventory" className="text-sm font-medium text-[var(--brand)]">← Stock on hand</Link>
       <h1 className="mt-4 text-lg font-bold text-[var(--text)]">Move stock between sites</h1>
@@ -151,12 +167,17 @@ export default function StockTransferPage() {
           Quantity {selectedLot && <span className="font-normal text-[var(--text-2)]">(up to {selectedLot.availableQty} {selectedLot.uomSymbol})</span>}
           <input className="eoss-input mt-1 w-full" type="number" min="0.001" max={selectedLot?.availableQty} step="0.001" required value={qty} onChange={(event) => setQty(event.target.value)} />
         </label>
+        <label className="block text-sm font-medium">
+          Transfer note
+          <textarea className="eoss-input mt-1 w-full" rows={2} value={note} onChange={(event) => setNote(event.target.value)} placeholder="Optional reason or reference" />
+        </label>
         {error && <p role="alert" className="text-sm text-[var(--error)]">{error}</p>}
         <div className="flex justify-end gap-2">
           <Button variant="ghost" type="button" onClick={() => navigate("/inventory/transfers")}>Cancel</Button>
           <Button type="submit" disabled={saving || loadingLots || !lots.length}>{saving ? "Dispatching…" : "Dispatch transfer"}</Button>
         </div>
       </form>
+    </div>
     </div>
   );
 }

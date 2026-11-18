@@ -5,6 +5,7 @@ import in.boss.inventory.api.InventoryApiDtos.CreateLotRequest;
 import in.boss.inventory.api.InventoryApiDtos.CustomerPoReservationRequest;
 import in.boss.inventory.api.InventoryApiDtos.CustomerPoReservationResponse;
 import in.boss.inventory.api.InventoryApiDtos.InventoryPage;
+import in.boss.inventory.api.InventoryApiDtos.JobReservationResponse;
 import in.boss.inventory.api.InventoryApiDtos.InventoryPositionResponse;
 import in.boss.inventory.api.InventoryApiDtos.IssueMaterialRequest;
 import in.boss.inventory.api.InventoryApiDtos.MaterialLotResponse;
@@ -14,6 +15,7 @@ import in.boss.inventory.api.InventoryApiDtos.ReturnMaterialRequest;
 import in.boss.inventory.api.InventoryApiDtos.StockMovementResponse;
 
 import java.time.LocalDate;
+import java.util.List;
 import java.util.UUID;
 
 public interface InventoryService {
@@ -55,4 +57,6 @@ public interface InventoryService {
 
     InventoryPage<StockMovementResponse> getLotMovements(
             UUID lotId, LocalDate from, LocalDate to, int page, int size);
+
+    List<JobReservationResponse> listActiveJobReservations();
 }

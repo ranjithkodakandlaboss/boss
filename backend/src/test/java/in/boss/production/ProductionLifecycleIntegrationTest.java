@@ -188,8 +188,24 @@ class ProductionLifecycleIntegrationTest extends BaseMasterDataIntegrationTest {
         assertThat(issued.movementId()).isNotNull();
         assertThat(query.get(job.id()).status()).isEqualTo("released");
         assertThat(inventory.getLot(lotId).qty()).isEqualByComparingTo("0");
-        materials.returnMaterial(job.id(), new ReturnMaterialRequest(issued.id(), new BigDecimal("4"), "unused"));
+        var returned = materials.returnMaterial(job.id(), new ReturnMaterialRequest(issued.id(), new BigDecimal("4"), "unused"));
         assertThat(inventory.getLot(lotId).qty()).isEqualByComparingTo("4");
+        assertThat(jdbc.queryForObject("""
+                SELECT COUNT(*) FROM stock_movements
+                WHERE tenant_id = ? AND reference_type = 'JOB' AND reference_id = ? AND movement_type = 'issue'
+                """, Integer.class, tenantId, job.id())).isEqualTo(1);
+        assertThat(jdbc.queryForObject("""
+                SELECT COUNT(*) FROM stock_movements
+                WHERE tenant_id = ? AND reference_type = 'production_job' AND reference_id = ? AND movement_type = 'return'
+                """, Integer.class, tenantId, returned.id())).isEqualTo(1);
+        assertThat(jdbc.queryForObject("""
+                SELECT COUNT(*) FROM job_material_issues
+                WHERE tenant_id = ? AND job_id = ? AND issue_type = 'issue'
+                """, Integer.class, tenantId, job.id())).isEqualTo(1);
+        assertThat(jdbc.queryForObject("""
+                SELECT COUNT(*) FROM job_material_issues
+                WHERE tenant_id = ? AND job_id = ? AND issue_type = 'return'
+                """, Integer.class, tenantId, job.id())).isEqualTo(1);
 
         var started = stages.start(job.id(), job.stages().get(0).id(), null);
         assertThat(started.status()).isEqualTo("in_progress");
