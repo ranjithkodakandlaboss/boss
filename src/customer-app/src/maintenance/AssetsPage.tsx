@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { Plus, Search } from "lucide-react";
+import { ChevronRight, Plus, Search } from "lucide-react";
 import { useCustomer } from "../auth/CustomerState";
 import { ApiError } from "../auth/api";
 import Modal from "../components/shared/Modal";
@@ -467,28 +467,33 @@ export default function AssetsPage() {
       )}
 
       {!loading && !error && tab === "events" && (
-        visibleEvents.length === 0 ? <p className="text-sm text-[var(--text-3)]">No maintenance events found.</p> : (
-          <div className="overflow-x-auto border border-[var(--border)] rounded-xl">
-            <table className="w-full text-xs">
-              <thead className="bg-[var(--surface-2)] text-left">
-                <tr><th className="p-2">Event #</th><th className="p-2">Asset</th><th className="p-2">Type</th><th className="p-2">Planned / Start</th><th className="p-2">Downtime</th><th className="p-2">Technician</th><th className="p-2">Status</th></tr>
-              </thead>
-              <tbody>
-                {visibleEvents.map((e) => (
-                  <tr key={e.id} className="border-t border-[var(--border)] hover:bg-[var(--surface-2)] cursor-pointer" onClick={() => navigate(`/assets/me/${e.id}`)}>
-                    <td className="p-2 font-semibold">{e.eventNumber}</td>
-                    <td className="p-2">{e.assetCode} — {e.assetName}</td>
-                    <td className="p-2">{e.eventType}</td>
-                    <td className="p-2">{displayDate(e.plannedDate ?? e.downtimeStart)}</td>
-                    <td className="p-2">{e.downtimeHours != null ? `${e.downtimeHours} h` : "—"}</td>
-                    <td className="p-2">{e.technicianName || "—"}</td>
-                    <td className="p-2"><StatusChip status={e.status} label={options.MAINTENANCE_EVENT_STATUS?.find((o) => o.code === e.status)?.label} /></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )
+        <div className="p-5 space-y-3 max-w-4xl">
+          {visibleEvents.length === 0 && <p className="text-center py-10 text-sm" style={{ color: "var(--text-3)" }}>No maintenance events found.</p>}
+          {visibleEvents.map((e) => (
+            <div key={e.id} className="rounded-xl border p-4 cursor-pointer hover:opacity-90 transition-opacity"
+              style={{ borderColor: (e.eventType === "Breakdown" && e.status !== "closed") ? "var(--error)" : "var(--border)", background: "var(--surface)" }}
+              onClick={() => navigate(`/assets/me/${e.id}`)}>
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex-1">
+                  <div className="flex items-center gap-2 flex-wrap mb-1">
+                    <span className="font-mono text-xs font-bold" style={{ color: "var(--brand)" }}>{e.eventNumber}</span>
+                    <StatusChip status={e.eventType?.toLowerCase() ?? ""} label={e.eventType} size="sm" />
+                    <StatusChip status={e.status} label={options.MAINTENANCE_EVENT_STATUS?.find((o) => o.code === e.status)?.label} size="sm" />
+                  </div>
+                  <div className="text-sm font-medium" style={{ color: "var(--text)" }}>{e.assetName} <span className="font-mono text-xs" style={{ color: "var(--text-3)" }}>({e.assetCode})</span></div>
+                  {e.symptom && <p className="text-xs mt-1 line-clamp-2" style={{ color: "var(--text-2)" }}>{e.symptom}</p>}
+                  <div className="flex items-center gap-3 mt-1 text-xs" style={{ color: "var(--text-3)" }}>
+                    {e.technicianName && <span>{e.technicianName}</span>}
+                    {e.technicianName && <span>·</span>}
+                    <span>{displayDate(e.plannedDate ?? e.downtimeStart)}</span>
+                    {e.downtimeHours != null && <><span>·</span><span>{e.downtimeHours} h downtime</span></>}
+                  </div>
+                </div>
+                <ChevronRight size={14} style={{ color: "var(--text-3)", flexShrink: 0 }} />
+              </div>
+            </div>
+          ))}
+        </div>
       )}
 
       <AssetFormModal open={assetModal.open} asset={assetModal.asset} options={options} lookup={lookup} ctl={ctl}

@@ -92,17 +92,18 @@ export default function ItemDetail() {
         <section className="overflow-hidden rounded-xl border" style={{ borderColor: "var(--border)" }}>
           <h2 className="border-b px-4 py-3 text-sm font-bold" style={{ borderColor: "var(--border)" }}>Lot and location</h2>
           <table className="w-full text-sm">
-            <thead><tr>{["Lot", "Heat / batch", "Quantity", "Reserved", "Location", "Status", ""].map((label) => <th key={label} className="px-3 py-2 text-left text-xs">{label}</th>)}</tr></thead>
+            <thead><tr>{["Lot", "Supplier Lot / Heat", "Grade", "Quantity", "Location", "Status", "Inspection", ""].map((label) => <th key={label} className="px-3 py-2 text-left text-xs">{label}</th>)}</tr></thead>
             <tbody>
-              {lots.length === 0 && <tr><td colSpan={7} className="px-3 py-6 text-center text-sm text-[var(--text-3)]">No lots recorded for this item.</td></tr>}
+              {lots.length === 0 && <tr><td colSpan={8} className="px-3 py-6 text-center text-sm text-[var(--text-3)]">No lots recorded for this item.</td></tr>}
               {lots.map((lot) => (
                 <tr key={lot.id}>
                   <td className="px-3 py-2 font-mono text-xs">{lot.lotNumber || lot.id.slice(0, 8)}</td>
                   <td className="px-3 py-2 text-xs">{lot.batchRef || "—"}</td>
+                  <td className="px-3 py-2 text-xs">{(lot as { grade?: string }).grade || "—"}</td>
                   <td className="px-3 py-2 font-mono text-xs">{quantity(lot.qty, lot.uomSymbol)}</td>
-                  <td className="px-3 py-2 font-mono text-xs">{quantity(lot.reservedQty, lot.uomSymbol)}</td>
                   <td className="px-3 py-2 text-xs">{lot.storeName}</td>
                   <td className="px-3 py-2 text-xs">{lot.status}</td>
+                  <td className="px-3 py-2 text-xs">{(lot as { inspectionResult?: string }).inspectionResult || "—"}</td>
                   <td className="px-3 py-2"><Link to={`/inventory/lot/${lot.id}`} className="text-xs font-semibold text-[var(--brand)]">Open lot</Link></td>
                 </tr>
               ))}
@@ -112,7 +113,7 @@ export default function ItemDetail() {
         <section className="overflow-hidden rounded-xl border" style={{ borderColor: "var(--border)" }}>
           <h2 className="border-b px-4 py-3 text-sm font-bold" style={{ borderColor: "var(--border)" }}>Used by jobs</h2>
           <table className="w-full text-sm">
-            <thead><tr>{["Job", "Site", "Required", "Reserved", "Issued", "Returned"].map((label) => <th key={label} className="px-3 py-2 text-left text-xs">{label}</th>)}</tr></thead>
+            <thead><tr>{["Job", "Site", "Required", "Reserved", "Issued", "Issue reference"].map((label) => <th key={label} className="px-3 py-2 text-left text-xs">{label}</th>)}</tr></thead>
             <tbody>
               {usage.length === 0 && <tr><td colSpan={6} className="px-3 py-6 text-center text-sm text-[var(--text-3)]">No job allocation or consumption is recorded.</td></tr>}
               {usage.map(({ job, row }) => {
@@ -124,7 +125,7 @@ export default function ItemDetail() {
                     <td className="px-3 py-2 font-mono text-xs">{quantity(row.requiredQty, row.uomSymbol)}</td>
                     <td className="px-3 py-2 font-mono text-xs">{quantity(reservedQty, row.uomSymbol)}</td>
                     <td className="px-3 py-2 font-mono text-xs">{quantity(row.issuedQty, row.uomSymbol)}</td>
-                    <td className="px-3 py-2 font-mono text-xs">{quantity(row.returnedQty, row.uomSymbol)}</td>
+                    <td className="px-3 py-2 text-xs">{(row as { issueReference?: string }).issueReference || "—"}</td>
                   </tr>
                 );
               })}
