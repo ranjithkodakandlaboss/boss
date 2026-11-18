@@ -3,6 +3,7 @@ package in.boss.inventory.api;
 import in.boss.inventory.domain.InvalidLotTransitionException;
 import in.boss.inventory.domain.InventoryValidationException;
 import in.boss.inventory.domain.LotNotFoundException;
+import in.boss.inventory.domain.ReservationConflictException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -26,6 +27,14 @@ public class InventoryExceptionHandler {
         ProblemDetail pd = ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, ex.getMessage());
         pd.setType(URI.create("urn:boss:error:invalid-lot-transition"));
         pd.setTitle("Invalid Lot Status Transition");
+        return pd;
+    }
+
+    @ExceptionHandler(ReservationConflictException.class)
+    public ProblemDetail handleReservationConflict(ReservationConflictException ex) {
+        ProblemDetail pd = ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, ex.getMessage());
+        pd.setType(URI.create("urn:boss:error:reservation-conflict"));
+        pd.setTitle("Inventory Reservation Conflict");
         return pd;
     }
 

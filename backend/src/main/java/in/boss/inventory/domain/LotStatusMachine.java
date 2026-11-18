@@ -57,7 +57,7 @@ public final class LotStatusMachine {
 
     private static boolean fromAvailable(String to, BigDecimal quantity, BigDecimal reservedQty) {
         return switch (to) {
-            case LotStatus.QUARANTINE -> quantity.signum() > 0;
+            case LotStatus.QUARANTINE -> quantity.signum() > 0 && reservedQty.signum() == 0;
             case LotStatus.RESERVED -> quantity.signum() > 0 && reservedQty.compareTo(quantity) == 0;
             case LotStatus.CONSUMED, LotStatus.DISPOSED -> quantity.signum() == 0;
             default -> false;

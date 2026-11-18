@@ -5,6 +5,7 @@ import in.boss.sales.api.SalesApiDtos.CpoResponse;
 import in.boss.sales.api.SalesApiDtos.PageResponse;
 import in.boss.sales.api.SalesApiDtos.RecordMaterialAvailabilityRequest;
 import in.boss.sales.api.SalesApiDtos.UpdateCpoRequest;
+import in.boss.inventory.domain.InventoryService;
 import in.boss.shared.audit.AuditService;
 import in.boss.shared.context.BossContext;
 import in.boss.shared.context.BossContextHolder;
@@ -40,15 +41,18 @@ public class CustomerPoService {
     private final CpoLookup cpoLookup;
     private final AuditService auditService;
     private final ObjectMapper objectMapper;
+    private final InventoryService inventoryService;
 
     public CustomerPoService(JdbcTemplate jdbc,
                              CpoLookup cpoLookup,
                              AuditService auditService,
-                             ObjectMapper objectMapper) {
+                             ObjectMapper objectMapper,
+                             InventoryService inventoryService) {
         this.jdbc = jdbc;
         this.cpoLookup = cpoLookup;
         this.auditService = auditService;
         this.objectMapper = objectMapper;
+        this.inventoryService = inventoryService;
     }
 
     public record AcceptResult(CpoResponse cpo, boolean created) {}
@@ -152,6 +156,9 @@ public class CustomerPoService {
         CpoResponse before = cpoLookup.read(tenantId, cpoId);
         jdbc.update("UPDATE cpos SET status = ?, updated_at = NOW() WHERE tenant_id = ? AND id = ?",
                 nextStatus, tenantId, cpoId);
+        if ("cancelled".equals(nextStatus)) {
+            inventoryService.releaseCustomerPoReservations(cpoId);
+        }
         CpoResponse result = cpoLookup.read(tenantId, cpoId);
         auditService.record("CPO", cpoId, "STATUS_" + nextStatus.toUpperCase(), toJson(before), toJson(result));
         return result;

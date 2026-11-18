@@ -17,6 +17,7 @@ public class BOMExplosionMaterialDto {
     private String itemCode;
     private String itemName;
     private BigDecimal qty;
+    private UUID uomId;
     private String uomSymbol;
     private Integer level;
 }
