@@ -321,7 +321,37 @@ public class MaintenanceService {
             closeInternal(ctx, id, new CloseEventRequest(r.completionDate(), r.rootCause(), r.workDone(),
                     r.resolutionNotes(), r.correctiveAction(), r.partsUsed()));
         }
-        return loadEvent(id);
+        EventResponse event = loadEvent(id);
+        if ("Breakdown".equals(type) && !"closed".equals(event.status())) {
+            notifyResponsibleOwner(ctx, asset, event);
+        }
+        return event;
+    }
+
+    private void notifyResponsibleOwner(BossContext ctx, AssetResponse asset, EventResponse event) {
+        if (asset.responsibleUserId() == null) return;
+        String title = "Asset " + asset.assetCode() + " unavailable";
+        String body = "Breakdown " + event.eventNumber() + " may affect "
+                + event.affectedStages().size() + " production stage(s) across "
+                + event.affectedJobs().size() + " job(s). Open the maintenance event to review impact and alternatives.";
+        jdbc.update("""
+                INSERT INTO notifications (tenant_id, user_id, notification_type, entity_type, entity_id, title, body)
+                SELECT ?, recipient.id, 'maintenance_asset_impact', 'maintenance_event', ?, ?, ?
+                FROM app_users recipient
+                WHERE recipient.tenant_id = ? AND recipient.id = ? AND recipient.status = 'active'
+                  AND COALESCE((
+                      SELECT preference.enabled FROM notification_preferences preference
+                      WHERE preference.tenant_id = recipient.tenant_id
+                        AND preference.user_id = recipient.id
+                        AND preference.notification_type = 'maintenance_asset_impact'
+                        AND preference.channel = 'in_app'
+                  ), TRUE)
+                ON CONFLICT (tenant_id, user_id, notification_type, entity_type, entity_id)
+                WHERE notification_type = 'maintenance_asset_impact'
+                  AND entity_type = 'maintenance_event'
+                  AND entity_id IS NOT NULL
+                DO NOTHING
+                """, ctx.tenantId(), event.id(), title, body, ctx.tenantId(), asset.responsibleUserId());
     }
 
     @PreAuthorize(MAINTENANCE_WRITE)

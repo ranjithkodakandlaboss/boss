@@ -124,11 +124,24 @@ class AssetStageDependencyIntegrationTest extends BaseMasterDataIntegrationTest 
 
         EventResponse event = maintenance.createEvent(new EventRequest(lathe.id(), "Breakdown", "High", "Spindle",
                 userId, null, null, null, Instant.now().minus(2, ChronoUnit.HOURS), null, null, List.of(), null));
+        assertThat(jdbc.queryForObject("""
+                SELECT COUNT(*) FROM notifications
+                WHERE tenant_id = ? AND user_id = ? AND notification_type = 'maintenance_asset_impact'
+                  AND entity_type = 'maintenance_event' AND entity_id = ?
+                """, Integer.class, tenantId, userId, event.id())).isEqualTo(1);
+        assertThat(jdbc.queryForObject("""
+                SELECT body FROM notifications WHERE tenant_id = ? AND user_id = ? AND entity_id = ?
+                """, String.class, tenantId, userId, event.id())).contains("production stage(s)");
         assertThat(maintenance.machineBlocker(tenantId, jobA, stageA, "CNC Bay")).contains(lathe.assetCode());
         assertThat(maintenance.machineBlocker(tenantId, jobB, stageB, "CNC Bay")).contains(event.eventNumber());
         assertThat(maintenance.machineBlocker(tenantId, otherAssetJob, stage(otherAssetJob), "CNC Bay")).isNull();
         assertThat(maintenance.machineBlocker(tenantId, unrelated, stage(unrelated), "CNC Bay")).isNull();
         EventResponse impacted = maintenance.getEvent(event.id());
+        assertThat(jdbc.queryForObject("""
+                SELECT COUNT(*) FROM notifications
+                WHERE tenant_id = ? AND user_id = ? AND notification_type = 'maintenance_asset_impact'
+                  AND entity_type = 'maintenance_event' AND entity_id = ?
+                """, Integer.class, tenantId, userId, event.id())).isEqualTo(1);
         assertThat(impacted.affectedJobs()).extracting(j -> j.id()).contains(jobA, jobB);
         AffectedStage impactedStage = impacted.affectedStages().stream()
                 .filter(s -> s.jobId().equals(jobA)).findFirst().orElseThrow();

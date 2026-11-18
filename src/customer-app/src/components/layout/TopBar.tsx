@@ -3,12 +3,24 @@ import { useNavigate } from "react-router-dom";
 import { Bell, Check, ChevronDown, HelpCircle, Menu, Search, Settings } from "lucide-react";
 import clsx from "clsx";
 import { useCustomer } from "../../auth/CustomerState";
+import { api, safeRandomUUID } from "../../auth/api";
 import { signOut } from "../../auth/session";
 import { useShell } from "../../shell/ShellContext";
 import { PALETTES } from "../../shell/theme";
 import QuickNewMenu from "./QuickNewMenu";
 import GlobalSearchModal from "../search/GlobalSearchModal";
 import Modal from "../shared/Modal";
+
+type AppNotification = {
+  id: string;
+  notificationType: string;
+  entityType: string | null;
+  entityId: string | null;
+  title: string;
+  body: string | null;
+  isRead: boolean;
+  createdAt: string;
+};
 
 export default function TopBar({ onOpenMenu }: { onOpenMenu?: () => void }) {
   const { collapsed, palette, mode, setPalette, setMode } = useShell();
@@ -19,6 +31,47 @@ export default function TopBar({ onOpenMenu }: { onOpenMenu?: () => void }) {
   const [helpOpen, setHelpOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [notesOpen, setNotesOpen] = useState(false);
+  const [notifications, setNotifications] = useState<AppNotification[]>([]);
+  const [notificationsLoading, setNotificationsLoading] = useState(false);
+  const [notificationsError, setNotificationsError] = useState("");
+
+  useEffect(() => {
+    if (!notesOpen) return;
+    let active = true;
+    setNotificationsLoading(true);
+    setNotificationsError("");
+    api<AppNotification[]>("/api/v1/notifications")
+      .then((items) => {
+        if (!Array.isArray(items)) throw new Error("The notification response was invalid.");
+        if (active) setNotifications(items);
+      })
+      .catch((error: unknown) => {
+        if (active) setNotificationsError(error instanceof Error ? error.message : "Could not load notifications.");
+      })
+      .finally(() => {
+        if (active) setNotificationsLoading(false);
+      });
+    return () => { active = false; };
+  }, [notesOpen]);
+
+  const openNotification = async (notification: AppNotification) => {
+    if (!notification.isRead) {
+      try {
+        const updated = await api<AppNotification>(`/api/v1/notifications/${notification.id}/read`, {
+          method: "POST",
+          headers: { "Idempotency-Key": safeRandomUUID() },
+        });
+        setNotifications((current) => current.map((item) => item.id === updated.id ? updated : item));
+      } catch (error) {
+        setNotificationsError(error instanceof Error ? error.message : "Could not mark notification as read.");
+        return;
+      }
+    }
+    if (notification.entityType === "maintenance_event" && notification.entityId) {
+      setNotesOpen(false);
+      navigate(`/assets/me/${notification.entityId}`);
+    }
+  };
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -89,8 +142,9 @@ export default function TopBar({ onOpenMenu }: { onOpenMenu?: () => void }) {
               </>
             )}
           </div>
-          <button type="button" className="p-1.5 rounded-full text-[var(--text-2)]" aria-label="Notifications" onClick={() => setNotesOpen(true)}>
+          <button type="button" className="relative p-1.5 rounded-full text-[var(--text-2)]" aria-label="Notifications" onClick={() => setNotesOpen(true)}>
             <Bell size={18} />
+            {notifications.some((item) => !item.isRead) && <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-[var(--danger,#dc2626)]" aria-label="Unread notifications" />}
           </button>
           <div className="relative hidden sm:block">
             <button type="button" onClick={() => setHelpOpen((open) => !open)} className="p-1.5 rounded-full text-[var(--text-2)]" title="System Documentation & Help" aria-label="Help">
@@ -114,7 +168,28 @@ export default function TopBar({ onOpenMenu }: { onOpenMenu?: () => void }) {
       </header>
       <GlobalSearchModal open={searchOpen} onClose={() => setSearchOpen(false)} />
       <Modal open={notesOpen} title="Notifications" onClose={() => setNotesOpen(false)}>
-        <p className="text-sm text-[var(--text-2)]">No notifications. The customer notification feed is not connected.</p>
+        {notificationsLoading && <p className="text-sm text-[var(--text-2)]">Loading notifications...</p>}
+        {notificationsError && <p role="alert" className="text-sm text-red-700">{notificationsError}</p>}
+        {!notificationsLoading && !notificationsError && notifications.length === 0 && (
+          <p className="text-sm text-[var(--text-2)]">No notifications.</p>
+        )}
+        {notifications.length > 0 && (
+          <ul className="divide-y divide-[var(--border)]">
+            {notifications.map((notification) => (
+              <li key={notification.id}>
+                <button
+                  type="button"
+                  onClick={() => void openNotification(notification)}
+                  className={clsx("w-full text-left py-3 rounded-lg px-2 hover:bg-[var(--surface-2)]", !notification.isRead && "bg-[var(--surface-2)]")}
+                >
+                  <span className="block text-sm font-semibold text-[var(--text)]">{notification.title}</span>
+                  {notification.body && <span className="block mt-1 text-xs text-[var(--text-2)]">{notification.body}</span>}
+                  <span className="block mt-1 text-[10px] text-[var(--text-3)]">{new Date(notification.createdAt).toLocaleString()}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
       </Modal>
       <Modal open={profileOpen} title="My Profile" onClose={() => setProfileOpen(false)}>
         <p className="text-sm font-semibold text-[var(--text)]">{customer.user?.displayName || customer.user?.email || "Not signed in"}</p>

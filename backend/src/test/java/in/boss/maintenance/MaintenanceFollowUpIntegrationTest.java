@@ -1,5 +1,6 @@
 package in.boss.maintenance;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import in.boss.maintenance.api.MaintenanceDtos.*;
 import in.boss.maintenance.domain.MaintenanceService;
 import in.boss.masterdata.BaseMasterDataIntegrationTest;
@@ -37,6 +38,7 @@ class MaintenanceFollowUpIntegrationTest extends BaseMasterDataIntegrationTest {
     @Autowired private MaintenanceService maintenance;
     @Autowired private ConfigService config;
     @Autowired private MockMvc mockMvc;
+    @Autowired private ObjectMapper objectMapper;
 
     private UUID tenantId;
     private UUID userId;
@@ -170,6 +172,33 @@ class MaintenanceFollowUpIntegrationTest extends BaseMasterDataIntegrationTest {
         startStage(jobA).andExpect(status().isOk());
         assertThat(jdbc.queryForObject("SELECT status FROM job_stages WHERE job_id = ?", String.class, jobA))
                 .isEqualTo("in_progress");
+    }
+
+    @Test
+    void repeatedBreakdownCreateRequestCreatesOnlyOneOwnerNotification() throws Exception {
+        AssetResponse asset = maintenance.createAsset(asset("LTH-NOTIFY", siteA, "CNC Bay"));
+        String key = UUID.randomUUID().toString();
+        String request = objectMapper.writeValueAsString(breakdown(asset.id(), List.of()));
+
+        for (int attempt = 0; attempt < 2; attempt++) {
+            as(siteA);
+            mockMvc.perform(post("/api/v1/maintenance/events")
+                            .with(user("owner").roles("OWNER"))
+                            .header("Idempotency-Key", key)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(request))
+                    .andExpect(status().isCreated());
+        }
+
+        assertThat(jdbc.queryForObject("""
+                SELECT COUNT(*) FROM maintenance_events
+                WHERE tenant_id = ? AND asset_id = ?
+                """, Integer.class, tenantId, asset.id())).isEqualTo(1);
+        assertThat(jdbc.queryForObject("""
+                SELECT COUNT(*) FROM notifications
+                WHERE tenant_id = ? AND user_id = ? AND notification_type = 'maintenance_asset_impact'
+                  AND entity_type = 'maintenance_event'
+                """, Integer.class, tenantId, userId)).isEqualTo(1);
     }
 
     private org.springframework.test.web.servlet.ResultActions startStage(UUID job) throws Exception {
