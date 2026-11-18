@@ -38,6 +38,10 @@ import GrnRecordPage from "./procurement/proto/GRNDetail";
 import IncomingInspectionPage from "./procurement/proto/IncomingInspection";
 import SupplierReturnPage from "./procurement/proto/SupplierReturn";
 import JobsPage from "./production/JobsPage";
+import QualityPage from "./quality/QualityPage";
+import InspectionDetailPage from "./quality/InspectionDetailPage";
+import NcrDetailPage from "./quality/NcrDetailPage";
+import ChecklistTemplatesPage from "./quality/ChecklistTemplatesPage";
 import AssetsPage from "./maintenance/AssetsPage";
 import { AssetDetailPage, MaintenanceEventDetailPage } from "./maintenance/AssetDetailPage";
 import JobWorkspacePage from "./production/JobWorkspacePage";
@@ -192,6 +196,10 @@ function Guard() {
           <Route path="quality/inspection/:id" element={<IncomingInspectionPage />} />
           <Route path="procurement/supplier-return" element={<SupplierReturnPage />} />
         </Route>
+        <Route path="quality" element={<QualityPage />} />
+        <Route path="quality/inspection/:id" element={<InspectionDetailPage />} />
+        <Route path="quality/ncr/:id" element={<NcrDetailPage />} />
+        <Route path="quality/checklist-templates" element={<ChecklistTemplatesPage />} />
         <Route path="assets" element={<AssetsPage />} />
         <Route path="assets/me/:id" element={<MaintenanceEventDetailPage />} />
         <Route path="assets/:id" element={<AssetDetailPage />} />
