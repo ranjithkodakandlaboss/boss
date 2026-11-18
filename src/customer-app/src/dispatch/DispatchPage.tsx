@@ -69,6 +69,7 @@ export default function DispatchPage() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [carriers, setCarriers] = useState<ConfigOption[]>([]);
   const [vehicles, setVehicles] = useState<ConfigOption[]>([]);
+  const [dispatchMethods, setDispatchMethods] = useState<ConfigOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState<{ type: "success" | "error"; title: string; body?: string } | null>(null);
 
@@ -91,6 +92,7 @@ export default function DispatchPage() {
     customerId: "",
     customerName: "",
     carrier: "",
+    dispatchMethodOptionId: "",
     vehicleNumber: "",
     lrNumber: "",
     dispatchDate: new Date().toISOString().split("T")[0],
@@ -108,13 +110,14 @@ export default function DispatchPage() {
   const loadData = async () => {
     try {
       setLoading(true);
-      const [dispList, comp, custList, jobList, carrierOpts, vehicleOpts] = await Promise.all([
+      const [dispList, comp, custList, jobList, carrierOpts, vehicleOpts, dispatchMethodOpts] = await Promise.all([
         listDispatches(),
         loadCompanySitesAndStores(),
         loadCustomersList(),
         loadJobsList(),
         listConfigOptions("CARRIER"),
         listConfigOptions("VEHICLE"),
+        listConfigOptions("DISPATCH_METHOD"),
       ]);
       setDispatches(dispList);
       setSites(comp.sites);
@@ -123,6 +126,7 @@ export default function DispatchPage() {
       setJobs(jobList);
       setCarriers(carrierOpts);
       setVehicles(vehicleOpts);
+      setDispatchMethods(dispatchMethodOpts);
 
       if (comp.sites.length > 0 && !form.sourceSiteId) {
         setForm((f) => ({
@@ -208,6 +212,7 @@ export default function DispatchPage() {
         sourceStoreId: form.sourceStoreId || undefined,
         sourceStoreName: form.sourceStoreName || undefined,
         carrier: form.carrier || undefined,
+        dispatchMethodOptionId: form.dispatchMethodOptionId || undefined,
         vehicleNumber: form.vehicleNumber || undefined,
         lrNumber: form.lrNumber || undefined,
         dispatchDate: form.dispatchDate,
@@ -482,6 +487,7 @@ export default function DispatchPage() {
                       {(d.jobs ?? []).join(", ") || "—"}
                     </td>
                     <td className="px-4 py-3 text-xs" style={{ color: "var(--text-2)" }}>
+                      {d.dispatchMethodLabel && <div>{d.dispatchMethodLabel}</div>}
                       {d.carrier ?? d.vehicleNumber ?? "—"}
                     </td>
                     <td className="px-4 py-3 text-xs" style={{ color: "var(--text-2)" }}>
@@ -666,6 +672,23 @@ export default function DispatchPage() {
                       : `✗ Not eligible — ${eligibility.reason}`}
                   </p>
                 )}
+              </div>
+
+              <div>
+                <label htmlFor="dispatch-method" className="text-xs text-[var(--text-3)] block mb-1">
+                  Dispatch Method (optional)
+                </label>
+                <select
+                  id="dispatch-method"
+                  value={form.dispatchMethodOptionId}
+                  onChange={(e) => setForm((f) => ({ ...f, dispatchMethodOptionId: e.target.value }))}
+                  className="w-full px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm text-[var(--text)] focus:outline-none focus:border-[var(--brand)]"
+                >
+                  <option value="">Select dispatch method</option>
+                  {dispatchMethods.map((method) => (
+                    <option key={method.id} value={method.id}>{method.label}</option>
+                  ))}
+                </select>
               </div>
 
               {/* Carrier with CreatableSelect inline Add New */}

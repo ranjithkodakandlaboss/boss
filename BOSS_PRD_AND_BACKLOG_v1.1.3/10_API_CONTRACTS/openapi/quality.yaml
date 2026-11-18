@@ -134,8 +134,12 @@ components:
         customerId: { type: string, format: uuid }
         customerName: { type: string }
         status: { type: string, enum: [draft, challan_generated, dispatched, delivered] }
-        dispatchMethodId: { type: string, format: uuid, nullable: true }
-        dispatchMethodLabel: { type: string, nullable: true }
+        dispatchMethodOptionId: { type: string, format: uuid, nullable: true }
+        dispatchMethodLabel:
+          type: string
+          nullable: true
+          readOnly: true
+          description: Server-derived label snapshot for the selected dispatch method.
         lines:
           type: array
           items: { $ref: '#/components/schemas/DispatchLine' }
@@ -419,8 +423,7 @@ paths:
               required: [cpoId, lines]
               properties:
                 cpoId: { type: string, format: uuid }
-                dispatchMethodId: { type: string, format: uuid, nullable: true }
-                dispatchMethodLabel: { type: string, nullable: true }
+                dispatchMethodOptionId: { type: string, format: uuid, nullable: true }
                 lines:
                   type: array
                   items:

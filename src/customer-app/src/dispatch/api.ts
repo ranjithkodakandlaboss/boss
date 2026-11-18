@@ -112,6 +112,8 @@ export type DispatchSummary = {
   sourceStoreId?: string;
   sourceStoreName?: string;
   carrier?: string;
+  dispatchMethodOptionId?: string;
+  dispatchMethodLabel?: string;
   vehicleNumber?: string;
   driverName?: string;
   lrNumber?: string;
@@ -161,6 +163,7 @@ export type CreateDispatchRequest = {
   sourceStoreId?: string;
   sourceStoreName?: string;
   carrier?: string;
+  dispatchMethodOptionId?: string;
   vehicleNumber?: string;
   driverName?: string;
   lrNumber?: string;
