@@ -48,6 +48,7 @@ export default function ConfigOptionsAdmin() {
       setOptions([]);
       return;
     }
+    setOptions([]);
     setLoadingOptions(true);
     try {
       const loaded = await listConfigOptions(codeToLoad);
@@ -120,17 +121,21 @@ export default function ConfigOptionsAdmin() {
       return;
     }
     setError("");
+    setSaving(true);
     try {
       await setConfigOptionActive(category.code, option.id, !option.isActive);
       await loadOptions(category.code);
     } catch (reason) {
       setError(messageFor(reason, `The value could not be ${action}d.`));
+    } finally {
+      setSaving(false);
     }
   }
 
   async function confirmDeactivate() {
     if (!category || !confirmOption) return;
     setError("");
+    setSaving(true);
     try {
       await setConfigOptionActive(category.code, confirmOption.id, false);
       setConfirmOption(null);
@@ -138,6 +143,8 @@ export default function ConfigOptionsAdmin() {
     } catch (reason) {
       setError(messageFor(reason, "The value could not be deactivated."));
       setConfirmOption(null);
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -148,11 +155,14 @@ export default function ConfigOptionsAdmin() {
     const nextIndex = index + direction;
     if (index < 0 || nextIndex < 0 || nextIndex >= movable.length) return;
     [movable[index], movable[nextIndex]] = [movable[nextIndex], movable[index]];
+    setSaving(true);
     try {
       await reorderConfigOptions(category.code, movable.map((item) => item.id));
       await loadOptions(category.code);
     } catch (reason) {
       setError(messageFor(reason, "The configuration order could not be saved."));
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -180,6 +190,7 @@ export default function ConfigOptionsAdmin() {
             aria-label="Reference data category"
             className="eoss-input mt-1 min-h-[40px] w-full"
             value={categoryCode}
+            disabled={saving || confirmOption !== null}
             onChange={(event) => { setCategoryCode(event.target.value); resetForm(); }}
           >
             {categories.map((item) => <option key={item.code} value={item.code}>{item.name}</option>)}
@@ -218,12 +229,12 @@ export default function ConfigOptionsAdmin() {
                         <div className="flex items-center gap-1">
                           {category.supportsOrdering && option.isActive && (
                             <>
-                              <button type="button" className="btn-ghost rounded p-2" aria-label={`Move ${option.label} up`} onClick={() => void move(option, -1)}><ArrowUp size={14} /></button>
-                              <button type="button" className="btn-ghost rounded p-2" aria-label={`Move ${option.label} down`} onClick={() => void move(option, 1)}><ArrowDown size={14} /></button>
+                              <button type="button" disabled={saving} className="btn-ghost rounded p-2" aria-label={`Move ${option.label} up`} onClick={() => void move(option, -1)}><ArrowUp size={14} /></button>
+                              <button type="button" disabled={saving} className="btn-ghost rounded p-2" aria-label={`Move ${option.label} down`} onClick={() => void move(option, 1)}><ArrowDown size={14} /></button>
                             </>
                           )}
-                          {option.isActive && <button type="button" className="btn-ghost rounded p-2" aria-label={`Edit ${option.label}`} onClick={() => beginEdit(option)}><Pencil size={14} /></button>}
-                          <button type="button" className="btn-ghost rounded p-2" aria-label={`${option.isActive ? "Deactivate" : "Reactivate"} ${option.label}`} onClick={() => void changeActive(option)}>
+                          {option.isActive && <button type="button" disabled={saving} className="btn-ghost rounded p-2" aria-label={`Edit ${option.label}`} onClick={() => beginEdit(option)}><Pencil size={14} /></button>}
+                          <button type="button" disabled={saving} className="btn-ghost rounded p-2" aria-label={`${option.isActive ? "Deactivate" : "Reactivate"} ${option.label}`} onClick={() => void changeActive(option)}>
                             {option.isActive ? <LockKeyhole size={14} /> : <RotateCcw size={14} />}
                           </button>
                         </div>
