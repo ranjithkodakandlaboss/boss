@@ -34,6 +34,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
+import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 
@@ -198,11 +199,10 @@ public class SpoService {
                 """, (rs, rowNum) -> mapLine(rs), tenantId, spoId);
         BigDecimal goods = lines.stream().map(SpoLineResponse::lineTotal).reduce(BigDecimal.ZERO, BigDecimal::add);
         BigDecimal lineTax = lines.stream()
-                .map(line -> line.gstRate() == null ? BigDecimal.ZERO
-                        : line.lineTotal().multiply(line.gstRate()).movePointLeft(2))
+                .map(line -> line.lineTotal().multiply(Objects.requireNonNullElse(line.gstRate(), BigDecimal.ZERO)).movePointLeft(2))
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
-        BigDecimal tax = lineTax.signum() > 0 ? lineTax : (header.taxAmount() == null ? BigDecimal.ZERO : header.taxAmount());
-        BigDecimal freight = header.freightAmount() == null ? BigDecimal.ZERO : header.freightAmount();
+        BigDecimal tax = lineTax.signum() > 0 ? lineTax : Objects.requireNonNullElse(header.taxAmount(), BigDecimal.ZERO);
+        BigDecimal freight = Objects.requireNonNullElse(header.freightAmount(), BigDecimal.ZERO);
         BigDecimal total = goods.add(tax).add(freight).setScale(2, RoundingMode.HALF_UP);
         return new SpoResponse(
                 header.id(), header.spoNumber(), header.prId(), header.quotationId(),

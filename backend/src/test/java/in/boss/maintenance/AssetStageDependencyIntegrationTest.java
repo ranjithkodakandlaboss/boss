@@ -98,7 +98,7 @@ class AssetStageDependencyIntegrationTest extends BaseMasterDataIntegrationTest 
                 .isInstanceOf(ResponseStatusException.class)
                 .hasMessageContaining("does not support");
         jobs.createRoutingTemplate(new CreateRoutingTemplateRequest(
-                "Compatible", null, List.of(new RoutingStageRequest("Cutting", "Bay", lathe.id(), cuttingId))));
+                "Compatible", null, List.of(new RoutingStageRequest("Cutting", "CNC Bay", lathe.id(), cuttingId))));
 
         UUID jobA = job("JOB-A", lathe.id());
         UUID jobB = job("JOB-B", lathe.id());
@@ -107,21 +107,21 @@ class AssetStageDependencyIntegrationTest extends BaseMasterDataIntegrationTest 
         UUID stageA = stage(jobA);
         UUID stageB = stage(jobB);
 
-        assertThat(maintenance.machineBlocker(tenantId, jobA, stageA, "Bay")).isNull();
+        assertThat(maintenance.machineBlocker(tenantId, jobA, stageA, "CNC Bay")).isNull();
 
         EventResponse event = maintenance.createEvent(new EventRequest(lathe.id(), "Breakdown", "High", "Spindle",
                 userId, null, null, null, Instant.now().minus(2, ChronoUnit.HOURS), null, null, List.of(), null));
-        assertThat(maintenance.machineBlocker(tenantId, jobA, stageA, "Bay")).contains(lathe.assetCode());
-        assertThat(maintenance.machineBlocker(tenantId, jobB, stageB, "Bay")).contains(event.eventNumber());
-        assertThat(maintenance.machineBlocker(tenantId, otherAssetJob, stage(otherAssetJob), "Bay")).isNull();
-        assertThat(maintenance.machineBlocker(tenantId, unrelated, stage(unrelated), "Bay")).isNull();
+        assertThat(maintenance.machineBlocker(tenantId, jobA, stageA, "CNC Bay")).contains(lathe.assetCode());
+        assertThat(maintenance.machineBlocker(tenantId, jobB, stageB, "CNC Bay")).contains(event.eventNumber());
+        assertThat(maintenance.machineBlocker(tenantId, otherAssetJob, stage(otherAssetJob), "CNC Bay")).isNull();
+        assertThat(maintenance.machineBlocker(tenantId, unrelated, stage(unrelated), "CNC Bay")).isNull();
         assertThat(maintenance.getEvent(event.id()).affectedJobs()).extracting(j -> j.id()).contains(jobA, jobB);
 
         EventResponse closed = maintenance.closeEvent(event.id(),
                 new CloseEventRequest(null, "Belt", "Replaced belt", null, null, "Belt"));
         assertThat(closed.downtimeHours()).isNotNull();
         assertThat(maintenance.getAsset(lathe.id()).status()).isEqualTo("operational");
-        assertThat(maintenance.machineBlocker(tenantId, jobA, stageA, "Bay")).isNull();
+        assertThat(maintenance.machineBlocker(tenantId, jobA, stageA, "CNC Bay")).isNull();
         assertThat(jdbc.queryForObject("SELECT status FROM job_stages WHERE id = ?", String.class, stageA)).isEqualTo("pending");
 
         BossContextHolder.set(new BossContext(otherTenant, userId, Set.of("OWNER"), null, null));
@@ -135,7 +135,7 @@ class AssetStageDependencyIntegrationTest extends BaseMasterDataIntegrationTest 
                 """, tenantId, number, itemId, siteId, uomId, userId);
         jdbc.update("""
                 INSERT INTO job_stages (tenant_id, job_id, seq_no, name, work_centre, asset_id, status)
-                VALUES (?, ?, 1, 'Cutting', 'Bay', ?, 'pending')
+                VALUES (?, ?, 1, 'Cutting', 'CNC Bay', ?, 'pending')
                 """, tenantId, job, assetId);
         return job;
     }
@@ -149,7 +149,7 @@ class AssetStageDependencyIntegrationTest extends BaseMasterDataIntegrationTest 
     }
 
     private AssetRequest asset(String code) {
-        return new AssetRequest(code, "Lathe " + code, "Machining Equipment", siteId, "Bay", "Haas", "ST-20",
+        return new AssetRequest(code, "Lathe " + code, "Machining Equipment", siteId, "CNC Bay", "Haas", "ST-20",
                 "SN1", "High", "hours", new BigDecimal("100"), null, LocalDate.now().minusDays(30), null, "hours",
                 new BigDecimal("500"), 90, userId, null, null, null, null);
     }

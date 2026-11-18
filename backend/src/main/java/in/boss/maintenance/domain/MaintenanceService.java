@@ -369,15 +369,7 @@ public class MaintenanceService {
         if (e.downtimeStart() != null && completion.isBefore(e.downtimeStart())) {
             throw bad("Completion cannot be earlier than downtime start");
         }
-        BigDecimal downtime = null;
-        Instant downtimeFrom = e.downtimeStart();
-        if (downtimeFrom == null && e.plannedDate() != null) {
-            downtimeFrom = e.plannedDate().atStartOfDay(ZoneOffset.UTC).toInstant();
-        }
-        if (downtimeFrom != null && !completion.isBefore(downtimeFrom)) {
-            downtime = BigDecimal.valueOf(Duration.between(downtimeFrom, completion).toMinutes())
-                    .divide(BigDecimal.valueOf(60), 2, RoundingMode.HALF_UP);
-        }
+        BigDecimal downtime = downtimeHours(e, completion);
         jdbc.update("""
                 UPDATE maintenance_events SET status = 'closed', completion_date = ?, downtime_end = COALESCE(downtime_end, ?),
                   downtime_hours = ?, root_cause = ?, work_done = ?, resolution_notes = ?,
@@ -388,10 +380,7 @@ public class MaintenanceService {
                 ctx.userId(), ctx.tenantId(), id);
         AssetResponse asset = loadAsset(e.assetId());
         LocalDate completed = completion.atZone(ZoneOffset.UTC).toLocalDate();
-        LocalDate next = asset.nextServiceDate();
-        if (next == null && asset.pmFrequencyDays() != null && asset.pmFrequencyDays() > 0) {
-            next = completed.plusDays(asset.pmFrequencyDays());
-        }
+        LocalDate next = nextServiceDate(asset, completed);
         jdbc.update("""
                 UPDATE assets SET last_service_date = ?, last_service_reading = COALESCE(current_reading, last_service_reading),
                   next_service_date = ?, status = ?, updated_at = NOW() WHERE tenant_id = ? AND id = ?
@@ -399,6 +388,23 @@ public class MaintenanceService {
                 ctx.tenantId(), e.assetId());
         audit.record("maintenance_event", id, "CLOSE", "{\"status\":\"" + e.status() + "\"}", "{\"status\":\"closed\"}");
         return loadEvent(id);
+    }
+
+    private static BigDecimal downtimeHours(EventResponse event, Instant completion) {
+        Instant from = event.downtimeStart();
+        if (from == null && event.plannedDate() != null) {
+            from = event.plannedDate().atStartOfDay(ZoneOffset.UTC).toInstant();
+        }
+        if (from == null || completion.isBefore(from)) return null;
+        return BigDecimal.valueOf(Duration.between(from, completion).toMinutes())
+                .divide(BigDecimal.valueOf(60), 2, RoundingMode.HALF_UP);
+    }
+
+    private static LocalDate nextServiceDate(AssetResponse asset, LocalDate completed) {
+        if (asset.nextServiceDate() != null) return asset.nextServiceDate();
+        Integer days = asset.pmFrequencyDays();
+        if (days == null || days <= 0) return null;
+        return completed.plusDays(days);
     }
 
     private String restoredStatus(UUID tenantId, UUID assetId, UUID closingEventId, String currentStatus) {
