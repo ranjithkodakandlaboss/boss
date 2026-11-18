@@ -9,6 +9,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.math.BigDecimal;
+import java.util.List;
 import java.util.UUID;
 
 @Data
@@ -39,4 +40,6 @@ public class CreateItemRequest {
     private String hsnCode;
     private BigDecimal standardCost;
     private BigDecimal reorderPoint;
+    private String productKind;
+    private List<ItemSpecification> specifications;
 }

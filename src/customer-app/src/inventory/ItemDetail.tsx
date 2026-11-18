@@ -131,6 +131,14 @@ export default function ItemDetail() {
 
       {error && <p role="alert" className="text-sm text-[var(--error)]">{error}</p>}
 
+      {item.itemType === "FINISHED_GOOD" && <section className="rounded-xl border p-4" style={{ borderColor: "var(--border)" }}>
+        <h2 className="text-sm font-bold">Product specifications</h2>
+        <p className="mt-1 text-xs text-[var(--text-2)]">Product kind: {item.productKind ? item.productKind.toLowerCase() : "Not specified"}. Configuration is fixed at creation; sales and BOM integration is not yet available.</p>
+        {(item.specifications ?? []).length === 0 ? <p className="mt-2 text-xs">No specifications configured.</p> : <ul className="mt-2 space-y-1">
+          {item.specifications?.map((spec) => <li key={spec.key} className="text-xs"><strong>{spec.label}</strong> ({spec.key}) · {spec.uomSymbol || spec.uomId} · min {spec.minValue ?? "—"} · max {spec.maxValue ?? "—"} · standard {spec.defaultValue ?? "—"}</li>)}
+        </ul>}
+      </section>}
+
       <section className="overflow-hidden rounded-xl border" style={{ borderColor: "var(--border)" }}>
         <h2 className="border-b px-4 py-3 text-sm font-bold" style={{ borderColor: "var(--border)" }}>Lot and location</h2>
         <table className="w-full text-sm">

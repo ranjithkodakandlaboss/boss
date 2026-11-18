@@ -13,6 +13,7 @@ import StockNav from "./stockNav";
 
 const TYPES = ["RAW_MATERIAL", "SEMI_FINISHED", "FINISHED_GOOD", "CONSUMABLE", "SPARE_PART", "SERVICE"];
 const TRACKING_MODES = ["None", "Lot", "Heat", "Serial"] as const;
+type SpecificationDraft = { key: string; label: string; uomId: string; minValue: string; maxValue: string; defaultValue: string };
 
 export default function ItemMaster({ embedded = false }: { embedded?: boolean }) {
   const navigate = useNavigate();
@@ -71,7 +72,7 @@ export default function ItemMaster({ embedded = false }: { embedded?: boolean })
           <option value="active">Active</option>
           <option value="inactive">Inactive</option>
         </select>
-        {canWrite && <button type="button" onClick={() => setOpen(true)} className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold text-white" style={{ background: "var(--brand-fill)" }}><Plus size={13} /> Add Material</button>}
+        {canWrite && <button type="button" onClick={() => setOpen(true)} className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold text-white" style={{ background: "var(--brand-fill)" }}><Plus size={13} /> Add item</button>}
       </header>
       <div className="min-h-0 flex-1 overflow-auto">
         {loading ? <LoadingState label="Loading item master" /> : error ? <ErrorState body={error} /> : (
@@ -95,6 +96,8 @@ export function ItemForm({ item, onClose, onSaved }: { item?: Item; onClose: () 
   const [categoryId, setCategoryId] = useState(item?.categoryId ?? "");
   const [uomId, setUomId] = useState(item?.uomId ?? "");
   const [reorderPoint, setReorderPoint] = useState(item?.reorderPoint == null ? "" : String(item.reorderPoint));
+  const [productKind, setProductKind] = useState((item as { productKind?: string })?.productKind ?? "");
+  const [specifications, setSpecifications] = useState<SpecificationDraft[]>([]);
   const [error, setError] = useState("");
   const [categoryError, setCategoryError] = useState("");
   const [uomError, setUomError] = useState("");
@@ -125,6 +128,7 @@ export function ItemForm({ item, onClose, onSaved }: { item?: Item; onClose: () 
     setError("");
     const category = categories.find((row) => row.id === categoryId);
     try {
+      const specs = specifications.filter((s) => s.key.trim() && s.label.trim());
       const saved = item
         ? await mutate<Item>(`/api/v1/items/${item.id}`, "PATCH", {
           name: name.trim(),
@@ -140,6 +144,7 @@ export function ItemForm({ item, onClose, onSaved }: { item?: Item; onClose: () 
           categoryLabel: category ? categoryName(category) : undefined,
           uomId,
           reorderPoint: reorderPoint === "" ? null : Number(reorderPoint),
+          ...(itemType === "FINISHED_GOOD" ? { productKind: productKind || null, specifications: specs.map((s) => ({ key: s.key.trim(), label: s.label.trim(), uomId: s.uomId || null, minValue: s.minValue === "" ? null : Number(s.minValue), maxValue: s.maxValue === "" ? null : Number(s.maxValue), defaultValue: s.defaultValue === "" ? null : Number(s.defaultValue) })) } : {}),
         });
       onSaved(saved);
     } catch (reason) {
@@ -151,19 +156,19 @@ export function ItemForm({ item, onClose, onSaved }: { item?: Item; onClose: () 
 
   return (
     <RecordSheet
-      title={item ? "Edit Material" : "Add Material"}
+      title={item ? "Edit item" : "Add item"}
       onClose={onClose}
-      primary={{ label: saving ? "Saving…" : item ? "Save Changes" : "Create Material", onClick: () => void save(), disabled: saving }}
+      primary={{ label: saving ? "Saving…" : item ? "Save changes" : "Create item", onClick: () => void save(), disabled: saving }}
       secondary={{ label: "Cancel", onClick: onClose }}
     >
       <div className="grid gap-3 sm:grid-cols-2">
         <label className="text-xs">
           <span className="block text-[11px] font-mono uppercase text-[var(--text-3)] mb-1">Item Code *</span>
-          <input className="eoss-input mt-1 w-full" placeholder="e.g. RM-001" value={code} disabled={!!item} onChange={(event) => setCode(event.target.value)} />
+          <input aria-label="Item code" className="eoss-input mt-1 w-full" placeholder="e.g. RM-001" value={code} disabled={!!item} onChange={(event) => setCode(event.target.value)} />
         </label>
         <label className="text-xs">
-          <span className="block text-[11px] font-mono uppercase text-[var(--text-3)] mb-1">Material Name *</span>
-          <input className="eoss-input mt-1 w-full" placeholder="e.g. Hot Rolled Steel Sheet" value={name} onChange={(event) => setName(event.target.value)} />
+          <span className="block text-[11px] font-mono uppercase text-[var(--text-3)] mb-1">Item Name *</span>
+          <input aria-label="Item name *" className="eoss-input mt-1 w-full" placeholder="e.g. Hot Rolled Steel Sheet" value={name} onChange={(event) => setName(event.target.value)} />
         </label>
         {!item && (
           <label className="text-xs">
@@ -220,6 +225,35 @@ export function ItemForm({ item, onClose, onSaved }: { item?: Item; onClose: () 
           </select>
         </label>
       </div>
+      {!item && itemType === "FINISHED_GOOD" && (
+        <fieldset className="mt-3 rounded-lg border p-3 text-xs" style={{ borderColor: "var(--border)" }}>
+          <legend className="px-1 font-semibold">Product kind &amp; specifications</legend>
+          <label className="mt-2 block">
+            <span className="block text-[11px] font-mono uppercase text-[var(--text-3)] mb-1">Product kind</span>
+            <select aria-label="Product kind" className="eoss-input w-full" value={productKind} onChange={(e) => setProductKind(e.target.value)}>
+              <option value="">Not specified</option>
+              <option value="MANUFACTURED">Manufactured</option>
+              <option value="TRADED">Traded</option>
+            </select>
+          </label>
+          <div className="mt-3 space-y-2">
+            {specifications.map((spec, i) => (
+              <div key={i} className="grid grid-cols-6 gap-1 items-end">
+                <input aria-label={`Specification ${i + 1} key`} className="eoss-input col-span-1" placeholder="Key" value={spec.key} onChange={(e) => setSpecifications((prev) => prev.map((s, j) => j === i ? { ...s, key: e.target.value } : s))} />
+                <input aria-label={`Specification ${i + 1} label`} className="eoss-input col-span-1" placeholder="Label" value={spec.label} onChange={(e) => setSpecifications((prev) => prev.map((s, j) => j === i ? { ...s, label: e.target.value } : s))} />
+                <select aria-label={`Specification ${i + 1} unit`} className="eoss-input col-span-1" value={spec.uomId} onChange={(e) => setSpecifications((prev) => prev.map((s, j) => j === i ? { ...s, uomId: e.target.value } : s))}>
+                  <option value="">—</option>
+                  {uoms.map((uom) => <option key={uom.id} value={uom.id}>{uom.symbol}</option>)}
+                </select>
+                <input aria-label={`Specification ${i + 1} minValue`} className="eoss-input col-span-1" placeholder="Min" type="number" value={spec.minValue} onChange={(e) => setSpecifications((prev) => prev.map((s, j) => j === i ? { ...s, minValue: e.target.value } : s))} />
+                <input aria-label={`Specification ${i + 1} defaultValue`} className="eoss-input col-span-1" placeholder="Default" type="number" value={spec.defaultValue} onChange={(e) => setSpecifications((prev) => prev.map((s, j) => j === i ? { ...s, defaultValue: e.target.value } : s))} />
+                <button type="button" className="text-[var(--error)] font-bold" onClick={() => setSpecifications((prev) => prev.filter((_, j) => j !== i))}>✕</button>
+              </div>
+            ))}
+            <button type="button" className="text-xs font-semibold text-[var(--brand)]" onClick={() => setSpecifications((prev) => [...prev, { key: "", label: "", uomId: "", minValue: "", maxValue: "", defaultValue: "" }])}>Add specification</button>
+          </div>
+        </fieldset>
+      )}
       {error && <p role="alert" className="mt-3 text-xs text-[var(--error)]">{error}</p>}
     </RecordSheet>
   );

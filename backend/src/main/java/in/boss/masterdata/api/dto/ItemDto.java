@@ -7,6 +7,7 @@ import lombok.NoArgsConstructor;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
 
 @Data
@@ -28,5 +29,7 @@ public class ItemDto {
     private BigDecimal standardCost;
     private BigDecimal reorderPoint;
     private String status;
+    private String productKind;
+    private List<ItemSpecification> specifications;
     private Instant createdAt;
 }

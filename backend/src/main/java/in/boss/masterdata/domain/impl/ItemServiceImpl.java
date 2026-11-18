@@ -3,6 +3,7 @@ package in.boss.masterdata.domain.impl;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import in.boss.masterdata.api.dto.CreateItemRequest;
 import in.boss.masterdata.api.dto.ItemDto;
+import in.boss.masterdata.api.dto.ItemSpecification;
 import in.boss.masterdata.api.dto.PageResponse;
 import in.boss.masterdata.api.dto.UpdateItemRequest;
 import in.boss.masterdata.domain.DuplicateEntityException;
@@ -32,7 +33,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
+import java.math.BigDecimal;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -110,6 +113,8 @@ public class ItemServiceImpl implements ItemService {
         }
 
         String dbItemType = toDbItemType(request.getItemType());
+        List<ItemSpecification> specifications = validateProductConfiguration(
+                tenantId, dbItemType, request.getProductKind(), request.getSpecifications());
         Instant now = Instant.now();
 
         ItemEntity entity = ItemEntity.builder()
@@ -119,6 +124,8 @@ public class ItemServiceImpl implements ItemService {
                 .name(request.getName().trim())
                 .description(request.getDescription())
                 .itemType(dbItemType)
+                .productKind(request.getProductKind())
+                .specifications(specifications)
                 .categoryId(category != null ? category.getId() : null)
                 .categoryLabelSnapshot(category != null ? category.getName() : null)
                 .baseUomId(uom.getId())
@@ -157,6 +164,9 @@ public class ItemServiceImpl implements ItemService {
         ItemEntity entity = itemRepository.findByIdAndTenantId(id, tenantId)
                 .orElseThrow(() -> new EntityNotFoundException("Item not found: " + id));
 
+        if (request.isProductConfigurationProvided() || request.getProductKind() != null || request.getSpecifications() != null) {
+            throw new LifecycleException("Product kind and specifications cannot be changed after creation");
+        }
         ItemDto oldDto = loadFullDto(entity, tenantId);
 
         if (request.getStatus() != null) {
@@ -313,6 +323,8 @@ public class ItemServiceImpl implements ItemService {
                 .name(entity.getName())
                 .description(entity.getDescription())
                 .itemType(toApiItemType(entity.getItemType()))
+                .productKind(entity.getProductKind())
+                .specifications(entity.getSpecifications())
                 .categoryId(entity.getCategoryId())
                 .categoryLabel(categoryLabel)
                 .uomId(entity.getBaseUomId())
@@ -324,6 +336,53 @@ public class ItemServiceImpl implements ItemService {
                 .status(entity.isActive() ? "active" : "inactive")
                 .createdAt(entity.getCreatedAt())
                 .build();
+    }
+
+    private List<ItemSpecification> validateProductConfiguration(UUID tenantId, String itemType, String productKind,
+                                                                  List<ItemSpecification> input) {
+        List<ItemSpecification> specifications = input == null ? List.of() : input;
+        if (productKind != null && !List.of("MANUFACTURED", "TRADED").contains(productKind)) {
+            throw new ValidationException("Product kind must be MANUFACTURED or TRADED");
+        }
+        if (!"finished_goods".equals(itemType) && (productKind != null || !specifications.isEmpty())) {
+            throw new ValidationException("Product kind and specifications are only supported for finished goods");
+        }
+        if (specifications.size() > 20) {
+            throw new ValidationException("At most 20 specifications are supported");
+        }
+        var keys = new HashSet<String>();
+        List<ItemSpecification> validated = new ArrayList<>();
+        for (ItemSpecification spec : specifications) {
+            if (spec == null || spec.getKey() == null || !spec.getKey().matches("[a-z][a-z0-9_]{0,49}")
+                    || !keys.add(spec.getKey())) {
+                throw new ValidationException("Specification keys must be unique lowercase identifiers (letters, digits and underscores)");
+            }
+            if (spec.getLabel() == null || spec.getLabel().isBlank() || spec.getLabel().trim().length() > 100) {
+                throw new ValidationException("Specification label is required and must be at most 100 characters");
+            }
+            if (spec.getUomId() == null) {
+                throw new ValidationException("A unit of measure is required for each specification");
+            }
+            UnitOfMeasureEntity unit = uomRepository.findByIdAndTenantId(spec.getUomId(), tenantId)
+                    .orElseThrow(() -> new ValidationException("Invalid specification UOM ID: " + spec.getUomId()));
+            for (BigDecimal value : new BigDecimal[]{spec.getMinValue(), spec.getMaxValue(), spec.getDefaultValue()}) {
+                if (value != null && (value.precision() - Math.min(value.scale(), 0) > 18 || Math.max(value.scale(), 0) > 6)) {
+                    throw new ValidationException("Specification values support at most 18 digits and 6 decimal places");
+                }
+            }
+            if (spec.getMinValue() != null && spec.getMaxValue() != null
+                    && spec.getMinValue().compareTo(spec.getMaxValue()) > 0) {
+                throw new ValidationException("Specification minimum cannot exceed maximum");
+            }
+            if (spec.getDefaultValue() != null && ((spec.getMinValue() != null && spec.getDefaultValue().compareTo(spec.getMinValue()) < 0)
+                    || (spec.getMaxValue() != null && spec.getDefaultValue().compareTo(spec.getMaxValue()) > 0))) {
+                throw new ValidationException("Specification default must be within its bounds");
+            }
+            validated.add(ItemSpecification.builder().key(spec.getKey()).label(spec.getLabel().trim())
+                    .uomId(unit.getId()).uomSymbol(unit.getSymbol()).minValue(spec.getMinValue())
+                    .maxValue(spec.getMaxValue()).defaultValue(spec.getDefaultValue()).build());
+        }
+        return validated;
     }
 
     private String toDbItemType(String apiType) {

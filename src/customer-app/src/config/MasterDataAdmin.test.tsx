@@ -37,7 +37,8 @@ beforeEach(() => {
       if (failCosting) return json({ message: "Unavailable" }, 500);
       return json(init?.method === "PUT" ? JSON.parse(String(init.body)) : config);
     }
-    if (url.includes("/boms") || url.includes("/uoms")) return json([]);
+    if (url.includes("/uoms")) return json([{ id: "unit-1", symbol: "m", name: "Metre" }]);
+    if (url.includes("/boms")) return json([]);
     if (url.includes("/items")) return json({ content: [], totalElements: 0 });
     if (url.includes("/config/categories")) return json([]);
     return json([]);
@@ -64,6 +65,31 @@ describe("master data administration", () => {
     expect(await screen.findByRole("heading", { name: "Bills of materials" })).toBeInTheDocument();
     expect(await screen.findByText(/No bills of materials yet/)).toBeInTheDocument();
     expect(vi.mocked(fetch).mock.calls.some(([input]) => String(input).includes("/api/v1/boms"))).toBe(true);
+  });
+
+  it("creates a finished product with numeric specification definitions", async () => {
+    renderAdmin("items");
+    await screen.findByRole("heading", { name: "Item Master" });
+    await userEvent.click(await screen.findByRole("button", { name: "Add item" }));
+    await userEvent.type(screen.getByLabelText("Item code"), "TOP");
+    await userEvent.type(screen.getByLabelText("Item name *"), "Countertop");
+    await userEvent.selectOptions(screen.getByLabelText("Item type"), "FINISHED_GOOD");
+    await userEvent.selectOptions(screen.getByLabelText("Product kind"), "MANUFACTURED");
+    await userEvent.click(screen.getByRole("button", { name: "Add specification" }));
+    await userEvent.type(screen.getByLabelText("Specification 1 key"), "length");
+    await userEvent.type(screen.getByLabelText("Specification 1 label"), "Length");
+    await userEvent.selectOptions(screen.getByLabelText("Specification 1 unit"), "unit-1");
+    await userEvent.type(screen.getByLabelText("Specification 1 minValue"), "1");
+    await userEvent.type(screen.getByLabelText("Specification 1 defaultValue"), "5");
+    await userEvent.click(screen.getByRole("button", { name: "Create item" }));
+    await waitFor(() => {
+      const request = vi.mocked(fetch).mock.calls.find(([input, init]) => String(input).endsWith("/api/v1/items") && init?.method === "POST");
+      expect(request).toBeDefined();
+      expect(JSON.parse(String(request?.[1]?.body))).toMatchObject({
+        productKind: "MANUFACTURED",
+        specifications: [{ key: "length", label: "Length", uomId: "unit-1", minValue: 1, maxValue: null, defaultValue: 5 }],
+      });
+    });
   });
 
   it("loads, validates and saves the real costing configuration", async () => {
