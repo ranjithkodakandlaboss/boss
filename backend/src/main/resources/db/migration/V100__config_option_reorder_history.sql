@@ -1,4 +1,4 @@
--- Preserve tenant-managed option ordering changes in the append-only history.
+-- V100: Preserve tenant-managed option ordering changes in the append-only history.
 ALTER TABLE tenant_config_option_history
   ADD COLUMN old_sort_order INTEGER,
   ADD COLUMN new_sort_order INTEGER;
