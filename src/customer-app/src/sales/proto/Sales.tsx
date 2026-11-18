@@ -5,6 +5,7 @@ import {
   Plus, Search, ChevronRight, ArrowUpRight, Calendar,
   FileText, Briefcase, DollarSign, Clock, User, X, Pencil, XCircle
 } from 'lucide-react';
+import RecordSheet from '../../components/shared/RecordSheet';
 import { useStore } from './runtime';
 import AddIfEmpty from './AddIfEmpty';
 import { newCustomer } from './quickMasters';
@@ -14,6 +15,7 @@ import type { CustomerRFQ, CustomerPO } from './types';
 import SortableHeader from '../../components/shared/SortableHeader';
 import { sortRows } from './tableSort';
 import CustomerDirectory from './CustomerDirectory';
+import RecordSheet from '../../components/shared/RecordSheet';
 
 type POTab = 'pos' | 'rfqs' | 'quotations' | 'customers';
 type SalesSortKey = 'number' | 'name' | 'date' | 'requiredBy' | 'value' | 'lines' | 'terms' | 'status' | 'channel' | 'quotation' | 'owner';
@@ -533,50 +535,43 @@ export default function Sales() {
 
       {/* RFQ Detail Drawer */}
       {selectedRfq && (
-        <div className="fixed inset-0 z-50 flex justify-end">
-          <div className="absolute inset-0 bg-black/30" onClick={() => setSelectedRfq(null)} />
-          <div className="relative w-full max-w-sm bg-[var(--surface)] border-l border-[var(--border)] h-full overflow-y-auto shadow-2xl p-6 flex flex-col gap-5">
-            <div className="flex items-center justify-between">
-              <h3 className="font-bold text-[var(--text)]">{selectedRfq.rfqNumber}</h3>
-              <button onClick={() => setSelectedRfq(null)}><X size={16} className="text-[var(--text-3)]" /></button>
+        <RecordSheet
+          title={selectedRfq.rfqNumber}
+          onClose={() => setSelectedRfq(null)}
+          primary={{ label: 'Convert to PO', onClick: () => { showToast({ type: 'success', title: 'PO Created', body: `Purchase Order raised from ${selectedRfq.rfqNumber} for ${selectedRfq.customerName}.` }); setSelectedRfq(null); } }}
+          secondary={{ label: 'Close', onClick: () => setSelectedRfq(null) }}
+        >
+          <div className="space-y-3 text-sm">
+            <div className="flex justify-between">
+              <span className="text-[var(--text-3)]">Customer</span>
+              <span className="font-medium text-[var(--text)]">{selectedRfq.customerName}</span>
             </div>
-            <div className="space-y-3 text-sm">
-              <div className="flex justify-between">
-                <span className="text-[var(--text-3)]">Customer</span>
-                <span className="font-medium text-[var(--text)]">{selectedRfq.customerName}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-[var(--text-3)]">Status</span>
-                <StatusChip status={selectedRfq.status} />
-              </div>
-              <div className="flex justify-between">
-                <span className="text-[var(--text-3)]">Received</span>
-                <span className="text-[var(--text)]">{fmt(selectedRfq.receivedDate)}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-[var(--text-3)]">Required By</span>
-                <span className="text-[var(--text)]">{fmt(selectedRfq.requiredBy)}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-[var(--text-3)]">Channel</span>
-                <span className="text-[var(--text)]">{selectedRfq.channel}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-[var(--text-3)]">Line Items</span>
-                <span className="text-[var(--text)]">{selectedRfq.lineCount}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-[var(--text-3)]">Owner</span>
-                <span className="text-[var(--text)]">{selectedRfq.owner}</span>
-              </div>
+            <div className="flex justify-between">
+              <span className="text-[var(--text-3)]">Status</span>
+              <StatusChip status={selectedRfq.status} />
             </div>
-            <button onClick={() => { showToast({ type: 'success', title: 'PO Created', body: `Purchase Order raised from ${selectedRfq.rfqNumber} for ${selectedRfq.customerName}.` }); setSelectedRfq(null); }}
-              className="mt-auto w-full py-2.5 rounded-xl text-sm font-semibold text-white"
-              style={{ background: 'var(--brand-fill)' }}>
-              Convert to PO
-            </button>
+            <div className="flex justify-between">
+              <span className="text-[var(--text-3)]">Received</span>
+              <span className="text-[var(--text)]">{fmt(selectedRfq.receivedDate)}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-[var(--text-3)]">Required By</span>
+              <span className="text-[var(--text)]">{fmt(selectedRfq.requiredBy)}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-[var(--text-3)]">Channel</span>
+              <span className="text-[var(--text)]">{selectedRfq.channel}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-[var(--text-3)]">Line Items</span>
+              <span className="text-[var(--text)]">{selectedRfq.lineCount}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-[var(--text-3)]">Owner</span>
+              <span className="text-[var(--text)]">{selectedRfq.owner}</span>
+            </div>
           </div>
-        </div>
+        </RecordSheet>
       )}
       </>}
     </div>
@@ -598,63 +593,58 @@ function NewRFQModal({ onClose, onSave }: { onClose: () => void; onSave: (r: Cus
     onSave(rfq);
   };
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
-      <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl w-full max-w-sm p-6 shadow-2xl">
-        <div className="flex justify-between items-center mb-4">
-          <h3 className="font-bold text-[var(--text)]">New RFQ</h3>
-          <button onClick={onClose}><X size={16} className="text-[var(--text-3)]" /></button>
+    <RecordSheet
+      title="New RFQ"
+      onClose={onClose}
+      primary={{ label: 'Create RFQ', onClick: save }}
+      secondary={{ label: 'Cancel', onClick: onClose }}
+    >
+      <div className="space-y-3">
+        <div>
+          <label className="block text-xs font-medium text-[var(--text-2)] mb-1">Customer *</label>
+          <AddIfEmpty
+            empty={CUSTOMERS.length === 0}
+            title="No customers yet"
+            hint="Add the business customer, then pick it for this RFQ."
+            fields={[{ key: 'legalName', label: 'Legal name' }, { key: 'city', label: 'City' }]}
+            submitLabel="Save customer"
+            onSubmit={async (values) => {
+              const name = (values.legalName || '').trim();
+              const city = (values.city || '').trim();
+              if (!name || !city) throw new Error('Enter a legal name and city.');
+              const saved = await addCustomer(newCustomer(name, city));
+              if (!saved?.id) throw new Error('Customer was not saved.');
+              setForm(f => ({ ...f, customerId: saved.id, customerName: saved.tradingName || saved.legalName }));
+            }}
+          >
+            <select className="eoss-input w-full" value={form.customerId} onChange={e => {
+              const c = CUSTOMERS.find(x => x.id === e.target.value);
+              setForm(f => ({ ...f, customerId: e.target.value, customerName: c?.tradingName ?? c?.legalName ?? '' }));
+            }}>
+              <option value="">Select customer…</option>
+              {CUSTOMERS.map(c => <option key={c.id} value={c.id}>{c.tradingName || c.legalName || 'Customer'}</option>)}
+            </select>
+          </AddIfEmpty>
         </div>
-        <div className="space-y-3">
-          <div>
-            <label className="block text-xs font-medium text-[var(--text-2)] mb-1">Customer *</label>
-            <AddIfEmpty
-              empty={CUSTOMERS.length === 0}
-              title="No customers yet"
-              hint="Add the business customer, then pick it for this RFQ."
-              fields={[{ key: 'legalName', label: 'Legal name' }, { key: 'city', label: 'City' }]}
-              submitLabel="Save customer"
-              onSubmit={async (values) => {
-                const name = (values.legalName || '').trim();
-                const city = (values.city || '').trim();
-                if (!name || !city) throw new Error('Enter a legal name and city.');
-                const saved = await addCustomer(newCustomer(name, city));
-                if (!saved?.id) throw new Error('Customer was not saved.');
-                setForm(f => ({ ...f, customerId: saved.id, customerName: saved.tradingName || saved.legalName }));
-              }}
-            >
-              <select className="eoss-input w-full" value={form.customerId} onChange={e => {
-                const c = CUSTOMERS.find(x => x.id === e.target.value);
-                setForm(f => ({ ...f, customerId: e.target.value, customerName: c?.tradingName ?? c?.legalName ?? '' }));
-              }}>
-                <option value="">Select customer…</option>
-                {CUSTOMERS.map(c => <option key={c.id} value={c.id}>{c.tradingName || c.legalName || 'Customer'}</option>)}
-              </select>
-            </AddIfEmpty>
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-[var(--text-2)] mb-1">Required By *</label>
-            <input type="date" className="eoss-input w-full" value={form.requiredBy} onChange={e => setForm(f => ({ ...f, requiredBy: e.target.value }))} />
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-medium text-[var(--text-2)] mb-1">Channel</label>
-              <select className="eoss-input w-full" value={form.channel} onChange={e => setForm(f => ({ ...f, channel: e.target.value }))}>
-                {['Email', 'Portal', 'WhatsApp', 'Phone', 'Tender'].map(c => <option key={c}>{c}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-[var(--text-2)] mb-1">Line Items</label>
-              <input type="number" className="eoss-input w-full" value={form.lineCount} onChange={e => setForm(f => ({ ...f, lineCount: e.target.value }))} min="1" />
-            </div>
-          </div>
+        <div>
+          <label className="block text-xs font-medium text-[var(--text-2)] mb-1">Required By *</label>
+          <input type="date" className="eoss-input w-full" value={form.requiredBy} onChange={e => setForm(f => ({ ...f, requiredBy: e.target.value }))} />
         </div>
-        {err && <p className="text-xs text-[var(--danger)] mt-2">{err}</p>}
-        <div className="flex gap-3 mt-5">
-          <button onClick={onClose} className="flex-1 py-2.5 border border-[var(--border)] rounded-xl text-sm text-[var(--text-2)]">Cancel</button>
-          <button onClick={save} className="flex-1 py-2.5 bg-[var(--brand-fill)] text-white rounded-xl text-sm font-medium">Create RFQ</button>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="block text-xs font-medium text-[var(--text-2)] mb-1">Channel</label>
+            <select className="eoss-input w-full" value={form.channel} onChange={e => setForm(f => ({ ...f, channel: e.target.value }))}>
+              {['Email', 'Portal', 'WhatsApp', 'Phone', 'Tender'].map(c => <option key={c}>{c}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-[var(--text-2)] mb-1">Line Items</label>
+            <input type="number" className="eoss-input w-full" value={form.lineCount} onChange={e => setForm(f => ({ ...f, lineCount: e.target.value }))} min="1" />
+          </div>
         </div>
       </div>
-    </div>
+      {err && <p className="text-xs text-[var(--danger)] mt-2">{err}</p>}
+    </RecordSheet>
   );
 }
 
@@ -668,7 +658,24 @@ function DirectOrderModal({ onClose, onSave }: { onClose: () => void; onSave: (p
     const id = `cpo-direct-${Date.now()}`;
     onSave({ id, poNumber: `DPO-${String(Date.now()).slice(-6)}`, customerId, customerName: customer.tradingName || customer.legalName, acceptedDate: new Date().toISOString().slice(0, 10), paymentTerms: customer.paymentTerms, status: 'active', totalValue: Number(value), currency: customer.currency, lineCount: 1, deliveryTerms: 'To be confirmed' });
   };
-  return <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"><div className="w-full max-w-md rounded-2xl border p-6 shadow-2xl" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}><div className="flex items-center justify-between mb-4"><div><h3 className="font-bold text-[var(--text)]">Direct customer order</h3><p className="text-xs text-[var(--text-2)] mt-1">Use only when no quotation was prepared. The record will be clearly labelled.</p></div><button type="button" onClick={onClose}><X size={16} /></button></div><div className="space-y-3"><label className="block text-xs text-[var(--text-2)]">Customer<AddIfEmpty empty={customers.length === 0} title="No customers yet" hint="Add the business customer here." fields={[{ key: 'legalName', label: 'Legal name' }, { key: 'city', label: 'City' }]} submitLabel="Save customer" onSubmit={async (values) => { const name = (values.legalName || '').trim(); const city = (values.city || '').trim(); if (!name || !city) throw new Error('Enter a legal name and city.'); const saved = await addCustomer(newCustomer(name, city)); if (!saved?.id) throw new Error('Customer was not saved.'); setCustomerId(saved.id); }}><select className="eoss-input w-full mt-1" value={customerId} onChange={e => setCustomerId(e.target.value)}><option value="">Select customer…</option>{customers.map(c => <option key={c.id} value={c.id}>{c.tradingName || c.legalName || 'Customer'}</option>)}</select></AddIfEmpty></label><label className="block text-xs text-[var(--text-2)]">Order value<input type="number" min="1" className="eoss-input w-full mt-1" value={value} onChange={e => setValue(e.target.value)} /></label><p className="text-[11px] text-[var(--text-3)]">Created by {currentUser.name}. Credit review is applied using the demo customer account.</p></div><div className="flex gap-2 mt-5"><button type="button" onClick={onClose} className="flex-1 py-2 rounded-lg border text-sm" style={{ borderColor: 'var(--border)' }}>Cancel</button><button type="button" onClick={submit} disabled={!customer || !value} className="flex-1 py-2 rounded-lg text-sm font-semibold text-white disabled:opacity-40" style={{ background: 'var(--brand-fill)' }}>Create direct order</button></div></div></div>;
+  return (
+    <RecordSheet title="Direct customer order" subtitle="Use only when no quotation was prepared. The record will be clearly labelled." onClose={onClose} secondary={{ label: "Cancel", onClick: onClose }} primary={{ label: "Create direct order", onClick: submit, disabled: !customer || !value }}>
+      <div className="space-y-3">
+        <label className="block text-xs text-[var(--text-2)]">Customer
+          <AddIfEmpty empty={customers.length === 0} title="No customers yet" hint="Add the business customer here." fields={[{ key: 'legalName', label: 'Legal name' }, { key: 'city', label: 'City' }]} submitLabel="Save customer" onSubmit={async (values) => { const name = (values.legalName || '').trim(); const city = (values.city || '').trim(); if (!name || !city) throw new Error('Enter a legal name and city.'); const saved = await addCustomer(newCustomer(name, city)); if (!saved?.id) throw new Error('Customer was not saved.'); setCustomerId(saved.id); }}>
+            <select className="eoss-input w-full mt-1" value={customerId} onChange={e => setCustomerId(e.target.value)}>
+              <option value="">Select customer…</option>
+              {customers.map(c => <option key={c.id} value={c.id}>{c.tradingName || c.legalName || 'Customer'}</option>)}
+            </select>
+          </AddIfEmpty>
+        </label>
+        <label className="block text-xs text-[var(--text-2)]">Order value
+          <input type="number" min="1" className="eoss-input w-full mt-1" value={value} onChange={e => setValue(e.target.value)} />
+        </label>
+        <p className="text-[11px] text-[var(--text-3)]">Created by {currentUser.name}. Credit review is applied using the demo customer account.</p>
+      </div>
+    </RecordSheet>
+  );
 }
 
 function Metric({ icon, label, value, small }: { icon: React.ReactNode; label: string; value: string; small?: boolean }) {
