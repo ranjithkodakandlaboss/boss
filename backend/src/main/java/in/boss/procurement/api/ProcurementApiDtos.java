@@ -145,7 +145,10 @@ public final class ProcurementApiDtos {
             BigDecimal unitPrice,
             Integer leadTimeDays,
             boolean isSelected,
-            BigDecimal taxRate) {}
+            BigDecimal taxRate,
+            BigDecimal quantity,
+            UUID uomId,
+            String uomSymbol) {}
 
     public record SupplierQuotationResponse(
             UUID id,
@@ -216,7 +219,11 @@ public final class ProcurementApiDtos {
             LocalDate expectedDeliveryDate,
             BigDecimal acceptedQty,
             BigDecimal rejectedQty,
-            BigDecimal gstRate) {}
+            BigDecimal gstRate,
+            UUID prLineId,
+            UUID supplierQuotationLineId,
+            UUID uomId,
+            String uomSymbol) {}
 
     public record SpoResponse(
             UUID id,
@@ -294,7 +301,8 @@ public final class ProcurementApiDtos {
             List<BigDecimal> lotQuantities,
             String enteredLotNumber,
             UUID storeId,
-            String storeName) {}
+            String storeName,
+            UUID uomId) {}
 
     public record GrnResponse(
             UUID id,

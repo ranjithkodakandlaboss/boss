@@ -184,7 +184,8 @@ public class SpoService {
 
         SpoHeader header = headers.get(0);
         List<SpoLineResponse> lines = jdbc.query("""
-                SELECT sl.id, sl.item_id, i.code AS item_code, i.name AS item_name,
+                SELECT sl.id, sl.item_id, sl.pr_line_id, sl.sq_line_id, sl.uom_id,
+                       u.symbol AS uom_symbol, i.code AS item_code, i.name AS item_name,
                        sl.quantity, sl.unit_price, sl.expected_date, sl.gst_rate,
                        COALESCE((SELECT SUM(g.received_qty) FROM grn_lines g
                                  WHERE g.tenant_id = sl.tenant_id AND g.spo_line_id = sl.id), sl.received_qty) AS received_qty,
@@ -194,6 +195,7 @@ public class SpoService {
                                  WHERE g.tenant_id = sl.tenant_id AND g.spo_line_id = sl.id), 0) AS rejected_qty
                 FROM spo_lines sl
                 JOIN items i ON i.id = sl.item_id AND i.tenant_id = sl.tenant_id
+                JOIN units_of_measure u ON u.id = sl.uom_id AND u.tenant_id = sl.tenant_id
                 WHERE sl.tenant_id = ? AND sl.spo_id = ?
                 ORDER BY sl.line_no
                 """, (rs, rowNum) -> mapLine(rs), tenantId, spoId);
@@ -541,7 +543,11 @@ public class SpoService {
                 rs.getObject("expected_date", LocalDate.class),
                 rs.getBigDecimal("accepted_qty"),
                 rs.getBigDecimal("rejected_qty"),
-                rs.getBigDecimal("gst_rate"));
+                rs.getBigDecimal("gst_rate"),
+                rs.getObject("pr_line_id", UUID.class),
+                rs.getObject("sq_line_id", UUID.class),
+                rs.getObject("uom_id", UUID.class),
+                rs.getString("uom_symbol"));
     }
 
     private String normalizeStatus(String status) {
