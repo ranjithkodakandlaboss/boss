@@ -23,7 +23,8 @@ beforeEach(() => {
     if (url.includes("/auth/me")) return json({ id: "1", tenantId: "t", email: "owner@example.test", displayName: "Owner", status: "active", roles: [{ role: "OWNER" }] });
     if (url.includes("/tenant/info")) return json({ id: "t", name: "North Works", status: "active" });
     if (url.includes("/onboarding")) return json({ industryType: "GENERAL_MANUFACTURING", completed: true, company: { companyName: "North Works", sites: [], stores: [] } });
-    if (url.endsWith("/config/categories")) return json([{ code: "PAYMENT_MODES", name: "Payment modes", scope: "tenant", tenantEditable: true, supportsOrdering: true }]);
+    if (url.endsWith("/config/options/categories")) return json([{ code: "PAYMENT_MODES", name: "Payment modes", scope: "tenant", tenantEditable: true, supportsOrdering: true }]);
+    if (url.endsWith("/config/categories")) return Promise.resolve(new Response(JSON.stringify({ error: "Not Found" }), { status: 404 }));
     if (url.includes("/config/options/PAYMENT_MODES")) {
       if (init?.method === "PUT" || init?.method === "PATCH" || init?.method === "POST") return json({ status: "updated" });
       return json(options);
@@ -46,6 +47,26 @@ function renderPage() {
 }
 
 describe("configuration options admin", () => {
+  it("shows a retryable error instead of an empty state when categories fail to load", async () => {
+    const fetcher = vi.mocked(fetch);
+    const original = fetcher.getMockImplementation();
+    let failed = false;
+    fetcher.mockImplementation((input, init) => {
+      if (String(input).endsWith("/config/options/categories") && !failed) {
+        failed = true;
+        return Promise.resolve(new Response(JSON.stringify({ error: "Not Found" }), { status: 404 }));
+      }
+      if (!original) throw new Error("Missing fetch mock");
+      return original(input, init);
+    });
+
+    renderPage();
+    expect(await screen.findByRole("alert")).toHaveTextContent("Not Found");
+    expect(screen.queryByText("No configuration categories are available.")).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(await screen.findByText("Bank transfer")).toBeInTheDocument();
+  });
+
   it("shows protected values as locked and edits tenant-managed labels", async () => {
     renderPage();
     expect(await screen.findByText("Bank transfer")).toBeInTheDocument();
