@@ -25,6 +25,8 @@ customer-api	src/main/java/in/boss/procurement/domain/PurchaseRequisitionService
 customer-api	src/main/java/in/boss/procurement/domain/SpoAmendmentFileService.java	GodClass	1
 customer-api	src/main/java/in/boss/procurement/domain/SpoService.java	GodClass	1
 customer-api	src/main/java/in/boss/procurement/domain/SupplierQuotationService.java	GodClass	1
+customer-api	src/main/java/in/boss/quality/domain/QualityService.java	CyclomaticComplexity	1
+customer-api	src/main/java/in/boss/quality/domain/QualityService.java	TooManyMethods	1
 customer-api	src/main/java/in/boss/sales/domain/CustomerPoService.java	CyclomaticComplexity	1
 customer-api	src/main/java/in/boss/sales/domain/QuotationPdf.java	GodClass	1
 customer-api	src/main/java/in/boss/sales/domain/SalesService.java	CognitiveComplexity	1
