@@ -240,4 +240,11 @@ public final class InventoryApiDtos {
             String itemName,
             BigDecimal reservedQty
     ) {}
+
+    public record JobLotReservationResponse(
+            UUID jobId,
+            UUID lotId,
+            UUID itemId,
+            BigDecimal reservedQty
+    ) {}
 }

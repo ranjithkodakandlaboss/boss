@@ -7,6 +7,7 @@ import in.boss.inventory.api.InventoryApiDtos.CreateLotRequest;
 import in.boss.inventory.api.InventoryApiDtos.CustomerPoReservationRequest;
 import in.boss.inventory.api.InventoryApiDtos.CustomerPoReservationResponse;
 import in.boss.inventory.api.InventoryApiDtos.InventoryPage;
+import in.boss.inventory.api.InventoryApiDtos.JobLotReservationResponse;
 import in.boss.inventory.api.InventoryApiDtos.JobReservationResponse;
 import in.boss.inventory.api.InventoryApiDtos.InventoryPositionResponse;
 import in.boss.inventory.api.InventoryApiDtos.IssueMaterialRequest;
@@ -256,6 +257,15 @@ public class InventoryServiceImpl implements InventoryService {
         return reservationRepository.activeProductionReservations(ctx.tenantId(), siteId).stream()
                 .map(row -> new JobReservationResponse(row.jobId(), row.jobNumber(), row.siteId(),
                         row.itemId(), row.itemCode(), row.itemName(), row.reservedQty()))
+                .toList();
+    }
+
+    @Override
+    public List<JobLotReservationResponse> listJobLotReservations(UUID jobId) {
+        BossContext ctx = requireContext();
+        UUID siteId = ctx.isSiteScoped() ? ctx.siteId() : null;
+        return reservationRepository.activeProductionLotReservations(ctx.tenantId(), jobId, siteId).stream()
+                .map(row -> new JobLotReservationResponse(row.jobId(), row.lotId(), row.itemId(), row.reservedQty()))
                 .toList();
     }
 

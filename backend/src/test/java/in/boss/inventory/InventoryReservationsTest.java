@@ -418,6 +418,58 @@ class InventoryReservationsTest extends InventoryIntegrationTest {
     }
 
     @Test
+    void lotReservationListShowsOnlyTheCurrentJobAndIssueStillRequiresThatReservation() throws Exception {
+        asKeeper();
+        var currentLot = inventoryService.createLot(lotRequest("4"));
+        inventoryService.reserveForJob(new ReservationRequest(jobId, List.of(
+                new ReservationRequirement(seed.itemId(), seed.storeId(), new BigDecimal("4")))), false);
+        var otherLot = inventoryService.createLot(lotRequest("4"));
+        UUID otherJobId = insert("""
+                INSERT INTO production_jobs
+                  (tenant_id, job_number, finished_item_id, site_id, quantity, uom_id, created_by)
+                VALUES (?, ?, ?, ?, 10, ?, ?) RETURNING id
+                """, seed.tenantId(), "JOB-" + UUID.randomUUID().toString().substring(0, 8),
+                seed.itemId(), seed.siteId(), seed.uomId(), UUID.randomUUID());
+        inventoryService.reserveForJob(new ReservationRequest(otherJobId, List.of(
+                new ReservationRequirement(seed.itemId(), seed.storeId(), new BigDecimal("4")))), false);
+        var availableLot = inventoryService.createLot(lotRequest("3"));
+
+        asKeeper();
+        mockMvc.perform(get("/api/v1/inventory/reservations/lots")
+                        .param("jobId", jobId.toString())
+                        .with(user("keeper").roles("STORE_KEEPER")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].jobId").value(jobId.toString()))
+                .andExpect(jsonPath("$[0].lotId").value(currentLot.id().toString()))
+                .andExpect(jsonPath("$[0].itemId").value(seed.itemId().toString()))
+                .andExpect(jsonPath("$[0].reservedQty").value(4.0));
+        asKeeper();
+        mockMvc.perform(get("/api/v1/inventory/reservations/lots")
+                        .param("jobId", otherJobId.toString())
+                        .with(user("keeper").roles("STORE_KEEPER")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].lotId").value(otherLot.id().toString()));
+
+        asKeeper();
+        inventoryService.issueMaterial(new IssueMaterialRequest(
+                jobId, currentLot.id(), new BigDecimal("4"), "issue reserved lot"));
+        assertThat(inventoryService.getLot(currentLot.id()).qty()).isEqualByComparingTo("0.000");
+        assertThatThrownBy(() -> inventoryService.issueMaterial(new IssueMaterialRequest(
+                jobId, otherLot.id(), BigDecimal.ONE, "other job lot")))
+                .isInstanceOf(InventoryValidationException.class)
+                .hasMessageContaining("active reservation");
+
+        asKeeper();
+        inventoryService.reserveForJob(new ReservationRequest(jobId, List.of(
+                new ReservationRequirement(seed.itemId(), seed.storeId(), new BigDecimal("3")))), false);
+        inventoryService.issueMaterial(new IssueMaterialRequest(
+                jobId, availableLot.id(), new BigDecimal("3"), "available lot"));
+        assertThat(inventoryService.getLot(availableLot.id()).qty()).isEqualByComparingTo("0.000");
+    }
+
+    @Test
     void reorderPolicyCreatesOnePendingRequestWhenAvailableStockFallsBelowThreshold() {
         asKeeper();
         inventoryService.createLot(lotRequest("10"));

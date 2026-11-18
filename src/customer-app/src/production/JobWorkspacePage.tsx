@@ -210,12 +210,12 @@ function MaterialRow({ job, row, canIssue, onIssue }: { job: ProductionJob; row:
   useEffect(() => {
     if (!canIssue) return;
     setLotError("");
-    usableLots(row.itemId).then((page) => setLots((page.content ?? []).filter((lot) => !job.siteId || lot.siteId === job.siteId)))
+    usableLots(row.itemId, job.id).then((page) => setLots((page.content ?? []).filter((lot) => !job.siteId || lot.siteId === job.siteId)))
       .catch((cause: unknown) => {
         setLots([]);
         setLotError(cause instanceof Error ? cause.message : "Lots could not be loaded.");
       });
-  }, [canIssue, row.itemId, job.siteId]);
+  }, [canIssue, row.itemId, job.siteId, job.id]);
   return (
     <div className="rounded-xl border p-3" style={{ borderColor: "var(--border)" }}>
       <div className="flex justify-between text-sm"><strong>{row.itemCode} {row.itemName}</strong><StatusChip status={row.readiness} label={readinessLabel(row.readiness)} size="sm" /></div>

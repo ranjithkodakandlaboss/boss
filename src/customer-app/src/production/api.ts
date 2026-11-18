@@ -257,15 +257,27 @@ export function addCost(jobId: string, entryType: "LABOUR" | "OVERHEAD" | "OTHER
   return post(`/api/v1/jobs/${jobId}/costing`, { entryType, description, amount });
 }
 
-export async function usableLots(itemId: string) {
+export type JobLotReservation = {
+  jobId: string;
+  lotId: string;
+  itemId: string;
+  reservedQty: number;
+};
+
+export async function usableLots(itemId: string, jobId: string) {
   const query = `/api/v1/inventory/lots?itemId=${encodeURIComponent(itemId)}&page=0&size=200&status=`;
-  const [available, reserved] = await Promise.all([
+  const [available, reserved, owned] = await Promise.all([
     api<Page<LotOption>>(`${query}available`),
     api<Page<LotOption>>(`${query}reserved`),
+    api<JobLotReservation[]>(`/api/v1/inventory/reservations/lots?jobId=${encodeURIComponent(jobId)}`),
   ]);
+  const ownedIds = new Set((Array.isArray(owned) ? owned : [])
+    .filter((row) => row.itemId === itemId)
+    .map((row) => row.lotId));
   const seen = new Set<string>();
   const content = [...(available.content ?? []), ...(reserved.content ?? [])].filter((lot) => {
     if (seen.has(lot.id)) return false;
+    if (lot.status === "reserved" && !ownedIds.has(lot.id)) return false;
     seen.add(lot.id);
     return true;
   });
