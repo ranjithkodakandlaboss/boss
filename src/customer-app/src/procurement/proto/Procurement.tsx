@@ -18,6 +18,7 @@ import { placeLabel } from './places';
 import SiteStoreField from './SiteStoreField';
 import SortableHeader from '../../components/shared/SortableHeader';
 import { sortRows } from '../../sales/proto/tableSort';
+import RecordSheet from '../../components/shared/RecordSheet';
 
 type ProcTab = 'spo' | 'pr' | 'grn' | 'approvals' | 'quotes';
 type ProcurementSortKey = 'number' | 'supplier' | 'date' | 'committedDate' | 'value' | 'lines' | 'dept' | 'source' | 'status' | 'raisedBy' | 'requiredBy' | 'priority' | 'poRef' | 'receivedBy' | 'challan' | 'validUntil' | 'leadTime' | 'terms';
@@ -769,24 +770,23 @@ export default function Procurement() {
       )}
 
       {editSpo && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-          <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-6 w-full max-w-md shadow-xl">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="font-bold text-[var(--text)]">Edit SPO — {editSpo.poNumber}</h2>
-              <button onClick={() => setEditSpo(null)} className="text-[var(--text-3)]"><X size={18} /></button>
-            </div>
-            <EditSPOForm spo={editSpo} onSave={(partial) => { updateSupplierPo(editSpo.id, partial); setEditSpo(null); showToast({ type: 'success', title: 'Supplier PO updated' }); }} onCancel={() => setEditSpo(null)} />
-          </div>
-        </div>
+        <RecordSheet
+          title={`Edit SPO — ${editSpo.poNumber}`}
+          onClose={() => setEditSpo(null)}
+          secondary={{ label: 'Cancel', onClick: () => setEditSpo(null) }}
+        >
+          <EditSPOForm spo={editSpo} onSave={(partial) => { updateSupplierPo(editSpo.id, partial); setEditSpo(null); showToast({ type: 'success', title: 'Supplier PO updated' }); }} onCancel={() => setEditSpo(null)} />
+        </RecordSheet>
       )}
 
       {rejectApprovalTarget && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-          <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-6 w-full max-w-md shadow-xl space-y-4">
-            <div className="flex items-center justify-between">
-              <h2 className="font-bold text-[var(--text)]">Reject {rejectApprovalTarget.entityRef}?</h2>
-              <button onClick={() => setRejectApprovalTarget(null)} className="text-[var(--text-3)]"><X size={18} /></button>
-            </div>
+        <RecordSheet
+          title={`Reject ${rejectApprovalTarget.entityRef}?`}
+          onClose={() => setRejectApprovalTarget(null)}
+          primary={{ label: 'Confirm Reject', onClick: () => { resolveApproval(rejectApprovalTarget.id, 'rejected', currentUser.name, rejectApprovalReason.trim()); setRejectApprovalTarget(null); }, disabled: !rejectApprovalReason.trim() }}
+          secondary={{ label: 'Cancel', onClick: () => setRejectApprovalTarget(null) }}
+        >
+          <div className="space-y-4">
             <div>
               <label className="text-xs font-semibold text-[var(--text-2)] block mb-1">Rejection Reason *</label>
               <textarea
@@ -813,7 +813,7 @@ export default function Procurement() {
               </button>
             </div>
           </div>
-        </div>
+        </RecordSheet>
       )}
     </div>
   );

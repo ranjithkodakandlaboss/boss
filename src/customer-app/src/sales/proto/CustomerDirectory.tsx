@@ -1,7 +1,8 @@
 // @ts-nocheck
 import { useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Search, Building2, Phone, Mail, ChevronRight, Star, X, Pencil } from 'lucide-react';
+import { Search, Building2, Phone, Mail, ChevronRight, Star, Pencil } from 'lucide-react';
+import RecordSheet from '../../components/shared/RecordSheet';
 import { useStore } from './runtime';
 import StatusChip, { getStatusLabel } from '../../components/shared/StatusChip';
 import EmptyState from './workflow/EmptyState';
@@ -181,42 +182,32 @@ function AddCustomerModal({ onClose, onSave, initialValues, editMode }: { onClos
     onSave(form);
   };
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
-      <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl w-full max-w-md shadow-2xl max-h-[90vh] flex flex-col">
-        <div className="flex justify-between items-center mb-4 px-6 pt-6">
-          <h3 className="font-bold text-[var(--text)]">{editMode ? 'Edit Customer' : 'Add Customer'}</h3>
-          <button onClick={onClose}><X size={16} className="text-[var(--text-3)]" /></button>
-        </div>
-        <div className="grid grid-cols-2 gap-3 overflow-y-auto px-6">
-          {[
-            { label: 'Legal Name *', key: 'legalName', placeholder: 'As per company registration', span: true },
-            { label: 'Trading Name', key: 'tradingName', placeholder: 'Short name', span: false },
-            { label: 'City *', key: 'city', placeholder: '', span: false },
-            { label: 'State', key: 'state', placeholder: '', span: false },
-            { label: 'GSTIN', key: 'gstin', placeholder: '', span: false },
-            { label: 'PAN', key: 'pan', placeholder: '', span: false },
-            { label: 'Contact Person', key: 'contactPerson', placeholder: '', span: false },
-            { label: 'Phone', key: 'phone', placeholder: '', span: false },
-            { label: 'Email', key: 'email', placeholder: '', span: true },
-          ].map(f => (
-            <div key={f.key} className={f.span ? 'col-span-2' : ''}>
-              <label className="block text-xs font-medium text-[var(--text-2)] mb-1">{f.label}</label>
-              <input className="eoss-input w-full" value={(form as any)[f.key]} onChange={e => setForm(prev => ({ ...prev, [f.key]: e.target.value }))} placeholder={f.placeholder} />
-            </div>
-          ))}
-          <div>
-            <label className="block text-xs font-medium text-[var(--text-2)] mb-1">Payment Terms</label>
-            <select className="eoss-input w-full" value={form.paymentTerms} onChange={e => setForm(f => ({ ...f, paymentTerms: e.target.value }))}>
-              {['Advance', 'Net 15', 'Net 30', 'Net 45', 'Net 60'].map(t => <option key={t}>{t}</option>)}
-            </select>
+    <RecordSheet title={editMode ? 'Edit Customer' : 'Add Customer'} onClose={onClose} secondary={{ label: 'Cancel', onClick: onClose }} primary={{ label: editMode ? 'Save Changes' : 'Save Customer', onClick: save }}>
+      <div className="grid grid-cols-2 gap-3">
+        {[
+          { label: 'Legal Name *', key: 'legalName', placeholder: 'As per company registration', span: true },
+          { label: 'Trading Name', key: 'tradingName', placeholder: 'Short name', span: false },
+          { label: 'City *', key: 'city', placeholder: '', span: false },
+          { label: 'State', key: 'state', placeholder: '', span: false },
+          { label: 'GSTIN', key: 'gstin', placeholder: '', span: false },
+          { label: 'PAN', key: 'pan', placeholder: '', span: false },
+          { label: 'Contact Person', key: 'contactPerson', placeholder: '', span: false },
+          { label: 'Phone', key: 'phone', placeholder: '', span: false },
+          { label: 'Email', key: 'email', placeholder: '', span: true },
+        ].map(f => (
+          <div key={f.key} className={f.span ? 'col-span-2' : ''}>
+            <label className="block text-xs font-medium text-[var(--text-2)] mb-1">{f.label}</label>
+            <input className="eoss-input w-full" value={(form as any)[f.key]} onChange={e => setForm(prev => ({ ...prev, [f.key]: e.target.value }))} placeholder={f.placeholder} />
           </div>
-        </div>
-        {err && <p className="px-6 text-xs text-[var(--danger)] mt-2">{err}</p>}
-        <div className="sticky bottom-0 flex gap-3 mt-5 px-6 py-4 border-t border-[var(--border)] bg-[var(--surface)]">
-          <button onClick={onClose} className="flex-1 py-2.5 border border-[var(--border)] rounded-xl text-sm text-[var(--text-2)]">Cancel</button>
-          <button onClick={save} className="flex-1 py-2.5 bg-[var(--brand-fill)] text-white rounded-xl text-sm font-medium">{editMode ? 'Save Changes' : 'Save Customer'}</button>
+        ))}
+        <div>
+          <label className="block text-xs font-medium text-[var(--text-2)] mb-1">Payment Terms</label>
+          <select className="eoss-input w-full" value={form.paymentTerms} onChange={e => setForm(f => ({ ...f, paymentTerms: e.target.value }))}>
+            {['Advance', 'Net 15', 'Net 30', 'Net 45', 'Net 60'].map(t => <option key={t}>{t}</option>)}
+          </select>
         </div>
       </div>
-    </div>
+      {err && <p className="text-xs text-[var(--danger)] mt-2">{err}</p>}
+    </RecordSheet>
   );
 }

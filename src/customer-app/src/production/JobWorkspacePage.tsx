@@ -4,6 +4,7 @@ import { ArrowLeft, ExternalLink } from "lucide-react";
 import { useCustomer } from "../auth/CustomerState";
 import { ApiError } from "../auth/api";
 import CreatableSelect, { roleAllowed } from "../components/shared/CreatableSelect";
+import RecordSheet from "../components/shared/RecordSheet";
 import StatusChip from "../components/shared/StatusChip";
 import { createLot, lotFields } from "../inventory/inlineCreate";
 import {
@@ -111,19 +112,14 @@ function CancelDialog({ job, onClose, onDone }: { job: ProductionJob; onClose: (
     }
   }
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-      <div className="w-full max-w-lg space-y-3 rounded-xl border p-5" style={{ background: "var(--surface)", borderColor: "var(--border)" }}>
-        <h2 className="text-sm font-bold">Cancel {job.jobNumber}</h2>
+    <RecordSheet title={`Cancel ${job.jobNumber}`} onClose={onClose} secondary={{ label: "Keep job", onClick: onClose }} primary={{ label: "Confirm cancellation", onClick: () => void confirm(), disabled: !reason.trim() }}>
+      <div className="space-y-3">
         <p className="text-xs text-[var(--text-2)]">Cancellation preserves the job and its history. Reserved but unissued quantities will be released. Issued material is not restored automatically.</p>
         <div className="rounded-lg p-3 text-xs" style={{ background: "var(--surface-2)" }}>Status: <strong>{job.status}</strong> · Stage: <strong>{job.currentStage}</strong> · Unissued: <strong>{reserved}</strong> · Issued: <strong>{issued}</strong></div>
         <label className="block text-xs font-semibold">Cancellation reason *<textarea className="eoss-input mt-1 w-full" rows={3} value={reason} onChange={(event) => setReason(event.target.value)} /></label>
         {error && <p role="alert" className="text-xs text-[var(--error)]">{error}</p>}
-        <div className="flex justify-end gap-2">
-          <button type="button" onClick={onClose} className="text-xs">Keep job</button>
-          <button type="button" disabled={!reason.trim()} onClick={() => void confirm()} className="rounded-lg px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50" style={{ background: "var(--error)" }}>Confirm cancellation</button>
-        </div>
       </div>
-    </div>
+    </RecordSheet>
   );
 }
 

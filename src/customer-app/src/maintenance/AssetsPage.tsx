@@ -4,7 +4,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { ChevronRight, Plus, Search } from "lucide-react";
 import { useCustomer } from "../auth/CustomerState";
 import { ApiError } from "../auth/api";
-import Modal from "../components/shared/Modal";
+import RecordSheet from "../components/shared/RecordSheet";
 import StatusChip from "../components/shared/StatusChip";
 import {
   CONFIG_ADMIN_ROLES, INLINE_ADD_CATEGORIES, MANAGE_ROLES, archiveAsset, computeDue, configOptions, createAsset,
@@ -146,9 +146,15 @@ export function AssetFormModal({ open, asset, options, lookup, ctl, onClose, onS
     } finally { setSaving(false); }
   }
 
+  if (!open) return null;
   return (
-    <Modal open={open} title={asset ? "Edit Asset" : "Add Asset"} onClose={onClose}>
-      <form onSubmit={submit} className="space-y-3 max-h-[70vh] overflow-y-auto">
+    <RecordSheet
+      title={asset ? "Edit Asset" : "Add Asset"}
+      onClose={onClose}
+      primary={{ label: saving ? "Saving…" : "Save asset", onClick: () => { const fakeEvt = { preventDefault: () => {} } as FormEvent; void submit(fakeEvt); }, disabled: saving }}
+      secondary={{ label: "Cancel", onClick: onClose }}
+    >
+      <form id="asset-form" onSubmit={submit} className="space-y-3">
         <div className="grid grid-cols-2 gap-3">
           <Field label="Asset code *"><input aria-label="Asset code" className="eoss-input w-full" value={form.assetCode ?? ""} onChange={(e) => set({ assetCode: e.target.value })} /></Field>
           <Field label="Name *"><input aria-label="Asset name" className="eoss-input w-full" value={form.name ?? ""} onChange={(e) => set({ name: e.target.value })} /></Field>
@@ -192,12 +198,8 @@ export function AssetFormModal({ open, asset, options, lookup, ctl, onClose, onS
           </div>
         </fieldset>
         {error && <p role="alert" className="text-xs" style={{ color: "var(--error)" }}>{error}</p>}
-        <div className="flex justify-end gap-2 pt-2">
-          <button type="button" onClick={onClose} className="px-3 py-1.5 text-xs rounded-lg border border-[var(--border)]">Cancel</button>
-          <button type="submit" disabled={saving} className="px-3 py-1.5 text-xs rounded-lg font-semibold text-white" style={{ background: "var(--brand-fill)" }}>{saving ? "Saving…" : "Save asset"}</button>
-        </div>
       </form>
-    </Modal>
+    </RecordSheet>
   );
 }
 
@@ -231,9 +233,15 @@ export function EventFormModal({ open, assets, assetId, options, lookup, ctl, on
     finally { setSaving(false); }
   }
 
+  if (!open) return null;
   return (
-    <Modal open={open} title="Log Maintenance Event" onClose={onClose}>
-      <form onSubmit={submit} className="space-y-3 max-h-[70vh] overflow-y-auto">
+    <RecordSheet
+      title="Log Maintenance Event"
+      onClose={onClose}
+      primary={{ label: saving ? "Saving…" : "Log event", onClick: () => { const fakeEvt = { preventDefault: () => {} } as FormEvent; void submit(fakeEvt); }, disabled: saving }}
+      secondary={{ label: "Cancel", onClick: onClose }}
+    >
+      <form onSubmit={submit} className="space-y-3">
         <Field label="Asset *">
           <select aria-label="Event asset" className="eoss-input w-full" value={form.assetId} onChange={(e) => set({ assetId: e.target.value })}>
             <option value="">Select…</option>
@@ -287,12 +295,8 @@ export function EventFormModal({ open, assets, assetId, options, lookup, ctl, on
           </div>
         )}
         {error && <p role="alert" className="text-xs" style={{ color: "var(--error)" }}>{error}</p>}
-        <div className="flex justify-end gap-2 pt-2">
-          <button type="button" onClick={onClose} className="px-3 py-1.5 text-xs rounded-lg border border-[var(--border)]">Cancel</button>
-          <button type="submit" disabled={saving} className="px-3 py-1.5 text-xs rounded-lg font-semibold text-white" style={{ background: "var(--brand-fill)" }}>{saving ? "Saving…" : "Log event"}</button>
-        </div>
       </form>
-    </Modal>
+    </RecordSheet>
   );
 }
 
@@ -500,16 +504,19 @@ export default function AssetsPage() {
         onClose={() => setAssetModal({ open: false, asset: null })} onSaved={() => { setAssetModal({ open: false, asset: null }); load(); }} />
       <EventFormModal open={eventModal} assets={assets} options={options} lookup={lookup} ctl={ctl}
         onClose={() => setEventModal(false)} onSaved={() => { setEventModal(false); load(); }} />
-      <Modal open={!!archiveTarget} title={`Archive ${archiveTarget?.assetCode ?? ""}`} onClose={() => setArchiveTarget(null)}>
-        <div className="space-y-3">
-          <Field label="Reason *"><textarea aria-label="Archive reason" className="eoss-input w-full" rows={2} value={archiveReason} onChange={(e) => setArchiveReason(e.target.value)} /></Field>
-          {archiveError && <p role="alert" className="text-xs" style={{ color: "var(--error)" }}>{archiveError}</p>}
-          <div className="flex justify-end gap-2">
-            <button type="button" onClick={() => setArchiveTarget(null)} className="px-3 py-1.5 text-xs rounded-lg border border-[var(--border)]">Cancel</button>
-            <button type="button" onClick={confirmArchive} className="px-3 py-1.5 text-xs rounded-lg font-semibold text-white" style={{ background: "var(--error)" }}>Archive asset</button>
+      {!!archiveTarget && (
+        <RecordSheet
+          title={`Archive ${archiveTarget.assetCode}`}
+          onClose={() => setArchiveTarget(null)}
+          primary={{ label: "Archive asset", onClick: () => void confirmArchive() }}
+          secondary={{ label: "Cancel", onClick: () => setArchiveTarget(null) }}
+        >
+          <div className="space-y-3">
+            <Field label="Reason *"><textarea aria-label="Archive reason" className="eoss-input w-full" rows={2} value={archiveReason} onChange={(e) => setArchiveReason(e.target.value)} /></Field>
+            {archiveError && <p role="alert" className="text-xs" style={{ color: "var(--error)" }}>{archiveError}</p>}
           </div>
-        </div>
-      </Modal>
+        </RecordSheet>
+      )}
     </div>
   );
 }

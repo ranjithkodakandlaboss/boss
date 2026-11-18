@@ -6,6 +6,7 @@ import { useCustomer } from "../auth/CustomerState";
 import CreatableSelect, { roleAllowed } from "../components/shared/CreatableSelect";
 import ErrorState from "../components/shared/ErrorState";
 import LoadingState from "../components/shared/LoadingState";
+import RecordSheet from "../components/shared/RecordSheet";
 import RecordTable, { type RecordColumn } from "../components/shared/RecordTable";
 import { allPages, categoryName, mutate, type Category, type Item, type Uom } from "./api";
 import StockNav from "./stockNav";
@@ -151,38 +152,36 @@ export function ItemForm({ item, onClose, onSaved }: { item?: Item; onClose: () 
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-      <div className="w-full max-w-lg space-y-3 rounded-xl border p-5" style={{ background: "var(--surface)", borderColor: "var(--border)" }}>
-        <h2 className="text-sm font-bold">{item ? "Edit material" : "Add material"}</h2>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <label className="text-xs">Item code<input className="eoss-input mt-1 w-full" value={code} disabled={!!item} onChange={(event) => setCode(event.target.value)} /></label>
-          <label className="text-xs">Material name *<input className="eoss-input mt-1 w-full" value={name} onChange={(event) => setName(event.target.value)} /></label>
-          {!item && (
-            <label className="text-xs">Type<select aria-label="Item type" className="eoss-input mt-1 w-full" value={itemType} onChange={(event) => setItemType(event.target.value)}>{TYPES.map((type) => <option key={type} value={type}>{type.replaceAll("_", " ")}</option>)}</select></label>
-          )}
-          <div className="text-xs">Category
-            <CreatableSelect label="category" ariaLabel="Category" value={categoryId} onChange={setCategoryId} placeholder="No category" error={categoryError} onRetry={loadReferences} creatable={canCreateReference} options={categories.map((category) => ({ id: category.id, label: categoryName(category) || "Unnamed category" }))} fields={[{ name: "code", label: "Code", required: true }, { name: "name", label: "Name", required: true }]} unique={(values) => categories.some((category) => (category.code ?? "").toLowerCase() === values.code.toLowerCase()) ? "This value already exists." : null} onCreate={async (values) => {
-              const created = await mutate<Category>("/api/v1/item-categories", "POST", { code: values.code, name: values.name });
-              setCategories((current) => [...current.filter((category) => category.id !== created.id), { ...created, label: created.name }]);
-              return { id: created.id, label: created.name || values.name };
-            }} />
-          </div>
-          <div className="text-xs">Unit of measure
-            <CreatableSelect label="unit of measure" ariaLabel="Unit of measure" value={uomId} onChange={setUomId} disabled={!!item} error={uomError} onRetry={loadReferences} creatable={canCreateReference && !item} options={uoms.map((uom) => ({ id: uom.id, label: `${uom.symbol} · ${uom.name}` }))} fields={[{ name: "name", label: "Name", required: true }, { name: "symbol", label: "Symbol", required: true }]} unique={(values) => uoms.some((uom) => uom.symbol.toLowerCase() === values.symbol.toLowerCase()) ? "This value already exists." : null} onCreate={async (values) => {
-              const created = await mutate<Uom>("/api/v1/uoms", "POST", { name: values.name, symbol: values.symbol, uomType: "quantity" });
-              setUoms((current) => [...current.filter((uom) => uom.id !== created.id), created]);
-              return { id: created.id, label: `${created.symbol} · ${created.name}` };
-            }} />
-          </div>
-          <label className="text-xs">Reorder level<input className="eoss-input mt-1 w-full" type="number" min="0" value={reorderPoint} onChange={(event) => setReorderPoint(event.target.value)} /></label>
-          <label className="text-xs sm:col-span-2">Description<textarea className="eoss-input mt-1 w-full" rows={2} value={description} onChange={(event) => setDescription(event.target.value)} /></label>
+    <RecordSheet
+      title={item ? "Edit material" : "Add material"}
+      onClose={onClose}
+      primary={{ label: saving ? "Saving…" : item ? "Save changes" : "Create material", onClick: () => void save(), disabled: saving }}
+      secondary={{ label: "Cancel", onClick: onClose }}
+    >
+      <div className="grid gap-3 sm:grid-cols-2">
+        <label className="text-xs">Item code<input className="eoss-input mt-1 w-full" value={code} disabled={!!item} onChange={(event) => setCode(event.target.value)} /></label>
+        <label className="text-xs">Material name *<input className="eoss-input mt-1 w-full" value={name} onChange={(event) => setName(event.target.value)} /></label>
+        {!item && (
+          <label className="text-xs">Type<select aria-label="Item type" className="eoss-input mt-1 w-full" value={itemType} onChange={(event) => setItemType(event.target.value)}>{TYPES.map((type) => <option key={type} value={type}>{type.replaceAll("_", " ")}</option>)}</select></label>
+        )}
+        <div className="text-xs">Category
+          <CreatableSelect label="category" ariaLabel="Category" value={categoryId} onChange={setCategoryId} placeholder="No category" error={categoryError} onRetry={loadReferences} creatable={canCreateReference} options={categories.map((category) => ({ id: category.id, label: categoryName(category) || "Unnamed category" }))} fields={[{ name: "code", label: "Code", required: true }, { name: "name", label: "Name", required: true }]} unique={(values) => categories.some((category) => (category.code ?? "").toLowerCase() === values.code.toLowerCase()) ? "This value already exists." : null} onCreate={async (values) => {
+            const created = await mutate<Category>("/api/v1/item-categories", "POST", { code: values.code, name: values.name });
+            setCategories((current) => [...current.filter((category) => category.id !== created.id), { ...created, label: created.name }]);
+            return { id: created.id, label: created.name || values.name };
+          }} />
         </div>
-        {error && <p role="alert" className="text-xs text-[var(--error)]">{error}</p>}
-        <div className="flex justify-end gap-2">
-          <button type="button" onClick={onClose} className="text-xs">Cancel</button>
-          <button type="button" disabled={saving} onClick={() => void save()} className="rounded-lg px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50" style={{ background: "var(--brand-fill)" }}>{saving ? "Saving…" : item ? "Save changes" : "Create material"}</button>
+        <div className="text-xs">Unit of measure
+          <CreatableSelect label="unit of measure" ariaLabel="Unit of measure" value={uomId} onChange={setUomId} disabled={!!item} error={uomError} onRetry={loadReferences} creatable={canCreateReference && !item} options={uoms.map((uom) => ({ id: uom.id, label: `${uom.symbol} · ${uom.name}` }))} fields={[{ name: "name", label: "Name", required: true }, { name: "symbol", label: "Symbol", required: true }]} unique={(values) => uoms.some((uom) => uom.symbol.toLowerCase() === values.symbol.toLowerCase()) ? "This value already exists." : null} onCreate={async (values) => {
+            const created = await mutate<Uom>("/api/v1/uoms", "POST", { name: values.name, symbol: values.symbol, uomType: "quantity" });
+            setUoms((current) => [...current.filter((uom) => uom.id !== created.id), created]);
+            return { id: created.id, label: `${created.symbol} · ${created.name}` };
+          }} />
         </div>
+        <label className="text-xs">Reorder level<input className="eoss-input mt-1 w-full" type="number" min="0" value={reorderPoint} onChange={(event) => setReorderPoint(event.target.value)} /></label>
+        <label className="text-xs sm:col-span-2">Description<textarea className="eoss-input mt-1 w-full" rows={2} value={description} onChange={(event) => setDescription(event.target.value)} /></label>
       </div>
-    </div>
+      {error && <p role="alert" className="mt-3 text-xs text-[var(--error)]">{error}</p>}
+    </RecordSheet>
   );
 }

@@ -1,7 +1,8 @@
 // @ts-nocheck
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, ChevronRight, Plus, X, Pencil } from 'lucide-react';
+import { Search, ChevronRight, Plus, Pencil } from 'lucide-react';
+import RecordSheet from '../../components/shared/RecordSheet';
 import { useStore } from './runtime';
 import StatusChip from '../../components/shared/StatusChip';
 import type { Party } from './types';
@@ -128,48 +129,38 @@ function AddSupplierModal({ onClose, onSave, initialValues, editMode }: { onClos
     onSave(form);
   };
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
-      <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl w-full max-w-md p-6 shadow-2xl max-h-[90vh] overflow-y-auto">
-        <div className="flex justify-between items-center mb-4">
-          <h3 className="font-bold text-[var(--text)]">{editMode ? 'Edit Supplier' : 'Add Supplier'}</h3>
-          <button onClick={onClose}><X size={16} className="text-[var(--text-3)]" /></button>
-        </div>
-        <div className="grid grid-cols-2 gap-3">
-          {[
-            { label: 'Legal Name *', key: 'legalName', placeholder: 'As per company registration' },
-            { label: 'Trading Name', key: 'tradingName', placeholder: 'Short name' },
-            { label: 'City *', key: 'city', placeholder: '' },
-            { label: 'State', key: 'state', placeholder: '' },
-            { label: 'GSTIN', key: 'gstin', placeholder: '' },
-            { label: 'PAN', key: 'pan', placeholder: '' },
-            { label: 'Contact Person', key: 'contactPerson', placeholder: '' },
-            { label: 'Phone', key: 'phone', placeholder: '' },
-            { label: 'Email', key: 'email', placeholder: '' },
-          ].map(f => (
-            <div key={f.key} className={f.key === 'legalName' || f.key === 'email' ? 'col-span-2' : ''}>
-              <label className="block text-xs font-medium text-[var(--text-2)] mb-1">{f.label}</label>
-              <input className="eoss-input w-full" value={(form as any)[f.key]} onChange={e => setForm(prev => ({ ...prev, [f.key]: e.target.value }))} placeholder={f.placeholder} />
-            </div>
-          ))}
-          <div>
-            <label className="block text-xs font-medium text-[var(--text-2)] mb-1">Category</label>
-            <select className="eoss-input w-full" value={form.category} onChange={e => setForm(f => ({ ...f, category: e.target.value }))}>
-              {['Raw Material', 'Consumables', 'Fasteners', 'Subcontractor', 'Services', 'Spares', 'Scrap'].map(c => <option key={c}>{c}</option>)}
-            </select>
+    <RecordSheet title={editMode ? 'Edit Supplier' : 'Add Supplier'} onClose={onClose} secondary={{ label: 'Cancel', onClick: onClose }} primary={{ label: 'Save Supplier', onClick: save }}>
+      <div className="grid grid-cols-2 gap-3">
+        {[
+          { label: 'Legal Name *', key: 'legalName', placeholder: 'As per company registration' },
+          { label: 'Trading Name', key: 'tradingName', placeholder: 'Short name' },
+          { label: 'City *', key: 'city', placeholder: '' },
+          { label: 'State', key: 'state', placeholder: '' },
+          { label: 'GSTIN', key: 'gstin', placeholder: '' },
+          { label: 'PAN', key: 'pan', placeholder: '' },
+          { label: 'Contact Person', key: 'contactPerson', placeholder: '' },
+          { label: 'Phone', key: 'phone', placeholder: '' },
+          { label: 'Email', key: 'email', placeholder: '' },
+        ].map(f => (
+          <div key={f.key} className={f.key === 'legalName' || f.key === 'email' ? 'col-span-2' : ''}>
+            <label className="block text-xs font-medium text-[var(--text-2)] mb-1">{f.label}</label>
+            <input className="eoss-input w-full" value={(form as any)[f.key]} onChange={e => setForm(prev => ({ ...prev, [f.key]: e.target.value }))} placeholder={f.placeholder} />
           </div>
-          <div>
-            <label className="block text-xs font-medium text-[var(--text-2)] mb-1">Payment Terms</label>
-            <select className="eoss-input w-full" value={form.paymentTerms} onChange={e => setForm(f => ({ ...f, paymentTerms: e.target.value }))}>
-              {['Net 15', 'Net 30', 'Net 45', 'Net 60', 'Advance'].map(t => <option key={t}>{t}</option>)}
-            </select>
-          </div>
+        ))}
+        <div>
+          <label className="block text-xs font-medium text-[var(--text-2)] mb-1">Category</label>
+          <select className="eoss-input w-full" value={form.category} onChange={e => setForm(f => ({ ...f, category: e.target.value }))}>
+            {['Raw Material', 'Consumables', 'Fasteners', 'Subcontractor', 'Services', 'Spares', 'Scrap'].map(c => <option key={c}>{c}</option>)}
+          </select>
         </div>
-        {err && <p className="text-xs text-[var(--danger)] mt-2">{err}</p>}
-        <div className="flex gap-3 mt-5">
-          <button onClick={onClose} className="flex-1 py-2.5 border border-[var(--border)] rounded-xl text-sm text-[var(--text-2)]">Cancel</button>
-          <button onClick={save} className="flex-1 py-2.5 bg-[var(--brand-fill)] text-white rounded-xl text-sm font-medium">Save Supplier</button>
+        <div>
+          <label className="block text-xs font-medium text-[var(--text-2)] mb-1">Payment Terms</label>
+          <select className="eoss-input w-full" value={form.paymentTerms} onChange={e => setForm(f => ({ ...f, paymentTerms: e.target.value }))}>
+            {['Net 15', 'Net 30', 'Net 45', 'Net 60', 'Advance'].map(t => <option key={t}>{t}</option>)}
+          </select>
         </div>
       </div>
-    </div>
+      {err && <p className="text-xs text-[var(--danger)] mt-2">{err}</p>}
+    </RecordSheet>
   );
 }
