@@ -5,6 +5,7 @@ import in.boss.masterdata.domain.impl.ItemServiceImpl;
 import in.boss.masterdata.persistence.BomHeaderRepository;
 import in.boss.masterdata.persistence.BomLineRepository;
 import in.boss.masterdata.persistence.HsnCodeRepository;
+import in.boss.masterdata.persistence.HsnCodeEntity;
 import in.boss.masterdata.persistence.ItemCategoryRepository;
 import in.boss.masterdata.persistence.ItemEntity;
 import in.boss.masterdata.persistence.ItemOperationalDependencies;
@@ -60,7 +61,7 @@ class ItemLifecycleTest {
     void deleteItem_whenFinishedItemInActiveBom_throwsLifecycleException() {
         UUID itemId = UUID.randomUUID();
         ItemEntity item = ItemEntity.builder().id(itemId).tenantId(tenantId).isActive(true).build();
-        when(itemRepo.findByIdAndTenantId(itemId, tenantId)).thenReturn(Optional.of(item));
+        when(itemRepo.findLockedByIdAndTenantId(itemId, tenantId)).thenReturn(Optional.of(item));
         when(bomHeaderRepo.existsByTenantIdAndFinishedItemIdAndStatus(tenantId, itemId, "approved")).thenReturn(true);
 
         assertThatThrownBy(() -> itemService.deleteItem(itemId))
@@ -72,7 +73,7 @@ class ItemLifecycleTest {
     void deleteItem_whenComponentInActiveBom_throwsLifecycleException() {
         UUID itemId = UUID.randomUUID();
         ItemEntity item = ItemEntity.builder().id(itemId).tenantId(tenantId).isActive(true).build();
-        when(itemRepo.findByIdAndTenantId(itemId, tenantId)).thenReturn(Optional.of(item));
+        when(itemRepo.findLockedByIdAndTenantId(itemId, tenantId)).thenReturn(Optional.of(item));
         when(bomHeaderRepo.existsByTenantIdAndFinishedItemIdAndStatus(tenantId, itemId, "approved")).thenReturn(false);
         when(bomLineRepo.isComponentInActiveBom(tenantId, itemId)).thenReturn(true);
 
@@ -85,7 +86,7 @@ class ItemLifecycleTest {
     void deactivateItem_whenComponentInActiveBom_throwsLifecycleException() {
         UUID itemId = UUID.randomUUID();
         ItemEntity item = ItemEntity.builder().id(itemId).tenantId(tenantId).isActive(true).build();
-        when(itemRepo.findByIdAndTenantId(itemId, tenantId)).thenReturn(Optional.of(item));
+        when(itemRepo.findLockedByIdAndTenantId(itemId, tenantId)).thenReturn(Optional.of(item));
         when(bomHeaderRepo.existsByTenantIdAndFinishedItemIdAndStatus(tenantId, itemId, "approved")).thenReturn(false);
         when(bomLineRepo.isComponentInActiveBom(tenantId, itemId)).thenReturn(true);
 
@@ -100,7 +101,7 @@ class ItemLifecycleTest {
     void operationalDependenciesBlockDeleteAndDeactivation() {
         UUID itemId = UUID.randomUUID();
         ItemEntity item = ItemEntity.builder().id(itemId).tenantId(tenantId).isActive(true).build();
-        when(itemRepo.findByIdAndTenantId(itemId, tenantId)).thenReturn(Optional.of(item));
+        when(itemRepo.findLockedByIdAndTenantId(itemId, tenantId)).thenReturn(Optional.of(item));
         when(operationalDependencies.findActive(tenantId, itemId)).thenReturn(List.of("production job", "dispatch"));
 
         assertThatThrownBy(() -> itemService.deleteItem(itemId))
@@ -109,5 +110,20 @@ class ItemLifecycleTest {
         assertThatThrownBy(() -> itemService.updateItem(itemId, UpdateItemRequest.builder().status("inactive").build()))
                 .isInstanceOf(LifecycleException.class)
                 .hasMessageContaining("production job, dispatch");
+    }
+
+    @Test
+    void categoryAndHsnChangesAreBlockedForReferencedItems() {
+        UUID itemId = UUID.randomUUID();
+        ItemEntity item = ItemEntity.builder().id(itemId).tenantId(tenantId).isActive(true).build();
+        when(itemRepo.findLockedByIdAndTenantId(itemId, tenantId)).thenReturn(Optional.of(item));
+        when(operationalDependencies.findReferences(tenantId, itemId)).thenReturn(List.of("BOM"));
+        when(hsnCodeRepo.findByCode("1234"))
+                .thenReturn(Optional.of(HsnCodeEntity.builder().id(UUID.randomUUID()).code("1234").build()));
+
+        assertThatThrownBy(() -> itemService.updateItem(itemId, UpdateItemRequest.builder().categoryId(UUID.randomUUID()).build()))
+                .isInstanceOf(LifecycleException.class).hasMessageContaining("BOM");
+        assertThatThrownBy(() -> itemService.updateItem(itemId, UpdateItemRequest.builder().hsnCode("1234").build()))
+                .isInstanceOf(LifecycleException.class).hasMessageContaining("BOM");
     }
 }

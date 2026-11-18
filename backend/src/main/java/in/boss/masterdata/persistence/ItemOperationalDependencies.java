@@ -48,4 +48,32 @@ public class ItemOperationalDependencies {
                     WHERE l.tenant_id = :tenant AND l.item_id = :item AND h.status NOT IN ('delivered', 'cancelled'))
                 """, new MapSqlParameterSource().addValue("tenant", tenantId).addValue("item", itemId), String.class);
     }
+
+    public List<String> findReferences(UUID tenantId, UUID itemId) {
+        return jdbc.queryForList("""
+                SELECT 'BOM' AS dependency WHERE EXISTS (
+                    SELECT 1 FROM bom_headers WHERE tenant_id = :tenant AND finished_item_id = :item
+                    UNION ALL SELECT 1 FROM bom_lines WHERE tenant_id = :tenant AND component_item_id = :item)
+                UNION ALL
+                SELECT 'customer purchase order' WHERE EXISTS (
+                    SELECT 1 FROM cpo_lines WHERE tenant_id = :tenant AND item_id = :item)
+                UNION ALL
+                SELECT 'purchase requisition' WHERE EXISTS (
+                    SELECT 1 FROM pr_lines WHERE tenant_id = :tenant AND item_id = :item)
+                UNION ALL
+                SELECT 'supplier purchase order' WHERE EXISTS (
+                    SELECT 1 FROM spo_lines WHERE tenant_id = :tenant AND item_id = :item)
+                UNION ALL
+                SELECT 'production job' WHERE EXISTS (
+                    SELECT 1 FROM production_jobs WHERE tenant_id = :tenant AND finished_item_id = :item
+                    UNION ALL SELECT 1 FROM job_material_requirements WHERE tenant_id = :tenant AND item_id = :item)
+                UNION ALL
+                SELECT 'inventory' WHERE EXISTS (
+                    SELECT 1 FROM material_lots WHERE tenant_id = :tenant AND item_id = :item
+                    UNION ALL SELECT 1 FROM stock_reservation_records WHERE tenant_id = :tenant AND item_id = :item)
+                UNION ALL
+                SELECT 'dispatch' WHERE EXISTS (
+                    SELECT 1 FROM dispatch_lines WHERE tenant_id = :tenant AND item_id = :item)
+                """, new MapSqlParameterSource().addValue("tenant", tenantId).addValue("item", itemId), String.class);
+    }
 }

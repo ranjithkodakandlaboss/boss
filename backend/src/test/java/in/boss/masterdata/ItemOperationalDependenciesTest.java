@@ -10,7 +10,13 @@ import in.boss.masterdata.domain.UomService;
 import in.boss.masterdata.persistence.ItemOperationalDependencies;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DataIntegrityViolationException;
 
+import java.math.BigDecimal;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.PreparedStatement;
+import java.sql.SQLException;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -60,6 +66,7 @@ class ItemOperationalDependenciesTest extends BaseMasterDataIntegrationTest {
         UUID otherTenant = provisionTenant("item-other");
         setTenantContext(tenant, "OWNER");
         assertThat(dependencies.findActive(otherTenant, item.getId())).isEmpty();
+        assertThat(dependencies.findReferences(otherTenant, item.getId())).isEmpty();
         assertThatThrownBy(() -> items.deleteItem(item.getId()))
                 .isInstanceOf(LifecycleException.class).hasMessageContaining("production job");
         assertThatThrownBy(() -> items.updateItem(item.getId(), UpdateItemRequest.builder().status("inactive").build()))
@@ -73,9 +80,101 @@ class ItemOperationalDependenciesTest extends BaseMasterDataIntegrationTest {
         jdbc.update("UPDATE material_lots SET quantity = 0 WHERE id = ?", lot);
         jdbc.update("UPDATE dispatches SET status = 'delivered' WHERE id = ?", dispatch);
         assertThat(dependencies.findActive(tenant, item.getId())).isEmpty();
+        assertThat(dependencies.findReferences(tenant, item.getId())).contains(
+                "production job", "inventory", "dispatch", "customer purchase order");
+        assertThatThrownBy(() -> items.updateItem(item.getId(), UpdateItemRequest.builder().name("Renamed").build()))
+                .isInstanceOf(LifecycleException.class).hasMessageContaining("production job");
+        assertThatThrownBy(() -> items.updateItem(item.getId(), UpdateItemRequest.builder().description("Changed").build()))
+                .isInstanceOf(LifecycleException.class).hasMessageContaining("inventory");
+        assertThat(items.updateItem(item.getId(), UpdateItemRequest.builder().name("Item")
+                .standardCost(new BigDecimal("2.50")).build()).getStandardCost()).isEqualByComparingTo("2.50");
         items.deleteItem(item.getId());
         assertThat(items.getItem(item.getId()).getStatus()).isEqualTo("inactive");
         assertThat(jdbc.queryForObject("SELECT count(*) FROM production_jobs WHERE id = ?", Integer.class, job)).isEqualTo(1);
+        assertThatThrownBy(() -> jdbc.update("UPDATE production_jobs SET status = 'planned' WHERE id = ?", job))
+                .isInstanceOf(DataIntegrityViolationException.class).hasMessageContaining("inactive");
+        assertThatThrownBy(() -> jdbc.update(
+                "INSERT INTO material_lots (tenant_id, item_id, store_id, quantity) VALUES (?, ?, ?, 1)",
+                tenant, item.getId(), store))
+                .isInstanceOf(DataIntegrityViolationException.class).hasMessageContaining("inactive");
+    }
+
+    @Test
+    void productionWritesAndDeactivationSerializeUnderRls() throws Exception {
+        UUID tenant = provisionTenant("item-locking");
+        setTenantContext(tenant, "OWNER");
+        UUID uom = uoms.createUom(CreateUomRequest.builder().name("Each").symbol("EA")
+                .uomType("quantity").isBase(true).build()).getId();
+        UUID first = items.createItem(CreateItemRequest.builder().code("ONE").name("One")
+                .itemType("FINISHED_GOOD").uomId(uom).build()).getId();
+        UUID second = items.createItem(CreateItemRequest.builder().code("TWO").name("Two")
+                .itemType("FINISHED_GOOD").uomId(uom).build()).getId();
+        UUID third = items.createItem(CreateItemRequest.builder().code("THREE").name("Three")
+                .itemType("FINISHED_GOOD").uomId(uom).build()).getId();
+        UUID legal = insertId("INSERT INTO legal_entities (tenant_id, name, legal_name) VALUES (?, 'Legal', 'Legal') RETURNING id", tenant);
+        UUID site = insertId("INSERT INTO physical_sites (tenant_id, legal_entity_id, name, code) VALUES (?, ?, 'Site', 'S') RETURNING id", tenant, legal);
+        UUID user = UUID.randomUUID();
+
+        jdbc.execute("CREATE ROLE item_lock_test LOGIN PASSWORD 'item_lock_test'");
+        jdbc.execute("GRANT USAGE ON SCHEMA public TO item_lock_test");
+        jdbc.execute("GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO item_lock_test");
+        try (Connection writer = appConnection(tenant); Connection lifecycle = appConnection(tenant)) {
+            execute(writer, "INSERT INTO production_jobs (tenant_id, job_number, finished_item_id, site_id, quantity, uom_id, created_by) VALUES (?, 'J1', ?, ?, 1, ?, ?)", tenant, first, site, uom, user);
+            execute(lifecycle, "SET LOCAL lock_timeout = '200ms'");
+            assertThatThrownBy(() -> execute(lifecycle, "SELECT id FROM items WHERE tenant_id = ? AND id = ? FOR UPDATE", tenant, first))
+                    .isInstanceOf(SQLException.class).extracting(e -> ((SQLException) e).getSQLState()).isEqualTo("55P03");
+            lifecycle.rollback();
+            writer.commit();
+            assertThatThrownBy(() -> items.updateItem(first, UpdateItemRequest.builder().status("inactive").build()))
+                    .isInstanceOf(LifecycleException.class).hasMessageContaining("production job");
+
+            execute(lifecycle, "SELECT id FROM items WHERE tenant_id = ? AND id = ? FOR UPDATE", tenant, second);
+            execute(lifecycle, "UPDATE items SET is_active = false WHERE tenant_id = ? AND id = ?", tenant, second);
+            execute(writer, "SET LOCAL lock_timeout = '200ms'");
+            assertThatThrownBy(() -> execute(writer, "INSERT INTO production_jobs (tenant_id, job_number, finished_item_id, site_id, quantity, uom_id, created_by) VALUES (?, 'J2', ?, ?, 1, ?, ?)", tenant, second, site, uom, user))
+                    .isInstanceOf(SQLException.class).extracting(e -> ((SQLException) e).getSQLState()).isEqualTo("55P03");
+            writer.rollback();
+            lifecycle.commit();
+            assertThatThrownBy(() -> execute(writer, "INSERT INTO production_jobs (tenant_id, job_number, finished_item_id, site_id, quantity, uom_id, created_by) VALUES (?, 'J2', ?, ?, 1, ?, ?)", tenant, second, site, uom, user))
+                    .isInstanceOf(SQLException.class).hasMessageContaining("inactive");
+            writer.rollback();
+            UUID cancelled = insertId("INSERT INTO production_jobs (tenant_id, job_number, finished_item_id, site_id, quantity, uom_id, status, created_by) VALUES (?, 'J3', ?, ?, 1, ?, 'cancelled', ?) RETURNING id", tenant, first, site, uom, user);
+            execute(writer, "INSERT INTO job_material_requirements (tenant_id, job_id, item_id, required_qty, uom_id) VALUES (?, ?, ?, 1, ?)", tenant, cancelled, second, uom);
+            execute(lifecycle, "SET LOCAL lock_timeout = '200ms'");
+            assertThatThrownBy(() -> execute(lifecycle, "UPDATE production_jobs SET status = 'planned' WHERE id = ?", cancelled))
+                    .isInstanceOf(SQLException.class).extracting(e -> ((SQLException) e).getSQLState()).isEqualTo("55P03");
+            lifecycle.rollback();
+            writer.commit();
+            assertThatThrownBy(() -> execute(lifecycle, "UPDATE production_jobs SET status = 'planned' WHERE id = ?", cancelled))
+                    .isInstanceOf(SQLException.class).hasMessageContaining("inactive");
+            lifecycle.rollback();
+
+            execute(writer, "INSERT INTO production_jobs (tenant_id, job_number, finished_item_id, site_id, quantity, uom_id, status, created_by) VALUES (?, 'J4', ?, ?, 1, ?, 'cancelled', ?)", tenant, third, site, uom, user);
+            execute(lifecycle, "SET LOCAL lock_timeout = '200ms'");
+            assertThatThrownBy(() -> execute(lifecycle, "SELECT id FROM items WHERE tenant_id = ? AND id = ? FOR UPDATE", tenant, third))
+                    .isInstanceOf(SQLException.class).extracting(e -> ((SQLException) e).getSQLState()).isEqualTo("55P03");
+            lifecycle.rollback();
+            writer.commit();
+            assertThatThrownBy(() -> items.updateItem(third, UpdateItemRequest.builder().name("Renamed").build()))
+                    .isInstanceOf(LifecycleException.class).hasMessageContaining("production job");
+        }
+    }
+
+    private Connection appConnection(UUID tenant) throws SQLException {
+        Connection connection = DriverManager.getConnection(postgres.getJdbcUrl(), "item_lock_test", "item_lock_test");
+        connection.setAutoCommit(false);
+        execute(connection, "SELECT set_config('app.current_tenant_id', ?, false)", tenant.toString());
+        connection.commit();
+        return connection;
+    }
+
+    private void execute(Connection connection, String sql, Object... args) throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement(sql)) {
+            for (int i = 0; i < args.length; i++) {
+                statement.setObject(i + 1, args[i]);
+            }
+            statement.execute();
+        }
     }
 
     private UUID insertId(String sql, Object... args) {

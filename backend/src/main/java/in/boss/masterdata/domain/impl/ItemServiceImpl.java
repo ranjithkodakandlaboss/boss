@@ -37,6 +37,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -158,10 +160,26 @@ public class ItemServiceImpl implements ItemService {
     @Override
     public ItemDto updateItem(UUID id, UpdateItemRequest request) {
         UUID tenantId = getTenantId();
-        ItemEntity entity = itemRepository.findByIdAndTenantId(id, tenantId)
+        ItemEntity entity = itemRepository.findLockedByIdAndTenantId(id, tenantId)
                 .orElseThrow(() -> new EntityNotFoundException("Item not found: " + id));
 
         ItemDto oldDto = loadFullDto(entity, tenantId);
+
+        Optional<HsnCodeEntity> requestedHsn = Optional.empty();
+        if (request.getHsnCode() != null && !request.getHsnCode().isBlank()) {
+            requestedHsn = hsnCodeRepository.findByCode(request.getHsnCode().trim());
+        }
+        boolean identityChanged = (request.getName() != null && !request.getName().isBlank()
+                && !Objects.equals(entity.getName(), request.getName().trim()))
+                || (request.getDescription() != null && !Objects.equals(entity.getDescription(), request.getDescription()))
+                || (request.getCategoryId() != null && !Objects.equals(entity.getCategoryId(), request.getCategoryId()))
+                || (requestedHsn.isPresent() && !Objects.equals(entity.getHsnCodeId(), requestedHsn.get().getId()));
+        if (identityChanged) {
+            List<String> references = operationalDependencies.findReferences(tenantId, id);
+            if (!references.isEmpty()) {
+                throw new LifecycleException("Cannot change item identity: referenced by " + String.join(", ", references));
+            }
+        }
 
         if (request.getStatus() != null) {
             boolean newActive = "active".equalsIgnoreCase(request.getStatus());
@@ -181,8 +199,10 @@ public class ItemServiceImpl implements ItemService {
         if (request.getCategoryId() != null) {
             ItemCategoryEntity cat = categoryRepository.findByIdAndTenantId(request.getCategoryId(), tenantId)
                     .orElseThrow(() -> new ValidationException("Invalid category ID: " + request.getCategoryId()));
-            entity.setCategoryId(cat.getId());
-            entity.setCategoryLabelSnapshot(cat.getName());
+            if (!Objects.equals(entity.getCategoryId(), cat.getId())) {
+                entity.setCategoryId(cat.getId());
+                entity.setCategoryLabelSnapshot(cat.getName());
+            }
         }
         if (request.getStandardCost() != null) {
             entity.setStdCost(request.getStandardCost());
@@ -191,9 +211,8 @@ public class ItemServiceImpl implements ItemService {
             entity.setReorderQty(request.getReorderPoint());
         }
         if (request.getHsnCode() != null && !request.getHsnCode().isBlank()) {
-            var hsnOpt = hsnCodeRepository.findByCode(request.getHsnCode().trim());
-            if (hsnOpt.isPresent()) {
-                HsnCodeEntity hsn = hsnOpt.get();
+            if (requestedHsn.isPresent()) {
+                HsnCodeEntity hsn = requestedHsn.get();
                 entity.setHsnCodeId(hsn.getId());
                 entity.setGstRate(hsn.getGstRate());
             }
@@ -213,7 +232,7 @@ public class ItemServiceImpl implements ItemService {
     @Override
     public void deleteItem(UUID id) {
         UUID tenantId = getTenantId();
-        ItemEntity entity = itemRepository.findByIdAndTenantId(id, tenantId)
+        ItemEntity entity = itemRepository.findLockedByIdAndTenantId(id, tenantId)
                 .orElseThrow(() -> new EntityNotFoundException("Item not found: " + id));
 
         checkNoActiveBomReference(tenantId, id, "delete");
