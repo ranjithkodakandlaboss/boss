@@ -86,8 +86,20 @@ public final class BossPermissions {
     public static final String PRODUCTION_ACCESS =
             "hasAnyRole('OWNER','OPS_MANAGER','PRODUCTION_SUPERVISOR')";
 
+    /** Read production jobs, including shop-floor and quality roles. */
+    public static final String PRODUCTION_VIEW =
+            "hasAnyRole('OWNER','OPS_MANAGER','PRODUCTION_SUPERVISOR','FIELD_WORKER','QUALITY_INSPECTOR')";
+
     public static final String PRODUCTION_WRITE =
             "hasAnyRole('OWNER','OPS_MANAGER','PRODUCTION_SUPERVISOR')";
+
+    /** Start or record stage execution, including the shop-floor role. */
+    public static final String PRODUCTION_EXECUTE =
+            "hasAnyRole('OWNER','OPS_MANAGER','PRODUCTION_SUPERVISOR','FIELD_WORKER')";
+
+    /** Complete a stage or the job. Quality can close the final gate. */
+    public static final String PRODUCTION_COMPLETE =
+            "hasAnyRole('OWNER','OPS_MANAGER','PRODUCTION_SUPERVISOR','QUALITY_INSPECTOR')";
 
     /** Anyone who can touch stock or warehouse records. */
     public static final String INVENTORY_WRITE =

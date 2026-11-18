@@ -1,0 +1,301 @@
+package in.boss.production.domain;
+
+import in.boss.masterdata.domain.BomExplosionService;
+import in.boss.production.api.ProductionApiDtos.CreateJobRequest;
+import in.boss.production.api.ProductionApiDtos.ProductionJobResponse;
+import in.boss.production.api.ProductionApiDtos.ReasonRequest;
+import in.boss.shared.audit.AuditService;
+import in.boss.shared.context.BossContext;
+import in.boss.shared.outbox.OutboxPublisher;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.math.BigDecimal;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.util.List;
+import java.util.UUID;
+
+import static in.boss.shared.security.BossPermissions.OWNER_OR_OPS;
+import static in.boss.shared.security.BossPermissions.PRODUCTION_WRITE;
+
+@Service
+@Transactional
+public class ProductionJobService {
+
+    private final JdbcTemplate jdbc;
+    private final ProductionSupport support;
+    private final ProductionFeatureFlags flags;
+    private final ProductionMetrics metrics;
+    private final ProductionQueryService query;
+    private final BomExplosionService explosion;
+    private final AuditService audit;
+    private final OutboxPublisher outbox;
+
+    public ProductionJobService(JdbcTemplate jdbc, ProductionSupport support, ProductionFeatureFlags flags,
+                                ProductionMetrics metrics, ProductionQueryService query,
+                                BomExplosionService explosion, AuditService audit, OutboxPublisher outbox) {
+        this.jdbc = jdbc;
+        this.support = support;
+        this.flags = flags;
+        this.metrics = metrics;
+        this.query = query;
+        this.explosion = explosion;
+        this.audit = audit;
+        this.outbox = outbox;
+    }
+
+    @PreAuthorize(PRODUCTION_WRITE)
+    public ProductionJobResponse create(CreateJobRequest request) {
+        BossContext context = support.requireContext();
+        flags.require(context.tenantId(), ProductionFeatureFlags.JOB_CREATE);
+        flags.require(context.tenantId(), ProductionFeatureFlags.ROUTING_STAGES);
+        try {
+            ProductionJobResponse created = insertJob(context, request);
+            metrics.afterCommit(() -> metrics.jobCreation("success"));
+            return created;
+        } catch (RuntimeException ex) {
+            metrics.jobCreation("failure");
+            throw ex;
+        }
+    }
+
+    @PreAuthorize(PRODUCTION_WRITE)
+    public ProductionJobResponse hold(UUID jobId, ReasonRequest request) {
+        return changeStatus(jobId, JobStatusMachine.ON_HOLD, request.reason(), true);
+    }
+
+    @PreAuthorize(PRODUCTION_WRITE)
+    public ProductionJobResponse releaseHold(UUID jobId) {
+        return changeStatus(jobId, JobStatusMachine.IN_PROGRESS, null, true);
+    }
+
+    @PreAuthorize(OWNER_OR_OPS)
+    public ProductionJobResponse cancel(UUID jobId, ReasonRequest request) {
+        return changeStatus(jobId, JobStatusMachine.CANCELLED, request.reason(), false);
+    }
+
+    private ProductionJobResponse insertJob(BossContext context, CreateJobRequest request) {
+        CpoLine line = lockLine(context, request);
+        rejectDuplicate(context.tenantId(), line.lineId());
+        RoutingTemplate routing = requireRouting(context.tenantId(), request.routingTemplateId(), line.itemId());
+        List<StageSeed> stages = loadStages(context.tenantId(), routing.id());
+        if (stages.isEmpty()) {
+            throw ProductionSupport.badRequest("Routing template has no stages");
+        }
+        UUID jobId = UUID.randomUUID();
+        String jobNumber = "JOB-" + LocalDate.now() + "-" + jobId.toString().substring(0, 8).toUpperCase();
+        BigDecimal selling = JobCostCalculator.money(line.unitPrice().multiply(line.quantity()));
+        LocalDate plannedEnd = request.scheduledEnd() != null ? request.scheduledEnd() : line.requiredBy();
+        String priority = request.priority() == null ? "normal" : request.priority();
+        jdbc.update("""
+                INSERT INTO production_jobs
+                  (id, tenant_id, job_number, cpo_id, cpo_line_id, finished_item_id, routing_id,
+                   routing_version, site_id, quantity, uom_id, status, planned_start, planned_end,
+                   priority, selling_price, created_by)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'planned', ?, ?, ?, ?, ?)
+                """, jobId, context.tenantId(), jobNumber, line.cpoId(), line.lineId(), line.itemId(),
+                routing.id(), routing.version(), line.siteId(), line.quantity(), line.uomId(),
+                request.scheduledStart(), plannedEnd, priority, selling, context.userId());
+        insertStages(context.tenantId(), jobId, stages);
+        BigDecimal estimated = insertMaterials(context, jobId, line);
+        insertCostHeader(context.tenantId(), jobId, estimated, selling);
+        audit.record("production_job", jobId, "CREATE", null, "{\"status\":\"planned\"}");
+        outbox.publish("production_job", jobId, "production.job.created",
+                "{\"jobId\":\"" + jobId + "\",\"status\":\"planned\"}");
+        return query.get(jobId);
+    }
+
+    private CpoLine lockLine(BossContext context, CreateJobRequest request) {
+        CpoLine line = jdbc.query("""
+                SELECT c.id AS cpo_id, c.status, c.site_id, c.required_by_date,
+                       l.id AS line_id, l.item_id, l.quantity, l.uom_id, l.unit_price
+                FROM cpos c
+                JOIN cpo_lines l ON l.cpo_id = c.id AND l.tenant_id = c.tenant_id
+                WHERE c.tenant_id = ? AND c.id = ? AND l.id = ?
+                FOR UPDATE OF c
+                """, rs -> {
+            if (!rs.next()) {
+                return null;
+            }
+            return new CpoLine(rs.getObject("cpo_id", UUID.class), rs.getString("status"),
+                    rs.getObject("site_id", UUID.class),
+                    rs.getDate("required_by_date") == null ? null : rs.getDate("required_by_date").toLocalDate(),
+                    rs.getObject("line_id", UUID.class), rs.getObject("item_id", UUID.class),
+                    rs.getBigDecimal("quantity"), rs.getObject("uom_id", UUID.class),
+                    rs.getBigDecimal("unit_price"));
+        }, context.tenantId(), request.cpoId(), request.cpoLineId());
+        if (line == null) {
+            throw ProductionSupport.badRequest("Customer PO line was not found for this tenant");
+        }
+        if (!context.canAccessSite(line.siteId())) {
+            throw ProductionSupport.notFound("Customer PO line was not found for this tenant");
+        }
+        if (!"open".equals(line.status()) && !"partial".equals(line.status())) {
+            throw ProductionSupport.badRequest("Customer PO status " + line.status() + " cannot start production");
+        }
+        return line;
+    }
+
+    private void rejectDuplicate(UUID tenantId, UUID lineId) {
+        Integer existing = jdbc.queryForObject("""
+                SELECT COUNT(*) FROM production_jobs
+                WHERE tenant_id = ? AND cpo_line_id = ? AND status <> 'cancelled'
+                """, Integer.class, tenantId, lineId);
+        if (existing != null && existing > 0) {
+            throw ProductionSupport.conflict("A production job already exists for this Customer PO line");
+        }
+    }
+
+    private RoutingTemplate requireRouting(UUID tenantId, UUID routingId, UUID itemId) {
+        RoutingTemplate routing = jdbc.query("""
+                SELECT id, version, status, finished_item_id
+                FROM routing_templates WHERE tenant_id = ? AND id = ?
+                """, rs -> rs.next() ? new RoutingTemplate(rs.getObject("id", UUID.class),
+                rs.getString("version"), rs.getString("status"),
+                rs.getObject("finished_item_id", UUID.class)) : null, tenantId, routingId);
+        if (routing == null || !"active".equals(routing.status())) {
+            throw ProductionSupport.badRequest("Active routing template was not found");
+        }
+        if (routing.itemId() != null && !routing.itemId().equals(itemId)) {
+            throw ProductionSupport.badRequest("Routing template does not match the Customer PO item");
+        }
+        return routing;
+    }
+
+    private List<StageSeed> loadStages(UUID tenantId, UUID routingId) {
+        Integer versioned = jdbc.queryForObject("""
+                SELECT COUNT(*) FROM routing_template_stages WHERE tenant_id = ? AND routing_id = ?
+                """, Integer.class, tenantId, routingId);
+        if (versioned != null && versioned > 0) {
+            return jdbc.query("""
+                    SELECT s.seq_no, s.name, s.requires_inspection, s.inspection_template_id, s.is_optional,
+                           s.stage_config_id, o.code, o.label
+                    FROM routing_template_stages s
+                    LEFT JOIN tenant_config_options o
+                      ON o.id = s.stage_config_id AND o.tenant_id = s.tenant_id
+                    WHERE s.tenant_id = ? AND s.routing_id = ?
+                    ORDER BY s.seq_no
+                    """, (rs, row) -> {
+                String label = rs.getString("label");
+                String name = label == null || label.isBlank() ? rs.getString("name") : label;
+                return new StageSeed(rs.getInt("seq_no"), name, rs.getString("code"),
+                        rs.getObject("stage_config_id", UUID.class), rs.getBoolean("requires_inspection"),
+                        rs.getObject("inspection_template_id", UUID.class), rs.getBoolean("is_optional"), null);
+            }, tenantId, routingId);
+        }
+        return jdbc.query("""
+                SELECT seq_no, name, work_centre, requires_inspection, is_optional
+                FROM routing_operations WHERE tenant_id = ? AND routing_id = ? ORDER BY seq_no
+                """, (rs, row) -> new StageSeed(rs.getInt("seq_no"), rs.getString("name"), null, null,
+                rs.getBoolean("requires_inspection"), null, rs.getBoolean("is_optional"),
+                rs.getString("work_centre")), tenantId, routingId);
+    }
+
+    private void insertStages(UUID tenantId, UUID jobId, List<StageSeed> stages) {
+        for (StageSeed stage : stages) {
+            jdbc.update("""
+                    INSERT INTO job_stages
+                      (id, tenant_id, job_id, seq_no, name, stage_code, stage_config_option_id,
+                       stage_label_snapshot, status, requires_inspection, inspection_template_id,
+                       is_optional, work_centre)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)
+                    """, UUID.randomUUID(), tenantId, jobId, stage.seq(), stage.name(), stage.code(),
+                    stage.configId(), stage.name(), stage.inspection(), stage.templateId(),
+                    stage.optional(), stage.workCentre());
+        }
+    }
+
+    private BigDecimal insertMaterials(BossContext context, UUID jobId, CpoLine line) {
+        var exploded = explosion.explodeBOM(line.itemId(), line.quantity());
+        if (exploded.getFlatMaterials() == null || exploded.getFlatMaterials().isEmpty()) {
+            throw ProductionSupport.badRequest("An approved BOM is required to create a production job");
+        }
+        BigDecimal estimated = BigDecimal.ZERO;
+        for (var material : exploded.getFlatMaterials()) {
+            ItemCost item = jdbc.query("""
+                    SELECT base_uom_id, COALESCE(std_cost, 0) AS std_cost
+                    FROM items WHERE tenant_id = ? AND id = ?
+                    """, rs -> rs.next() ? new ItemCost(rs.getObject("base_uom_id", UUID.class),
+                    rs.getBigDecimal("std_cost")) : null, context.tenantId(), material.getItemId());
+            if (item == null) {
+                throw ProductionSupport.badRequest("BOM component was not found");
+            }
+            BigDecimal qty = material.getQty().setScale(3, java.math.RoundingMode.HALF_UP);
+            if (qty.signum() <= 0) {
+                continue;
+            }
+            jdbc.update("""
+                    INSERT INTO job_material_requirements
+                      (id, tenant_id, job_id, item_id, required_qty, uom_id)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """, UUID.randomUUID(), context.tenantId(), jobId, material.getItemId(), qty, item.uomId());
+            estimated = estimated.add(qty.multiply(item.stdCost()));
+        }
+        if (estimated.signum() == 0 && exploded.getFlatMaterials().isEmpty()) {
+            throw ProductionSupport.badRequest("An approved BOM is required to create a production job");
+        }
+        return JobCostCalculator.money(estimated);
+    }
+
+    private void insertCostHeader(UUID tenantId, UUID jobId, BigDecimal estimated, BigDecimal selling) {
+        UUID costingId = UUID.randomUUID();
+        jdbc.update("""
+                INSERT INTO job_costing_headers
+                  (id, tenant_id, job_id, est_material_cost, selling_price, status)
+                VALUES (?, ?, ?, ?, ?, 'estimated')
+                """, costingId, tenantId, jobId, estimated, selling);
+        jdbc.update("""
+                INSERT INTO job_costing_lines
+                  (id, tenant_id, costing_id, cost_type, description, amount, is_estimated)
+                VALUES (?, ?, ?, 'material', 'Estimated material from approved BOM', ?, TRUE)
+                """, UUID.randomUUID(), tenantId, costingId, estimated);
+    }
+
+    private ProductionJobResponse changeStatus(UUID jobId, String target, String reason, boolean hold) {
+        BossContext context = support.requireContext();
+        flags.require(context.tenantId(), ProductionFeatureFlags.STAGE_TRANSITION);
+        String current = jdbc.query("""
+                SELECT status FROM production_jobs WHERE tenant_id = ? AND id = ? FOR UPDATE
+                """, rs -> rs.next() ? rs.getString("status") : null, context.tenantId(), jobId);
+        if (current == null) {
+            throw ProductionSupport.notFound("Production job not found");
+        }
+        JobStatusMachine.assertTransition(current, target);
+        if (hold && JobStatusMachine.ON_HOLD.equals(target)) {
+            jdbc.update("""
+                    UPDATE production_jobs SET status = ?, hold_reason = ?, updated_at = NOW()
+                    WHERE tenant_id = ? AND id = ?
+                    """, target, reason.trim(), context.tenantId(), jobId);
+        } else if (JobStatusMachine.CANCELLED.equals(target)) {
+            jdbc.update("""
+                    UPDATE production_jobs SET status = ?, cancel_reason = ?, updated_at = NOW()
+                    WHERE tenant_id = ? AND id = ?
+                    """, target, reason.trim(), context.tenantId(), jobId);
+        } else {
+            jdbc.update("""
+                    UPDATE production_jobs
+                    SET status = ?, hold_reason = NULL, updated_at = NOW()
+                    WHERE tenant_id = ? AND id = ?
+                    """, target, context.tenantId(), jobId);
+        }
+        audit.record("production_job", jobId, "STATUS", "{\"status\":\"" + current + "\"}",
+                "{\"status\":\"" + target + "\"}");
+        outbox.publish("production_job", jobId, "production.job.status_changed",
+                "{\"from\":\"" + current + "\",\"to\":\"" + target + "\"}");
+        metrics.afterCommit(() -> metrics.jobTransition(current, target));
+        return query.get(jobId);
+    }
+
+    private record CpoLine(UUID cpoId, String status, UUID siteId, LocalDate requiredBy, UUID lineId,
+                           UUID itemId, BigDecimal quantity, UUID uomId, BigDecimal unitPrice) {}
+
+    private record RoutingTemplate(UUID id, String version, String status, UUID itemId) {}
+
+    private record StageSeed(int seq, String name, String code, UUID configId, boolean inspection,
+                             UUID templateId, boolean optional, String workCentre) {}
+
+    private record ItemCost(UUID uomId, BigDecimal stdCost) {}
+}

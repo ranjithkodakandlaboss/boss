@@ -6,3 +6,14 @@
 # Example:
 # customer-api in.boss.billing.InvoiceService
 customer-api in.boss.procurement.domain.PurchaseRequisitionService
+customer-api in.boss.production.domain.ProductionJobService
+customer-api in.boss.production.domain.ProductionQueryService
+customer-api in.boss.production.domain.ProductionJobView
+customer-api in.boss.production.domain.ProductionMaterialReadiness
+customer-api in.boss.production.domain.JobStageService
+customer-api in.boss.production.domain.JobMaterialService
+customer-api in.boss.production.domain.JobCostingService
+customer-api in.boss.production.domain.JobInspectionService
+customer-api in.boss.production.domain.ProductionFeatureFlags
+customer-api in.boss.production.domain.ProductionMetrics
+customer-api in.boss.production.domain.JobCostCalculator
