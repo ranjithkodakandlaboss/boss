@@ -43,7 +43,7 @@ public class ConfigService {
                 .computeIfAbsent(categoryCode, c -> loadOptions(ctx.tenantId(), c));
     }
 
-    @PreAuthorize("hasRole('OWNER')")
+    @PreAuthorize("hasAnyRole('OWNER','OPS_MANAGER','STORE_KEEPER')")
     @Transactional
     public ConfigOptionDto createOption(String categoryCode, String code,
                                         String label, int sortOrder) {
@@ -96,7 +96,7 @@ public class ConfigService {
         return new ConfigOptionDto(id, categoryCode, code, label, sortOrder, false);
     }
 
-    @PreAuthorize("hasRole('OWNER')")
+    @PreAuthorize("hasAnyRole('OWNER','OPS_MANAGER','STORE_KEEPER')")
     @Transactional
     public void deactivateOption(UUID optionId) {
         var ctx = BossContextHolder.get();
