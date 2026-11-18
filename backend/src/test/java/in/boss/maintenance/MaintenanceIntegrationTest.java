@@ -115,7 +115,7 @@ class MaintenanceIntegrationTest extends BaseMasterDataIntegrationTest {
         assertThat(after.nextServiceDate()).isEqualTo(LocalDate.now().plusDays(90));
         assertThat(maintenance.createEvent(breakdown(created.id())).eventNumber()).endsWith("-002");
 
-        maintenance.markRepaired(created.id(), new RepairRequest(null, "Reset drive", null));
+        maintenance.markRepaired(created.id(), new RepairRequest(Instant.now(), "Drive fault", "Reset drive", null));
         assertThat(maintenance.getAsset(created.id()).status()).isEqualTo("operational");
         AssetResponse archived = maintenance.archiveAsset(created.id(), new ArchiveRequest("Sold"));
         assertThat(archived.status()).isEqualTo("retired");

@@ -53,8 +53,11 @@ export type MaintenanceEvent = {
   workDone?: string | null;
   resolutionNotes?: string | null;
   partsUsed?: string | null;
+  notes?: string | null;
   createdAt?: string;
 };
+
+export type ActivityEntry = { action: string; actor?: string | null; at: string };
 
 export type MeterReading = {
   id: string;
@@ -90,6 +93,11 @@ export type EventInput = {
   completionDate?: string;
   affectedJobIds?: string[];
   correctiveAction?: string;
+  notes?: string;
+  rootCause?: string;
+  workDone?: string;
+  resolutionNotes?: string;
+  partsUsed?: string;
 };
 
 function send<T>(method: string, path: string, body?: unknown) {
@@ -110,7 +118,7 @@ export const archiveAsset = (id: string, reason: string) => send<Asset>("POST", 
 export const listReadings = (id: string) => api<MeterReading[]>(`${base}/assets/${id}/readings`);
 export const logReading = (id: string, body: { reading: number; readingDate?: string; readingType: string; notes?: string }) =>
   send<Asset>("POST", `${base}/assets/${id}/readings`, body);
-export const markRepaired = (id: string, body: { rootCause?: string; workDone?: string; resolutionNotes?: string }) =>
+export const markRepaired = (id: string, body: { completionDate: string; rootCause: string; workDone: string; resolutionNotes?: string }) =>
   send<MaintenanceEvent>("POST", `${base}/assets/${id}/repair`, body);
 export const listEvents = (assetId?: string) => api<MaintenanceEvent[]>(`${base}/events${assetId ? `?assetId=${assetId}` : ""}`);
 export const getEvent = (id: string) => api<MaintenanceEvent>(`${base}/events/${id}`);
@@ -120,9 +128,16 @@ export const closeEvent = (id: string, body: {
   completionDate?: string; rootCause?: string; workDone?: string; resolutionNotes?: string;
   correctiveAction?: string; partsUsed?: string;
 }) => send<MaintenanceEvent>("POST", `${base}/events/${id}/close`, body);
+export const assetActivity = (id: string) => api<ActivityEntry[]>(`${base}/assets/${id}/activity`);
+export const eventActivity = (id: string) => api<ActivityEntry[]>(`${base}/events/${id}/activity`);
+export const createConfigOption = (category: string, body: { code: string; label: string; sortOrder: number }) =>
+  send<ConfigOption>("POST", `/api/v1/config/options/${category}`, body);
 export const lookups = () => api<Lookups>(`${base}/lookups`);
 export const configOptions = (category: string) => api<ConfigOption[]>(`/api/v1/config/options/${category}`);
 
+// Only tenant-configurable categories may be extended inline; system-controlled ones are never offered.
+export const INLINE_ADD_CATEGORIES = ["ASSET_CATEGORY", "WORK_CENTRE", "ASSET_CRITICALITY", "MAINTENANCE_SEVERITY"];
+export const CONFIG_ADMIN_ROLES = ["OWNER"];
 export const MANAGE_ROLES = ["OWNER", "OPS_MANAGER", "PRODUCTION_SUPERVISOR"];
 
 export function displayDate(value?: string | null) {

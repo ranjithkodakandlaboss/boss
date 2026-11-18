@@ -7,8 +7,8 @@ import { ApiError } from "../auth/api";
 import Modal from "../components/shared/Modal";
 import StatusChip from "../components/shared/StatusChip";
 import {
-  MANAGE_ROLES, archiveAsset, computeDue, configOptions, createAsset, createEvent, displayDate, listAssets, listEvents,
-  lookups, nextServiceLabel, updateAsset,
+  CONFIG_ADMIN_ROLES, INLINE_ADD_CATEGORIES, MANAGE_ROLES, archiveAsset, computeDue, configOptions, createAsset,
+  createConfigOption, createEvent, displayDate, listAssets, listEvents, lookups, nextServiceLabel, updateAsset,
   type Asset, type AssetInput, type ConfigOption, type EventInput, type Lookups, type MaintenanceEvent,
 } from "./api";
 
@@ -18,21 +18,32 @@ const CATEGORIES = [
   "MAINTENANCE_EVENT_TYPE", "MAINTENANCE_SEVERITY", "MAINTENANCE_EVENT_STATUS",
 ];
 
+export type OptionsCtl = { error: string; ready: boolean; canAdd: boolean; reload: () => Promise<void> };
+const NO_CTL: OptionsCtl = { error: "", ready: true, canAdd: false, reload: async () => {} };
+
 export function useMaintenanceOptions() {
+  const { user } = useCustomer();
   const [options, setOptions] = useState<Options>({});
   const [lookup, setLookup] = useState<Lookups>({ sites: [], technicians: [], jobs: [] });
   const [error, setError] = useState("");
-  useEffect(() => {
-    Promise.all([...CATEGORIES.map((c) => configOptions(c)), lookups()])
-      .then((results) => {
-        const next: Options = {};
-        CATEGORIES.forEach((c, i) => { next[c] = results[i] as ConfigOption[]; });
-        setOptions(next);
-        setLookup(results[CATEGORIES.length] as Lookups);
-      })
-      .catch((e) => setError(e instanceof ApiError ? e.message : "Could not load dropdown options."));
+  const [ready, setReady] = useState(false);
+  const reload = useCallback(async () => {
+    setError("");
+    try {
+      const results = await Promise.all([...CATEGORIES.map((c) => configOptions(c)), lookups()]);
+      const next: Options = {};
+      CATEGORIES.forEach((c, i) => { next[c] = results[i] as ConfigOption[]; });
+      setOptions(next);
+      setLookup(results[CATEGORIES.length] as Lookups);
+      setReady(true);
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Could not load dropdown options.");
+    }
   }, []);
-  return { options, lookup, error };
+  useEffect(() => { void reload(); }, [reload]);
+  const canAdd = (user?.roles.map((r) => r.role) ?? []).some((r) => CONFIG_ADMIN_ROLES.includes(r));
+  const ctl: OptionsCtl = { error, ready, canAdd, reload };
+  return { options, lookup, error, ctl };
 }
 
 export function Field({ label, children }: { label: string; children: ReactNode }) {
@@ -50,8 +61,63 @@ export function Select({ value, onChange, options, label, byLabel = false, blank
   );
 }
 
-export function AssetFormModal({ open, asset, options, lookup, onClose, onSaved }: {
-  open: boolean; asset?: Asset | null; options: Options; lookup: Lookups; onClose: () => void; onSaved: (a: Asset) => void;
+export function ConfigSelect({ category, label, value, onChange, options, byLabel = false, ctl = NO_CTL }: {
+  category: string; label: string; value?: string | null; onChange: (v: string) => void; options: ConfigOption[];
+  byLabel?: boolean; ctl?: OptionsCtl;
+}) {
+  const [query, setQuery] = useState("");
+  const [adding, setAdding] = useState(false);
+  const [name, setName] = useState("");
+  const [addError, setAddError] = useState("");
+  const [busy, setBusy] = useState(false);
+  if (ctl.error) {
+    return <p role="alert" className="text-xs" style={{ color: "var(--error)" }}>Could not load {label.toLowerCase()} options. <button type="button" className="underline" onClick={() => void ctl.reload()}>Retry</button></p>;
+  }
+  if (!ctl.ready) return <select aria-label={label} disabled className="eoss-input w-full"><option>Loading…</option></select>;
+
+  const inlineAddable = INLINE_ADD_CATEGORIES.includes(category);
+  const needle = query.trim().toLowerCase();
+  const matches = needle ? options.filter((o) => o.label.toLowerCase().includes(needle)) : options;
+  const showAdd = ctl.canAdd && inlineAddable && !adding && (options.length === 0 || (needle !== "" && matches.length === 0));
+
+  async function save() {
+    const text = name.trim();
+    if (!text) { setAddError(`Enter a name for the new ${label.toLowerCase()}.`); return; }
+    const code = text.toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+    setBusy(true); setAddError("");
+    try {
+      await createConfigOption(category, { code, label: text, sortOrder: options.length + 1 });
+      await ctl.reload();
+      onChange(byLabel ? text : code);
+      setAdding(false); setName(""); setQuery("");
+    } catch (err) {
+      setAddError(err instanceof ApiError ? err.message : "Could not add the option.");
+    } finally { setBusy(false); }
+  }
+
+  return (
+    <div className="space-y-1">
+      {inlineAddable && options.length > 0 && (
+        <input aria-label={`Search ${label}`} placeholder={`Search ${label.toLowerCase()}…`} className="eoss-input w-full" value={query} onChange={(e) => setQuery(e.target.value)} />
+      )}
+      <Select label={label} byLabel={byLabel} value={value} onChange={onChange} options={matches} />
+      {options.length === 0 && <p className="text-xs text-[var(--text-3)]">No {label.toLowerCase()} options yet.</p>}
+      {needle !== "" && matches.length === 0 && options.length > 0 && <p className="text-xs text-[var(--text-3)]">No match for “{query.trim()}”.</p>}
+      {showAdd && <button type="button" className="text-xs underline" onClick={() => { setAdding(true); setName(query.trim()); setAddError(""); }}>Add New {label}</button>}
+      {adding && (
+        <div className="flex gap-2 items-center">
+          <input aria-label={`New ${label}`} className="eoss-input flex-1" value={name} onChange={(e) => setName(e.target.value)} />
+          <button type="button" disabled={busy} className="px-2 py-1 text-xs rounded-lg font-semibold text-white" style={{ background: "var(--brand-fill)" }} onClick={() => void save()}>{busy ? "Adding…" : "Add"}</button>
+          <button type="button" className="px-2 py-1 text-xs rounded-lg border border-[var(--border)]" onClick={() => setAdding(false)}>Cancel</button>
+        </div>
+      )}
+      {addError && <p role="alert" className="text-xs" style={{ color: "var(--error)" }}>{addError}</p>}
+    </div>
+  );
+}
+
+export function AssetFormModal({ open, asset, options, lookup, ctl, onClose, onSaved }: {
+  open: boolean; asset?: Asset | null; options: Options; lookup: Lookups; ctl?: OptionsCtl; onClose: () => void; onSaved: (a: Asset) => void;
 }) {
   const [form, setForm] = useState<AssetInput>({});
   const [error, setError] = useState("");
@@ -80,15 +146,15 @@ export function AssetFormModal({ open, asset, options, lookup, onClose, onSaved 
         <div className="grid grid-cols-2 gap-3">
           <Field label="Asset code *"><input aria-label="Asset code" className="eoss-input w-full" value={form.assetCode ?? ""} onChange={(e) => set({ assetCode: e.target.value })} /></Field>
           <Field label="Name *"><input aria-label="Asset name" className="eoss-input w-full" value={form.name ?? ""} onChange={(e) => set({ name: e.target.value })} /></Field>
-          <Field label="Category"><Select label="Category" byLabel value={form.category} onChange={(v) => set({ category: v })} options={options.ASSET_CATEGORY ?? []} /></Field>
-          <Field label="Work centre"><Select label="Work centre" byLabel value={form.workCentre} onChange={(v) => set({ workCentre: v })} options={options.WORK_CENTRE ?? []} /></Field>
+          <Field label="Category"><ConfigSelect category="ASSET_CATEGORY" ctl={ctl} label="Category" byLabel value={form.category} onChange={(v) => set({ category: v })} options={options.ASSET_CATEGORY ?? []} /></Field>
+          <Field label="Work centre"><ConfigSelect category="WORK_CENTRE" ctl={ctl} label="Work centre" byLabel value={form.workCentre} onChange={(v) => set({ workCentre: v })} options={options.WORK_CENTRE ?? []} /></Field>
           <Field label="Site *">
             <select aria-label="Site" className="eoss-input w-full" value={form.siteId ?? ""} onChange={(e) => set({ siteId: e.target.value })}>
               <option value="">Select…</option>
               {lookup.sites.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
             </select>
           </Field>
-          <Field label="Criticality"><Select label="Criticality" value={form.criticality} onChange={(v) => set({ criticality: v })} options={options.ASSET_CRITICALITY ?? []} /></Field>
+          <Field label="Criticality"><ConfigSelect category="ASSET_CRITICALITY" ctl={ctl} label="Criticality" value={form.criticality} onChange={(v) => set({ criticality: v })} options={options.ASSET_CRITICALITY ?? []} /></Field>
           <Field label="Manufacturer"><input aria-label="Manufacturer" className="eoss-input w-full" value={form.manufacturer ?? ""} onChange={(e) => set({ manufacturer: e.target.value })} /></Field>
           <Field label="Model"><input aria-label="Model" className="eoss-input w-full" value={form.model ?? ""} onChange={(e) => set({ model: e.target.value })} /></Field>
           <Field label="Serial number"><input aria-label="Serial number" className="eoss-input w-full" value={form.serialNumber ?? ""} onChange={(e) => set({ serialNumber: e.target.value })} /></Field>
@@ -117,14 +183,15 @@ export function AssetFormModal({ open, asset, options, lookup, onClose, onSaved 
   );
 }
 
-export function EventFormModal({ open, assets, assetId, options, lookup, onClose, onSaved }: {
-  open: boolean; assets: Asset[]; assetId?: string; options: Options; lookup: Lookups; onClose: () => void; onSaved: (e: MaintenanceEvent) => void;
+export function EventFormModal({ open, assets, assetId, options, lookup, ctl, onClose, onSaved }: {
+  open: boolean; assets: Asset[]; assetId?: string; options: Options; lookup: Lookups; ctl?: OptionsCtl; onClose: () => void; onSaved: (e: MaintenanceEvent) => void;
 }) {
   const [form, setForm] = useState<EventInput>({ assetId: "", eventType: "", symptom: "" });
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+  const [completed, setCompleted] = useState(false);
   useEffect(() => {
-    if (open) { setForm({ assetId: assetId ?? "", eventType: "", symptom: "" }); setError(""); }
+    if (open) { setForm({ assetId: assetId ?? "", eventType: "", symptom: "" }); setCompleted(false); setError(""); }
   }, [open, assetId]);
   const set = (patch: Partial<EventInput>) => setForm((f) => ({ ...f, ...patch }));
   const toggleJob = (id: string) => set({ affectedJobIds: form.affectedJobIds?.includes(id) ? form.affectedJobIds.filter((j) => j !== id) : [...(form.affectedJobIds ?? []), id] });
@@ -134,8 +201,14 @@ export function EventFormModal({ open, assets, assetId, options, lookup, onClose
     if (!form.assetId || !form.eventType || !form.symptom.trim()) { setError("Asset, event type and description are required."); return; }
     if (form.eventType === "Breakdown" && !form.downtimeStart) { setError("Downtime start is required for a breakdown."); return; }
     if (form.eventType !== "Breakdown" && !form.plannedDate) { setError("Planned date is required."); return; }
+    if (completed && !form.completionDate) { setError("Completion time is required for a completed event."); return; }
+    if (completed && !form.workDone?.trim()) { setError("Work done is required for a completed event."); return; }
     setSaving(true); setError("");
-    try { onSaved(await createEvent({ ...form, downtimeStart: form.downtimeStart ? new Date(form.downtimeStart).toISOString() : undefined })); }
+    const iso = (v?: string) => (v ? new Date(v).toISOString() : undefined);
+    const closure = completed
+      ? { completionDate: iso(form.completionDate) }
+      : { completionDate: undefined, rootCause: undefined, workDone: undefined, resolutionNotes: undefined, partsUsed: undefined };
+    try { onSaved(await createEvent({ ...form, ...closure, downtimeStart: iso(form.downtimeStart) })); }
     catch (err) { setError(err instanceof ApiError ? err.message : "Could not log the event."); }
     finally { setSaving(false); }
   }
@@ -150,14 +223,17 @@ export function EventFormModal({ open, assets, assetId, options, lookup, onClose
           </select>
         </Field>
         <Field label="Event type *"><Select label="Event type" value={form.eventType} onChange={(v) => set({ eventType: v })} options={options.MAINTENANCE_EVENT_TYPE ?? []} /></Field>
-        {form.eventType && <Field label="Severity"><Select label="Severity" value={form.severity} onChange={(v) => set({ severity: v })} options={options.MAINTENANCE_SEVERITY ?? []} /></Field>}
+        {form.eventType && <Field label="Severity"><ConfigSelect category="MAINTENANCE_SEVERITY" ctl={ctl} label="Severity" value={form.severity} onChange={(v) => set({ severity: v })} options={options.MAINTENANCE_SEVERITY ?? []} /></Field>}
         <Field label="Description *"><textarea aria-label="Description" className="eoss-input w-full" rows={2} value={form.symptom} onChange={(e) => set({ symptom: e.target.value })} /></Field>
         <Field label="Technician">
-          <select aria-label="Technician" className="eoss-input w-full" value={form.technicianUserId ?? ""} onChange={(e) => set({ technicianUserId: e.target.value || undefined })}>
+          <select aria-label="Technician" className="eoss-input w-full" value={form.technicianUserId ?? ""} onChange={(e) => set({ technicianUserId: e.target.value || undefined, technicianName: e.target.value ? undefined : form.technicianName })}>
             <option value="">Select…</option>
             {lookup.technicians.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
           </select>
         </Field>
+        {!form.technicianUserId && (
+          <Field label="External technician / contractor"><input aria-label="External technician" placeholder="Name, if not a BOSS user" className="eoss-input w-full" value={form.technicianName ?? ""} onChange={(e) => set({ technicianName: e.target.value })} /></Field>
+        )}
         {form.eventType === "Breakdown" ? (
           <>
             <Field label="Downtime start *"><input aria-label="Downtime start" type="datetime-local" className="eoss-input w-full" value={form.downtimeStart ?? ""} onChange={(e) => set({ downtimeStart: e.target.value })} /></Field>
@@ -176,6 +252,22 @@ export function EventFormModal({ open, assets, assetId, options, lookup, onClose
             <Field label="Expected duration (hours)"><input aria-label="Expected duration" type="number" className="eoss-input w-full" value={form.expectedDurationHours ?? ""} onChange={(e) => set({ expectedDurationHours: e.target.value === "" ? undefined : Number(e.target.value) })} /></Field>
           </>
         ) : null}
+        {form.eventType && (
+          <>
+            <Field label="Corrective action"><textarea aria-label="Corrective action" className="eoss-input w-full" rows={2} value={form.correctiveAction ?? ""} onChange={(e) => set({ correctiveAction: e.target.value })} /></Field>
+            <Field label="Notes"><textarea aria-label="Notes" className="eoss-input w-full" rows={2} value={form.notes ?? ""} onChange={(e) => set({ notes: e.target.value })} /></Field>
+            <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={completed} onChange={(e) => setCompleted(e.target.checked)} />Already completed</label>
+          </>
+        )}
+        {completed && (
+          <div className="space-y-3 border border-[var(--border)] rounded-lg p-3">
+            <Field label="Completion time *"><input aria-label="Completion time" type="datetime-local" className="eoss-input w-full" value={form.completionDate ?? ""} onChange={(e) => set({ completionDate: e.target.value })} /></Field>
+            <Field label="Root cause"><input aria-label="Event root cause" className="eoss-input w-full" value={form.rootCause ?? ""} onChange={(e) => set({ rootCause: e.target.value })} /></Field>
+            <Field label="Work done *"><textarea aria-label="Event work done" className="eoss-input w-full" rows={2} value={form.workDone ?? ""} onChange={(e) => set({ workDone: e.target.value })} /></Field>
+            <Field label="Resolution notes"><input aria-label="Event resolution notes" className="eoss-input w-full" value={form.resolutionNotes ?? ""} onChange={(e) => set({ resolutionNotes: e.target.value })} /></Field>
+            <Field label="Parts used"><input aria-label="Event parts used" className="eoss-input w-full" value={form.partsUsed ?? ""} onChange={(e) => set({ partsUsed: e.target.value })} /></Field>
+          </div>
+        )}
         {error && <p role="alert" className="text-xs" style={{ color: "var(--error)" }}>{error}</p>}
         <div className="flex justify-end gap-2 pt-2">
           <button type="button" onClick={onClose} className="px-3 py-1.5 text-xs rounded-lg border border-[var(--border)]">Cancel</button>
@@ -194,7 +286,7 @@ export default function AssetsPage() {
   const tab = params.get("tab") === "events" ? "events" : "assets";
   const { user } = useCustomer();
   const canManage = (user?.roles.map((r) => r.role) ?? []).some((r) => MANAGE_ROLES.includes(r));
-  const { options, lookup, error: optionsError } = useMaintenanceOptions();
+  const { options, lookup, error: optionsError, ctl } = useMaintenanceOptions();
 
   const [assets, setAssets] = useState<Asset[]>([]);
   const [events, setEvents] = useState<MaintenanceEvent[]>([]);
@@ -277,7 +369,7 @@ export default function AssetsPage() {
         ))}
       </div>
 
-      {optionsError && <p role="alert" className="text-xs" style={{ color: "var(--error)" }}>{optionsError}</p>}
+      {optionsError && <p role="alert" className="text-xs" style={{ color: "var(--error)" }}>{optionsError} <button type="button" className="underline" onClick={() => void ctl.reload()}>Retry</button></p>}
 
       <div className="flex flex-wrap items-center gap-2">
         <div className="relative">
@@ -380,9 +472,9 @@ export default function AssetsPage() {
         )
       )}
 
-      <AssetFormModal open={assetModal.open} asset={assetModal.asset} options={options} lookup={lookup}
+      <AssetFormModal open={assetModal.open} asset={assetModal.asset} options={options} lookup={lookup} ctl={ctl}
         onClose={() => setAssetModal({ open: false, asset: null })} onSaved={() => { setAssetModal({ open: false, asset: null }); load(); }} />
-      <EventFormModal open={eventModal} assets={assets} options={options} lookup={lookup}
+      <EventFormModal open={eventModal} assets={assets} options={options} lookup={lookup} ctl={ctl}
         onClose={() => setEventModal(false)} onSaved={() => { setEventModal(false); load(); }} />
       <Modal open={!!archiveTarget} title={`Archive ${archiveTarget?.assetCode ?? ""}`} onClose={() => setArchiveTarget(null)}>
         <div className="space-y-3">

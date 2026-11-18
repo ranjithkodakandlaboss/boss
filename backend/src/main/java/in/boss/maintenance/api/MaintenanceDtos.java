@@ -42,15 +42,27 @@ public final class MaintenanceDtos {
             UUID assetId, String eventType, String severity, String symptom, UUID technicianUserId,
             String technicianName, LocalDate plannedDate, BigDecimal expectedDurationHours,
             Instant downtimeStart, Instant downtimeEnd, Instant completionDate,
-            List<UUID> affectedJobIds, String correctiveAction
-    ) {}
+            List<UUID> affectedJobIds, String correctiveAction, String notes, String rootCause,
+            String workDone, String resolutionNotes, String partsUsed
+    ) {
+        public EventRequest(UUID assetId, String eventType, String severity, String symptom, UUID technicianUserId,
+                            String technicianName, LocalDate plannedDate, BigDecimal expectedDurationHours,
+                            Instant downtimeStart, Instant downtimeEnd, Instant completionDate,
+                            List<UUID> affectedJobIds, String correctiveAction) {
+            this(assetId, eventType, severity, symptom, technicianUserId, technicianName, plannedDate,
+                    expectedDurationHours, downtimeStart, downtimeEnd, completionDate, affectedJobIds,
+                    correctiveAction, null, null, null, null, null);
+        }
+    }
 
     public record CloseEventRequest(
             Instant completionDate, String rootCause, String workDone, String resolutionNotes,
             String correctiveAction, String partsUsed
     ) {}
 
-    public record RepairRequest(String rootCause, String workDone, String resolutionNotes) {}
+    public record RepairRequest(Instant completionDate, String rootCause, String workDone, String resolutionNotes) {}
+
+    public record ActivityEntry(String action, String actor, Instant at) {}
 
     public record AffectedJob(UUID id, String jobNumber) {}
 
@@ -60,7 +72,7 @@ public final class MaintenanceDtos {
             LocalDate plannedDate, BigDecimal expectedDurationHours, Instant downtimeStart,
             Instant downtimeEnd, Instant completionDate, BigDecimal downtimeHours,
             List<AffectedJob> affectedJobs, String rootCause, String correctiveAction, String workDone,
-            String resolutionNotes, String partsUsed, Instant createdAt
+            String resolutionNotes, String partsUsed, Instant createdAt, UUID siteId, String notes
     ) {}
 
     public record SiteOption(UUID id, String name, String code) {}

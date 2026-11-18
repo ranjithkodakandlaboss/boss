@@ -65,9 +65,10 @@ public class MaintenanceService {
         List<JobOption> jobs = jdbc.query("""
                 SELECT id, job_number, status FROM production_jobs
                 WHERE tenant_id = ? AND status IN ('planned','released','in_progress','on_hold')
+                  AND (?::uuid IS NULL OR site_id = ?::uuid)
                 ORDER BY job_number
                 """, (rs, i) -> new JobOption(rs.getObject("id", UUID.class), rs.getString("job_number"),
-                rs.getString("status")), ctx.tenantId());
+                rs.getString("status")), ctx.tenantId(), ctx.siteId(), ctx.siteId());
         return new Lookups(sites, technicians, jobs);
     }
 
@@ -252,7 +253,8 @@ public class MaintenanceService {
         if (assetId != null) { sql.append(" AND e.asset_id = ?"); args.add(assetId); }
         if (jobId != null) { sql.append(" AND ? = ANY(e.affected_job_ids)"); args.add(jobId); }
         sql.append(" ORDER BY e.created_at DESC");
-        return jdbc.query(sql.toString(), eventMapper(), args.toArray());
+        return jdbc.query(sql.toString(), eventMapper(), args.toArray()).stream()
+                .filter(e -> ctx.canAccessSite(e.siteId())).toList();
     }
 
     @PreAuthorize(MAINTENANCE_VIEW)
@@ -298,20 +300,19 @@ public class MaintenanceService {
         jdbc.update("""
                 INSERT INTO maintenance_events (id, tenant_id, event_number, asset_id, event_type, status, severity,
                   symptom, technician_user_id, technician_name, planned_date, expected_duration_hours,
-                  downtime_start, downtime_end, affected_job_ids, corrective_action, created_by)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?::uuid[],?,?)
+                  downtime_start, downtime_end, affected_job_ids, corrective_action, notes, created_by)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?::uuid[],?,?,?)
                 """, id, ctx.tenantId(), number, asset.id(), type, status, severity, symptom.trim(),
                 r.technicianUserId(), technician, r.plannedDate(), r.expectedDurationHours(),
-                ts(r.downtimeStart()), ts(r.downtimeEnd()), uuidArray(jobs), r.correctiveAction(), ctx.userId());
+                ts(r.downtimeStart()), ts(r.downtimeEnd()), uuidArray(jobs), r.correctiveAction(), blankToNull(r.notes()), ctx.userId());
         audit.record("maintenance_event", id, "CREATE", null, "{\"eventNumber\":\"" + number + "\"}");
         if ("Breakdown".equals(type)) {
             jdbc.update("UPDATE assets SET status = 'breakdown', updated_at = NOW() WHERE tenant_id = ? AND id = ?",
                     ctx.tenantId(), asset.id());
         }
         if (r.completionDate() != null) {
-            closeInternal(ctx, id, new CloseEventRequest(r.completionDate(), null,
-                    r.correctiveAction() == null ? "Completed as logged" : r.correctiveAction(), null,
-                    r.correctiveAction(), null));
+            closeInternal(ctx, id, new CloseEventRequest(r.completionDate(), r.rootCause(), r.workDone(),
+                    r.resolutionNotes(), r.correctiveAction(), r.partsUsed()));
         }
         return loadEvent(id);
     }
@@ -344,15 +345,18 @@ public class MaintenanceService {
     public EventResponse markRepaired(UUID assetId, RepairRequest r) {
         BossContext ctx = context();
         loadAsset(assetId);
+        if (r == null || r.completionDate() == null) throw bad("Completion time is required");
+        if (r.completionDate().isAfter(Instant.now().plus(Duration.ofMinutes(5)))) throw bad("Completion cannot be in the future");
+        required(r.rootCause(), "Root cause / diagnosis");
+        required(r.workDone(), "Work done");
         List<UUID> open = jdbc.query("""
                 SELECT id FROM maintenance_events
                 WHERE tenant_id = ? AND asset_id = ? AND event_type = 'Breakdown' AND status <> 'closed'
                 ORDER BY created_at DESC
                 """, (rs, i) -> rs.getObject("id", UUID.class), ctx.tenantId(), assetId);
         if (open.isEmpty()) throw conflict("This asset has no open breakdown to repair");
-        return closeInternal(ctx, open.get(0), new CloseEventRequest(Instant.now(),
-                r == null ? null : r.rootCause(), r == null ? null : r.workDone(),
-                r == null ? null : r.resolutionNotes(), null, null));
+        return closeInternal(ctx, open.get(0), new CloseEventRequest(r.completionDate(),
+                r.rootCause(), r.workDone(), r.resolutionNotes(), null, null));
     }
 
     private EventResponse closeInternal(BossContext ctx, UUID id, CloseEventRequest r) {
@@ -420,10 +424,33 @@ public class MaintenanceService {
         return blockers.isEmpty() ? null : blockers.get(0);
     }
 
+    @PreAuthorize(MAINTENANCE_VIEW)
+    @Transactional(readOnly = true)
+    public List<ActivityEntry> assetActivity(UUID assetId) {
+        loadAsset(assetId);
+        return activity("asset", assetId);
+    }
+
+    @PreAuthorize(MAINTENANCE_VIEW)
+    @Transactional(readOnly = true)
+    public List<ActivityEntry> eventActivity(UUID eventId) {
+        loadEvent(eventId);
+        return activity("maintenance_event", eventId);
+    }
+
+    private List<ActivityEntry> activity(String entityType, UUID id) {
+        return jdbc.query("""
+                SELECT a.action, COALESCE(NULLIF(u.display_name,''), u.email) AS actor, a.created_at
+                FROM audit_events a LEFT JOIN app_users u ON u.id = a.actor_id
+                WHERE a.tenant_id = ? AND a.entity_type = ? AND a.entity_id = ? ORDER BY a.created_at DESC
+                """, (rs, i) -> new ActivityEntry(rs.getString("action"), rs.getString("actor"),
+                rs.getTimestamp("created_at").toInstant()), context().tenantId(), entityType, id);
+    }
+
     // ---- helpers ---------------------------------------------------------
 
     private static final String EVENT_SELECT = """
-            SELECT e.*, a.asset_number, a.name AS asset_name,
+            SELECT e.*, a.asset_number, a.name AS asset_name, a.site_id AS asset_site_id,
                    (SELECT COALESCE(json_agg(json_build_object('id', j.id, 'n', j.job_number)), '[]'::json)::text
                       FROM production_jobs j WHERE j.tenant_id = e.tenant_id AND j.id = ANY(e.affected_job_ids)) AS jobs_json
             FROM maintenance_events e JOIN assets a ON a.id = e.asset_id AND a.tenant_id = e.tenant_id
@@ -433,7 +460,9 @@ public class MaintenanceService {
         BossContext ctx = context();
         List<EventResponse> rows = jdbc.query(EVENT_SELECT + " WHERE e.tenant_id = ? AND e.id = ?",
                 eventMapper(), ctx.tenantId(), id);
-        if (rows.isEmpty()) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Maintenance event not found");
+        if (rows.isEmpty() || !ctx.canAccessSite(rows.get(0).siteId())) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Maintenance event not found");
+        }
         return rows.get(0);
     }
 
@@ -471,7 +500,8 @@ public class MaintenanceService {
                 instant(rs.getTimestamp("downtime_end")), instant(rs.getTimestamp("completion_date")),
                 rs.getBigDecimal("downtime_hours"), parseJobs(rs.getString("jobs_json")),
                 rs.getString("root_cause"), rs.getString("corrective_action"), rs.getString("work_done"),
-                rs.getString("resolution_notes"), rs.getString("parts_used"), instant(rs.getTimestamp("created_at")));
+                rs.getString("resolution_notes"), rs.getString("parts_used"), instant(rs.getTimestamp("created_at")),
+                rs.getObject("asset_site_id", UUID.class), rs.getString("notes"));
     }
 
     private List<AffectedJob> parseJobs(String json) {
@@ -545,9 +575,11 @@ public class MaintenanceService {
 
     private void validateJobs(BossContext ctx, List<UUID> jobs) {
         for (UUID job : jobs) {
-            Integer n = jdbc.queryForObject("SELECT count(*) FROM production_jobs WHERE tenant_id = ? AND id = ?",
-                    Integer.class, ctx.tenantId(), job);
-            if (n == null || n == 0) throw bad("Affected production job was not found for this tenant");
+            List<UUID> sites = jdbc.query("SELECT site_id FROM production_jobs WHERE tenant_id = ? AND id = ?",
+                    (rs, i) -> rs.getObject(1, UUID.class), ctx.tenantId(), job);
+            if (sites.isEmpty() || !ctx.canAccessSite(sites.get(0))) {
+                throw bad("Affected production job was not found for this tenant");
+            }
         }
     }
 
@@ -563,6 +595,7 @@ public class MaintenanceService {
         return "{" + String.join(",", ids.stream().map(UUID::toString).toList()) + "}";
     }
 
+    private static String blankToNull(String v) { return v == null || v.isBlank() ? null : v.trim(); }
     private static Timestamp ts(Instant v) { return v == null ? null : Timestamp.from(v); }
     private static Instant instant(Timestamp v) { return v == null ? null : v.toInstant(); }
     private static LocalDate date(java.sql.Date v) { return v == null ? null : v.toLocalDate(); }

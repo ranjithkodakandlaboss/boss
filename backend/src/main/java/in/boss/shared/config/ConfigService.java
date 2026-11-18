@@ -50,6 +50,29 @@ public class ConfigService {
         var ctx = BossContextHolder.get();
         if (ctx == null) throw new IllegalStateException("BossContext required");
 
+        List<String> scopes = jdbc.query("SELECT scope FROM config_categories WHERE code = ? AND is_active",
+                (rs, i) -> rs.getString(1), categoryCode == null ? null : categoryCode.toUpperCase());
+        if (scopes.isEmpty()) {
+            throw new org.springframework.web.server.ResponseStatusException(
+                    org.springframework.http.HttpStatus.BAD_REQUEST, "Unknown config category");
+        }
+        if ("system".equals(scopes.get(0))) {
+            throw new org.springframework.web.server.ResponseStatusException(
+                    org.springframework.http.HttpStatus.FORBIDDEN, "System-controlled categories cannot be changed by tenants");
+        }
+        if (code == null || code.isBlank() || label == null || label.isBlank()) {
+            throw new org.springframework.web.server.ResponseStatusException(
+                    org.springframework.http.HttpStatus.BAD_REQUEST, "Code and label are required");
+        }
+        boolean exists = Boolean.TRUE.equals(jdbc.queryForObject("""
+                SELECT EXISTS (SELECT 1 FROM tenant_config_options o JOIN config_categories c ON c.id = o.category_id
+                WHERE o.tenant_id = ? AND c.code = ? AND (lower(o.code) = lower(?) OR lower(o.label) = lower(?)))
+                """, Boolean.class, ctx.tenantId(), categoryCode.toUpperCase(), code.trim(), label.trim()));
+        if (exists) {
+            throw new org.springframework.web.server.ResponseStatusException(
+                    org.springframework.http.HttpStatus.CONFLICT, "An option with this code or label already exists");
+        }
+
         if ("ITEM_CATEGORY".equalsIgnoreCase(categoryCode)) {
             UUID id = UUID.fromString(Objects.requireNonNull(jdbc.queryForObject(
                     "INSERT INTO item_categories (tenant_id, code, name, is_system, is_active) "

@@ -5,6 +5,7 @@ import { beforeEach, expect, it, vi } from "vitest";
 import { CustomerProvider } from "../auth/CustomerState";
 import { signIn } from "../auth/session";
 import AssetsPage from "./AssetsPage";
+import { AssetDetailPage } from "./AssetDetailPage";
 
 const siteId = "11111111-1111-4111-8111-111111111111";
 const asset = {
@@ -25,9 +26,13 @@ const options: Record<string, { id: string; code: string; label: string }[]> = {
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
 let posted: { url: string; body: unknown }[] = [];
 let failCreate = false;
+let failOptions = false;
+let emptyWorkCentres = false;
+let configPosts: { url: string; body: any }[] = [];
+let repairs: unknown[] = [];
 
 beforeEach(() => {
-  posted = []; failCreate = false;
+  posted = []; failCreate = false; failOptions = false; emptyWorkCentres = false; configPosts = []; repairs = [];
   signIn("test-session");
   vi.stubGlobal("fetch", vi.fn((input: RequestInfo, init?: RequestInit) => {
     const url = String(input);
@@ -35,7 +40,23 @@ beforeEach(() => {
     if (url.includes("/tenant/info")) return Promise.resolve(json({ id: "t", name: "Works", status: "active" }));
     if (url.includes("/onboarding")) return Promise.resolve(json({ industryType: "GENERAL_MANUFACTURING", completed: true, company: { sites: [], stores: [] } }));
     const cat = url.match(/config\/options\/(\w+)/);
-    if (cat) return Promise.resolve(json(options[cat[1]] ?? []));
+    if (cat && init?.method === "POST") {
+      const body = JSON.parse(String(init.body));
+      configPosts.push({ url, body });
+      const created = { id: "new-" + body.code, code: body.code, label: body.label };
+      options[cat[1]] = [...(options[cat[1]] ?? []), created];
+      emptyWorkCentres = false;
+      return Promise.resolve(json(created, 201));
+    }
+    if (cat) {
+      if (failOptions) return Promise.resolve(json({ message: "Config unavailable" }, 500));
+      if (cat[1] === "WORK_CENTRE" && emptyWorkCentres) return Promise.resolve(json([]));
+      return Promise.resolve(json(options[cat[1]] ?? []));
+    }
+    if (url.includes("/maintenance/assets/") && url.endsWith("/repair")) { repairs.push(JSON.parse(String(init?.body))); return Promise.resolve(json({}, 200)); }
+    if (url.includes("/maintenance/assets/") && url.endsWith("/readings")) return Promise.resolve(json([]));
+    if (url.includes("/maintenance/assets/") && url.endsWith("/activity")) return Promise.resolve(json([{ action: "CREATE", actor: "Owner", at: "2026-01-01T00:00:00Z" }]));
+    if (/\/maintenance\/assets\/[\w-]+$/.test(url)) return Promise.resolve(json({ ...asset, status: "breakdown", openEvents: 1 }));
     if (url.includes("/maintenance/lookups")) return Promise.resolve(json({ sites: [{ id: siteId, name: "Plant", code: "P1" }], technicians: [], jobs: [] }));
     if (init?.method === "POST" && url.includes("/maintenance/assets")) {
       expect(new Headers(init.headers).get("Idempotency-Key")).toBeTruthy();
@@ -44,7 +65,7 @@ beforeEach(() => {
       return Promise.resolve(json(asset, 201));
     }
     if (url.includes("/maintenance/assets")) return Promise.resolve(json([asset]));
-    if (url.includes("/maintenance/events")) return Promise.resolve(json([]));
+    if (url.includes("/maintenance/events")) return Promise.resolve(json([{ id: "ev1", eventNumber: "ME-1", assetId: asset.id, assetCode: "CNC-01", assetName: "CNC Lathe", eventType: "Breakdown", status: "open", symptom: "x", technicianName: "", affectedJobs: [] }]));
     return Promise.resolve(json({}));
   }));
 });
@@ -77,4 +98,56 @@ it("creates an asset and shows API errors", async () => {
   await userEvent.click(within(dialog).getByRole("button", { name: "Save asset" }));
   await waitFor(() => expect(posted).toHaveLength(1));
   expect(posted[0].body).toMatchObject({ assetCode: "PRESS-9", siteId });
+});
+
+async function openAddAsset() {
+  renderPage();
+  await userEvent.click(await screen.findByRole("button", { name: /Add Asset/ }));
+  return screen.findByRole("dialog");
+}
+
+it("offers Add New for an empty tenant dropdown, then refreshes and selects the new value", async () => {
+  emptyWorkCentres = true;
+  const dialog = await openAddAsset();
+  await userEvent.click(await within(dialog).findByRole("button", { name: /Add New Work centre/ }));
+  await userEvent.type(within(dialog).getByLabelText("New Work centre"), "Paint Booth");
+  await userEvent.click(within(dialog).getByRole("button", { name: "Add" }));
+  await waitFor(() => expect(configPosts).toHaveLength(1));
+  expect(configPosts[0].url).toContain("/config/options/WORK_CENTRE");
+  expect(configPosts[0].body).toMatchObject({ code: "PAINT_BOOTH", label: "Paint Booth" });
+  await waitFor(() => expect((within(dialog).getByRole("combobox", { name: "Work centre" }) as HTMLSelectElement).value).toBe("Paint Booth"));
+});
+
+it("offers Add New when a search matches nothing", async () => {
+  const dialog = await openAddAsset();
+  await userEvent.type(await within(dialog).findByLabelText("Search Category"), "Grinder");
+  expect(within(dialog).getByText(/No match for/)).toBeTruthy();
+  expect(within(dialog).getByRole("button", { name: /Add New Category/ })).toBeTruthy();
+});
+
+it("shows Retry instead of Add New when options fail to load, and never offers Add New for system categories", async () => {
+  failOptions = true;
+  await openAddAsset();
+  await waitFor(() => expect(screen.getAllByRole("button", { name: "Retry" }).length).toBeGreaterThan(0));
+  expect(screen.queryByRole("button", { name: /Add New/ })).toBeNull();
+  failOptions = false;
+  await userEvent.click(screen.getAllByRole("button", { name: "Retry" })[0]);
+  await waitFor(() => expect(screen.getByRole("option", { name: "CNC Machine" })).toBeTruthy());
+  expect(screen.queryByRole("button", { name: /Add New (Status|Meter type)/ })).toBeNull();
+  expect(configPosts).toHaveLength(0);
+});
+
+it("Mark Repaired sends the completion time, root cause and work done entered by the user", async () => {
+  render(<MemoryRouter initialEntries={[`/assets/${asset.id}`]}><CustomerProvider><Routes><Route path="/assets/:id" element={<AssetDetailPage />} /></Routes></CustomerProvider></MemoryRouter>);
+  await userEvent.click(await screen.findByRole("button", { name: "Mark Repaired" }));
+  const dialog = await screen.findByRole("dialog");
+  await userEvent.click(within(dialog).getByRole("button", { name: "Confirm repaired" }));
+  expect((await within(dialog).findByRole("alert")).textContent).toContain("required");
+  expect(repairs).toHaveLength(0);
+  await userEvent.type(within(dialog).getByLabelText("Repair root cause"), "Worn bearing");
+  await userEvent.type(within(dialog).getByLabelText("Repair work done"), "Replaced bearing");
+  await userEvent.click(within(dialog).getByRole("button", { name: "Confirm repaired" }));
+  await waitFor(() => expect(repairs).toHaveLength(1));
+  expect(repairs[0]).toMatchObject({ rootCause: "Worn bearing", workDone: "Replaced bearing" });
+  expect((repairs[0] as { completionDate: string }).completionDate).toMatch(/^\d{4}-\d\d-\d\dT/);
 });

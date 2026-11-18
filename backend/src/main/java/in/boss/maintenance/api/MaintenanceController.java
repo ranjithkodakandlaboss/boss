@@ -74,6 +74,12 @@ public class MaintenanceController {
     @GetMapping("/events/{id}")
     public EventResponse event(@PathVariable UUID id) { return service.getEvent(id); }
 
+    @GetMapping("/events/{id}/activity")
+    public List<ActivityEntry> eventActivity(@PathVariable UUID id) { return service.eventActivity(id); }
+
+    @GetMapping("/assets/{id}/activity")
+    public List<ActivityEntry> assetActivity(@PathVariable UUID id) { return service.assetActivity(id); }
+
     @PostMapping("/events")
     @ResponseStatus(HttpStatus.CREATED)
     @PreAuthorize(BossPermissions.MAINTENANCE_WRITE)
