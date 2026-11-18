@@ -37,6 +37,9 @@ import GrnCreatePage from "./procurement/proto/GRNCreate";
 import GrnRecordPage from "./procurement/proto/GRNDetail";
 import IncomingInspectionPage from "./procurement/proto/IncomingInspection";
 import SupplierReturnPage from "./procurement/proto/SupplierReturn";
+import JobsPage from "./production/JobsPage";
+import JobWorkspacePage from "./production/JobWorkspacePage";
+import StageUpdatePage from "./production/StageUpdatePage";
 
 function Background({ pathname }: { pathname: string }) {
   const screen = findScreen(pathname.split("?")[0]);
@@ -184,6 +187,9 @@ function Guard() {
           <Route path="quality/inspection/:id" element={<IncomingInspectionPage />} />
           <Route path="procurement/supplier-return" element={<SupplierReturnPage />} />
         </Route>
+        <Route path="jobs" element={<JobsPage />} />
+        <Route path="jobs/:id/stage/:stageId" element={<StageUpdatePage />} />
+        <Route path="jobs/:id" element={<JobWorkspacePage />} />
         <Route path="sales/customers" element={<Navigate to="/sales?tab=customers" replace />} />
         <Route path="settings" element={<Navigate to="/admin" replace />} />
         <Route path="admin/audit" element={<Navigate to="/audit" replace />} />
