@@ -183,6 +183,16 @@ class ConfigOptionsRlsTest {
         configService.updateOption("PAYMENT_MODES", first.id(), "Card payment");
         configService.setOptionActive("PAYMENT_MODES", second.id(), false);
 
+        assertThat(jdbc.queryForObject("""
+                SELECT COUNT(*) FROM tenant_config_option_history
+                WHERE tenant_id = ? AND option_id = ? AND change_type = 'update'
+                  AND old_label = 'Card' AND new_label = 'Card payment'
+                """, Integer.class, tenantA, first.id())).isEqualTo(1);
+        assertThat(jdbc.queryForObject("""
+                SELECT COUNT(*) FROM tenant_config_option_history
+                WHERE tenant_id = ? AND option_id = ? AND change_type IN ('deactivate', 'reactivate')
+                """, Integer.class, tenantA, second.id())).isEqualTo(1);
+
         List<ConfigOptionDto> options = configService.getOptions("PAYMENT_MODES", true);
         assertThat(options).filteredOn(option -> option.id().equals(first.id())).singleElement()
                 .extracting(ConfigOptionDto::label).isEqualTo("Card payment");
@@ -190,6 +200,26 @@ class ConfigOptionsRlsTest {
                 .extracting(ConfigOptionDto::isActive).isEqualTo(false);
         assertThat(options.stream().filter(option -> !option.isSystem()).map(ConfigOptionDto::id).toList())
                 .containsExactlyElementsOf(reordered);
+
+        configService.setOptionActive("PAYMENT_MODES", second.id(), true);
+        assertThat(jdbc.queryForObject("""
+                SELECT COUNT(*) FROM tenant_config_option_history
+                WHERE tenant_id = ? AND option_id = ? AND change_type = 'reactivate'
+                """, Integer.class, tenantA, second.id())).isEqualTo(1);
+    }
+
+    @Test
+    void optionReadsDoNotKeepStaleProcessLocalValues() {
+        setTenant(tenantA);
+        ConfigOptionDto option = configService.createOption("PAYMENT_MODES", "LIVE_OPTION", "Live option", 10);
+        assertThat(configService.getOptions("PAYMENT_MODES"))
+                .anyMatch(value -> value.id().equals(option.id()));
+
+        jdbc.update("UPDATE tenant_config_options SET is_active = FALSE WHERE tenant_id = ? AND id = ?",
+                tenantA, option.id());
+
+        assertThat(configService.getOptions("PAYMENT_MODES"))
+                .noneMatch(value -> value.id().equals(option.id()));
     }
 
     @Test
@@ -257,7 +287,7 @@ class ConfigOptionsRlsTest {
 
         assertThatThrownBy(() -> configService.updateOption("ITEM_CATEGORY", category.id(), "Renamed"))
                 .isInstanceOf(org.springframework.web.server.ResponseStatusException.class)
-                .hasMessageContaining("referenced by business records");
+                .hasMessageContaining("Item-category labels cannot be changed");
         configService.setOptionActive("ITEM_CATEGORY", category.id(), false);
         ConfigOptionDto deactivated = configService.getOptions("ITEM_CATEGORY", true).stream()
                 .filter(option -> option.id().equals(category.id())).findFirst().orElseThrow();

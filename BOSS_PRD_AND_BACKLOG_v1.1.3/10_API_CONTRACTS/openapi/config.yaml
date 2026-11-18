@@ -173,6 +173,7 @@ paths:
           schema: { type: string }
         - name: Idempotency-Key
           in: header
+          required: true
           schema: { type: string }
       requestBody:
         required: true
@@ -189,9 +190,9 @@ paths:
         '409': { description: Option code already exists in this category for this tenant }
 
   /config/options/{categoryCode}/{optionId}:
-    patch:
+    put:
       operationId: updateConfigOption
-      summary: Update label, sort order, or metadata for a tenant option
+      summary: Update the label of a tenant option
       description: OWNER role required. System options (isSystem=true) cannot have label changed.
       tags: [Configuration]
       parameters:
@@ -203,17 +204,19 @@ paths:
           in: path
           required: true
           schema: { type: string, format: uuid }
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string }
       requestBody:
+        required: true
         content:
           application/json:
             schema:
               type: object
+              required: [label]
               properties:
                 label: { type: string }
-                shortLabel: { type: string }
-                description: { type: string }
-                sortOrder: { type: integer }
-                metadata: { type: object }
       responses:
         '200':
           content:
@@ -227,8 +230,8 @@ paths:
       operationId: deactivateConfigOption
       summary: Deactivate an option (not delete — historical records preserved)
       description: |
-        Cannot deactivate an option that is referenced by active records.
-        Returns 409 with count of blocking active references.
+        Deactivating an option does not delete it or rewrite historical transactions.
+        Existing records retain their label snapshots; the option can later be reactivated.
       tags: [Configuration]
       parameters:
         - name: categoryCode
@@ -239,19 +242,37 @@ paths:
           in: path
           required: true
           schema: { type: string, format: uuid }
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string }
       responses:
-        '204': { description: Option deactivated }
+        '200':
+          description: Option deactivated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: deactivated }
         '403': { description: OWNER role required }
-        '409': { description: Option is referenced by active records }
 
-  /config/options/{categoryCode}/reorder:
-    post:
-      operationId: reorderOptions
-      summary: Set sort order for all options in an ORDERED category
+  /config/options/{categoryCode}/{optionId}/status:
+    patch:
+      operationId: setConfigOptionStatus
+      summary: Activate or deactivate a tenant option
       tags: [Configuration]
       parameters:
         - name: categoryCode
           in: path
+          required: true
+          schema: { type: string }
+        - name: optionId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: Idempotency-Key
+          in: header
           required: true
           schema: { type: string }
       requestBody:
@@ -260,19 +281,55 @@ paths:
           application/json:
             schema:
               type: object
-              required: [order]
+              required: [active]
               properties:
-                order:
-                  type: array
-                  items:
-                    type: object
-                    required: [id, sortOrder]
-                    properties:
-                      id: { type: string, format: uuid }
-                      sortOrder: { type: integer }
+                active: { type: boolean }
       responses:
-        '200': { description: Order updated }
-        '400': { description: Category is not ORDERED type }
+        '200':
+          description: Option status updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, enum: [active, deactivated] }
+        '403': { description: OWNER role required }
+
+  /config/options/{categoryCode}/order:
+    put:
+      operationId: reorderOptions
+      summary: Reorder active tenant-managed options in a category
+      tags: [Configuration]
+      parameters:
+        - name: categoryCode
+          in: path
+          required: true
+          schema: { type: string }
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [optionIds]
+              properties:
+                optionIds:
+                  type: array
+                  items: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Order updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: reordered }
+        '400': { description: Option list must contain every active tenant-managed option exactly once }
         '403': { description: OWNER role required }
 
   /config/routing-templates:

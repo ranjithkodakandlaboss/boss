@@ -13,7 +13,6 @@ import org.springframework.http.HttpStatus;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Config options service (issue #90).
@@ -31,21 +30,12 @@ public class ConfigService {
     private final AuditService audit;
     private final ObjectMapper objectMapper;
 
-    // Simple in-process cache: tenantId -> categoryCode/query variant -> options
-    // Evicted on any write to that tenant's options.
-    private final Map<UUID, Map<String, List<ConfigOptionDto>>> cache =
-            new ConcurrentHashMap<>();
-
     public ConfigService(JdbcTemplate jdbc, AuditService audit, ObjectMapper objectMapper) {
         this.jdbc = jdbc;
         this.audit = audit;
         this.objectMapper = objectMapper;
     }
 
-    /**
-     * Returns active options for {@code categoryCode} for the current tenant.
-     * Results are cached until any write occurs for that tenant.
-     */
     public List<ConfigCategoryDto> getCategories() {
         return jdbc.query("""
                 SELECT code, name, scope
@@ -62,11 +52,7 @@ public class ConfigService {
     public List<ConfigOptionDto> getOptions(String categoryCode, boolean includeInactive) {
         var ctx = BossContextHolder.get();
         if (ctx == null) throw new IllegalStateException("BossContext required");
-        String cacheKey = categoryCode + (includeInactive ? ":all" : ":active");
-
-        return cache
-                .computeIfAbsent(ctx.tenantId(), t -> new ConcurrentHashMap<>())
-                .computeIfAbsent(cacheKey, c -> loadOptions(ctx.tenantId(), categoryCode, includeInactive));
+        return loadOptions(ctx.tenantId(), categoryCode, includeInactive);
     }
 
     @PreAuthorize("hasAnyRole('OWNER','OPS_MANAGER','STORE_KEEPER')")
@@ -103,7 +89,6 @@ public class ConfigService {
                     + "VALUES (?, ?, ?, false, true) RETURNING id::text",
                     String.class,
                     ctx.tenantId(), normalizedCode, normalizedLabel)));
-            evict(ctx.tenantId(), "ITEM_CATEGORY");
             ConfigOptionDto created = new ConfigOptionDto(id, "ITEM_CATEGORY", normalizedCode, normalizedLabel, sortOrder, false, true);
             audit.record("ITEM_CATEGORY", id, "CREATE", null, optionJson(created));
             return created;
@@ -118,9 +103,9 @@ public class ConfigService {
                 String.class,
                 ctx.tenantId(), categoryId, normalizedCode, normalizedLabel, sortOrder));
 
-        evict(ctx.tenantId(), categoryCode);
         ConfigOptionDto created = new ConfigOptionDto(id, categoryCode, normalizedCode, normalizedLabel, sortOrder, false, true);
         audit.record("CONFIG_OPTION", id, "CREATE", null, optionJson(created));
+        recordOptionHistory(id, ctx, "create", null, normalizedLabel);
         return created;
     }
 
@@ -131,6 +116,10 @@ public class ConfigService {
         if (ctx == null) throw new IllegalStateException("BossContext required");
         requireOwner(ctx);
         requireTenantEditable(categoryCode);
+        if ("ITEM_CATEGORY".equalsIgnoreCase(categoryCode)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+                    "Item-category labels cannot be changed");
+        }
         if (label == null || label.isBlank()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Label is required");
         }
@@ -139,42 +128,27 @@ public class ConfigService {
         if (existing.isSystem()) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "System-controlled options cannot be changed");
         }
-        List<String> dependencies = findReferences(
-                "ITEM_CATEGORY".equalsIgnoreCase(categoryCode) ? "item_categories" : "tenant_config_options",
-                optionId, ctx.tenantId());
+        List<String> dependencies = findReferences("tenant_config_options", optionId, ctx.tenantId());
         if (!dependencies.isEmpty()) {
             throw new ResponseStatusException(HttpStatus.CONFLICT,
                     "This option is referenced by business records and cannot be changed: " + String.join(", ", dependencies));
         }
         String normalizedLabel = label.trim();
-        boolean duplicateLabel;
-        if ("ITEM_CATEGORY".equalsIgnoreCase(categoryCode)) {
-            duplicateLabel = Boolean.TRUE.equals(jdbc.queryForObject("""
-                    SELECT EXISTS (SELECT 1 FROM item_categories
-                    WHERE tenant_id = ? AND id <> ? AND lower(name) = lower(?))
-                    """, Boolean.class, ctx.tenantId(), optionId, normalizedLabel));
-        } else {
-            duplicateLabel = Boolean.TRUE.equals(jdbc.queryForObject("""
-                    SELECT EXISTS (SELECT 1 FROM tenant_config_options o
-                    JOIN config_categories c ON c.id = o.category_id
-                    WHERE o.tenant_id = ? AND c.code = ? AND o.id <> ? AND lower(o.label) = lower(?))
-                    """, Boolean.class, ctx.tenantId(), categoryCode.toUpperCase(), optionId, normalizedLabel));
-        }
+        boolean duplicateLabel = Boolean.TRUE.equals(jdbc.queryForObject("""
+                SELECT EXISTS (SELECT 1 FROM tenant_config_options o
+                JOIN config_categories c ON c.id = o.category_id
+                WHERE o.tenant_id = ? AND c.code = ? AND o.id <> ? AND lower(o.label) = lower(?))
+                """, Boolean.class, ctx.tenantId(), categoryCode.toUpperCase(), optionId, normalizedLabel));
         if (duplicateLabel) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "An option with this label already exists");
         }
-        if ("ITEM_CATEGORY".equalsIgnoreCase(categoryCode)) {
-            jdbc.update("UPDATE item_categories SET name = ? WHERE id = ? AND tenant_id = ? AND is_system = FALSE",
-                    normalizedLabel, optionId, ctx.tenantId());
-        } else {
-            jdbc.update("UPDATE tenant_config_options SET label = ?, updated_at = NOW() "
-                            + "WHERE id = ? AND tenant_id = ? AND is_system = FALSE",
-                    normalizedLabel, optionId, ctx.tenantId());
-        }
-        evict(ctx.tenantId(), categoryCode);
+        jdbc.update("UPDATE tenant_config_options SET label = ?, updated_at = NOW() "
+                        + "WHERE id = ? AND tenant_id = ? AND is_system = FALSE",
+                normalizedLabel, optionId, ctx.tenantId());
         ConfigOptionDto updated = new ConfigOptionDto(existing.id(), existing.categoryCode(), existing.code(),
                 normalizedLabel, existing.sortOrder(), false, existing.isActive());
         audit.record("CONFIG_OPTION", optionId, "UPDATE", optionJson(existing), optionJson(updated));
+        recordOptionHistory(optionId, ctx, "update", existing.label(), normalizedLabel);
         return updated;
     }
 
@@ -187,6 +161,9 @@ public class ConfigService {
         requireTenantEditable(categoryCode);
         ConfigOptionDto existing = findOption(ctx.tenantId(), categoryCode, optionId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Configuration option not found"));
+        if (existing.isActive() == active) {
+            return;
+        }
         if ("ITEM_CATEGORY".equalsIgnoreCase(categoryCode)) {
             jdbc.update("UPDATE item_categories SET is_active = ? WHERE id = ? AND tenant_id = ?",
                     active, optionId, ctx.tenantId());
@@ -195,9 +172,12 @@ public class ConfigService {
                             + "WHERE id = ? AND tenant_id = ?",
                     active, optionId, ctx.tenantId());
         }
-        evict(ctx.tenantId(), categoryCode);
         audit.record("CONFIG_OPTION", optionId, active ? "ACTIVATE" : "DEACTIVATE",
                 optionJson(existing), "{\"active\":" + active + "}");
+        if (!"ITEM_CATEGORY".equalsIgnoreCase(categoryCode)) {
+            recordOptionHistory(optionId, ctx, active ? "reactivate" : "deactivate",
+                            existing.label(), existing.label());
+        }
     }
 
     @PreAuthorize("hasAnyRole('OWNER','OPS_MANAGER','STORE_KEEPER')")
@@ -246,7 +226,6 @@ public class ConfigService {
                         """, id, ctx.tenantId(), ctx.userId(), previousOrder, sortOrder);
             }
         }
-        evict(ctx.tenantId(), categoryCode);
     }
 
     private List<ConfigOptionDto> loadOptions(UUID tenantId, String categoryCode, boolean includeInactive) {
@@ -378,8 +357,13 @@ public class ConfigService {
                 "Config category not found: " + categoryCode));
     }
 
-    private void evict(UUID tenantId, String categoryCode) {
-        cache.remove(tenantId);
+    private void recordOptionHistory(UUID optionId, BossContext context, String changeType,
+                                     String oldLabel, String newLabel) {
+        jdbc.update("""
+                INSERT INTO tenant_config_option_history
+                  (option_id, tenant_id, changed_by, old_label, new_label, change_type)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """, optionId, context.tenantId(), context.userId(), oldLabel, newLabel, changeType);
     }
 
     public List<ConfigOptionDto> getOptions(String categoryCode) {
