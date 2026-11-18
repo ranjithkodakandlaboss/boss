@@ -358,6 +358,10 @@ public class QualityService {
             throw notFound("Inspection not found");
         }
         validateItem(ctx.tenantId(), request.itemId());
+        if (request.severity() != null
+                && !List.of("critical", "major", "medium", "minor").contains(request.severity())) {
+            throw badRequest("Invalid NCR severity");
+        }
         ConfigOption defectCategory = resolveConfigOption(
                 ctx.tenantId(), request.defectCategoryId(), "DEFECT_CATEGORY");
 
@@ -954,6 +958,7 @@ public class QualityService {
                 FROM tenant_config_options o
                 JOIN config_categories c ON c.id = o.category_id
                 WHERE o.tenant_id = ? AND o.id = ? AND c.code = ? AND o.is_active
+                FOR SHARE OF o
                 """,
                 (rs, row) -> new ConfigOption(
                         rs.getObject("id", UUID.class), rs.getString("label")),

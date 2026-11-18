@@ -7,6 +7,7 @@ import in.boss.production.api.ProductionApiDtos.InspectionResultRequest;
 import in.boss.production.api.ProductionApiDtos.ConcessionRequest;
 import in.boss.quality.api.QualityDtos.*;
 import in.boss.quality.domain.QualityService;
+import in.boss.shared.config.ConfigService;
 import in.boss.shared.context.BossContext;
 import in.boss.shared.context.BossContextHolder;
 import org.junit.jupiter.api.BeforeEach;
@@ -18,6 +19,7 @@ import org.springframework.security.authentication.UsernamePasswordAuthenticatio
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.math.BigDecimal;
@@ -25,6 +27,10 @@ import java.time.LocalDate;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -36,6 +42,8 @@ class QualityModuleIntegrationTest extends BaseMasterDataIntegrationTest {
     @Autowired JobInspectionService jobInspectionService;
     @Autowired JobStageService jobStageService;
     @Autowired MockMvc mockMvc;
+    @Autowired ConfigService configService;
+    @Autowired TransactionTemplate transactionTemplate;
 
     private UUID tenantId;
     private UUID itemId;
@@ -194,6 +202,121 @@ class QualityModuleIntegrationTest extends BaseMasterDataIntegrationTest {
         assertThat(historicalInspection.linkedNcrs()).hasSize(1);
         assertThat(historicalInspection.linkedNcrs().get(0).defectCategoryLabel()).isEqualTo("Surface Defect");
         assertThat(listedNcr.defectCategoryLabel()).isEqualTo("Surface Defect");
+    }
+
+    @Test
+    void qualityOptionsRejectWrongCategoryInactiveAndOtherTenant() {
+        setRole("OWNER");
+        BossContext original = BossContextHolder.get();
+        UUID type = qualityOption("INSPECTION_TYPES", "TYPE", "Type");
+        UUID defect = qualityOption("DEFECT_CATEGORY", "DEFECT", "Defect");
+        UUID otherTenant = provisionTenant("other-quality");
+        setTenantContext(otherTenant);
+        UUID foreign = qualityOption("INSPECTION_TYPES", "FOREIGN", "Foreign");
+        BossContextHolder.set(original);
+        setRole("OWNER");
+        for (UUID invalid : List.of(defect, foreign)) {
+            assertThatThrownBy(() -> qualityService.createInspection(inspectionRequest(invalid)))
+                    .isInstanceOf(ResponseStatusException.class).hasMessageContaining("not active for this tenant");
+        }
+        configService.setOptionActive("INSPECTION_TYPES", type, false);
+        assertThatThrownBy(() -> qualityService.createInspection(inspectionRequest(type)))
+                .isInstanceOf(ResponseStatusException.class).hasMessageContaining("not active for this tenant");
+
+        UUID inspection = qualityService.createInspection(inspectionRequest(null)).id();
+        assertThatThrownBy(() -> qualityService.createNcr(new CreateNcrRequest(
+                inspection, itemId, null, jobId, type, "Defect", "major", BigDecimal.ONE, null)))
+                .isInstanceOf(ResponseStatusException.class).hasMessageContaining("not active for this tenant");
+        assertThatThrownBy(() -> qualityService.createNcr(new CreateNcrRequest(
+                inspection, itemId, null, jobId, defect, "Defect", UUID.randomUUID().toString(), BigDecimal.ONE, null)))
+                .isInstanceOf(ResponseStatusException.class).hasMessageContaining("Invalid NCR severity");
+    }
+
+    @Test
+    void activeQualityDependenciesPreventDeactivationButHistoricalRecordsDoNot() {
+        setRole("OWNER");
+        UUID type = qualityOption("INSPECTION_TYPES", "TYPE", "Type");
+        UUID defect = qualityOption("DEFECT_CATEGORY", "DEFECT", "Defect");
+        InspectionDetail inspection = qualityService.createInspection(inspectionRequest(type));
+        NcrDetail ncr = qualityService.createNcr(new CreateNcrRequest(
+                inspection.id(), itemId, null, jobId, defect, "Defect", "major", BigDecimal.ONE, null));
+        assertThatThrownBy(() -> configService.setOptionActive("INSPECTION_TYPES", type, false))
+                .isInstanceOf(ResponseStatusException.class).hasMessageContaining("active quality records");
+        assertThatThrownBy(() -> configService.setOptionActive("DEFECT_CATEGORY", defect, false))
+                .isInstanceOf(ResponseStatusException.class).hasMessageContaining("active quality records");
+        qualityService.recordResult(inspection.id(),
+                new RecordResultRequest("pass", BigDecimal.TEN, BigDecimal.ZERO, null, null));
+        qualityService.updateNcr(ncr.id(), new UpdateNcrRequest("closed", null, null, "Resolved"));
+        configService.setOptionActive("INSPECTION_TYPES", type, false);
+        configService.setOptionActive("DEFECT_CATEGORY", defect, false);
+        assertThat(qualityService.getInspection(inspection.id()).inspectionTypeLabel()).isEqualTo("Type");
+        assertThat(qualityService.getNcr(ncr.id()).defectCategoryLabel()).isEqualTo("Defect");
+    }
+
+    @Test
+    void deactivationWaitsForConcurrentQualityCreation() throws Exception {
+        setRole("OWNER");
+        UUID type = qualityOption("INSPECTION_TYPES", "TYPE", "Type");
+        BossContext context = BossContextHolder.get();
+        CountDownLatch created = new CountDownLatch(1);
+        CountDownLatch deactivationStarted = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        var executor = Executors.newFixedThreadPool(2);
+        try {
+            var create = executor.submit(() -> {
+                BossContextHolder.set(context);
+                setRole("OWNER");
+                try {
+                    transactionTemplate.executeWithoutResult(status -> {
+                        qualityService.createInspection(inspectionRequest(type));
+                        created.countDown();
+                        try {
+                            if (!release.await(30, TimeUnit.SECONDS)) throw new IllegalStateException("Timed out");
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                            throw new IllegalStateException(e);
+                        }
+                    });
+                } finally {
+                    BossContextHolder.clear();
+                    SecurityContextHolder.clearContext();
+                }
+            });
+            assertThat(created.await(30, TimeUnit.SECONDS)).isTrue();
+            var deactivate = executor.submit(() -> {
+                BossContextHolder.set(context);
+                setRole("OWNER");
+                try {
+                    deactivationStarted.countDown();
+                    configService.setOptionActive("INSPECTION_TYPES", type, false);
+                } finally {
+                    BossContextHolder.clear();
+                    SecurityContextHolder.clearContext();
+                }
+            });
+            assertThat(deactivationStarted.await(30, TimeUnit.SECONDS)).isTrue();
+            assertThatThrownBy(() -> deactivate.get(300, TimeUnit.MILLISECONDS)).isInstanceOf(TimeoutException.class);
+            release.countDown();
+            create.get(30, TimeUnit.SECONDS);
+            assertThatThrownBy(() -> deactivate.get(30, TimeUnit.SECONDS))
+                    .hasRootCauseInstanceOf(ResponseStatusException.class)
+                    .hasStackTraceContaining("active quality records");
+        } finally {
+            release.countDown();
+            executor.shutdownNow();
+        }
+    }
+
+    private UUID qualityOption(String category, String code, String label) {
+        return insert("""
+                INSERT INTO tenant_config_options (tenant_id, category_id, code, label)
+                SELECT ?, id, ?, ? FROM config_categories WHERE code = ? RETURNING id
+                """, BossContextHolder.get().tenantId(), code, label, category);
+    }
+
+    private CreateInspectionRequest inspectionRequest(UUID optionId) {
+        return new CreateInspectionRequest("final", "production_job", jobId, itemId, null, BigDecimal.TEN,
+                null, null, LocalDate.now(), null, optionId);
     }
 
     @Test
