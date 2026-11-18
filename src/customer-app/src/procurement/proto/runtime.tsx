@@ -761,6 +761,8 @@ export function ProcurementProvider({ children }: { children?: ReactNode }) {
             supplierId: quote.supplierId,
             prId: quote.prId,
             supplierQuotationId: quote.id,
+            paymentTerms: quote.paymentTerms != null ? Number(quote.paymentTerms) : undefined,
+            paymentTermsText: quote.paymentTermsText || undefined,
             lines,
           }, `spo-from:${quote.id}`);
           await reload();

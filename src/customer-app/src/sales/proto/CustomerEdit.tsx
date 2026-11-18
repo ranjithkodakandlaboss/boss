@@ -9,5 +9,8 @@ export default function CustomerEdit() {
   const { customers, updateCustomer } = useStore();
   const customer = customers.find(c => c.id === id);
   if (!customer) return <div className="p-8 text-center text-sm text-[var(--text-2)]">Customer not found.</div>;
-  return <CustomerForm customer={customer} title={`Edit Customer · ${customer.tradingName}`} onCancel={() => navigate(`/sales/customers/${customer.id}`)} onSave={async patch => { await updateCustomer(customer.id, patch); navigate(`/sales/customers/${customer.id}`); }} />;
+  const others = customers.filter(c => c.id !== id);
+  const existingLegalNames = others.map(c => c.legalName);
+  const existingGstins = others.map(c => c.gstin).filter(Boolean);
+  return <CustomerForm customer={customer} title={`Edit Customer · ${customer.tradingName}`} existingLegalNames={existingLegalNames} existingGstins={existingGstins} onCancel={() => navigate(`/sales/customers/${customer.id}`)} onSave={async patch => { await updateCustomer(customer.id, patch); navigate(`/sales/customers/${customer.id}`); }} />;
 }

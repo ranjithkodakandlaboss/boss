@@ -206,7 +206,7 @@ export default function CustomerDetail() {
                       onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = ''; }}
                       onClick={() => openRecord(`/sales/po/${po.id}`)}>
                       <td className="px-4 py-3 font-mono text-xs font-bold" style={{ color: 'var(--brand)' }}>{po.poNumber}</td>
-                      <td className="px-4 py-3 text-xs" style={{ color: 'var(--text-2)' }}>{new Date(po.acceptedDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}</td>
+                      <td className="px-4 py-3 text-xs" style={{ color: 'var(--text-2)' }}>{po.acceptedDate ? (() => { const d = new Date(po.acceptedDate); return isNaN(d.getTime()) ? '—' : d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }); })() : '—'}</td>
                       <td className="px-4 py-3 font-mono text-sm font-semibold" style={{ color: 'var(--text)' }}>₹{(po.totalValue / 100000).toFixed(2)}L</td>
                       <td className="px-4 py-3 text-xs" style={{ color: 'var(--text-2)' }}>{po.lineCount}</td>
                       <td className="px-4 py-3 text-xs" style={{ color: 'var(--text-2)' }}>{po.paymentTerms}</td>
@@ -236,8 +236,8 @@ export default function CustomerDetail() {
                   ) : customerRfqs.map(rfq => (
                     <tr key={rfq.id} className="cursor-pointer" style={{ borderBottom: '1px solid var(--border)' }} onClick={() => openRecord(`/sales/rfq/${rfq.id}`)}>
                       <td className="px-4 py-3 font-mono text-xs font-bold" style={{ color: 'var(--brand)' }}>{rfq.rfqNumber}</td>
-                      <td className="px-4 py-3 text-xs" style={{ color: 'var(--text-2)' }}>{new Date(rfq.receivedDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}</td>
-                      <td className="px-4 py-3 text-xs" style={{ color: 'var(--text-2)' }}>{new Date(rfq.requiredBy).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}</td>
+                      <td className="px-4 py-3 text-xs" style={{ color: 'var(--text-2)' }}>{rfq.receivedDate ? (() => { const d = new Date(rfq.receivedDate); return isNaN(d.getTime()) ? '—' : d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }); })() : '—'}</td>
+                      <td className="px-4 py-3 text-xs" style={{ color: 'var(--text-2)' }}>{rfq.requiredBy ? (() => { const d = new Date(rfq.requiredBy); return isNaN(d.getTime()) ? '—' : d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }); })() : '—'}</td>
                       <td className="px-4 py-3 text-xs" style={{ color: 'var(--text-2)' }}>{rfq.lineCount}</td>
                       <td className="px-4 py-3"><StatusChip status={rfq.status} size="sm" /></td>
                     </tr>
