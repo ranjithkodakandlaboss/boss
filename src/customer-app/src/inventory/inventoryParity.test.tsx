@@ -3,7 +3,7 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { api } from "../auth/api";
 import ItemDetail from "./ItemDetail";
-import ItemMaster from "./ItemMaster";
+import ItemMaster, { ItemForm } from "./ItemMaster";
 import MaterialReturns from "./MaterialReturns";
 import SiteNeed from "./SiteNeed";
 
@@ -72,6 +72,18 @@ describe("inventory prototype screens", () => {
     expect(await screen.findByText(/Copper Wire/)).toBeInTheDocument();
     expect(screen.getByText("Posted")).toBeInTheDocument();
     expect(screen.getByText("J-1")).toBeInTheDocument();
+  });
+
+  it("shows category and unit failures instead of an empty item form", async () => {
+    vi.mocked(api).mockImplementation(async (path) => {
+      const url = String(path);
+      if (url.includes("/api/v1/uoms")) return [{ id: "uom-1", name: "Kilogram", symbol: "KG" }];
+      if (url.includes("ITEM_CATEGORY")) throw new Error("Categories could not be loaded.");
+      return {};
+    });
+    render(<ItemForm onClose={() => undefined} onSaved={() => undefined} />);
+    expect(await screen.findByRole("option", { name: "KG · Kilogram" })).toBeInTheDocument();
+    expect(await screen.findByRole("alert")).toHaveTextContent("Categories could not be loaded.");
   });
 
   it("reserves a short job requirement through the job reservation API", async () => {

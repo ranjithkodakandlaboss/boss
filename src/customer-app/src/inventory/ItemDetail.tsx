@@ -31,7 +31,7 @@ export default function ItemDetail() {
       api<Item>(`/api/v1/items/${id}`),
       loadPositions(`?itemId=${id}`),
       loadLots(`itemId=${id}`),
-      loadJobs().catch(() => [] as ProductionJob[]),
+      loadJobs(),
       loadReservations(),
     ]).then(([next, stock, itemLots, jobPage, reserved]) => {
       setItem(next);

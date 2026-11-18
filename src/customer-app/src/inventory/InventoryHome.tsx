@@ -28,6 +28,7 @@ export default function InventoryHome() {
   const [status, setStatus] = useState("all");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [storeWarning, setStoreWarning] = useState("");
 
   useEffect(() => {
     let active = true;
@@ -36,8 +37,9 @@ export default function InventoryHome() {
     Promise.all([
       loadPositions(),
       loadLots("status=quarantine"),
-      loadStores(),
-    ]).then(([positions, quarantined, companyStores]) => {
+      loadStores().then((stores) => ({ stores, failed: false })).catch(() => ({ stores: [] as Store[], failed: true })),
+    ]).then(([positions, quarantined, company]) => {
+      const companyStores = company.stores;
       if (!active) return;
       const held = new Map<string, number>();
       for (const lot of quarantined) {
@@ -45,6 +47,7 @@ export default function InventoryHome() {
         held.set(key, (held.get(key) ?? 0) + Number(lot.qty));
       }
       setStores(companyStores);
+      setStoreWarning(company.failed ? "Stores could not be loaded. Locations are taken from the stock rows." : "");
       setRows(positions.map((position) => {
         const qcHoldQty = held.get(`${position.itemId}:${position.storeId}`) ?? 0;
         const next = { ...position, id: `${position.itemId}:${position.storeId}`, qcHoldQty, status: "" };
@@ -128,6 +131,7 @@ export default function InventoryHome() {
         })}
       </div>
       <div className="min-h-0 flex-1 overflow-auto">
+        {storeWarning && <p role="alert" className="px-5 pt-3 text-sm text-[var(--error)]">{storeWarning}</p>}
         {loading ? <LoadingState label="Loading stock positions" />
           : error ? <ErrorState body={error} />
             : <RecordTable

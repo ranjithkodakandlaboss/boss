@@ -94,4 +94,7 @@ it("opens a job from an eligible customer order and issues material", async () =
   await userEvent.selectOptions(await screen.findByLabelText("Lot for PLATE"), lotId);
   await userEvent.click(screen.getByRole("button", { name: "Issue" }));
   expect(await screen.findByText("Material issued")).toBeInTheDocument();
+  const calls = vi.mocked(fetch).mock.calls.map(([input]) => String(input));
+  expect(calls.some((url) => url.includes("status=available"))).toBe(true);
+  expect(calls.some((url) => url.includes("status=reserved"))).toBe(true);
 });

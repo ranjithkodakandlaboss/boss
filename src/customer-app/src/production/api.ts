@@ -126,12 +126,16 @@ export type RoutingTemplate = { id: string; name: string; version?: string; fini
 export type LotOption = {
   id: string;
   itemId: string;
-  batchRef?: string;
+  lotNumber?: string | null;
+  batchRef?: string | null;
   qty?: number;
+  reservedQty?: number;
   availableQty?: number;
+  uomSymbol?: string;
   unitCost?: number;
   status?: string;
   siteId?: string;
+  storeName?: string;
 };
 
 const READINESS_LABELS: Record<string, string> = {
@@ -253,6 +257,17 @@ export function addCost(jobId: string, entryType: "LABOUR" | "OVERHEAD" | "OTHER
   return post(`/api/v1/jobs/${jobId}/costing`, { entryType, description, amount });
 }
 
-export function usableLots(itemId: string) {
-  return api<Page<LotOption>>(`/api/v1/inventory/lots?itemId=${itemId}&status=available&page=0&size=50`);
+export async function usableLots(itemId: string) {
+  const query = `/api/v1/inventory/lots?itemId=${encodeURIComponent(itemId)}&page=0&size=200&status=`;
+  const [available, reserved] = await Promise.all([
+    api<Page<LotOption>>(`${query}available`),
+    api<Page<LotOption>>(`${query}reserved`),
+  ]);
+  const seen = new Set<string>();
+  const content = [...(available.content ?? []), ...(reserved.content ?? [])].filter((lot) => {
+    if (seen.has(lot.id)) return false;
+    seen.add(lot.id);
+    return true;
+  });
+  return { content };
 }
