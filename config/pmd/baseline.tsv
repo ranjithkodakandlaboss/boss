@@ -5,6 +5,10 @@ customer-api	src/main/java/in/boss/identity/domain/CompanyWorkspaceService.java	
 customer-api	src/main/java/in/boss/identity/domain/CompanyWorkspaceService.java	GodClass	1
 customer-api	src/main/java/in/boss/identity/domain/CustomerIdentityService.java	CyclomaticComplexity	1
 customer-api	src/main/java/in/boss/identity/domain/CustomerIdentityService.java	GodClass	1
+customer-api	src/main/java/in/boss/maintenance/domain/MaintenanceService.java	CognitiveComplexity	2
+customer-api	src/main/java/in/boss/maintenance/domain/MaintenanceService.java	CyclomaticComplexity	4
+customer-api	src/main/java/in/boss/maintenance/domain/MaintenanceService.java	GodClass	1
+customer-api	src/main/java/in/boss/maintenance/domain/MaintenanceService.java	TooManyMethods	1
 customer-api	src/main/java/in/boss/masterdata/domain/impl/BomServiceImpl.java	CognitiveComplexity	1
 customer-api	src/main/java/in/boss/masterdata/domain/impl/BomServiceImpl.java	CyclomaticComplexity	1
 customer-api	src/main/java/in/boss/masterdata/domain/impl/CustomerServiceImpl.java	CyclomaticComplexity	1
@@ -27,6 +31,7 @@ customer-api	src/main/java/in/boss/sales/domain/SalesService.java	CognitiveCompl
 customer-api	src/main/java/in/boss/sales/domain/SalesService.java	CyclomaticComplexity	2
 customer-api	src/main/java/in/boss/sales/domain/SalesService.java	GodClass	1
 customer-api	src/main/java/in/boss/sales/domain/SalesService.java	TooManyMethods	1
+customer-api	src/main/java/in/boss/shared/config/ConfigService.java	CyclomaticComplexity	1
 platform-admin-api	src/main/java/in/boss/admin/activation/CustomerActivationController.java	CyclomaticComplexity	1
 platform-admin-api	src/main/java/in/boss/admin/domain/TenantManagementService.java	CyclomaticComplexity	2
 platform-admin-api	src/main/java/in/boss/admin/domain/TenantManagementService.java	GodClass	1
