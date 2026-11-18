@@ -773,7 +773,6 @@ export default function Procurement() {
         <RecordSheet
           title={`Edit SPO — ${editSpo.poNumber}`}
           onClose={() => setEditSpo(null)}
-          secondary={{ label: 'Cancel', onClick: () => setEditSpo(null) }}
         >
           <EditSPOForm spo={editSpo} onSave={(partial) => { updateSupplierPo(editSpo.id, partial); setEditSpo(null); showToast({ type: 'success', title: 'Supplier PO updated' }); }} onCancel={() => setEditSpo(null)} />
         </RecordSheet>
@@ -796,21 +795,6 @@ export default function Procurement() {
                 value={rejectApprovalReason}
                 onChange={e => setRejectApprovalReason(e.target.value)}
               />
-            </div>
-            <div className="flex gap-2">
-              <button type="button" onClick={() => setRejectApprovalTarget(null)} className="flex-1 py-2 border border-[var(--border)] text-[var(--text)] rounded-lg text-sm">Cancel</button>
-              <button
-                type="button"
-                disabled={!rejectApprovalReason.trim()}
-                onClick={() => {
-                  resolveApproval(rejectApprovalTarget.id, 'rejected', currentUser.name, rejectApprovalReason.trim());
-                  setRejectApprovalTarget(null);
-                }}
-                className="flex-1 py-2 rounded-lg text-sm font-semibold text-white disabled:opacity-40"
-                style={{ background: 'var(--error,#DC2626)' }}
-              >
-                Confirm Reject
-              </button>
             </div>
           </div>
         </RecordSheet>

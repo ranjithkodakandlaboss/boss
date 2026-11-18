@@ -10,7 +10,7 @@ import StatusChip from '../../components/shared/StatusChip';
 import RecordHistoryPanel from './workflow/RecordHistoryPanel';
 import type { CustomerRFQ } from './types';
 
-const fmt = (d: string) => { if (!d) return '—'; const dt = new Date(d); return isNaN(dt.getTime()) ? '—' : dt.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }); };
+const fmt = (d: string | null | undefined) => { if (!d) return '—'; const dt = new Date(d); return isNaN(dt.getTime()) ? '—' : dt.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }); };
 const fmtMoney = (n: number) => `₹${n.toLocaleString('en-IN')}`;
 
 type Tab = 'overview' | 'lines' | 'technical' | 'commercial' | 'documents' | 'clarifications' | 'history';

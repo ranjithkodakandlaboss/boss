@@ -1,13 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { ArrowRightLeft, Plus, ShieldAlert } from "lucide-react";
+import { ArrowRightLeft, Pencil, Plus, ShieldAlert } from "lucide-react";
 import ErrorState from "../components/shared/ErrorState";
 import LoadingState from "../components/shared/LoadingState";
 import RecordTable, { type RecordColumn } from "../components/shared/RecordTable";
-import { loadLots, loadPositions, loadStores, quantity, type Position, type Store } from "./api";
+import { loadLots, loadPositions, loadStores, quantity, type Lot, type Position, type Store } from "./api";
 import StockNav from "./stockNav";
 
-type StockRow = Position & { id: string; qcHoldQty: number; status: string };
+type StockRow = Position & { id: string; qcHoldQty: number; lotCount: number; status: string };
 
 const STATUSES = ["Available", "Shortage", "Quality Hold", "Reserved", "Awaiting goods receipt"] as const;
 
@@ -37,8 +37,10 @@ export default function InventoryHome() {
     Promise.all([
       loadPositions(),
       loadLots("status=quarantine"),
-      loadStores().then((stores) => ({ stores, failed: false })).catch(() => ({ stores: [] as Store[], failed: true })),
-    ]).then(([positions, quarantined, company]) => {
+      loadLots("status=available"),
+      loadLots("status=reserved"),
+      loadStores().then((s) => ({ stores: s, failed: false })).catch(() => ({ stores: [] as Store[], failed: true })),
+    ]).then(([positions, quarantined, available, reserved, company]) => {
       const companyStores = company.stores;
       if (!active) return;
       const held = new Map<string, number>();
@@ -46,11 +48,17 @@ export default function InventoryHome() {
         const key = `${lot.itemId}:${lot.storeId}`;
         held.set(key, (held.get(key) ?? 0) + Number(lot.qty));
       }
+      const lotCountMap = new Map<string, number>();
+      for (const lot of [...available, ...reserved]) {
+        const key = `${lot.itemId}:${lot.storeId}`;
+        lotCountMap.set(key, (lotCountMap.get(key) ?? 0) + 1);
+      }
       setStores(companyStores);
       setStoreWarning(company.failed ? "Stores could not be loaded. Locations are taken from the stock rows." : "");
       setRows(positions.map((position) => {
         const qcHoldQty = held.get(`${position.itemId}:${position.storeId}`) ?? 0;
-        const next = { ...position, id: `${position.itemId}:${position.storeId}`, qcHoldQty, status: "" };
+        const lotCount = lotCountMap.get(`${position.itemId}:${position.storeId}`) ?? 0;
+        const next = { ...position, id: `${position.itemId}:${position.storeId}`, qcHoldQty, lotCount, status: "" };
         return { ...next, status: rowStatus(next) };
       }));
     }).catch((reason: unknown) => {
@@ -78,7 +86,14 @@ export default function InventoryHome() {
 
   const columns: RecordColumn<StockRow>[] = [
     { key: "itemCode", label: "Code", value: (row) => row.itemCode, render: (row) => <span className="font-semibold text-[var(--brand)]">{row.itemCode}</span> },
-    { key: "itemName", label: "Material / Specification", value: (row) => row.itemName, render: (row) => row.itemName },
+    {
+      key: "itemName", label: "Material / Specification", value: (row) => row.itemName, render: (row) => (
+        <div>
+          <div>{row.itemName}</div>
+          {row.lotCount > 0 && <div className="mt-0.5 text-[11px] text-[var(--text-3)]">{row.lotCount} lot{row.lotCount === 1 ? "" : "s"}</div>}
+        </div>
+      )
+    },
     { key: "storeName", label: "Location", value: (row) => row.storeName, render: (row) => row.storeName },
     { key: "totalQty", label: "On Hand", align: "right", value: (row) => row.totalQty, render: (row) => quantity(row.totalQty, row.uomSymbol) },
     { key: "reservedQty", label: "Reserved", align: "right", value: (row) => row.reservedQty, render: (row) => quantity(row.reservedQty, row.uomSymbol) },
@@ -139,7 +154,7 @@ export default function InventoryHome() {
               columns={columns}
               empty="No stock positions"
               onRow={(row) => navigate(`/inventory/item/${row.itemId}`)}
-              trailing={(row) => row.status === "Shortage" ? <ShortageActions row={row} rows={rows} /> : null}
+              trailing={(row) => <RowActions row={row} rows={rows} />}
             />}
       </div>
       <footer className="flex flex-wrap gap-4 border-t px-5 py-2 text-xs" style={{ borderColor: "var(--border)", color: "var(--text-3)" }}>
@@ -152,12 +167,15 @@ export default function InventoryHome() {
   );
 }
 
-function ShortageActions({ row, rows }: { row: StockRow; rows: StockRow[] }) {
+function RowActions({ row, rows }: { row: StockRow; rows: StockRow[] }) {
   const source = rows.find((other) => other.itemId === row.itemId && other.storeId !== row.storeId && other.availableQty > 0);
   const qty = Math.max((row.reorderPoint ?? 0) - row.availableQty, row.reorderPoint || 1);
   const pr = new URLSearchParams({ code: row.itemCode, materialId: row.itemId, name: row.itemName, uom: row.uomSymbol, qty: String(qty) });
   return (
-    <div className="flex justify-end gap-2">
+    <div className="flex items-center justify-end gap-2">
+      <Link to={`/inventory/item/${row.itemId}?edit=1`} className="text-[var(--text-3)] hover:text-[var(--text)]" title="Edit material" onClick={(event) => event.stopPropagation()}>
+        <Pencil size={13} />
+      </Link>
       <Link to={`/procurement/pr/new?${pr}`} className="rounded-lg px-2 py-1 text-xs font-semibold text-white" style={{ background: "var(--brand-fill)" }} onClick={(event) => event.stopPropagation()}>Create PR</Link>
       {source && (
         <Link to={`/inventory/transfer?from=${encodeURIComponent(source.storeName)}&to=${encodeURIComponent(row.storeName)}&material=${encodeURIComponent(row.itemCode)}&qty=${encodeURIComponent(String(Math.min(source.availableQty, qty)))}`} className="text-xs font-semibold text-[var(--brand)]" onClick={(event) => event.stopPropagation()}>Move stock</Link>

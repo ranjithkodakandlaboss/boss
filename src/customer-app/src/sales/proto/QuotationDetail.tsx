@@ -10,7 +10,7 @@ import RelatedRecordsPanel from './workflow/RelatedRecordsPanel';
 import RecordHistoryPanel from './workflow/RecordHistoryPanel';
 import { useReturnNavigation } from './useReturnNavigation';
 
-const fmt = (d: string) => { if (!d) return '—'; const dt = new Date(d); return isNaN(dt.getTime()) ? '—' : dt.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }); };
+const fmt = (d: string | null | undefined) => { if (!d) return '—'; const dt = new Date(d); return isNaN(dt.getTime()) ? '—' : dt.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }); };
 const fmtMoney = (n: number) => `₹${n.toLocaleString('en-IN')}`;
 
 export default function QuotationDetail() {
@@ -18,7 +18,7 @@ export default function QuotationDetail() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { quotations, quotationLines, rfqs, customerPos, currentUser, updateQuotation, reviseQuotation, convertQuotationToPO, updateRfq, showToast } = useStore();
-  const [confirming, setConfirming] = useState<'submit' | 'accept' | 'convert' | null>(null);
+  const [confirming, setConfirming] = useState<'submit' | 'accept' | 'convert' | 'decline' | null>(null);
   const [reviseModal, setReviseModal] = useState(false);
   const [reviseDiscount, setReviseDiscount] = useState('0');
   const [reviseNotes, setReviseNotes] = useState('');
@@ -134,7 +134,7 @@ export default function QuotationDetail() {
             )}
             {quotation.status === 'submitted' && (
               <>
-                <button type="button" onClick={() => handleDecision('rejected')} className="px-3 py-2 rounded-lg text-sm font-semibold border" style={{ borderColor: 'var(--error)', color: 'var(--error)' }}>Decline</button>
+                <button type="button" onClick={() => setConfirming('decline')} className="px-3 py-2 rounded-lg text-sm font-semibold border" style={{ borderColor: 'var(--error)', color: 'var(--error)' }}>Decline</button>
                 <button type="button" onClick={() => handleDecision('expired')} className="px-3 py-2 rounded-lg text-sm font-semibold border" style={{ borderColor: 'var(--border)', color: 'var(--text-2)' }}>No Response</button>
               </>
             )}
@@ -232,13 +232,27 @@ export default function QuotationDetail() {
                   <td className="text-sm text-[var(--text)]">{l.productName}</td>
                   <td className="font-mono text-sm text-left">{l.orderedQty}</td>
                   <td className="text-xs text-[var(--text-2)]">{l.uom}</td>
-                  <td className="font-mono text-sm text-left">{fmtMoney(l.unitPrice)}</td>
-                  <td className="font-mono text-sm text-left font-semibold">{fmtMoney(l.value)}</td>
+                  <td className="font-mono text-sm text-right">{fmtMoney(l.unitPrice)}</td>
+                  <td className="font-mono text-sm text-right font-semibold">{fmtMoney(l.value)}</td>
                   <td className="text-sm text-[var(--text-2)]">{fmt(l.requiredDate)}</td>
                 </tr>
               ))}
             </tbody>
             <tfoot>
+              {quotation.subtotal != null && quotation.subtotal !== quotation.totalValue && (
+                <tr>
+                  <td colSpan={7} className="text-right text-xs text-[var(--text-2)] pr-4">Subtotal</td>
+                  <td className="font-mono text-sm text-[var(--text)]">{fmtMoney(quotation.subtotal)}</td>
+                  <td />
+                </tr>
+              )}
+              {quotation.taxAmount != null && quotation.taxAmount > 0 && (
+                <tr>
+                  <td colSpan={7} className="text-right text-xs text-[var(--text-2)] pr-4">GST</td>
+                  <td className="font-mono text-sm text-[var(--text)]">{fmtMoney(quotation.taxAmount)}</td>
+                  <td />
+                </tr>
+              )}
               <tr>
                 <td colSpan={7} className="text-right text-xs font-bold text-[var(--text-2)] pr-4">Total</td>
                 <td className="font-mono text-base font-bold text-[var(--text)]">{fmtMoney(quotation.totalValue)}</td>

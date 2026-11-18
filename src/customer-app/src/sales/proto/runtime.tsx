@@ -323,7 +323,7 @@ function mapQuote(quote: Quotation): CustomerQuotation {
     taxAmount: totals.taxAmount,
     discountAmount: money(quote.discountAmount),
     revision: quote.revision,
-    owner: "",
+    owner: quote.ownerName || "",
     deliveryTerms: quote.deliveryTerms || "",
     paymentTerms: termsLabel(quote.paymentTerms, quote.paymentTermsText),
     notes: quote.notes || "",
@@ -710,10 +710,14 @@ export function SalesProvider({ children }: { children?: ReactNode }) {
       convertQuotationToPO: async (quotationId, po) => {
         const existing = customerPos.find((item) => item.quotationId === quotationId);
         if (existing) return existing;
+        const sourceQuote = quotations.find((item) => item.id === quotationId);
         const saved = await guard(() => salesApi.accept(quotationId, {
           customerPoRef: po.customerPoRef || undefined,
           confirmationNote: po.confirmationNote || po.directOrderReason || undefined,
         }), { title: "Customer PO created", body: "The accepted price is now locked on the Customer PO." });
+        if (saved && sourceQuote?.rfqId) {
+          salesApi.rfqStatus(sourceQuote.rfqId, "closed").catch(() => undefined);
+        }
         return saved ? mapPo(saved) : null;
       },
       updateCustomerPo: async (id, patch) => {
