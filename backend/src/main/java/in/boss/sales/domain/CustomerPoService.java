@@ -5,6 +5,7 @@ import in.boss.sales.api.SalesApiDtos.CpoResponse;
 import in.boss.sales.api.SalesApiDtos.PageResponse;
 import in.boss.sales.api.SalesApiDtos.RecordMaterialAvailabilityRequest;
 import in.boss.sales.api.SalesApiDtos.UpdateCpoRequest;
+import in.boss.inventory.api.InventoryApiDtos.FeasibilityResponse;
 import in.boss.inventory.domain.InventoryService;
 import in.boss.shared.audit.AuditService;
 import in.boss.shared.context.BossContext;
@@ -151,7 +152,29 @@ public class CustomerPoService {
     }
 
     @Transactional
+    @PreAuthorize(BossPermissions.CPO_TRANSITIONS)
     public CpoResponse updateStatus(UUID cpoId, String nextStatus) {
+        return transitionStatus(cpoId, nextStatus, true);
+    }
+
+    @Transactional
+    @PreAuthorize(BossPermissions.CPO_TRANSITIONS)
+    public FeasibilityResponse checkFeasibility(UUID cpoId) {
+        UUID tenantId = requireContext().tenantId();
+        String current = lockStatus(tenantId, cpoId);
+        if (!"open".equals(current)) {
+            throw conflict("Feasibility can only be run for an open Customer PO");
+        }
+
+        transitionStatus(cpoId, "feasibility_pending", false);
+        FeasibilityResponse feasibility = inventoryService.checkAndReserveForCustomerPo(cpoId);
+        if (feasibility.feasible()) {
+            transitionStatus(cpoId, "feasibility_approved", false);
+        }
+        return feasibility;
+    }
+
+    private CpoResponse transitionStatus(UUID cpoId, String nextStatus, boolean reserveForApproval) {
         UUID tenantId = requireContext().tenantId();
         String current = lockStatus(tenantId, cpoId);
         if (current.equals(nextStatus)
@@ -168,7 +191,7 @@ public class CustomerPoService {
             throw conflict("Invalid Customer PO status transition: " + current + " -> " + nextStatus);
         }
         CpoResponse before = cpoLookup.read(tenantId, cpoId);
-        if ("feasibility_approved".equals(nextStatus)) {
+        if ("feasibility_approved".equals(nextStatus) && reserveForApproval) {
             var feasibility = inventoryService.checkAndReserveForCustomerPo(cpoId);
             if (!feasibility.feasible()) {
                 throw conflict("Customer PO cannot be approved because required materials are unavailable");

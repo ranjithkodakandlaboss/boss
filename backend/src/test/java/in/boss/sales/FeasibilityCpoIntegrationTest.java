@@ -9,8 +9,11 @@ import in.boss.shared.context.BossContextHolder;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.http.HttpStatus;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.test.context.support.WithMockUser;
+import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.math.BigDecimal;
@@ -19,8 +22,15 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @WithMockUser(roles = "OWNER")
+@AutoConfigureMockMvc
 class FeasibilityCpoIntegrationTest extends BaseMasterDataIntegrationTest {
 
     @Autowired
@@ -28,6 +38,9 @@ class FeasibilityCpoIntegrationTest extends BaseMasterDataIntegrationTest {
 
     @Autowired
     private InventoryService inventoryService;
+
+    @Autowired
+    private MockMvc mockMvc;
 
     private UUID tenantId;
     private UUID siteId;
@@ -111,6 +124,50 @@ class FeasibilityCpoIntegrationTest extends BaseMasterDataIntegrationTest {
     }
 
     @Test
+    void feasibilityEndpointReservesOnceAndReplaysSameRequest() throws Exception {
+        lot("10");
+        String idempotencyKey = UUID.randomUUID().toString();
+
+        mockMvc.perform(post("/api/v1/cpos/" + cpoId + "/feasibility")
+                        .with(user("sales-owner").roles("OWNER"))
+                        .header("Idempotency-Key", idempotencyKey))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.cpoId").value(cpoId.toString()))
+                .andExpect(jsonPath("$.feasible").value(true));
+
+        assertThat(cpoStatus()).isEqualTo("feasibility_approved");
+        assertThat(activeReservations()).isEqualTo(1);
+
+        setTenantContext(tenantId, "OWNER");
+        mockMvc.perform(post("/api/v1/cpos/" + cpoId + "/feasibility")
+                        .with(user("sales-owner").roles("OWNER"))
+                        .header("Idempotency-Key", idempotencyKey))
+                .andExpect(status().isOk())
+                .andExpect(header().string("X-Idempotent-Replayed", "true"));
+
+        assertThat(activeReservations()).isEqualTo(1);
+    }
+
+    @Test
+    @WithMockUser(roles = "OPS_MANAGER")
+    void opsManagerCannotTransitionCpoThroughServiceOrController() throws Exception {
+        assertThatThrownBy(() -> customerPoService.updateStatus(cpoId, "feasibility_pending"))
+                .isInstanceOf(AccessDeniedException.class);
+        assertThatThrownBy(() -> customerPoService.checkFeasibility(cpoId))
+                .isInstanceOf(AccessDeniedException.class);
+
+        mockMvc.perform(patch("/api/v1/cpos/" + cpoId + "/status")
+                        .with(user("ops-manager").roles("OPS_MANAGER"))
+                        .header("Idempotency-Key", UUID.randomUUID().toString())
+                        .contentType("application/json")
+                        .content("{\"status\":\"feasibility_pending\"}"))
+                .andExpect(status().isForbidden());
+
+        assertThat(cpoStatus()).isEqualTo("open");
+        assertThat(activeReservations()).isZero();
+    }
+
+    @Test
     void approvalWithShortageLeavesCpoPendingAndReservesNothing() {
         lot("9");
         customerPoService.updateStatus(cpoId, "feasibility_pending");
@@ -149,6 +206,11 @@ class FeasibilityCpoIntegrationTest extends BaseMasterDataIntegrationTest {
                 SELECT COUNT(*) FROM stock_reservation_records
                  WHERE tenant_id = ? AND reference_id = ? AND status = 'active'
                 """, Integer.class, tenantId, cpoId);
+    }
+
+    private String cpoStatus() {
+        return jdbc.queryForObject("SELECT status FROM cpos WHERE tenant_id = ? AND id = ?",
+                String.class, tenantId, cpoId);
     }
 
     private BigDecimal reservedQty() {
