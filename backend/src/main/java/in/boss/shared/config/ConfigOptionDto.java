@@ -8,5 +8,6 @@ public record ConfigOptionDto(
         String code,
         String label,
         int sortOrder,
-        boolean isSystem
+        boolean isSystem,
+        boolean isActive
 ) {}
