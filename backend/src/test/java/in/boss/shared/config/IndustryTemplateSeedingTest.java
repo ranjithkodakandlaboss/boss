@@ -113,6 +113,19 @@ class IndustryTemplateSeedingTest {
             List<ConfigOptionDto> rejReasons = configService.getOptions("REJECTION_REASONS");
             assertThat(rejReasons).as("Rejection reasons for " + industry).isNotEmpty();
 
+            // Quality screen categories. Inspection type and severity codes are
+            // the values stored on inspections and NCRs.
+            assertThat(configService.getOptions("INSPECTION_TYPE"))
+                    .extracting(ConfigOptionDto::code)
+                    .containsExactly("incoming", "in_process", "final", "customer", "dispatch_readiness");
+            assertThat(configService.getOptions("DEFECT_SEVERITY"))
+                    .extracting(ConfigOptionDto::code)
+                    .containsExactly("critical", "major", "medium", "minor");
+            assertThat(configService.getOptions("DEFECT_CATEGORY"))
+                    .extracting(ConfigOptionDto::code)
+                    .containsExactlyInAnyOrderElementsOf(
+                            rejReasons.stream().map(ConfigOptionDto::code).toList());
+
             // Standard UOMs seeded in units_of_measure
             Integer uomCount = jdbc.queryForObject(
                     "SELECT COUNT(*) FROM units_of_measure WHERE tenant_id = ?",
