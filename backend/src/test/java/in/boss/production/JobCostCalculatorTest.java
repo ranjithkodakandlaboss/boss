@@ -17,6 +17,10 @@ class JobCostCalculatorTest {
     void marginUsesSellingPriceAndDoesNotInventARate() {
         assertThat(JobCostCalculator.marginPct(new BigDecimal("1000"), new BigDecimal("50")))
                 .isEqualByComparingTo("95.0000");
+        assertThat(JobCostCalculator.marginPct(new BigDecimal("1000"), BigDecimal.ZERO))
+                .isEqualByComparingTo("100.0000");
+        assertThat(JobCostCalculator.profit(new BigDecimal("1000"), new BigDecimal("50")))
+                .isEqualByComparingTo("950.00");
         assertThat(JobCostCalculator.marginPct(BigDecimal.ZERO, new BigDecimal("50"))).isNull();
         assertThat(JobCostCalculator.variance(new BigDecimal("50"), new BigDecimal("40")))
                 .isEqualByComparingTo("10.00");

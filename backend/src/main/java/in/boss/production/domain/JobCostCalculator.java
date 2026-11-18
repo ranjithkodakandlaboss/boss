@@ -5,8 +5,8 @@ import java.math.RoundingMode;
 
 /**
  * Approved job-cost arithmetic.
- * Margin is {@code (selling price - actual cost) / selling price * 100}
- * when both amounts are positive. Selling price is never an input this class writes.
+ * Margin is {@code (selling price - cost) / selling price * 100}
+ * when selling price is positive and cost is non-negative. Selling price is never written here.
  */
 public final class JobCostCalculator {
 
@@ -26,10 +26,14 @@ public final class JobCostCalculator {
         return money(actual).subtract(money(estimated));
     }
 
+    public static BigDecimal profit(BigDecimal sellingPrice, BigDecimal cost) {
+        return money(sellingPrice).subtract(money(cost));
+    }
+
     public static BigDecimal marginPct(BigDecimal sellingPrice, BigDecimal actualCost) {
         BigDecimal selling = money(sellingPrice);
         BigDecimal actual = money(actualCost);
-        if (selling.signum() <= 0 || actual.signum() <= 0) {
+        if (selling.signum() <= 0 || actual.signum() < 0) {
             return null;
         }
         return selling.subtract(actual)

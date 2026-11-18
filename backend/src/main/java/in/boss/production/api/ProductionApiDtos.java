@@ -142,7 +142,18 @@ public final class ProductionApiDtos {
             BigDecimal overheadCost,
             BigDecimal totalCost,
             BigDecimal sellingPrice,
-            BigDecimal marginPct
+            BigDecimal marginPct,
+            String materialStatus,
+            String labourStatus,
+            String overheadStatus
+    ) {}
+
+    public record HistoricalCostReference(
+            int completedOrderCount,
+            BigDecimal totalQuantity,
+            BigDecimal totalActualCost,
+            BigDecimal weightedAverageUnitCost,
+            String basis
     ) {}
 
     public record CostingResponse(
@@ -151,6 +162,10 @@ public final class ProductionApiDtos {
             CostSummary estimatedCost,
             CostSummary actualCost,
             BigDecimal variance,
+            BigDecimal estimatedProfit,
+            BigDecimal actualProfit,
+            String estimatedCostBasis,
+            HistoricalCostReference historicalReference,
             List<CostEntryResponse> entries
     ) {}
 

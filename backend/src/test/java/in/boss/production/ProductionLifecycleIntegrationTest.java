@@ -178,7 +178,12 @@ class ProductionLifecycleIntegrationTest extends BaseMasterDataIntegrationTest {
         assertThat(job.materials()).hasSize(1);
         assertThat(job.materials().get(0).requiredQty()).isEqualByComparingTo("20.000");
         assertThat(job.estimatedCost().materialCost()).isEqualByComparingTo("50.00");
+        assertThat(job.estimatedCost().totalCost()).isNull();
         assertThat(job.actualCost().sellingPrice()).isEqualByComparingTo("1000.00");
+        var initialCosting = costing.get(job.id());
+        assertThat(initialCosting.estimatedCost().labourStatus()).isEqualTo("not_recorded");
+        assertThat(initialCosting.actualCost().totalCost()).isNull();
+        assertThat(initialCosting.actualProfit()).isNull();
         assertThat(jdbc.queryForObject(
                 "SELECT unit_price FROM cpo_lines WHERE tenant_id = ? AND id = ?",
                 BigDecimal.class, tenantId, lineId)).isEqualByComparingTo("100.00");
@@ -221,6 +226,7 @@ class ProductionLifecycleIntegrationTest extends BaseMasterDataIntegrationTest {
         inspections.record(job.id(), inspectionId, new InspectionResultRequest("pass", BigDecimal.TEN, BigDecimal.ZERO, "ok"));
         stages.complete(job.id(), job.stages().get(1).id(), null);
         costing.addEntry(job.id(), new AddCostRequest("LABOUR", "Shift", new BigDecimal("10.00"), null, null));
+        costing.addEntry(job.id(), new AddCostRequest("OVERHEAD", "No additional overhead", BigDecimal.ZERO, null, null));
         asRole("PRODUCTION_SUPERVISOR");
         assertThatThrownBy(() -> stages.skip(job.id(), job.stages().get(2).id(), new ReasonRequest("not needed")))
                 .isInstanceOf(AccessDeniedException.class);
@@ -230,16 +236,84 @@ class ProductionLifecycleIntegrationTest extends BaseMasterDataIntegrationTest {
         var cost = costing.get(job.id());
         assertThat(cost.actualCost().materialCost()).isEqualByComparingTo("40.00");
         assertThat(cost.actualCost().totalCost()).isEqualByComparingTo("50.00");
-        assertThat(cost.variance()).isEqualByComparingTo("0.00");
+        assertThat(cost.variance()).isNull();
+        assertThat(cost.actualProfit()).isEqualByComparingTo("950.00");
         assertThat(cost.actualCost().marginPct()).isEqualByComparingTo("95.0000");
         assertThat(cost.actualCost().sellingPrice()).isEqualByComparingTo("1000.00");
+        assertThat(cost.actualCost().materialStatus()).isEqualTo("complete");
+        assertThat(cost.actualCost().labourStatus()).isEqualTo("complete");
+        assertThat(cost.actualCost().overheadStatus()).isEqualTo("complete");
+        assertThat(jdbc.queryForObject("""
+                SELECT COUNT(*) FROM audit_events
+                WHERE tenant_id = ? AND entity_type = 'job_costing_lines'
+                  AND new_data ->> 'description' = 'Shift'
+                """, Integer.class, tenantId)).isEqualTo(1);
         assertThat(jdbc.queryForObject(
                 "SELECT unit_price FROM cpo_lines WHERE id = ?", BigDecimal.class, lineId))
                 .isEqualByComparingTo("100.00");
+        UUID customerId = jdbc.queryForObject("SELECT customer_id FROM cpos WHERE id = ?", UUID.class, cpoId);
+        UUID nextCpoId = insert("""
+                INSERT INTO cpos (tenant_id, cpo_number, customer_id, site_id, status, order_date, required_by_date, created_by)
+                VALUES (?, ?, ?, ?, 'open', CURRENT_DATE, ?, ?) RETURNING id
+                """, tenantId, "CPO-" + UUID.randomUUID().toString().substring(0, 6), customerId, siteId,
+                LocalDate.now().plusDays(10), BossContextHolder.get().userId());
+        UUID nextLineId = insert("""
+                INSERT INTO cpo_lines (tenant_id, cpo_id, line_no, item_id, quantity, uom_id, unit_price)
+                VALUES (?, ?, 1, ?, 10, (SELECT base_uom_id FROM items WHERE id = ?), 100) RETURNING id
+                """, tenantId, nextCpoId, finishedItemId, finishedItemId);
+        ProductionJobResponse nextJob = jobs.create(new CreateJobRequest(
+                nextCpoId, nextLineId, routingId, LocalDate.now(), LocalDate.now().plusDays(10), "high"));
+        var history = costing.get(nextJob.id()).historicalReference();
+        assertThat(history.completedOrderCount()).isEqualTo(1);
+        assertThat(history.totalActualCost()).isEqualByComparingTo("50.00");
+        assertThat(history.weightedAverageUnitCost()).isEqualByComparingTo("5.0000");
+        assertThat(history.basis()).contains("same item and routing").contains("specifications are not captured");
         assertThat(query.businessMetrics().completedJobs()).isEqualTo(1);
+        assertThat(query.businessMetrics().estimatedCost()).isNull();
+        assertThat(query.businessMetrics().actualCost()).isNull();
+        assertThat(query.businessMetrics().costVariance()).isNull();
         assertThat(query.businessMetrics().materialConsumedQty()).isEqualByComparingTo("16");
         assertThat(query.list(cpoId, "completed", 0, 20).totalElements()).isEqualTo(1);
         assertThat(query.features()).containsEntry("production.job.create", true);
+    }
+
+    @Test
+    void missingInventoryUnitCostDoesNotBecomeZeroProfit() {
+        ProductionJobResponse job = jobs.create(new CreateJobRequest(
+                cpoId, lineId, routingId, LocalDate.now(), LocalDate.now().plusDays(10), "normal"));
+        requirementId = job.materials().get(0).id();
+        jdbc.update("UPDATE material_lots SET unit_cost = NULL WHERE tenant_id = ? AND id = ?", tenantId, lotId);
+        materials.issue(job.id(), new IssueMaterialRequest(requirementId, lotId, new BigDecimal("20"), "kit"));
+
+        var cost = costing.get(job.id());
+        assertThat(cost.actualCost().materialCost()).isNull();
+        assertThat(cost.actualCost().materialStatus()).isEqualTo("missing_unit_cost");
+        assertThat(cost.actualCost().totalCost()).isNull();
+        assertThat(cost.actualProfit()).isNull();
+        assertThat(cost.variance()).isNull();
+    }
+
+    @Test
+    void missingStandardCostDoesNotBecomeZeroEstimatedMaterialCost() {
+        jdbc.update("UPDATE items SET std_cost = NULL WHERE tenant_id = ? AND id = ?", tenantId, materialItemId);
+        ProductionJobResponse job = jobs.create(new CreateJobRequest(
+                cpoId, lineId, routingId, LocalDate.now(), LocalDate.now().plusDays(10), "normal"));
+
+        var cost = costing.get(job.id());
+        assertThat(cost.estimatedCost().materialCost()).isNull();
+        assertThat(cost.estimatedCost().materialStatus()).isEqualTo("missing_unit_cost");
+        assertThat(cost.estimatedProfit()).isNull();
+    }
+
+    @Test
+    void commercialReadRoleCannotWriteJobCosts() throws Exception {
+        mockMvc.perform(post("/api/v1/jobs/{jobId}/costing", UUID.randomUUID())
+                        .with(user("sales").roles("SALES_MANAGER"))
+                        .header("Idempotency-Key", UUID.randomUUID().toString())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                new AddCostRequest("LABOUR", "Shift", BigDecimal.TEN, null, null))))
+                .andExpect(status().isForbidden());
     }
 
     @Test
@@ -483,7 +557,7 @@ class ProductionLifecycleIntegrationTest extends BaseMasterDataIntegrationTest {
         assertThat(siteBMetrics.byStatus()).containsEntry("planned", 1L);
         assertThat(siteBMetrics.byCurrentStage()).isEmpty();
         assertThat(siteBMetrics.materialIssuedQty()).isEqualByComparingTo("0");
-        assertThat(siteBMetrics.estimatedCost()).isEqualByComparingTo("50.00");
+        assertThat(siteBMetrics.estimatedCost()).isNull();
 
         scope(siteId);
         var siteAMetrics = query.businessMetrics();
@@ -491,7 +565,7 @@ class ProductionLifecycleIntegrationTest extends BaseMasterDataIntegrationTest {
         assertThat(siteAMetrics.byStatus()).containsEntry("in_progress", 1L);
         assertThat(siteAMetrics.byCurrentStage()).containsEntry("Cutting", 1L);
         assertThat(siteAMetrics.materialIssuedQty()).isEqualByComparingTo("20.000");
-        assertThat(siteAMetrics.estimatedCost()).isEqualByComparingTo("50.00");
+        assertThat(siteAMetrics.estimatedCost()).isNull();
 
         scope(null);
         var tenantMetrics = query.businessMetrics();
@@ -499,7 +573,7 @@ class ProductionLifecycleIntegrationTest extends BaseMasterDataIntegrationTest {
         assertThat(tenantMetrics.byStatus()).containsEntry("planned", 1L).containsEntry("in_progress", 1L);
         assertThat(tenantMetrics.byCurrentStage()).containsEntry("Cutting", 1L);
         assertThat(tenantMetrics.materialIssuedQty()).isEqualByComparingTo("20.000");
-        assertThat(tenantMetrics.estimatedCost()).isEqualByComparingTo("100.00");
+        assertThat(tenantMetrics.estimatedCost()).isNull();
     }
 
     @Test

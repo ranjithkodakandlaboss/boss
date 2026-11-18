@@ -192,7 +192,41 @@ public class ProductionQueryService {
                 SELECT COALESCE(SUM(h.act_material_cost + h.act_labour_cost + h.act_overhead_cost), 0)
                 FROM job_costing_headers h
                 JOIN production_jobs j ON j.id = h.job_id AND j.tenant_id = h.tenant_id
-                WHERE h.tenant_id = ?""" + site, args);
+                WHERE h.tenant_id = ? AND j.status <> 'cancelled'""" + site, args);
+        long incompleteEstimates = count("""
+                SELECT COUNT(*) FROM production_jobs j
+                LEFT JOIN job_costing_headers h ON h.job_id = j.id AND h.tenant_id = j.tenant_id
+                WHERE j.tenant_id = ?""" + site + """
+                  AND (h.id IS NULL
+                    OR NOT EXISTS (SELECT 1 FROM job_costing_lines l
+                                   WHERE l.tenant_id = h.tenant_id AND l.costing_id = h.id
+                                     AND l.is_estimated AND l.cost_type = 'material'
+                                     AND l.unit_cost IS NOT NULL)
+                    OR NOT EXISTS (SELECT 1 FROM job_costing_lines l
+                                   WHERE l.tenant_id = h.tenant_id AND l.costing_id = h.id
+                                     AND l.is_estimated AND l.cost_type = 'labour')
+                    OR NOT EXISTS (SELECT 1 FROM job_costing_lines l
+                                   WHERE l.tenant_id = h.tenant_id AND l.costing_id = h.id
+                                     AND l.is_estimated AND l.cost_type IN ('overhead', 'other')))
+                """, args);
+        long incompleteActuals = count("""
+                SELECT COUNT(*) FROM production_jobs j
+                LEFT JOIN job_costing_headers h ON h.job_id = j.id AND h.tenant_id = j.tenant_id
+                WHERE j.tenant_id = ? AND j.status <> 'cancelled'""" + site + """
+                  AND (j.status <> 'completed' OR h.id IS NULL
+                    OR EXISTS (SELECT 1 FROM job_material_requirements r
+                               WHERE r.tenant_id = j.tenant_id AND r.job_id = j.id
+                                 AND r.issued_qty < r.required_qty)
+                    OR EXISTS (SELECT 1 FROM job_material_issues m
+                               WHERE m.tenant_id = j.tenant_id AND m.job_id = j.id
+                                 AND m.issue_type IN ('issue', 'return') AND m.unit_cost IS NULL)
+                    OR NOT EXISTS (SELECT 1 FROM job_costing_lines l
+                                   WHERE l.tenant_id = h.tenant_id AND l.costing_id = h.id
+                                     AND NOT l.is_estimated AND l.cost_type = 'labour')
+                    OR NOT EXISTS (SELECT 1 FROM job_costing_lines l
+                                   WHERE l.tenant_id = h.tenant_id AND l.costing_id = h.id
+                                     AND NOT l.is_estimated AND l.cost_type IN ('overhead', 'other')))
+                """, args);
         long active = count("""
                 SELECT COUNT(*) FROM production_jobs j
                 WHERE j.tenant_id = ? AND j.status IN ('planned','released','in_progress','on_hold')"""
@@ -207,9 +241,10 @@ public class ProductionQueryService {
         boolean showMoney = support.commercial(context);
         return new BusinessMetrics(active, completed, delayed, byStatus, byStage,
                 issued, returned, issued.subtract(returned),
-                showMoney ? estimated : null,
-                showMoney ? actual : null,
-                showMoney ? JobCostCalculator.variance(actual, estimated) : null);
+                showMoney && incompleteEstimates == 0 ? estimated : null,
+                showMoney && incompleteActuals == 0 ? actual : null,
+                showMoney && incompleteEstimates == 0 && incompleteActuals == 0
+                        ? JobCostCalculator.variance(actual, estimated) : null);
     }
 
     private String selectSql() {
@@ -219,9 +254,7 @@ public class ProductionQueryService {
                        j.planned_start, j.planned_end, j.actual_start, j.actual_end, j.selling_price,
                        j.created_at, c.cpo_number, c.customer_id, cu.name AS customer_name,
                        i.code AS item_code, i.name AS item_name, u.symbol AS uom_symbol,
-                       rt.name AS routing_name, s.name AS site_name,
-                       h.est_material_cost, h.est_labour_cost, h.est_overhead_cost,
-                       h.act_material_cost, h.act_labour_cost, h.act_overhead_cost
+                       rt.name AS routing_name, s.name AS site_name
                 FROM production_jobs j
                 LEFT JOIN cpos c ON c.id = j.cpo_id AND c.tenant_id = j.tenant_id
                 LEFT JOIN customers cu ON cu.id = c.customer_id AND cu.tenant_id = j.tenant_id
@@ -229,7 +262,6 @@ public class ProductionQueryService {
                 JOIN units_of_measure u ON u.id = j.uom_id
                 LEFT JOIN routing_templates rt ON rt.id = j.routing_id AND rt.tenant_id = j.tenant_id
                 JOIN physical_sites s ON s.id = j.site_id AND s.tenant_id = j.tenant_id
-                LEFT JOIN job_costing_headers h ON h.job_id = j.id AND h.tenant_id = j.tenant_id
                 WHERE j.tenant_id = ?
                 """;
     }

@@ -53,6 +53,10 @@ public final class BossPermissions {
     public static final String COMMERCIAL_DATA_READ =
             "hasAnyRole('OWNER','OPS_MANAGER','SALES_MANAGER','PURCHASE_MANAGER','ACCOUNTS_STAFF')";
 
+    /** Owner, Ops Manager or Accounts Staff may record actual job-cost adjustments. */
+    public static final String COSTING_WRITE =
+            "hasAnyRole('OWNER','OPS_MANAGER','ACCOUNTS_STAFF')";
+
     /** Owner, Ops Manager or Sales Manager — sales-oriented access. */
     public static final String SALES_ACCESS =
             "hasAnyRole('OWNER','OPS_MANAGER','SALES_MANAGER')";
