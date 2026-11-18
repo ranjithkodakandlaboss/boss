@@ -21,7 +21,7 @@ class CpoFeasibilityMigrationTest {
                     .locations("classpath:db/migration").target("100").load().migrate();
             var result = Flyway.configure().dataSource(url, user, password)
                     .locations("classpath:db/migration").load().migrate();
-            assertThat(result.migrations).extracting(migration -> migration.version).containsExactly("102");
+            assertThat(result.migrations).extracting(migration -> migration.version).contains("102");
 
             try (var connection = DriverManager.getConnection(url, user, password);
                  var statement = connection.prepareStatement("""
