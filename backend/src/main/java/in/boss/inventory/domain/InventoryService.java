@@ -2,9 +2,15 @@ package in.boss.inventory.domain;
 
 import in.boss.inventory.api.InventoryApiDtos.AddMovementRequest;
 import in.boss.inventory.api.InventoryApiDtos.CreateLotRequest;
+import in.boss.inventory.api.InventoryApiDtos.CustomerPoReservationRequest;
+import in.boss.inventory.api.InventoryApiDtos.CustomerPoReservationResponse;
 import in.boss.inventory.api.InventoryApiDtos.InventoryPage;
 import in.boss.inventory.api.InventoryApiDtos.InventoryPositionResponse;
+import in.boss.inventory.api.InventoryApiDtos.IssueMaterialRequest;
 import in.boss.inventory.api.InventoryApiDtos.MaterialLotResponse;
+import in.boss.inventory.api.InventoryApiDtos.ReservationRequest;
+import in.boss.inventory.api.InventoryApiDtos.ReservationResponse;
+import in.boss.inventory.api.InventoryApiDtos.ReturnMaterialRequest;
 import in.boss.inventory.api.InventoryApiDtos.StockMovementResponse;
 
 import java.time.LocalDate;
@@ -15,6 +21,27 @@ public interface InventoryService {
     MaterialLotResponse createLot(CreateLotRequest request);
 
     StockMovementResponse addMovement(UUID lotId, AddMovementRequest request);
+
+    ReservationResponse reserveForJob(ReservationRequest request, boolean allowPartial);
+
+    ReservationResponse reserveForJobRequirements(UUID jobId, boolean allowPartial);
+
+    CustomerPoReservationResponse reserveForCustomerPo(
+            CustomerPoReservationRequest request, boolean allowPartial);
+
+    void releaseJobReservations(UUID jobId);
+
+    void releaseCustomerPoReservations(UUID cpoId);
+
+    StockMovementResponse issueMaterial(IssueMaterialRequest request);
+
+    /**
+     * Issues against this job's reservations without creating the job material issue row.
+     * Use when the calling production workflow owns that row's additional traceability data.
+     */
+    StockMovementResponse issueReservedMaterial(IssueMaterialRequest request);
+
+    StockMovementResponse returnMaterial(ReturnMaterialRequest request);
 
     MaterialLotResponse transitionLotStatus(UUID lotId, String targetStatus);
 

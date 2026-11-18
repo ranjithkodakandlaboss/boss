@@ -93,6 +93,7 @@ public class BomExplosionServiceImpl implements BomExplosionService {
                     .itemCode(item != null ? item.getCode() : null)
                     .itemName(item != null ? item.getName() : null)
                     .qty(raw.qty().setScale(4, RoundingMode.HALF_UP))
+                    .uomId(raw.uomId())
                     .uomSymbol(uom != null ? uom.getSymbol() : null)
                     .level(raw.level())
                     .build());

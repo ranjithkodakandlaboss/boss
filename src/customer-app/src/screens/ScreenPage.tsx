@@ -13,6 +13,9 @@ import { getStatusLabel } from "../components/shared/StatusChip";
 import CompanyPanel from "./CompanyPanel";
 import HomePage from "./HomePage";
 import OnboardingPage from "./OnboardingPage";
+import InventoryHome from "../inventory/InventoryHome";
+import InventoryTransfers from "../inventory/InventoryTransfers";
+import StockTransferPage from "../inventory/StockTransferPage";
 
 const SALES_TABS: Record<string, { title: string; columns: string[]; placeholder: string; statuses?: string[]; action?: { label: string; to: string } }> = {
   pos: {
@@ -55,6 +58,9 @@ const STOCK_LINKS = [
 export default function ScreenPage({ screen }: { screen: ScreenDef }) {
   if (screen.kind === "home") return <HomePage />;
   if (screen.kind === "onboarding") return <OnboardingPage />;
+  if (screen.path === "inventory") return <InventoryHome />;
+  if (screen.path === "inventory/transfers") return <InventoryTransfers />;
+  if (screen.path === "inventory/transfer") return <StockTransferPage />;
   return <Workspace screen={screen} />;
 }
 

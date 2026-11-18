@@ -13,7 +13,9 @@ public record PositionRow(
         BigDecimal totalQty,
         BigDecimal reservedQty,
         BigDecimal availableQty,
+        BigDecimal inTransitQty,
         BigDecimal valuationAmt,
+        BigDecimal reorderPoint,
         String uomSymbol,
         Instant lastMovedAt
 ) {}

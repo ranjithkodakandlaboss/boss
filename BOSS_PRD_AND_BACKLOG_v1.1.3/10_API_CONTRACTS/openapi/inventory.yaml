@@ -4,7 +4,7 @@ info:
   version: "1.0.0"
   description: |
     Foundational inventory: material lots, stock movements (append-only), reservations,
-    item issue/return for production jobs.
+    item issue/return for production jobs, and policy-driven replenishment.
 
     **Concurrency:** All reservation endpoints use `SELECT FOR UPDATE` pessimistic locking.
     The `InventoryConcurrencyIntegrationTest` (10 threads, 6 available) must pass.
@@ -116,6 +116,13 @@ components:
         availableQty:
           type: number
           description: "totalQty minus reservedQty"
+        inTransitQty:
+          type: number
+          description: "Dispatched quantity for this item and store that has not been received yet"
+        reorderPoint:
+          type: number
+          nullable: true
+          description: "Active store policy threshold, or the item's legacy reorder quantity when no policy is configured"
         valuationAmt:
           type: number
           description: "Sum of physical qty * unit_cost for the included lots"
@@ -150,11 +157,64 @@ components:
             type: object
             properties:
               itemId: { type: string, format: uuid }
+              storeId:
+                type: string
+                format: uuid
+                nullable: true
+                description: Null when a job's BOM requirements are allocated across site stores
+              requested: { type: number }
+              reserved: { type: number }
+              shortfall: { type: number }
+              allocations:
+                type: array
+                items:
+                  type: object
+                  required: [lotId, qty]
+                  properties:
+                    lotId: { type: string, format: uuid }
+                    qty: { type: number }
+
+    CustomerPoReservationRequest:
+      type: object
+      required: [cpoId, lines]
+      properties:
+        cpoId: { type: string, format: uuid }
+        lines:
+          type: array
+          items:
+            type: object
+            required: [cpoLineId, storeId, qty]
+            properties:
+              cpoLineId: { type: string, format: uuid }
+              storeId: { type: string, format: uuid }
+              qty: { type: number, minimum: 0.001 }
+
+    CustomerPoReservationResult:
+      type: object
+      properties:
+        cpoId: { type: string, format: uuid }
+        status:
+          type: string
+          enum: [FULLY_RESERVED, PARTIALLY_RESERVED, FAILED]
+        lines:
+          type: array
+          items:
+            type: object
+            properties:
+              cpoLineId: { type: string, format: uuid }
+              itemId: { type: string, format: uuid }
               storeId: { type: string, format: uuid }
               requested: { type: number }
               reserved: { type: number }
               shortfall: { type: number }
-              lotId: { type: string, format: uuid, nullable: true }
+              allocations:
+                type: array
+                items:
+                  type: object
+                  required: [lotId, qty]
+                  properties:
+                  lotId: { type: string, format: uuid }
+                  qty: { type: number }
 
     IssueRequest:
       type: object
@@ -173,6 +233,27 @@ components:
         lotId: { type: string, format: uuid }
         qty: { type: number, minimum: 0.001 }
         returnReason: { type: string, nullable: true }
+
+    ReorderPolicyRequest:
+      type: object
+      required: [itemId, storeId, reorderPoint, reorderQty]
+      properties:
+        itemId: { type: string, format: uuid }
+        storeId: { type: string, format: uuid }
+        reorderPoint: { type: number, minimum: 0 }
+        reorderQty: { type: number, exclusiveMinimum: 0 }
+        maxStock: { type: number, exclusiveMinimum: 0, nullable: true }
+        leadTimeDays: { type: integer, minimum: 0, nullable: true }
+        preferredSupplierId: { type: string, format: uuid, nullable: true }
+        active: { type: boolean, default: true }
+
+    ReorderPolicy:
+      allOf:
+        - $ref: '#/components/schemas/ReorderPolicyRequest'
+        - type: object
+          required: [id]
+          properties:
+            id: { type: string, format: uuid }
 
     ProblemDetail:
       type: object
@@ -260,6 +341,24 @@ components:
         receivedAt: { type: string, format: date-time, nullable: true }
 
 paths:
+  /inventory/features:
+    get:
+      operationId: getInventoryFeatureFlags
+      summary: Get the effective inventory capabilities for the current tenant
+      description: |
+        Capabilities are read from the shared tenant_entitlements table. Missing rows default to
+        enabled; explicit disabled rows reject matching writes with HTTP 403.
+      tags: [Inventory]
+      responses:
+        '200':
+          description: Effective inventory capability values by feature key
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties:
+                  type: boolean
+
   /inventory/positions:
     get:
       operationId: getInventoryPositions
@@ -268,7 +367,7 @@ paths:
         Aggregates available and fully reserved lots. A reserved lot still contributes its physical
         quantity to totalQty and its reserved_qty to reservedQty, so availableQty is zero for that lot.
         Quarantine, depleted, and disposed lots are omitted. Reservation rows are not summed on top of
-        material_lots.reserved_qty.
+        material_lots.reserved_qty. inTransitQty includes dispatched transfers not yet received.
       tags: [Inventory Position]
       parameters:
         - name: storeId
@@ -478,8 +577,9 @@ paths:
       summary: Check availability and reserve materials for a production job
       description: |
         Atomic pessimistic reservation. Uses SELECT FOR UPDATE per lot.
-        If ANY line cannot be fully satisfied, the entire reservation fails (no partial commits).
-        Returns PARTIALLY_RESERVED only when partial=true is passed.
+        The whole request is atomic. If any line cannot be fully satisfied, no stock is reserved
+        unless partial=true, in which case every line is allocated as far as available stock permits.
+        A job can have only one active reservation request; release it before requesting again.
       tags: [Reservations]
       parameters:
         - name: Idempotency-Key
@@ -509,7 +609,7 @@ paths:
   /inventory/reservations/{jobId}:
     delete:
       operationId: releaseReservations
-      summary: Release all reservations for a production job (on CPO cancellation)
+      summary: Release all reservations for a production job
       tags: [Reservations]
       parameters:
         - name: jobId
@@ -519,6 +619,88 @@ paths:
       responses:
         '204': { description: Reservations released }
         '404': { description: No reservations found for this job }
+
+  /inventory/reservations/{jobId}/requirements:
+    post:
+      operationId: reserveJobMaterialRequirements
+      summary: Reserve a production job's unissued BOM material requirements
+      description: |
+        Allocates eligible lots across stores at the job's site. Existing job material requirements
+        remain the authoritative snapshot. If none exist, the service explodes the approved BOM once,
+        persists its leaf materials as the job snapshot, and then reserves those requirements.
+        Requirements and eligible lots are locked; the operation is all-or-nothing unless partial=true.
+      tags: [Reservations]
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string }
+        - name: partial
+          in: query
+          schema: { type: boolean, default: false }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReservationResult' }
+        '409':
+          description: Insufficient stock for full reservation or an active reservation already exists
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReservationResult' }
+
+  /inventory/reservations/customer-pos:
+    post:
+      operationId: reserveForCustomerPo
+      summary: Reserve stock against Customer PO lines
+      description: |
+        Reserves the CPO line item quantities from stores at the order's site. Every reservation row
+        is linked to its CPO line. Already delivered and actively reserved quantities are excluded
+        from the line's remaining demand. An all-or-nothing request makes no changes when stock is
+        insufficient; partial=true reserves available stock and returns line-level shortfalls.
+        A user-confirmed shortage can be raised through POST /prs with originType=customer_po,
+        customerPoId set to cpoId, and PR lines populated from the returned shortfall quantities.
+      tags: [Reservations]
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string }
+        - name: partial
+          in: query
+          schema: { type: boolean, default: false }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CustomerPoReservationRequest' }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CustomerPoReservationResult' }
+        '409':
+          description: Insufficient stock for full reservation or invalid Customer PO state
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CustomerPoReservationResult' }
+
+  /inventory/reservations/customer-pos/{cpoId}:
+    delete:
+      operationId: releaseCustomerPoReservations
+      summary: Release active reservations for a Customer PO
+      tags: [Reservations]
+      parameters:
+        - name: cpoId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '204': { description: Reservations released }
 
   /inventory/issues:
     post:
@@ -567,6 +749,56 @@ paths:
               schema: { $ref: '#/components/schemas/StockMovement' }
         '400': { description: Returned qty exceeds issued qty for this job and lot }
 
+  /inventory/reorder-policies:
+    get:
+      operationId: listReorderPolicies
+      summary: List reorder policies
+      tags: [Replenishment]
+      parameters:
+        - name: storeId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: page
+          in: query
+          schema: { type: integer, default: 0 }
+        - name: size
+          in: query
+          schema: { type: integer, default: 50, maximum: 200 }
+      responses:
+        '200':
+          description: Paged reorder policies
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  content:
+                    type: array
+                    items: { $ref: '#/components/schemas/ReorderPolicy' }
+                  page: { type: integer }
+                  totalElements: { type: integer }
+    post:
+      operationId: upsertReorderPolicy
+      summary: Create or replace the reorder policy for one item and store
+      tags: [Replenishment]
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ReorderPolicyRequest' }
+      responses:
+        '200':
+          description: Policy saved
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReorderPolicy' }
+        '400': { description: Invalid item, store, supplier, or reorder threshold }
+
   /inventory/adjustments:
     post:
       operationId: adjustStock
@@ -601,7 +833,7 @@ paths:
               schema: { $ref: '#/components/schemas/StockMovement' }
         '403': { description: STORE_KEEPER or OWNER role required }
 
-  /replenishment-requests:
+  /inventory/replenishment-requests:
     get:
       operationId: listReplenishmentRequests
       summary: List replenishment requests (auto-generated by reorder policy)
@@ -612,7 +844,7 @@ paths:
       parameters:
         - name: status
           in: query
-          schema: { type: string, enum: [open, pr_created, cancelled] }
+          schema: { type: string, enum: [pending, pr_created, fulfilled, cancelled] }
         - name: storeId
           in: query
           schema: { type: string, format: uuid }
@@ -639,28 +871,26 @@ paths:
                       type: object
                       properties:
                         id: { type: string, format: uuid }
-                        rrNumber: { type: string }
                         itemId: { type: string, format: uuid }
                         itemCode: { type: string }
                         itemName: { type: string }
                         storeId: { type: string, format: uuid }
                         storeName: { type: string }
                         policyId: { type: string, format: uuid, nullable: true }
-                        requiredQty: { type: number }
+                        requestedQty: { type: number }
                         status: { type: string }
                         prId: { type: string, format: uuid, nullable: true }
-                        triggeredAt: { type: string, format: date-time }
+                        createdAt: { type: string, format: date-time }
                   totalElements: { type: integer }
                   page: { type: integer }
-                  size: { type: integer }
 
-  /replenishment-requests/{id}/cancel:
+  /inventory/replenishment-requests/{requestId}/cancel:
     post:
       operationId: cancelReplenishmentRequest
       summary: Cancel a replenishment request
       tags: [Replenishment]
       parameters:
-        - name: id
+        - name: requestId
           in: path
           required: true
           schema: { type: string, format: uuid }
@@ -678,7 +908,7 @@ paths:
                 properties:
                   id: { type: string, format: uuid }
                   status: { type: string, enum: [cancelled] }
-        '409': { description: Already pr_created or cancelled }
+        '409': { description: Only pending requests can be cancelled }
 
   /inter-site-transfers:
     get:
@@ -722,6 +952,9 @@ paths:
     post:
       operationId: createInterSiteTransfer
       summary: Create inter-site transfer
+      description: |
+        Dispatches the transfer immediately: unreserved quantities are removed from the source
+        lots, transfer_out movements are appended, and the response status is in_transit.
       tags: [Inter-Site Transfers]
       parameters:
         - name: Idempotency-Key
@@ -754,8 +987,10 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/InterSiteTransfer' }
-        '422':
-          description: Insufficient stock or lot not found in source store
+        '400':
+          description: Invalid store, unavailable or expired lot, or insufficient unreserved stock
+        '404':
+          description: Source lot not found
 
   /inter-site-transfers/{id}/receive:
     post:

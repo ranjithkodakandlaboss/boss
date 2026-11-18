@@ -187,36 +187,65 @@ public class InventoryRepository {
     private Filter positionQuery(UUID tenantId, UUID itemId, UUID storeId, UUID siteId,
                                  boolean belowReorderPoint) {
         StringBuilder sql = new StringBuilder("""
-                SELECT ml.item_id, i.code AS item_code, i.name AS item_name,
-                       ml.store_id, s.name AS store_name,
-                       SUM(ml.quantity) AS total_qty,
-                       SUM(ml.reserved_qty) AS reserved_qty,
-                       SUM(ml.quantity - ml.reserved_qty) AS available_qty,
-                       SUM(ml.quantity * COALESCE(ml.unit_cost, 0)) AS valuation_amt,
-                       u.symbol AS uom_symbol,
-                       MAX(moved.last_moved_at) AS last_moved_at
-                  FROM material_lots ml
-                  JOIN items i ON i.id = ml.item_id AND i.tenant_id = ml.tenant_id
-                  JOIN stores s ON s.id = ml.store_id AND s.tenant_id = ml.tenant_id
-                  JOIN units_of_measure u ON u.id = i.base_uom_id AND u.tenant_id = ml.tenant_id
-                  LEFT JOIN (
-                    SELECT lot.item_id, lot.store_id, MAX(sm.created_at) AS last_moved_at
+                WITH moved AS (
+                    SELECT lot.tenant_id, lot.item_id, lot.store_id,
+                           MAX(sm.created_at) AS last_moved_at
                       FROM stock_movements sm
-                      JOIN material_lots lot ON lot.id = sm.lot_id AND lot.tenant_id = sm.tenant_id
+                      JOIN material_lots lot
+                        ON lot.id = sm.lot_id AND lot.tenant_id = sm.tenant_id
                      WHERE lot.tenant_id = ? AND lot.status IN ('available', 'reserved')
-                     GROUP BY lot.item_id, lot.store_id
-                  ) moved ON moved.item_id = ml.item_id AND moved.store_id = ml.store_id
-                 WHERE ml.tenant_id = ? AND ml.status IN ('available', 'reserved')
+                     GROUP BY lot.tenant_id, lot.item_id, lot.store_id
+                ), stock_rows AS (
+                    SELECT ml.tenant_id, ml.item_id, ml.store_id,
+                           ml.quantity AS total_qty, ml.reserved_qty,
+                           0::numeric AS in_transit_qty,
+                           ml.quantity * COALESCE(ml.unit_cost, 0) AS valuation_amt,
+                           moved.last_moved_at
+                      FROM material_lots ml
+                      LEFT JOIN moved
+                        ON moved.tenant_id = ml.tenant_id AND moved.item_id = ml.item_id
+                       AND moved.store_id = ml.store_id
+                     WHERE ml.tenant_id = ? AND ml.status IN ('available', 'reserved')
+                    UNION ALL
+                    SELECT t.tenant_id, l.item_id, t.to_store_id AS store_id,
+                           0::numeric AS total_qty, 0::numeric AS reserved_qty,
+                           l.quantity - COALESCE(l.received_qty, 0) AS in_transit_qty,
+                           0::numeric AS valuation_amt, NULL::timestamptz AS last_moved_at
+                      FROM inter_site_transfers t
+                      JOIN inter_site_transfer_lines l
+                        ON l.transfer_id = t.id AND l.tenant_id = t.tenant_id
+                     WHERE t.tenant_id = ? AND t.status = 'in_transit'
+                )
+                SELECT p.item_id, i.code AS item_code, i.name AS item_name,
+                       p.store_id, s.name AS store_name,
+                       SUM(p.total_qty) AS total_qty,
+                       SUM(p.reserved_qty) AS reserved_qty,
+                       SUM(p.total_qty - p.reserved_qty) AS available_qty,
+                       SUM(p.in_transit_qty) AS in_transit_qty,
+                       SUM(p.valuation_amt) AS valuation_amt,
+                       COALESCE(rp.reorder_point, i.reorder_qty) AS reorder_point,
+                       u.symbol AS uom_symbol,
+                       MAX(p.last_moved_at) AS last_moved_at
+                  FROM stock_rows p
+                  JOIN items i ON i.id = p.item_id AND i.tenant_id = p.tenant_id
+                  JOIN stores s ON s.id = p.store_id AND s.tenant_id = p.tenant_id
+                  JOIN units_of_measure u ON u.id = i.base_uom_id AND u.tenant_id = p.tenant_id
+                  LEFT JOIN reorder_policies rp
+                    ON rp.tenant_id = p.tenant_id AND rp.item_id = p.item_id
+                   AND rp.store_id = p.store_id AND rp.is_active
+                 WHERE p.tenant_id = ?
                 """);
         List<Object> args = new ArrayList<>();
         args.add(tenantId);
         args.add(tenantId);
+        args.add(tenantId);
+        args.add(tenantId);
         if (itemId != null) {
-            sql.append(" AND ml.item_id = ?");
+            sql.append(" AND p.item_id = ?");
             args.add(itemId);
         }
         if (storeId != null) {
-            sql.append(" AND ml.store_id = ?");
+            sql.append(" AND p.store_id = ?");
             args.add(storeId);
         }
         if (siteId != null) {
@@ -224,12 +253,14 @@ public class InventoryRepository {
             args.add(siteId);
         }
         sql.append("""
-                 GROUP BY ml.item_id, i.code, i.name, ml.store_id, s.name, u.symbol, i.reorder_qty
+                 GROUP BY p.item_id, i.code, i.name, p.store_id, s.name, u.symbol,
+                          rp.reorder_point, i.reorder_qty
                 """);
         if (belowReorderPoint) {
             sql.append("""
-                     HAVING i.reorder_qty IS NOT NULL
-                        AND SUM(ml.quantity - ml.reserved_qty) < i.reorder_qty
+                     HAVING COALESCE(rp.reorder_point, i.reorder_qty) IS NOT NULL
+                        AND SUM(p.total_qty - p.reserved_qty)
+                            < COALESCE(rp.reorder_point, i.reorder_qty)
                     """);
         }
         return new Filter(sql.toString(), args);
@@ -318,7 +349,9 @@ public class InventoryRepository {
                 rs.getBigDecimal("total_qty"),
                 rs.getBigDecimal("reserved_qty"),
                 rs.getBigDecimal("available_qty"),
+                rs.getBigDecimal("in_transit_qty"),
                 rs.getBigDecimal("valuation_amt"),
+                rs.getBigDecimal("reorder_point"),
                 rs.getString("uom_symbol"),
                 instant(rs, "last_moved_at"));
     }

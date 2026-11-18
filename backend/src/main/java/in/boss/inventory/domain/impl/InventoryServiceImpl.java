@@ -4,11 +4,22 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import in.boss.inventory.api.InventoryApiDtos.AddMovementRequest;
 import in.boss.inventory.api.InventoryApiDtos.CreateLotRequest;
+import in.boss.inventory.api.InventoryApiDtos.CustomerPoReservationRequest;
+import in.boss.inventory.api.InventoryApiDtos.CustomerPoReservationResponse;
 import in.boss.inventory.api.InventoryApiDtos.InventoryPage;
 import in.boss.inventory.api.InventoryApiDtos.InventoryPositionResponse;
+import in.boss.inventory.api.InventoryApiDtos.IssueMaterialRequest;
 import in.boss.inventory.api.InventoryApiDtos.MaterialLotResponse;
+import in.boss.inventory.api.InventoryApiDtos.ReservationRequest;
+import in.boss.inventory.api.InventoryApiDtos.ReservationResponse;
+import in.boss.inventory.api.InventoryApiDtos.ReturnMaterialRequest;
 import in.boss.inventory.api.InventoryApiDtos.StockMovementResponse;
 import in.boss.inventory.domain.InventoryService;
+import in.boss.inventory.domain.InventoryMaterialIssueService;
+import in.boss.inventory.domain.InventoryReplenishmentService;
+import in.boss.inventory.domain.CustomerPoReservationService;
+import in.boss.inventory.domain.InventoryReservationService;
+import in.boss.inventory.domain.InventoryReservationReleaseService;
 import in.boss.inventory.domain.InventoryValidationException;
 import in.boss.inventory.domain.LotNotFoundException;
 import in.boss.inventory.domain.LotStatus;
@@ -44,15 +55,30 @@ public class InventoryServiceImpl implements InventoryService {
     private final AuditService auditService;
     private final InventoryEventPublisher events;
     private final ObjectMapper objectMapper;
+    private final InventoryReservationService reservationService;
+    private final InventoryMaterialIssueService materialIssueService;
+    private final InventoryReservationReleaseService reservationReleaseService;
+    private final InventoryReplenishmentService replenishmentService;
+    private final CustomerPoReservationService customerPoReservationService;
 
     public InventoryServiceImpl(InventoryRepository repository,
                                 AuditService auditService,
                                 InventoryEventPublisher events,
-                                ObjectMapper objectMapper) {
+                                ObjectMapper objectMapper,
+                                InventoryReservationService reservationService,
+                                InventoryMaterialIssueService materialIssueService,
+                                InventoryReservationReleaseService reservationReleaseService,
+                                InventoryReplenishmentService replenishmentService,
+                                CustomerPoReservationService customerPoReservationService) {
         this.repository = repository;
         this.auditService = auditService;
         this.events = events;
         this.objectMapper = objectMapper;
+        this.reservationService = reservationService;
+        this.materialIssueService = materialIssueService;
+        this.reservationReleaseService = reservationReleaseService;
+        this.replenishmentService = replenishmentService;
+        this.customerPoReservationService = customerPoReservationService;
     }
 
     @Override
@@ -81,6 +107,7 @@ public class InventoryServiceImpl implements InventoryService {
         auditService.record("LOT", lotId, "CREATE", null, json(snapshot));
         events.lotCreated(lotId, snapshot);
         events.movementCreated(movementId, movementSnapshot(movementId, lot, opening, qty));
+        replenishmentService.checkAfterStockChange(ctx.tenantId(), request.itemId(), request.storeId());
         return toLot(lot);
     }
 
@@ -110,8 +137,50 @@ public class InventoryServiceImpl implements InventoryService {
                     json(Map.of("status", LotStatus.toApi(nextStatus))));
         }
         events.movementCreated(movementId, snapshot);
+        replenishmentService.checkAfterStockChange(ctx.tenantId(), lot.itemId(), lot.storeId());
         return toMovement(repository.findMovement(ctx.tenantId(), movementId)
                 .orElseThrow(() -> new IllegalStateException("Inserted movement was not readable")));
+    }
+
+    @Override
+    public ReservationResponse reserveForJob(ReservationRequest request, boolean allowPartial) {
+        return reservationService.reserveForJob(request, allowPartial);
+    }
+
+    @Override
+    public ReservationResponse reserveForJobRequirements(UUID jobId, boolean allowPartial) {
+        return reservationService.reserveForJobRequirements(jobId, allowPartial);
+    }
+
+    @Override
+    public CustomerPoReservationResponse reserveForCustomerPo(
+            CustomerPoReservationRequest request, boolean allowPartial) {
+        return customerPoReservationService.reserve(request, allowPartial);
+    }
+
+    @Override
+    public void releaseJobReservations(UUID jobId) {
+        reservationReleaseService.releaseJobReservations(jobId);
+    }
+
+    @Override
+    public void releaseCustomerPoReservations(UUID cpoId) {
+        customerPoReservationService.release(cpoId);
+    }
+
+    @Override
+    public StockMovementResponse issueMaterial(IssueMaterialRequest request) {
+        return materialIssueService.issueMaterial(request);
+    }
+
+    @Override
+    public StockMovementResponse issueReservedMaterial(IssueMaterialRequest request) {
+        return materialIssueService.issueReservedMaterial(request);
+    }
+
+    @Override
+    public StockMovementResponse returnMaterial(ReturnMaterialRequest request) {
+        return materialIssueService.returnMaterial(request);
     }
 
     @Override
@@ -142,8 +211,9 @@ public class InventoryServiceImpl implements InventoryService {
                 .stream()
                 .map(row -> new InventoryPositionResponse(
                         row.itemId(), row.itemCode(), row.itemName(), row.storeId(), row.storeName(),
-                        row.totalQty(), row.reservedQty(), row.availableQty(), row.valuationAmt(),
-                        row.uomSymbol(), row.lastMovedAt()))
+                        row.totalQty(), row.reservedQty(), row.availableQty(), row.inTransitQty(),
+                        row.valuationAmt(),
+                        row.reorderPoint(), row.uomSymbol(), row.lastMovedAt()))
                 .toList();
         long total = repository.countPositions(
                 ctx.tenantId(), itemId, storeId, effectiveSite, belowReorderPoint);
@@ -362,4 +432,5 @@ public class InventoryServiceImpl implements InventoryService {
         }
         return ctx;
     }
+
 }
