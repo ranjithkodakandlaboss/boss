@@ -51,7 +51,7 @@ export default function QuotationCreate() {
   const rfqLines: any[] = rfq?.lines ?? [];
   const isDirect = !rfqId;
 
-  const [customerId, setCustomerId] = useState(customers[0]?.id ?? '');
+  const [customerId, setCustomerId] = useState('');
   const [validDays, setValidDays] = useState('30');
   const [paymentTerms, setPaymentTerms] = useState('Net 30 days');
   const [deliveryTerms, setDeliveryTerms] = useState('Ex-Works / By Road · 2-3 weeks');
@@ -65,7 +65,7 @@ export default function QuotationCreate() {
   if (rfqId && !rfq) return <div className="p-8 text-sm text-[var(--text-2)]">RFQ not found.</div>;
 
   const directCustomer = customers.find(c => c.id === customerId);
-  const activeCustomerId = rfq ? rfq.customerId : (directCustomer?.id ?? 'cust-001');
+  const activeCustomerId = rfq ? rfq.customerId : (directCustomer?.id ?? '');
   const activeCustomerName = rfq ? rfq.customerName : (directCustomer?.tradingName || directCustomer?.legalName || 'Customer');
 
   const addLine = () => setLines(ls => [...ls, newLine(ls.length + 1)]);
@@ -198,7 +198,7 @@ export default function QuotationCreate() {
                     }}
                   >
                     <select value={customerId} onChange={e => setCustomerId(e.target.value)} className="eoss-input">
-                      <option value="">Select customer…</option>
+                      <option value="">Select Customer</option>
                       {customers.map(c => (
                         <option key={c.id} value={c.id}>{c.tradingName || c.legalName || 'Customer'}</option>
                       ))}
@@ -301,7 +301,7 @@ export default function QuotationCreate() {
                       {catalog.map(item => <option key={item.id} value={item.id}>{item.code} · {item.name}</option>)}
                     </select>
                   </Field>
-                  <Field label="Drawing No.">
+                  <Field label="Drawing No. *">
                     <input value={l.drawingNumber} onChange={e => updateLine(l.id, 'drawingNumber', e.target.value)} className="eoss-input" />
                   </Field>
                   <Field label="Rev">

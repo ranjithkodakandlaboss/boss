@@ -51,6 +51,7 @@ export default function ItemMaster() {
     { key: "type", label: "Type", value: (row) => row.itemType ?? "", render: (row) => (row.itemType ?? "").replaceAll("_", " ").toLowerCase() },
     { key: "uom", label: "UOM", value: (row) => row.uomSymbol ?? "", render: (row) => row.uomSymbol || "—" },
     { key: "status", label: "Status", value: (row) => row.status ?? "", render: (row) => row.status === "inactive" ? "Inactive" : "Active" },
+    { key: "edit", label: "", value: () => "", render: (row) => canWrite ? <button type="button" className="text-xs font-semibold text-[var(--brand)]" onClick={(event) => { event.stopPropagation(); navigate(`/inventory/item/${row.id}?edit=1`); }}>Edit</button> : null },
   ];
 
   return (

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { ArrowLeft } from "lucide-react";
 import { api } from "../auth/api";
 import { useCustomer } from "../auth/CustomerState";
@@ -12,6 +12,7 @@ import StockNav from "./stockNav";
 
 export default function ItemDetail() {
   const { id = "" } = useParams();
+  const [search] = useSearchParams();
   const navigate = useNavigate();
   const { user } = useCustomer();
   const canWrite = (user?.roles ?? []).some((role) => ["OWNER", "OPS_MANAGER", "STORE_KEEPER", "PURCHASE_MANAGER"].includes(role.role));
@@ -21,7 +22,7 @@ export default function ItemDetail() {
   const [lots, setLots] = useState<Lot[]>([]);
   const [jobs, setJobs] = useState<ProductionJob[]>([]);
   const [reservations, setReservations] = useState<JobReservation[]>([]);
-  const [editing, setEditing] = useState(false);
+  const [editing, setEditing] = useState(search.get("edit") === "1");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
 
@@ -43,7 +44,14 @@ export default function ItemDetail() {
       .finally(() => setLoading(false));
   }
 
-  useEffect(() => { load(); }, [id]);
+  useEffect(() => {
+    if (!id) {
+      setLoading(false);
+      setError("Select an item to view its stock, lots and sources.");
+      return;
+    }
+    load();
+  }, [id]);
 
   if (loading) return <LoadingState label="Loading inventory item" />;
   if (error || !item) return <ErrorState body={error || "Inventory item not found."} />;

@@ -137,11 +137,13 @@ public class SpoService {
         jdbc.update("""
                 INSERT INTO spos
                   (id, tenant_id, spo_number, sq_id, pr_id, supplier_id, site_id, status,
-                   order_date, payment_terms, created_by)
-                VALUES (?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?)
+                   order_date, payment_terms, payment_terms_text, freight_amount, tax_amount, created_by)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?)
                 """,
                 id, tenantId, spoNumber, quotation.id(), quotation.prId(), quotation.supplierId(),
-                quotation.siteId(), LocalDate.now(), quotation.paymentTerms(), context.userId());
+                quotation.siteId(), LocalDate.now(), quotation.paymentTerms(), quotation.paymentTermsText(),
+                quotation.freightAmount() == null ? BigDecimal.ZERO : quotation.freightAmount(),
+                quotation.taxAmount() == null ? BigDecimal.ZERO : quotation.taxAmount(), context.userId());
 
         int lineNo = 1;
         for (ValidatedSpoLine line : validatedLines) {
@@ -149,12 +151,12 @@ public class SpoService {
             jdbc.update("""
                     INSERT INTO spo_lines
                       (tenant_id, spo_id, sq_line_id, pr_line_id, line_no, item_id,
-                       quantity, uom_id, unit_price, received_qty, expected_date)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
+                       quantity, uom_id, unit_price, gst_rate, received_qty, expected_date)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
                     """,
                     tenantId, id, line.quotationLineId(), line.prLineId(), lineNo++,
                     line.itemId(), requestLine.orderedQty(), line.uomId(), line.unitPrice(),
-                    requestLine.expectedDeliveryDate());
+                    line.taxRate(), requestLine.expectedDeliveryDate());
         }
 
         SpoResponse response = getSpo(id);
@@ -168,7 +170,8 @@ public class SpoService {
         UUID tenantId = context.tenantId();
         List<SpoHeader> headers = jdbc.query("""
                 SELECT o.id, o.spo_number, o.pr_id, o.sq_id, o.supplier_id,
-                       s.name AS supplier_name, o.status, o.created_at, o.revision, o.decline_reason
+                       s.name AS supplier_name, o.status, o.created_at, o.revision, o.decline_reason,
+                       o.payment_terms, o.payment_terms_text, o.freight_amount, o.tax_amount
                 FROM spos o
                 JOIN suppliers s ON s.id = o.supplier_id AND s.tenant_id = o.tenant_id
                 WHERE o.tenant_id = ? AND o.id = ?
@@ -181,19 +184,31 @@ public class SpoService {
         SpoHeader header = headers.get(0);
         List<SpoLineResponse> lines = jdbc.query("""
                 SELECT sl.id, sl.item_id, i.code AS item_code, i.name AS item_name,
-                       sl.quantity, sl.received_qty, sl.unit_price, sl.expected_date
+                       sl.quantity, sl.unit_price, sl.expected_date, sl.gst_rate,
+                       COALESCE((SELECT SUM(g.received_qty) FROM grn_lines g
+                                 WHERE g.tenant_id = sl.tenant_id AND g.spo_line_id = sl.id), sl.received_qty) AS received_qty,
+                       COALESCE((SELECT SUM(g.accepted_qty) FROM grn_lines g
+                                 WHERE g.tenant_id = sl.tenant_id AND g.spo_line_id = sl.id), 0) AS accepted_qty,
+                       COALESCE((SELECT SUM(g.rejected_qty) FROM grn_lines g
+                                 WHERE g.tenant_id = sl.tenant_id AND g.spo_line_id = sl.id), 0) AS rejected_qty
                 FROM spo_lines sl
                 JOIN items i ON i.id = sl.item_id AND i.tenant_id = sl.tenant_id
                 WHERE sl.tenant_id = ? AND sl.spo_id = ?
                 ORDER BY sl.line_no
                 """, (rs, rowNum) -> mapLine(rs), tenantId, spoId);
-        BigDecimal total = lines.stream()
-                .map(SpoLineResponse::lineTotal)
+        BigDecimal goods = lines.stream().map(SpoLineResponse::lineTotal).reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal lineTax = lines.stream()
+                .map(line -> line.gstRate() == null ? BigDecimal.ZERO
+                        : line.lineTotal().multiply(line.gstRate()).movePointLeft(2))
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal tax = lineTax.signum() > 0 ? lineTax : (header.taxAmount() == null ? BigDecimal.ZERO : header.taxAmount());
+        BigDecimal freight = header.freightAmount() == null ? BigDecimal.ZERO : header.freightAmount();
+        BigDecimal total = goods.add(tax).add(freight).setScale(2, RoundingMode.HALF_UP);
         return new SpoResponse(
                 header.id(), header.spoNumber(), header.prId(), header.quotationId(),
                 header.supplierId(), header.supplierName(), header.status(), lines,
-                total, header.createdAt(), header.revision(), header.declineReason());
+                total, header.createdAt(), header.revision(), header.declineReason(),
+                header.paymentTerms(), header.paymentTermsText(), freight, tax);
     }
 
     @Transactional
@@ -380,8 +395,8 @@ public class SpoService {
     private SelectedQuotation requireSelectedQuotation(
             UUID tenantId, UUID quotationId, UUID prId, UUID supplierId) {
         List<SelectedQuotation> quotations = jdbc.query("""
-                SELECT q.id, q.pr_id, q.supplier_id, q.status, q.payment_terms,
-                       p.site_id, p.status AS pr_status
+                SELECT q.id, q.pr_id, q.supplier_id, q.status, q.payment_terms, q.payment_terms_text,
+                       q.freight_amount, q.tax_amount, p.site_id, p.status AS pr_status
                 FROM supplier_quotations q
                 JOIN purchase_requisitions p
                   ON p.id = q.pr_id AND p.tenant_id = q.tenant_id
@@ -393,6 +408,9 @@ public class SpoService {
                 rs.getObject("supplier_id", UUID.class),
                 rs.getString("status"),
                 (Integer) rs.getObject("payment_terms"),
+                rs.getString("payment_terms_text"),
+                rs.getBigDecimal("freight_amount"),
+                rs.getBigDecimal("tax_amount"),
                 rs.getObject("site_id", UUID.class),
                 rs.getString("pr_status")), tenantId, quotationId);
         if (quotations.isEmpty()) {
@@ -412,7 +430,7 @@ public class SpoService {
             UUID tenantId, SelectedQuotation quotation, CreateSpoLineRequest request) {
         List<ValidatedSpoLine> lines = jdbc.query("""
                 SELECT ql.id AS quotation_line_id, ql.pr_line_id, ql.item_id,
-                       ql.quantity AS quotation_quantity, ql.uom_id, ql.unit_price,
+                       ql.quantity AS quotation_quantity, ql.uom_id, ql.unit_price, ql.tax_rate,
                        pl.quantity AS pr_quantity, pl.item_id AS pr_item_id, pl.uom_id AS pr_uom_id
                 FROM supplier_quotation_lines ql
                 JOIN pr_lines pl
@@ -429,6 +447,7 @@ public class SpoService {
                 rs.getBigDecimal("pr_quantity"),
                 rs.getObject("pr_item_id", UUID.class),
                 rs.getObject("pr_uom_id", UUID.class),
+                rs.getBigDecimal("tax_rate"),
                 null), tenantId, quotation.id(), request.prLineId());
         if (lines.isEmpty()) {
             throw badRequest("Every SPO line must match a line in the selected supplier quotation");
@@ -471,7 +490,8 @@ public class SpoService {
     private SpoHeader lockSpo(UUID tenantId, UUID spoId) {
         List<SpoHeader> headers = jdbc.query("""
                 SELECT o.id, o.spo_number, o.pr_id, o.sq_id, o.supplier_id,
-                       s.name AS supplier_name, o.status, o.created_at, o.revision, o.decline_reason
+                       s.name AS supplier_name, o.status, o.created_at, o.revision, o.decline_reason,
+                       o.payment_terms, o.payment_terms_text, o.freight_amount, o.tax_amount
                 FROM spos o
                 JOIN suppliers s ON s.id = o.supplier_id AND s.tenant_id = o.tenant_id
                 WHERE o.tenant_id = ? AND o.id = ?
@@ -518,7 +538,10 @@ public class SpoService {
                 rs.getBigDecimal("received_qty"),
                 unitPrice,
                 lineTotal,
-                rs.getObject("expected_date", LocalDate.class));
+                rs.getObject("expected_date", LocalDate.class),
+                rs.getBigDecimal("accepted_qty"),
+                rs.getBigDecimal("rejected_qty"),
+                rs.getBigDecimal("gst_rate"));
     }
 
     private String normalizeStatus(String status) {
@@ -573,6 +596,7 @@ public class SpoService {
 
     private record SelectedQuotation(
             UUID id, UUID prId, UUID supplierId, String status, Integer paymentTerms,
+            String paymentTermsText, BigDecimal freightAmount, BigDecimal taxAmount,
             UUID siteId, String prStatus) {}
 
     private record ValidatedSpoLine(
@@ -585,11 +609,12 @@ public class SpoService {
             BigDecimal prQuantity,
             UUID prItemId,
             UUID prUomId,
+            BigDecimal taxRate,
             CreateSpoLineRequest request) {
         private ValidatedSpoLine withRequest(CreateSpoLineRequest request) {
             return new ValidatedSpoLine(
                     quotationLineId, prLineId, itemId, quotationQuantity, uomId,
-                    unitPrice, prQuantity, prItemId, prUomId, request);
+                    unitPrice, prQuantity, prItemId, prUomId, taxRate, request);
         }
     }
 
@@ -604,13 +629,18 @@ public class SpoService {
                 rs.getString("status"),
                 rs.getTimestamp("created_at").toInstant(),
                 rs.getInt("revision"),
-                rs.getString("decline_reason"));
+                rs.getString("decline_reason"),
+                (Integer) rs.getObject("payment_terms"),
+                rs.getString("payment_terms_text"),
+                rs.getBigDecimal("freight_amount"),
+                rs.getBigDecimal("tax_amount"));
     }
 
     private record SpoHeader(
             UUID id, String spoNumber, UUID prId, UUID quotationId, UUID supplierId,
             String supplierName, String status, java.time.Instant createdAt,
-            int revision, String declineReason) {}
+            int revision, String declineReason, Integer paymentTerms, String paymentTermsText,
+            BigDecimal freightAmount, BigDecimal taxAmount) {}
 
     private record StatusSnapshot(String status) {}
 }

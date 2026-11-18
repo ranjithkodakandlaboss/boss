@@ -108,7 +108,13 @@ export default function Sales() {
     return values[key] ?? r.receivedDate;
   });
 
-  const filteredQuotations = quotations.filter(qt => {
+  const latestQuotations = [...quotations.reduce((latest, quote) => {
+    const key = quote.quotationNumber.replace(/-R\d+$/i, "");
+    const current = latest.get(key);
+    if (!current || (quote.revision ?? 0) >= (current.revision ?? 0)) latest.set(key, quote);
+    return latest;
+  }, new Map<string, typeof quotations[number]>()).values()];
+  const filteredQuotations = latestQuotations.filter(qt => {
     const q = search.toLowerCase();
     return (!customerFilter || qt.customerId === customerFilter)
       && (!q || qt.quotationNumber.toLowerCase().includes(q) || qt.customerName.toLowerCase().includes(q) || (qt.rfqNumber ?? '').toLowerCase().includes(q));
@@ -126,7 +132,12 @@ export default function Sales() {
 
   const poStatuses = ['all', 'pending', 'active', 'partial', 'complete', 'cancelled'];
 
-  const fmt = (d: string) => new Date(d).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: '2-digit' });
+  const fmt = (d: string) => {
+    if (!d) return "—";
+    const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(d);
+    const date = match ? new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3])) : new Date(d);
+    return Number.isNaN(date.getTime()) ? "—" : date.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: '2-digit' });
+  };
 
   return (
     <div className="flex flex-col h-full">

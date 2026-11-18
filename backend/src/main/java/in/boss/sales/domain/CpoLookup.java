@@ -97,7 +97,7 @@ public class CpoLookup {
     public CpoResponse read(UUID tenantId, UUID cpoId) {
         List<Header> headers = jdbc.query("""
                 SELECT p.id, p.cpo_number, p.customer_id, p.quotation_id, p.customer_po_ref, p.status,
-                       p.order_date, p.required_by_date, p.payment_terms, p.notes, p.discount_amount,
+                       p.order_date, p.required_by_date, p.payment_terms, p.payment_terms_text, p.notes, p.discount_amount,
                        p.source_revision, p.created_at, q.quotation_number, q.revision, q.rfq_id,
                        q.decision_channel, q.decision_note, q.decided_by, q.decided_at, r.rfq_number
                   FROM cpos p
@@ -114,6 +114,7 @@ public class CpoLookup {
                 localDate(rs, "order_date"),
                 localDate(rs, "required_by_date"),
                 (Integer) rs.getObject("payment_terms"),
+                rs.getString("payment_terms_text"),
                 rs.getString("notes"),
                 rs.getBigDecimal("discount_amount"),
                 (Integer) rs.getObject("source_revision"),
@@ -146,7 +147,8 @@ public class CpoLookup {
                 header.quotationId(), header.quotationNumber(), revision, header.rfqId(), header.rfqNumber(),
                 header.customerPoRef(), header.status(), header.orderDate(), header.requiredByDate(),
                 header.paymentTerms(), header.notes(), header.discountAmount(), header.decisionChannel(),
-                header.decisionNote(), header.decidedBy(), header.decidedAt(), lines, header.createdAt());
+                header.decisionNote(), header.decidedBy(), header.decidedAt(), lines, header.createdAt(),
+                header.paymentTermsText());
     }
 
     private CpoLineResponse line(ResultSet rs) throws SQLException {
@@ -202,7 +204,7 @@ public class CpoLookup {
 
     private record Header(UUID id, String cpoNumber, UUID customerId, UUID quotationId, String customerPoRef,
                           String status, LocalDate orderDate, LocalDate requiredByDate, Integer paymentTerms,
-                          String notes, BigDecimal discountAmount, Integer sourceRevision, Instant createdAt,
+                          String paymentTermsText, String notes, BigDecimal discountAmount, Integer sourceRevision, Instant createdAt,
                           String quotationNumber, Integer quotationRevision, UUID rfqId, String decisionChannel,
                           String decisionNote, UUID decidedBy, Instant decidedAt, String rfqNumber) {}
 }

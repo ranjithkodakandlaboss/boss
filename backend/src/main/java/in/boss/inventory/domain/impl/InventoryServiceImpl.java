@@ -88,6 +88,11 @@ public class InventoryServiceImpl implements InventoryService {
 
     @Override
     public MaterialLotResponse createLot(CreateLotRequest request) {
+        return createLot(request, null);
+    }
+
+    @Override
+    public MaterialLotResponse createLot(CreateLotRequest request, String preferredLotNumber) {
         BossContext ctx = requireContext();
         String status = LotStatus.canonical(request.status());
         LotStatus.assertCreatable(status);
@@ -98,7 +103,11 @@ public class InventoryServiceImpl implements InventoryService {
         requireGrnLine(ctx.tenantId(), request.grnLineId(), request.itemId(), request.storeId());
 
         UUID lotId = UUID.randomUUID();
-        String lotNumber = "LOT-" + lotId.toString().substring(0, 8).toUpperCase();
+        String preferred = blankToNull(preferredLotNumber);
+        if (preferred != null && repository.lotNumberExists(ctx.tenantId(), preferred)) {
+            throw new InventoryValidationException("Lot number " + preferred + " already exists");
+        }
+        String lotNumber = preferred != null ? preferred : "LOT-" + lotId.toString().substring(0, 8).toUpperCase();
         repository.insertLot(lotId, ctx.tenantId(), request.itemId(), request.storeId(), lotNumber,
                 blankToNull(request.batchRef()), qty, unitCost, status, request.expiryDate());
 

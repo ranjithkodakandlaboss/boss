@@ -132,7 +132,8 @@ public final class ProcurementApiDtos {
             @Min(0) Integer paymentTerms,
             @DecimalMin("0.00") BigDecimal freightAmount,
             @DecimalMin("0.00") BigDecimal discountAmount,
-            @DecimalMin("0.00") BigDecimal taxAmount) {}
+            @DecimalMin("0.00") BigDecimal taxAmount,
+            @jakarta.validation.constraints.Size(max = 200) String paymentTermsText) {}
 
     public record SelectSupplierQuotationRequest(
             @Size(max = 1000) String reason) {}
@@ -162,7 +163,8 @@ public final class ProcurementApiDtos {
             String selectionReason,
             String deliveryStatus,
             String deliveryRecipient,
-            String deliveryError) {}
+            String deliveryError,
+            String paymentTermsText) {}
 
     public record SupplierQuotationComparisonOffer(
             UUID supplierQuotationId,
@@ -211,7 +213,10 @@ public final class ProcurementApiDtos {
             BigDecimal receivedQty,
             BigDecimal unitPrice,
             BigDecimal lineTotal,
-            LocalDate expectedDeliveryDate) {}
+            LocalDate expectedDeliveryDate,
+            BigDecimal acceptedQty,
+            BigDecimal rejectedQty,
+            BigDecimal gstRate) {}
 
     public record SpoResponse(
             UUID id,
@@ -225,7 +230,11 @@ public final class ProcurementApiDtos {
             BigDecimal totalAmount,
             Instant createdAt,
             Integer revision,
-            String declineReason) {}
+            String declineReason,
+            Integer paymentTerms,
+            String paymentTermsText,
+            BigDecimal freightAmount,
+            BigDecimal taxAmount) {}
 
     public record DeclineSpoRequest(
             @NotBlank @Size(max = 1000) String reason) {}
@@ -282,7 +291,10 @@ public final class ProcurementApiDtos {
             List<UUID> lotIds,
             List<String> lotNumbers,
             List<String> lotStatuses,
-            List<BigDecimal> lotQuantities) {}
+            List<BigDecimal> lotQuantities,
+            String enteredLotNumber,
+            UUID storeId,
+            String storeName) {}
 
     public record GrnResponse(
             UUID id,
@@ -296,7 +308,9 @@ public final class ProcurementApiDtos {
             LocalDate receivedDate,
             String supplierDcRef,
             String vehicleNumber,
-            List<GrnLineResponse> lines) {}
+            List<GrnLineResponse> lines,
+            UUID storeId,
+            String storeName) {}
 
     public record CreateSupplierReturnLineRequest(
             @NotNull UUID grnLineId,

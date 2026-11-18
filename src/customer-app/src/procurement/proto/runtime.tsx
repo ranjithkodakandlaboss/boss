@@ -31,10 +31,11 @@ function money(value: unknown) {
   return Number.isFinite(number) ? number : 0;
 }
 
-function termsLabel(value?: number | null) {
+function termsLabel(value?: number | null, text?: string | null) {
+  if (text && text.trim()) return text.trim();
   if (value == null) return "";
   if (value === 0) return "Advance";
-  return `Net ${value}`;
+  return `Net ${value} days`;
 }
 
 function termsDays(value?: string | number | null) {
@@ -188,11 +189,11 @@ function mapQuote(record: QuoteRecord, pr?: ReturnType<typeof mapPr>) {
     prNumber: pr?.prNumber,
     supplierId: record.supplierId,
     supplierName: record.supplierName || "Supplier",
-    quoteDate: "",
+    quoteDate: (record.createdAt || "").slice(0, 10),
     validUntil: record.validUntil || "",
     currency: "INR",
     deliveryDays: lines.find((line) => line.leadTimeDays != null)?.leadTimeDays ?? 0,
-    paymentTerms: termsLabel(record.paymentTerms),
+    paymentTerms: termsLabel(record.paymentTerms, record.paymentTermsText),
     deliveryCharges: money(record.freightAmount),
     discountAmount: money(record.discountAmount),
     taxAmount: money(record.taxAmount),
@@ -217,8 +218,8 @@ function mapSpo(record: SpoRecord, pr?: ReturnType<typeof mapPr>) {
     materialName: line.itemName,
     orderedQty: money(line.orderedQty),
     receivedQty: money(line.receivedQty),
-    acceptedQty: 0,
-    rejectedQty: 0,
+    acceptedQty: money(line.acceptedQty),
+    rejectedQty: money(line.rejectedQty),
     uom: "",
     rate: money(line.unitPrice),
     value: money(line.lineTotal || money(line.unitPrice) * money(line.orderedQty)),
@@ -242,7 +243,7 @@ function mapSpo(record: SpoRecord, pr?: ReturnType<typeof mapPr>) {
     totalValue: money(record.totalAmount),
     currency: "INR",
     lineCount: lines.length,
-    paymentTerms: "",
+    paymentTerms: termsLabel(record.paymentTerms, record.paymentTermsText),
     originatingRequirementId: pr?.customerPoId,
     lines,
   };
@@ -266,7 +267,8 @@ function mapGrn(record: GrnRecord, spo?: ReturnType<typeof mapSpo>) {
       const stored = line.lotStatuses?.[index] || "quarantine";
       return {
         id: line.lotIds?.[index],
-        lotNumber,
+        lotNumber: line.enteredLotNumber || lotNumber,
+        systemLotNumber: lotNumber,
         qty: quantity,
         primaryQty: quantity,
         primaryUom: line.uomSymbol || "",
@@ -288,6 +290,8 @@ function mapGrn(record: GrnRecord, spo?: ReturnType<typeof mapSpo>) {
     receivedDate: record.receivedDate || "",
     deliveryChallan: record.supplierDcRef,
     vehicleNumber: record.vehicleNumber,
+    storeLocationName: record.storeName,
+    siteName: record.storeName,
     lineCount: lines.length,
     lines,
   };
@@ -387,7 +391,13 @@ export function ProcurementProvider({ children }: { children?: ReactNode }) {
       state: site.state,
       status: "active",
     }));
-    const poNumbers = new Map<string, string>();
+    let poNumbers = new Map<string, string>();
+    try {
+      const customerOrders = await allPages<{ id: string; cpoNumber: string }>("/api/v1/cpos");
+      poNumbers = new Map(customerOrders.map((order) => [order.id, order.cpoNumber]));
+    } catch (error) {
+      showToast({ type: "error", title: "Customer POs did not load", body: failure(error) });
+    }
     const mappedPrs = prRows.map((row) => mapPr(row, nextSites, poNumbers.get(row.customerPoId || "")));
     const quoteGroups = await Promise.all(mappedPrs.map(async (pr) => {
       try {
@@ -451,7 +461,7 @@ export function ProcurementProvider({ children }: { children?: ReactNode }) {
       uoms: uomRows,
       sites: nextSites,
     };
-  }, []);
+  }, [showToast]);
 
   useEffect(() => {
     let live = true;
@@ -620,6 +630,11 @@ export function ProcurementProvider({ children }: { children?: ReactNode }) {
       updatePurchaseReq: async (id: string, patch: any) => guard(async () => {
         const current = purchaseReqs.find((item) => item.id === id);
         if (!current) throw new Error("Purchase requisition was not found.");
+        if (patch.status === "submitted") {
+          const saved = await procurementApi.submitPr(id);
+          showToast({ type: "success", title: "PR submitted", body: `${saved.prNumber} is waiting for approval.` });
+          return mapPr(saved, sites, current.sourceRefLabel);
+        }
         if (patch.status === "approved") {
           let saved = current.apiStatus === "draft" ? await procurementApi.submitPr(id) : current;
           if (saved.status === "submitted" || saved.apiStatus === "submitted" || current.apiStatus === "submitted") {
@@ -683,6 +698,7 @@ export function ProcurementProvider({ children }: { children?: ReactNode }) {
           validUntil: quote.validUntil || undefined,
           supplierQuoteRef: quote.quoteNumber || undefined,
           paymentTerms: termsDays(quote.paymentTerms),
+          paymentTermsText: quote.paymentTerms || undefined,
           freightAmount: Number(quote.deliveryCharges || 0),
           discountAmount: Number(quote.discountAmount || 0),
           taxAmount: Number(quote.taxAmount || 0),

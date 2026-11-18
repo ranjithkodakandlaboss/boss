@@ -76,6 +76,8 @@ export type QuoteRecord = {
   lines?: QuoteLineRecord[];
   supplierQuoteRef?: string;
   paymentTerms?: number;
+  paymentTermsText?: string;
+  createdAt?: string;
   freightAmount?: number;
   discountAmount?: number;
   taxAmount?: number;
@@ -110,6 +112,9 @@ export type SpoLineRecord = {
   itemName?: string;
   orderedQty: number;
   receivedQty?: number;
+  acceptedQty?: number;
+  rejectedQty?: number;
+  gstRate?: number;
   unitPrice: number;
   lineTotal?: number;
   expectedDeliveryDate?: string;
@@ -124,6 +129,10 @@ export type SpoRecord = {
   status: string;
   lines?: SpoLineRecord[];
   totalAmount?: number;
+  paymentTerms?: number;
+  paymentTermsText?: string;
+  freightAmount?: number;
+  taxAmount?: number;
   createdAt?: string;
   revision?: number;
   declineReason?: string;
@@ -142,6 +151,9 @@ export type GrnLineRecord = {
   lotNumbers?: string[];
   lotStatuses?: string[];
   lotQuantities?: number[];
+  enteredLotNumber?: string;
+  storeId?: string;
+  storeName?: string;
 };
 export type GrnRecord = {
   id: string;
@@ -155,6 +167,8 @@ export type GrnRecord = {
   receivedDate?: string;
   supplierDcRef?: string;
   vehicleNumber?: string;
+  storeId?: string;
+  storeName?: string;
   lines?: GrnLineRecord[];
 };
 export type AmendmentRecord = {

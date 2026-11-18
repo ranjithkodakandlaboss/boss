@@ -72,7 +72,10 @@ public class GoodsReceiptService {
         BossContext context = requireContext();
         List<GrnResponse> headers = jdbc.query("""
                 SELECT g.id, g.grn_number, g.spo_id, o.spo_number, g.supplier_id, s.name,
-                       g.site_id, g.status, g.received_date, g.supplier_dc_ref, g.vehicle_number
+                       g.site_id, g.status, g.received_date, g.supplier_dc_ref, g.vehicle_number,
+                       (SELECT l.store_id FROM grn_lines l WHERE l.tenant_id = g.tenant_id AND l.grn_id = g.id ORDER BY l.line_no LIMIT 1) AS store_id,
+                       (SELECT st.name FROM grn_lines l JOIN stores st ON st.id = l.store_id AND st.tenant_id = l.tenant_id
+                         WHERE l.tenant_id = g.tenant_id AND l.grn_id = g.id ORDER BY l.line_no LIMIT 1) AS store_name
                 FROM grns g
                 JOIN suppliers s ON s.id = g.supplier_id AND s.tenant_id = g.tenant_id
                 LEFT JOIN spos o ON o.id = g.spo_id AND o.tenant_id = g.tenant_id
@@ -89,17 +92,20 @@ public class GoodsReceiptService {
                 rs.getObject("received_date", LocalDate.class),
                 rs.getString("supplier_dc_ref"),
                 rs.getString("vehicle_number"),
-                List.of()), context.tenantId(), grnId);
+                List.of(),
+                rs.getObject("store_id", UUID.class),
+                rs.getString("store_name")), context.tenantId(), grnId);
         if (headers.isEmpty()) {
             throw notFound("Goods receipt not found");
         }
         GrnResponse header = headers.get(0);
         List<GrnLineResponse> lines = jdbc.query("""
                 SELECT l.id, l.spo_line_id, l.item_id, i.code, i.name, l.received_qty,
-                       l.accepted_qty, l.rejected_qty, u.symbol
+                       l.accepted_qty, l.rejected_qty, u.symbol, l.lot_number, l.store_id, st.name AS store_name
                 FROM grn_lines l
                 JOIN items i ON i.id = l.item_id AND i.tenant_id = l.tenant_id
                 JOIN units_of_measure u ON u.id = l.uom_id AND u.tenant_id = l.tenant_id
+                LEFT JOIN stores st ON st.id = l.store_id AND st.tenant_id = l.tenant_id
                 WHERE l.tenant_id = ? AND l.grn_id = ?
                 ORDER BY l.line_no
                 """, (rs, rowNum) -> {
@@ -133,11 +139,15 @@ public class GoodsReceiptService {
                     lots,
                     lotNumbers,
                     lotStatuses,
-                    lotQuantities);
+                    lotQuantities,
+                    rs.getString("lot_number"),
+                    rs.getObject("store_id", UUID.class),
+                    rs.getString("store_name"));
         }, context.tenantId(), grnId);
         return new GrnResponse(header.id(), header.grnNumber(), header.spoId(), header.spoNumber(),
                 header.supplierId(), header.supplierName(), header.siteId(), header.status(),
-                header.receivedDate(), header.supplierDcRef(), header.vehicleNumber(), lines);
+                header.receivedDate(), header.supplierDcRef(), header.vehicleNumber(), lines,
+                header.storeId(), header.storeName());
     }
 
     @Transactional
@@ -197,13 +207,12 @@ public class GoodsReceiptService {
             for (CreateGrnLotRequest lot : line.lots()) {
                 inventoryService.createLot(new CreateLotRequest(
                         spoLine.itemId(), request.storeId(), lot.qty(), spoLine.unitPrice(),
-                        lot.supplierLotRef() == null ? lot.lotNumber() : lot.supplierLotRef(),
-                        lot.expiryDate(), "quarantine", grnLineId));
+                        lot.supplierLotRef(), lot.expiryDate(), "quarantine", grnLineId), lot.lotNumber());
             }
             jdbc.update("""
-                    UPDATE spo_lines SET store_id = ?
+                    UPDATE spo_lines SET store_id = ?, received_qty = received_qty + ?
                     WHERE tenant_id = ? AND id = ?
-                    """, request.storeId(), tenantId, spoLine.id());
+                    """, request.storeId(), line.receivedQty(), tenantId, spoLine.id());
         }
 
         GrnResponse response = get(grnId);

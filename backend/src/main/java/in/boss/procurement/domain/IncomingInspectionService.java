@@ -176,11 +176,6 @@ public class IncomingInspectionService {
                 SET accepted_qty = accepted_qty + ?, rejected_qty = rejected_qty + ?
                 WHERE tenant_id = ? AND id = ?
                 """, accepted, rejected, context.tenantId(), lot.grnLineId());
-        jdbc.update("""
-                UPDATE spo_lines SET received_qty = received_qty + ?
-                WHERE tenant_id = ? AND id = (
-                  SELECT spo_line_id FROM grn_lines WHERE tenant_id = ? AND id = ?)
-                """, accepted, context.tenantId(), context.tenantId(), lot.grnLineId());
         closeReceiptIfDecided(context.tenantId(), current.grnId());
         auditService.record("quality_inspections", inspectionId, "COMPLETED", null,
                 "{\"result\":\"" + result + "\"}");

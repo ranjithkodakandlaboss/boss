@@ -13,6 +13,8 @@ export type JobStage = {
   isOptional: boolean;
   canSkip: boolean;
   workCentre?: string;
+  assetId?: string;
+  assetCode?: string;
   actualStartAt?: string;
   actualEndAt?: string;
 };
@@ -113,6 +115,7 @@ export type EligibleLine = {
   itemCode?: string;
   itemName?: string;
   qty?: number;
+  remainingQty?: number;
   unitPrice?: number;
   sellingPrice?: number;
   siteId?: string;
@@ -194,8 +197,11 @@ export function routingTemplates(itemId: string) {
   return api<RoutingTemplate[]>(`/api/v1/jobs/routing-templates?itemId=${itemId}`);
 }
 
-export function createRoutingTemplate(name: string, stageName: string) {
-  return post<RoutingTemplate>("/api/v1/jobs/routing-templates", { name, stageName });
+export function createRoutingTemplate(name: string, stageName: string, stages?: Array<{ name: string; workCentre?: string; assetId?: string; stageConfigOptionId?: string }>) {
+  const parsed = stages && stages.length > 0
+    ? stages
+    : stageName.split(",").map((part) => part.trim()).filter(Boolean).map((stage) => ({ name: stage }));
+  return post<RoutingTemplate>("/api/v1/jobs/routing-templates", { name, stageName: parsed[0]?.name || stageName, stages: parsed });
 }
 
 export function createJob(body: {
@@ -205,6 +211,7 @@ export function createJob(body: {
   scheduledStart?: string;
   scheduledEnd?: string;
   priority?: string;
+  quantity?: number;
 }) {
   return post<ProductionJob>("/api/v1/jobs", body);
 }

@@ -186,7 +186,11 @@ export default function PODetail() {
         : 'completed',
       reference: po.availabilityStatus && po.availabilityStatus !== 'not_assessed' ? po.availabilityStatus.replace('_', ' ') : undefined,
       blocker: hasShortage && !firstPr ? 'Material shortage — Purchase Requisition not yet raised' : undefined,
-      note: isAllocated ? 'Stock reserved for this order' : undefined,
+      note: po.availabilityStatus === 'allocated'
+        ? 'Available stock is reserved for this order'
+        : po.availabilityStatus === 'partial'
+          ? 'Only the available quantity is reserved. The shortage remains on the purchase requisition.'
+          : undefined,
     });
 
     steps.push({
@@ -571,7 +575,7 @@ export default function PODetail() {
                 <tbody>
                   {liveAvailability.items.map(item => {
                     const poReserved = linkedReqs.find(r => r.materialItemId === item.materialItemId)?.reservedQty
-                      ?? (po.availabilityStatus && po.availabilityStatus !== 'not_assessed' ? item.toReserveQty : item.reservedQty);
+                      ?? item.reservedQty;
                     return (
                     <tr key={item.materialItemId}>
                       <td>

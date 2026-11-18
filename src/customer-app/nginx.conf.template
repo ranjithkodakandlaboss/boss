@@ -18,7 +18,13 @@ server {
     proxy_set_header Host boss-api-dev-201664309080.asia-south1.run.app;
   }
 
+  # Hashed bundles live under /static/. Do not directory-index /assets/,
+  # because that path is also the Assets screen and a directory match hangs refresh.
+  location /static/ {
+    try_files $uri =404;
+  }
+
   location / {
-    try_files $uri $uri/ /index.html;
+    try_files $uri /index.html;
   }
 }

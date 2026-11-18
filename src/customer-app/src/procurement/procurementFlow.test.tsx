@@ -167,7 +167,11 @@ function salesFetch(url: string, init?: RequestInit, created?: { count: number }
   if (url.includes("/cpos")) return json(JSON.parse(page([customerPo])));
   if (url.includes("/items")) return json(JSON.parse(page([{ id: itemId, code: "SHAFT", name: "Shaft", uomId, uomSymbol: "EA", status: "active" }])));
   if (url.includes("/uoms")) return json(JSON.parse(page([{ id: uomId, symbol: "EA" }])));
-  if (url.includes("/company")) return json({ companyName: "North Works", sites: [{ id: siteId, name: "Plant" }], stores: [] });
+  if (url.includes("/company")) return json({ companyName: "North Works", sites: [{ id: siteId, name: "Plant" }], stores: [{ id: "55555555-5555-4555-8555-555555555555", siteId, name: "Main", code: "MAIN", siteCode: "P1" }] });
+  if (url.includes("/reservations/customer-pos") && init?.method === "POST") {
+    const body = JSON.parse(String(init.body)) as { lines: Array<{ cpoLineId: string; qty: number }> };
+    return json({ status: "FULLY_RESERVED", lines: body.lines.map((line) => ({ cpoLineId: line.cpoLineId, reserved: line.qty, shortfall: 0 })) });
+  }
   if (url.includes("/prs") && init?.method === "POST") {
     if (created) created.count += 1;
     return json({ ...pr, id: prId, prNumber: "PR-SHORT", originType: "customer_po", customerPoId: poId, status: "draft" }, 201);

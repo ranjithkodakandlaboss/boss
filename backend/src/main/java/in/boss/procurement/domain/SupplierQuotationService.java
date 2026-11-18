@@ -124,7 +124,7 @@ public class SupplierQuotationService {
         UUID tenantId = context.tenantId();
         List<QuotationHeader> headers = jdbc.query("""
                 SELECT q.id, q.pr_id, q.supplier_id, s.name AS supplier_name,
-                       q.status, q.valid_until, q.supplier_quote_ref, q.payment_terms,
+                       q.status, q.valid_until, q.supplier_quote_ref, q.payment_terms, q.payment_terms_text,
                        q.freight_amount, q.discount_amount, q.tax_amount, q.selection_reason
                 FROM supplier_quotations q
                 JOIN suppliers s ON s.id = q.supplier_id AND s.tenant_id = q.tenant_id
@@ -138,6 +138,7 @@ public class SupplierQuotationService {
                 rs.getObject("valid_until", LocalDate.class),
                 rs.getString("supplier_quote_ref"),
                 (Integer) rs.getObject("payment_terms"),
+                rs.getString("payment_terms_text"),
                 rs.getBigDecimal("freight_amount"),
                 rs.getBigDecimal("discount_amount"),
                 rs.getBigDecimal("tax_amount"),
@@ -177,7 +178,7 @@ public class SupplierQuotationService {
                 header.status(), header.validUntil(), lines,
                 header.supplierQuoteRef(), header.paymentTerms(), header.freightAmount(),
                 header.discountAmount(), header.taxAmount(), header.selectionReason(),
-                delivery.status(), delivery.recipient(), delivery.errorMessage());
+                delivery.status(), delivery.recipient(), delivery.errorMessage(), header.paymentTermsText());
     }
 
     @Transactional
@@ -210,16 +211,20 @@ public class SupplierQuotationService {
         }
         BigDecimal freight = request.freightAmount() == null ? BigDecimal.ZERO : request.freightAmount();
         BigDecimal discount = request.discountAmount() == null ? BigDecimal.ZERO : request.discountAmount();
-        BigDecimal tax = request.taxAmount() == null ? BigDecimal.ZERO : request.taxAmount();
+        BigDecimal tax = lineTax(tenantId, quotationId);
+        if (tax.signum() == 0 && request.taxAmount() != null) {
+            tax = request.taxAmount();
+        }
 
         jdbc.update("""
                 UPDATE supplier_quotations
                 SET status = 'received', valid_until = ?, supplier_quote_ref = ?,
                     payment_terms = COALESCE(?, payment_terms),
+                    payment_terms_text = COALESCE(?, payment_terms_text),
                     freight_amount = ?, discount_amount = ?, tax_amount = ?, updated_at = NOW()
                 WHERE tenant_id = ? AND id = ? AND status = 'requested'
                 """, request.validUntil(), blank(request.supplierQuoteRef()), request.paymentTerms(),
-                freight, discount, tax, tenantId, quotationId);
+                blank(request.paymentTermsText()), freight, discount, tax, tenantId, quotationId);
 
         SupplierQuotationResponse response = getQuotation(quotationId);
         auditService.record("supplier_quotations", quotationId, "RECEIVED",
@@ -338,7 +343,7 @@ public class SupplierQuotationService {
     private QuotationHeader lockQuotation(UUID tenantId, UUID quotationId) {
         List<QuotationHeader> headers = jdbc.query("""
                 SELECT q.id, q.pr_id, q.supplier_id, s.name AS supplier_name, q.status, q.valid_until,
-                       q.supplier_quote_ref, q.payment_terms, q.freight_amount, q.discount_amount,
+                       q.supplier_quote_ref, q.payment_terms, q.payment_terms_text, q.freight_amount, q.discount_amount,
                        q.tax_amount, q.selection_reason
                 FROM supplier_quotations q
                 JOIN suppliers s ON s.id = q.supplier_id AND s.tenant_id = q.tenant_id
@@ -353,6 +358,7 @@ public class SupplierQuotationService {
                 rs.getObject("valid_until", LocalDate.class),
                 rs.getString("supplier_quote_ref"),
                 (Integer) rs.getObject("payment_terms"),
+                rs.getString("payment_terms_text"),
                 rs.getBigDecimal("freight_amount"),
                 rs.getBigDecimal("discount_amount"),
                 rs.getBigDecimal("tax_amount"),
@@ -459,9 +465,18 @@ public class SupplierQuotationService {
         return value == null || value.isBlank() ? null : value.trim();
     }
 
+    private BigDecimal lineTax(UUID tenantId, UUID quotationId) {
+        BigDecimal tax = jdbc.queryForObject("""
+                SELECT COALESCE(SUM(ROUND(quantity * unit_price * COALESCE(tax_rate, 0) / 100, 2)), 0)
+                FROM supplier_quotation_lines
+                WHERE tenant_id = ? AND sq_id = ? AND COALESCE(tax_rate, 0) > 0
+                """, BigDecimal.class, tenantId, quotationId);
+        return tax == null ? BigDecimal.ZERO : tax;
+    }
+
     private record QuotationHeader(
             UUID id, UUID prId, UUID supplierId, String supplierName, String status, LocalDate validUntil,
-            String supplierQuoteRef, Integer paymentTerms, BigDecimal freightAmount,
+            String supplierQuoteRef, Integer paymentTerms, String paymentTermsText, BigDecimal freightAmount,
             BigDecimal discountAmount, BigDecimal taxAmount, String selectionReason) {}
 
     private record StatusSnapshot(String status) {}

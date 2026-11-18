@@ -14,6 +14,7 @@ export type Customer = {
   creditDays?: number;
   status?: string;
   contacts?: Contact[];
+  createdAt?: string;
 };
 export type RfqLine = {
   id?: string;
@@ -67,6 +68,7 @@ export type QuoteLine = {
   drawingNumber?: string;
   drawingRevision?: string;
   description?: string;
+  requiredBy?: string;
 };
 export type RevisionLink = { id: string; revision: number; status: string };
 export type Negotiation = { id: string; round: number; partyType: string; note?: string; createdAt: string };
@@ -84,6 +86,7 @@ export type Quotation = {
   negotiationHistory?: Negotiation[];
   createdAt?: string;
   paymentTerms?: number;
+  paymentTermsText?: string;
   deliveryTerms?: string;
   notes?: string;
   discountAmount?: number;
@@ -127,6 +130,7 @@ export type Cpo = {
   orderDate?: string;
   requiredByDate?: string;
   paymentTerms?: number;
+  paymentTermsText?: string;
   notes?: string;
   discountAmount?: number;
   decisionChannel?: string;

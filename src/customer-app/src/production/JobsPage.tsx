@@ -265,6 +265,7 @@ function NewJob({ onClose, onCreated }: { onClose: () => void; onCreated: (job: 
   const [templateId, setTemplateId] = useState("");
   const [plannedEnd, setPlannedEnd] = useState("");
   const [priority, setPriority] = useState("normal");
+  const [quantity, setQuantity] = useState("");
   const [error, setError] = useState("");
   const [templateError, setTemplateError] = useState("");
   const line = lines.find((row) => row.cpoLineId === lineId);
@@ -282,16 +283,23 @@ function NewJob({ onClose, onCreated }: { onClose: () => void; onCreated: (job: 
   useEffect(() => { loadLines(); }, []);
   useEffect(() => {
     if (!line) { setTemplates([]); return; }
+    setQuantity(String(line.remainingQty ?? line.qty ?? ""));
     loadTemplates(line.itemId);
   }, [line]);
 
   async function save() {
-    if (!line || !templateId || !plannedEnd) {
-      setError("Customer PO line, production workflow and planned end are required.");
+    const jobQty = Number(quantity);
+    const remaining = Number(line?.remainingQty ?? line?.qty ?? 0);
+    if (!line || !templateId || !plannedEnd || !(jobQty > 0)) {
+      setError("Customer PO line, job quantity, production workflow and planned end are required.");
+      return;
+    }
+    if (jobQty > remaining) {
+      setError(`Job quantity cannot exceed the remaining Customer PO quantity of ${remaining}.`);
       return;
     }
     try {
-      const job = await createJob({ cpoId: line.cpoId, cpoLineId: line.cpoLineId, routingTemplateId: templateId, scheduledEnd: plannedEnd, priority });
+      const job = await createJob({ cpoId: line.cpoId, cpoLineId: line.cpoLineId, routingTemplateId: templateId, scheduledEnd: plannedEnd, priority, quantity: jobQty });
       onCreated(job);
     } catch (cause) {
       setError(cause instanceof ApiError ? cause.message : "The job was not created");
@@ -307,19 +315,20 @@ function NewJob({ onClose, onCreated }: { onClose: () => void; onCreated: (job: 
           <div className="rounded-xl border p-3 text-xs space-y-1" style={{ background: "var(--surface-2)", borderColor: "var(--border)" }}>
             <div>Customer: <strong>{line.customerName}</strong></div>
             <div>Site: <strong>{line.siteName}</strong></div>
-            <div>Item: <strong>{line.itemName}</strong> · Qty <strong>{line.qty}</strong></div>
+            <div>Item: <strong>{line.itemName}</strong> · Ordered <strong>{line.qty}</strong> · Remaining <strong>{line.remainingQty ?? line.qty}</strong></div>
             <div>Selling price: <strong>{line.sellingPrice ?? line.unitPrice}</strong></div>
             <p style={{ color: "var(--text-3)" }}>Selling price stays on the Customer PO. Production costing does not change it.</p>
           </div>
         )}
         <div className="block text-xs font-medium">Production workflow *
-          <CreatableSelect label="workflow" ariaLabel="Production workflow" value={templateId} onChange={setTemplateId} error={templateError} onRetry={() => line && loadTemplates(line.itemId)} creatable={canCreateTemplate && !!line} options={templates.map((template) => ({ id: template.id, label: `${template.name} (${template.stageCount} stages)` }))} fields={[{ name: "name", label: "Workflow name", required: true }, { name: "stageName", label: "First stage", required: true }]} unique={(values) => templates.some((template) => template.name.toLowerCase() === values.name.toLowerCase()) ? "This value already exists." : null} onCreate={async (values) => {
+          <CreatableSelect label="workflow" ariaLabel="Production workflow" value={templateId} onChange={setTemplateId} error={templateError} onRetry={() => line && loadTemplates(line.itemId)} creatable={canCreateTemplate && !!line} options={templates.map((template) => ({ id: template.id, label: `${template.name} (${template.stageCount} stages)` }))} fields={[{ name: "name", label: "Workflow name", required: true }, { name: "stageName", label: "Stages in order, separated by commas", required: true }]} unique={(values) => templates.some((template) => template.name.toLowerCase() === values.name.toLowerCase()) ? "This value already exists." : null} onCreate={async (values) => {
             const created = await createRoutingTemplate(values.name, values.stageName);
             setTemplates((current) => [...current.filter((template) => template.id !== created.id), created]);
             return { id: created.id, label: `${created.name} (${created.stageCount} stages)` };
           }} />
           <p className="text-[11px] mt-1" style={{ color: "var(--text-3)" }}>The selected stage sequence is copied to the job and will not change if the template changes later.</p>
         </div>
+        <label className="block text-xs font-medium">Job quantity *<input className="eoss-input w-full mt-1 text-left" aria-label="Job quantity" inputMode="decimal" value={quantity} onChange={(event) => setQuantity(event.target.value)} /></label>
         <div className="grid grid-cols-2 gap-3">
           <label className="text-xs font-medium">Planned End *<input type="date" className="eoss-input w-full mt-1" aria-label="Planned End" value={plannedEnd} onChange={(event) => setPlannedEnd(event.target.value)} /></label>
           <label className="text-xs font-medium">Priority<select className="eoss-input w-full mt-1" aria-label="Priority" value={priority} onChange={(event) => setPriority(event.target.value)}>{["normal", "high", "urgent", "low"].map((value) => <option key={value} value={value}>{value}</option>)}</select></label>

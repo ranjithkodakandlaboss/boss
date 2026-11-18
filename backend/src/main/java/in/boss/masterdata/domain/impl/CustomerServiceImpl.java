@@ -320,6 +320,7 @@ public class CustomerServiceImpl implements CustomerService {
                 .creditDays(entity.getCreditDays())
                 .status(entity.isActive() ? "active" : "inactive")
                 .contacts(contactDtos)
+                .createdAt(entity.getCreatedAt())
                 .build();
     }
 

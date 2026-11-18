@@ -8,13 +8,13 @@ import Modal from "../components/shared/Modal";
 import StatusChip from "../components/shared/StatusChip";
 import {
   CONFIG_ADMIN_ROLES, INLINE_ADD_CATEGORIES, MANAGE_ROLES, archiveAsset, computeDue, configOptions, createAsset,
-  createConfigOption, createEvent, displayDate, listAssets, listEvents, lookups, nextServiceLabel, updateAsset,
+  createConfigOption, createEvent, displayDate, listAssets, listEvents, lookups, nextServiceLabel, replaceCapabilities, updateAsset,
   type Asset, type AssetInput, type ConfigOption, type EventInput, type Lookups, type MaintenanceEvent,
 } from "./api";
 
 export type Options = Record<string, ConfigOption[]>;
 const CATEGORIES = [
-  "ASSET_CATEGORY", "WORK_CENTRE", "ASSET_CRITICALITY", "ASSET_STATUS", "METER_TYPE",
+  "ASSET_CATEGORY", "WORK_CENTRE", "ASSET_CRITICALITY", "ASSET_STATUS", "METER_TYPE", "PRODUCTION_STAGES",
   "MAINTENANCE_EVENT_TYPE", "MAINTENANCE_SEVERITY", "MAINTENANCE_EVENT_STATUS",
 ];
 
@@ -120,21 +120,27 @@ export function AssetFormModal({ open, asset, options, lookup, ctl, onClose, onS
   open: boolean; asset?: Asset | null; options: Options; lookup: Lookups; ctl?: OptionsCtl; onClose: () => void; onSaved: (a: Asset) => void;
 }) {
   const [form, setForm] = useState<AssetInput>({});
+  const [capabilities, setCapabilities] = useState<string[]>([]);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   useEffect(() => {
-    if (open) { setForm(asset ? { ...asset } : { meterType: "hours", criticality: "medium", status: "operational" }); setError(""); }
+    if (open) {
+      setForm(asset ? { ...asset } : { meterType: "hours", criticality: "medium", status: "operational" });
+      setCapabilities((asset?.capabilities ?? []).map((item) => item.stageOptionId));
+      setError("");
+    }
   }, [open, asset]);
   const set = (patch: AssetInput) => setForm((f) => ({ ...f, ...patch }));
   const num = (v: string) => (v === "" ? null : Number(v));
 
   async function submit(e: FormEvent) {
     e.preventDefault();
-    if (!form.assetCode?.trim() || !form.name?.trim() || !form.siteId) { setError("Asset code, name and site are required."); return; }
+    if (!form.assetCode?.trim() || !form.name?.trim() || !form.siteId || !form.manufacturer?.trim()) { setError("Asset code, name, site and manufacturer are required."); return; }
     setSaving(true); setError("");
     try {
       const saved = asset ? await updateAsset(asset.id, form) : await createAsset(form);
-      onSaved(saved);
+      const withCapabilities = await replaceCapabilities(saved.id, capabilities);
+      onSaved(withCapabilities);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not save the asset.");
     } finally { setSaving(false); }
@@ -155,7 +161,7 @@ export function AssetFormModal({ open, asset, options, lookup, ctl, onClose, onS
             </select>
           </Field>
           <Field label="Criticality"><ConfigSelect category="ASSET_CRITICALITY" ctl={ctl} label="Criticality" value={form.criticality} onChange={(v) => set({ criticality: v })} options={options.ASSET_CRITICALITY ?? []} /></Field>
-          <Field label="Manufacturer"><input aria-label="Manufacturer" className="eoss-input w-full" value={form.manufacturer ?? ""} onChange={(e) => set({ manufacturer: e.target.value })} /></Field>
+          <Field label="Manufacturer *"><input aria-label="Manufacturer" required className="eoss-input w-full" value={form.manufacturer ?? ""} onChange={(e) => set({ manufacturer: e.target.value })} /></Field>
           <Field label="Model"><input aria-label="Model" className="eoss-input w-full" value={form.model ?? ""} onChange={(e) => set({ model: e.target.value })} /></Field>
           <Field label="Serial number"><input aria-label="Serial number" className="eoss-input w-full" value={form.serialNumber ?? ""} onChange={(e) => set({ serialNumber: e.target.value })} /></Field>
           <Field label="Status"><Select label="Status" value={form.status} onChange={(v) => set({ status: v })} options={(options.ASSET_STATUS ?? []).filter((o) => o.code !== "retired")} /></Field>
@@ -173,6 +179,18 @@ export function AssetFormModal({ open, asset, options, lookup, ctl, onClose, onS
             </select>
           </Field>
         </div>
+        <fieldset className="text-xs">
+          <legend className="font-medium mb-1">Supported production stages</legend>
+          <div className="flex flex-wrap gap-2">
+            {(options.PRODUCTION_STAGES ?? []).map((stage) => (
+              <label key={stage.id} className="inline-flex items-center gap-1">
+                <input type="checkbox" checked={capabilities.includes(stage.id)} onChange={() => setCapabilities((current) => current.includes(stage.id) ? current.filter((id) => id !== stage.id) : [...current, stage.id])} />
+                {stage.label}
+              </label>
+            ))}
+            {(options.PRODUCTION_STAGES ?? []).length === 0 && <span className="text-[var(--text-3)]">No production stages are configured.</span>}
+          </div>
+        </fieldset>
         {error && <p role="alert" className="text-xs" style={{ color: "var(--error)" }}>{error}</p>}
         <div className="flex justify-end gap-2 pt-2">
           <button type="button" onClick={onClose} className="px-3 py-1.5 text-xs rounded-lg border border-[var(--border)]">Cancel</button>
@@ -306,11 +324,11 @@ export default function AssetsPage() {
 
   const load = useCallback(() => {
     setLoading(true); setError("");
-    Promise.all([listAssets(showArchived), listEvents()])
+    Promise.all([listAssets(true), listEvents()])
       .then(([a, e]) => { setAssets(a); setEvents(e); })
       .catch((e) => setError(e instanceof ApiError ? e.message : "Could not load maintenance data."))
       .finally(() => setLoading(false));
-  }, [showArchived]);
+  }, []);
   useEffect(load, [load]);
 
   const statusLabel = (code: string) => options.ASSET_STATUS?.find((o) => o.code === code)?.label ?? code;
@@ -328,6 +346,7 @@ export default function AssetsPage() {
   const visibleAssets = useMemo(() => {
     const q = search.trim().toLowerCase();
     return assets
+      .filter((a) => showArchived || status === "retired" || a.status !== "retired")
       .filter((a) => status === "all" || a.status === status)
       .filter((a) => focus === "all" || (focus === "breakdown" ? a.status === "breakdown" : focus === "overdue" ? computeDue(a).status === "overdue" : ["due", "upcoming"].includes(computeDue(a).status)))
       .filter((a) => !q || [a.assetCode, a.name, a.category, a.workCentre, a.manufacturer, a.model].some((v) => v?.toLowerCase().includes(q)))

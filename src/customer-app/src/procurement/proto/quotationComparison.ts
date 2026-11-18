@@ -303,7 +303,8 @@ export function compareAndRecommendQuotations(
     const supplier = suppliers.find(s => s.id === q.supplierId);
     const quoteLines = q.lines ?? [];
     const subtotal = quoteLines.reduce((s, l) => s + (l.lineTotal || getLineQty(l) * getLinePrice(l)), 0);
-    const taxAmount = q.taxAmount ?? quoteLines.reduce((s, l) => s + ((l.lineTotal || 0) * (l.taxPct ?? 0)) / 100, 0);
+    const lineTax = quoteLines.reduce((s, l) => s + ((l.lineTotal || 0) * (l.taxPct ?? 0)) / 100, 0);
+    const taxAmount = quoteLines.some((line) => line.taxPct) ? lineTax : (q.taxAmount ?? lineTax);
     const deliveryCharges = q.deliveryCharges ?? 0;
     const discountAmount = q.discountAmount ?? 0;
     const landedTotal = Math.max(0, subtotal + taxAmount + deliveryCharges - discountAmount);

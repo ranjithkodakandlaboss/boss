@@ -3,6 +3,7 @@ package in.boss.production.domain;
 import in.boss.inventory.domain.InventoryService;
 import in.boss.masterdata.domain.BomExplosionService;
 import in.boss.production.api.ProductionApiDtos.CreateJobRequest;
+import in.boss.production.api.ProductionApiDtos.RoutingStageRequest;
 import in.boss.production.api.ProductionApiDtos.CreateRoutingTemplateRequest;
 import in.boss.production.api.ProductionApiDtos.RoutingTemplateOption;
 import in.boss.production.api.ProductionApiDtos.ProductionJobResponse;
@@ -57,7 +58,13 @@ public class ProductionJobService {
     public RoutingTemplateOption createRoutingTemplate(CreateRoutingTemplateRequest request) {
         BossContext context = support.requireContext();
         String name = request.name().trim();
-        String stageName = request.stageName().trim();
+        List<RoutingStageRequest> requested = request.stages() == null || request.stages().isEmpty()
+                ? List.of(new RoutingStageRequest(
+                request.stageName() == null ? "" : request.stageName(), null, null, null))
+                : request.stages();
+        if (requested.stream().anyMatch(stage -> stage.name() == null || stage.name().isBlank())) {
+            throw ProductionSupport.badRequest("Every workflow stage needs a name");
+        }
         Integer existing = jdbc.queryForObject("""
                 SELECT COUNT(*) FROM routing_templates
                 WHERE tenant_id = ? AND status = 'active' AND lower(name) = lower(?)
@@ -70,13 +77,19 @@ public class ProductionJobService {
                 INSERT INTO routing_templates (id, tenant_id, name, version, is_default, status)
                 VALUES (?, ?, ?, 'v1', false, 'active')
                 """, id, context.tenantId(), name);
-        jdbc.update("""
-                INSERT INTO routing_template_stages (tenant_id, routing_id, seq_no, name, stage_type)
-                VALUES (?, ?, 1, ?, 'production')
-                """, context.tenantId(), id, stageName);
+        int seq = 1;
+        for (RoutingStageRequest stage : requested) {
+            StageOption option = resolveStage(context.tenantId(), stage);
+            requireAssetCapability(context.tenantId(), stage.assetId(), option.id());
+            jdbc.update("""
+                    INSERT INTO routing_template_stages
+                      (tenant_id, routing_id, stage_config_id, seq_no, name, stage_type, work_centre, asset_id)
+                    VALUES (?, ?, ?, ?, ?, 'production', ?, ?)
+                    """, context.tenantId(), id, option.id(), seq++, option.label(), stage.workCentre(), stage.assetId());
+        }
         audit.record("routing_templates", id, "CREATE", null,
                 "{\"name\":\"" + name.replace("\\", "\\\\").replace("\"", "\\\"") + "\"}");
-        return new RoutingTemplateOption(id, name, "v1", null, 1);
+        return new RoutingTemplateOption(id, name, "v1", null, requested.size());
     }
 
     @PreAuthorize(PRODUCTION_WRITE)
@@ -111,15 +124,18 @@ public class ProductionJobService {
 
     private ProductionJobResponse insertJob(BossContext context, CreateJobRequest request) {
         CpoLine line = lockLine(context, request);
-        rejectDuplicate(context.tenantId(), line.lineId());
+        BigDecimal quantity = jobQuantity(context.tenantId(), line, request.quantity());
         RoutingTemplate routing = requireRouting(context.tenantId(), request.routingTemplateId(), line.itemId());
         List<StageSeed> stages = loadStages(context.tenantId(), routing.id());
         if (stages.isEmpty()) {
             throw ProductionSupport.badRequest("Routing template has no stages");
         }
+        for (StageSeed stage : stages) {
+            requireAssetCapability(context.tenantId(), stage.assetId(), stage.configId());
+        }
         UUID jobId = UUID.randomUUID();
         String jobNumber = "JOB-" + LocalDate.now() + "-" + jobId.toString().substring(0, 8).toUpperCase();
-        BigDecimal selling = JobCostCalculator.money(line.unitPrice().multiply(line.quantity()));
+        BigDecimal selling = JobCostCalculator.money(line.unitPrice().multiply(quantity));
         LocalDate plannedEnd = request.scheduledEnd() != null ? request.scheduledEnd() : line.requiredBy();
         String priority = request.priority() == null ? "normal" : request.priority();
         jdbc.update("""
@@ -129,10 +145,10 @@ public class ProductionJobService {
                    priority, selling_price, created_by)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'planned', ?, ?, ?, ?, ?)
                 """, jobId, context.tenantId(), jobNumber, line.cpoId(), line.lineId(), line.itemId(),
-                routing.id(), routing.version(), line.siteId(), line.quantity(), line.uomId(),
+                routing.id(), routing.version(), line.siteId(), quantity, line.uomId(),
                 request.scheduledStart(), plannedEnd, priority, selling, context.userId());
         insertStages(context.tenantId(), jobId, stages);
-        BigDecimal estimated = insertMaterials(context, jobId, line);
+        BigDecimal estimated = insertMaterials(context, jobId, line, quantity);
         insertCostHeader(context.tenantId(), jobId, estimated, selling);
         audit.record("production_job", jobId, "CREATE", null, "{\"status\":\"planned\"}");
         outbox.publish("production_job", jobId, "production.job.created",
@@ -171,14 +187,21 @@ public class ProductionJobService {
         return line;
     }
 
-    private void rejectDuplicate(UUID tenantId, UUID lineId) {
-        Integer existing = jdbc.queryForObject("""
-                SELECT COUNT(*) FROM production_jobs
+    private BigDecimal jobQuantity(UUID tenantId, CpoLine line, BigDecimal requested) {
+        BigDecimal allocated = jdbc.queryForObject("""
+                SELECT COALESCE(SUM(quantity), 0) FROM production_jobs
                 WHERE tenant_id = ? AND cpo_line_id = ? AND status <> 'cancelled'
-                """, Integer.class, tenantId, lineId);
-        if (existing != null && existing > 0) {
+                """, BigDecimal.class, tenantId, line.lineId());
+        BigDecimal used = allocated == null ? BigDecimal.ZERO : allocated;
+        BigDecimal remaining = line.quantity().subtract(used);
+        if (remaining.signum() <= 0) {
             throw ProductionSupport.conflict("A production job already exists for this Customer PO line");
         }
+        BigDecimal quantity = requested == null ? remaining : requested;
+        if (quantity.signum() <= 0 || quantity.compareTo(remaining) > 0) {
+            throw ProductionSupport.badRequest("Job quantity exceeds the remaining unallocated Customer PO line quantity");
+        }
+        return quantity;
     }
 
     private RoutingTemplate requireRouting(UUID tenantId, UUID routingId, UUID itemId) {
@@ -204,7 +227,7 @@ public class ProductionJobService {
         if (versioned != null && versioned > 0) {
             return jdbc.query("""
                     SELECT s.seq_no, s.name, s.requires_inspection, s.inspection_template_id, s.is_optional,
-                           s.stage_config_id, o.code, o.label
+                           s.stage_config_id, s.work_centre, s.asset_id, o.code, o.label
                     FROM routing_template_stages s
                     LEFT JOIN tenant_config_options o
                       ON o.id = s.stage_config_id AND o.tenant_id = s.tenant_id
@@ -215,7 +238,8 @@ public class ProductionJobService {
                 String name = label == null || label.isBlank() ? rs.getString("name") : label;
                 return new StageSeed(rs.getInt("seq_no"), name, rs.getString("code"),
                         rs.getObject("stage_config_id", UUID.class), rs.getBoolean("requires_inspection"),
-                        rs.getObject("inspection_template_id", UUID.class), rs.getBoolean("is_optional"), null);
+                        rs.getObject("inspection_template_id", UUID.class), rs.getBoolean("is_optional"),
+                        rs.getString("work_centre"), rs.getObject("asset_id", UUID.class));
             }, tenantId, routingId);
         }
         return jdbc.query("""
@@ -223,7 +247,7 @@ public class ProductionJobService {
                 FROM routing_operations WHERE tenant_id = ? AND routing_id = ? ORDER BY seq_no
                 """, (rs, row) -> new StageSeed(rs.getInt("seq_no"), rs.getString("name"), null, null,
                 rs.getBoolean("requires_inspection"), null, rs.getBoolean("is_optional"),
-                rs.getString("work_centre")), tenantId, routingId);
+                rs.getString("work_centre"), null), tenantId, routingId);
     }
 
     private void insertStages(UUID tenantId, UUID jobId, List<StageSeed> stages) {
@@ -232,16 +256,16 @@ public class ProductionJobService {
                     INSERT INTO job_stages
                       (id, tenant_id, job_id, seq_no, name, stage_code, stage_config_option_id,
                        stage_label_snapshot, status, requires_inspection, inspection_template_id,
-                       is_optional, work_centre)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)
+                       is_optional, work_centre, asset_id)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)
                     """, UUID.randomUUID(), tenantId, jobId, stage.seq(), stage.name(), stage.code(),
                     stage.configId(), stage.name(), stage.inspection(), stage.templateId(),
-                    stage.optional(), stage.workCentre());
+                    stage.optional(), stage.workCentre(), stage.assetId());
         }
     }
 
-    private BigDecimal insertMaterials(BossContext context, UUID jobId, CpoLine line) {
-        var exploded = explosion.explodeBOM(line.itemId(), line.quantity());
+    private BigDecimal insertMaterials(BossContext context, UUID jobId, CpoLine line, BigDecimal quantity) {
+        var exploded = explosion.explodeBOM(line.itemId(), quantity);
         if (exploded.getFlatMaterials() == null || exploded.getFlatMaterials().isEmpty()) {
             throw ProductionSupport.badRequest("An approved BOM is required to create a production job");
         }
@@ -329,7 +353,48 @@ public class ProductionJobService {
     private record RoutingTemplate(UUID id, String version, String status, UUID itemId) {}
 
     private record StageSeed(int seq, String name, String code, UUID configId, boolean inspection,
-                             UUID templateId, boolean optional, String workCentre) {}
+                             UUID templateId, boolean optional, String workCentre, UUID assetId) {}
+
+    private record StageOption(UUID id, String label) {}
+
+    private StageOption resolveStage(UUID tenantId, RoutingStageRequest stage) {
+        if (stage.stageConfigOptionId() != null) {
+            StageOption option = jdbc.query("""
+                    SELECT o.id, o.label FROM tenant_config_options o
+                    JOIN config_categories c ON c.id = o.category_id
+                    WHERE o.tenant_id = ? AND o.id = ? AND c.code = 'PRODUCTION_STAGES' AND o.is_active
+                    """, rs -> rs.next() ? new StageOption(rs.getObject("id", UUID.class), rs.getString("label")) : null,
+                    tenantId, stage.stageConfigOptionId());
+            if (option == null) {
+                throw ProductionSupport.badRequest("Production stage is not a configured activity for this tenant");
+            }
+            return option;
+        }
+        StageOption matched = jdbc.query("""
+                SELECT o.id, o.label FROM tenant_config_options o
+                JOIN config_categories c ON c.id = o.category_id
+                WHERE o.tenant_id = ? AND c.code = 'PRODUCTION_STAGES' AND o.is_active
+                  AND lower(o.label) = lower(?)
+                """, rs -> rs.next() ? new StageOption(rs.getObject("id", UUID.class), rs.getString("label")) : null,
+                tenantId, stage.name().trim());
+        return matched == null ? new StageOption(null, stage.name().trim()) : matched;
+    }
+
+    private void requireAssetCapability(UUID tenantId, UUID assetId, UUID stageOptionId) {
+        if (assetId == null) {
+            return;
+        }
+        if (stageOptionId == null) {
+            throw ProductionSupport.badRequest("Select a configured production stage before assigning an asset");
+        }
+        Integer count = jdbc.queryForObject("""
+                SELECT COUNT(*) FROM asset_capabilities
+                WHERE tenant_id = ? AND asset_id = ? AND stage_option_id = ?
+                """, Integer.class, tenantId, assetId, stageOptionId);
+        if (count == null || count == 0) {
+            throw ProductionSupport.badRequest("The selected asset does not support this production stage");
+        }
+    }
 
     private record ItemCost(UUID uomId, BigDecimal stdCost) {}
 }

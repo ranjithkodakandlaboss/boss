@@ -246,7 +246,7 @@ public class JobStageService {
     private void requireMachineAvailable(UUID tenantId, UUID jobId, UUID stageId) {
         List<String> centres = jdbc.query("SELECT work_centre FROM job_stages WHERE tenant_id = ? AND id = ?",
                 (rs, i) -> rs.getString(1), tenantId, stageId);
-        String blocker = maintenance.machineBlocker(tenantId, jobId, centres.isEmpty() ? null : centres.get(0));
+        String blocker = maintenance.machineBlocker(tenantId, jobId, stageId, centres.isEmpty() ? null : centres.get(0));
         if (blocker != null) {
             throw ProductionSupport.conflict("Machine unavailable: open breakdown " + blocker
                     + " blocks this job. Close the maintenance event before starting the stage.");

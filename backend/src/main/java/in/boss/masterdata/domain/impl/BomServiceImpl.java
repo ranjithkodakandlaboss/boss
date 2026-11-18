@@ -78,6 +78,19 @@ public class BomServiceImpl implements BomService {
 
     @Override
     @Transactional(readOnly = true)
+    public List<BOMHeaderDto> list() {
+        UUID tenantId = getTenantId();
+        return bomHeaderRepository.findByTenantIdOrderByCreatedAtDesc(tenantId).stream()
+                .map(header -> {
+                    ItemEntity item = itemRepository.findByIdAndTenantId(header.getFinishedItemId(), tenantId)
+                            .orElse(null);
+                    return buildHeaderDto(header, item, tenantId);
+                })
+                .toList();
+    }
+
+    @Override
+    @Transactional(readOnly = true)
     public BOMHeaderDto getItemBOM(UUID itemId) {
         UUID tenantId = getTenantId();
 
@@ -322,11 +335,11 @@ public class BomServiceImpl implements BomService {
 
         return BOMHeaderDto.builder()
                 .id(header.getId())
-                .itemId(item.getId())
-                .itemCode(item.getCode())
-                .itemName(item.getName())
+                .itemId(item != null ? item.getId() : header.getFinishedItemId())
+                .itemCode(item != null ? item.getCode() : null)
+                .itemName(item != null ? item.getName() : null)
                 .version(versionInt)
-                .status("approved".equalsIgnoreCase(header.getStatus()) ? "active" : header.getStatus())
+                .status(header.getStatus())
                 .lines(lineDtos)
                 .build();
     }

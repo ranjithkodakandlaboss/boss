@@ -22,6 +22,10 @@ public interface InventoryService {
 
     MaterialLotResponse createLot(CreateLotRequest request);
 
+    default MaterialLotResponse createLot(CreateLotRequest request, String preferredLotNumber) {
+        return createLot(request);
+    }
+
     StockMovementResponse addMovement(UUID lotId, AddMovementRequest request);
 
     ReservationResponse reserveForJob(ReservationRequest request, boolean allowPartial);

@@ -22,13 +22,13 @@ class QuotationPdfTest {
         QuotationLineResponse line = new QuotationLineResponse(
                 UUID.randomUUID(), UUID.randomUUID(), "SHAFT-01", "Drive shaft",
                 new BigDecimal("4"), UUID.randomUUID(), "NOS", new BigDecimal("1250"),
-                new BigDecimal("5000.00"), 2, new BigDecimal("18"), null, "DWG-440", "A", "Drive shaft");
+                new BigDecimal("5000.00"), 2, new BigDecimal("18"), null, "DWG-440", "A", "Drive shaft", null);
         QuotationResponse quotation = new QuotationResponse(
                 UUID.randomUUID(), "QT-20261117-B4857772", UUID.randomUUID(), UUID.randomUUID(),
                 "North Works", 2, "accepted", LocalDate.of(2026, 12, 1), List.of(line), List.of(), Instant.parse("2026-11-17T06:31:24Z"),
                 30, "Ex works", "Ship with material certificate", BigDecimal.ZERO, "OWNER_RECORDED",
                 "Accepted by phone", UUID.randomUUID(), Instant.parse("2026-11-17T06:31:24Z"),
-                UUID.randomUUID(), "CPO-20261117-D97F131E", "RFQ-20261117-F423026D", List.of());
+                UUID.randomUUID(), "CPO-20261117-D97F131E", "RFQ-20261117-F423026D", List.of(), "Net 30 days");
         Party seller = new Party("Cursor Journey One Manufacturing", "Plant 1", "Pune", "Maharashtra",
                 "27AAAAA0000A1Z5", "AAAAA0000A", "owner@example.com", "9800000000", "");
         Party buyer = new Party("North Works Private Limited", "12 Industrial Estate", "Pune", "Maharashtra",

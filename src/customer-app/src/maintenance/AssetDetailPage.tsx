@@ -53,7 +53,7 @@ export function AssetDetailPage() {
   const [editing, setEditing] = useState(false);
   const [logEvent, setLogEvent] = useState(false);
   const [readingOpen, setReadingOpen] = useState(false);
-  const [readingForm, setReadingForm] = useState({ reading: "", readingType: "manual", notes: "" });
+  const [readingForm, setReadingForm] = useState({ reading: "", readingType: "routine", notes: "" });
 
   const load = useCallback(() => {
     setError("");
@@ -92,7 +92,7 @@ export function AssetDetailPage() {
     e.preventDefault(); setActionError("");
     try {
       await logReading(id, { reading: Number(readingForm.reading), readingType: readingForm.readingType, notes: readingForm.notes || undefined });
-      setReadingOpen(false); setReadingForm({ reading: "", readingType: "manual", notes: "" }); load();
+      setReadingOpen(false); setReadingForm({ reading: "", readingType: "routine", notes: "" }); load();
     } catch (err) { setActionError(err instanceof ApiError ? err.message : "Could not log the reading."); }
   }
 
@@ -103,6 +103,7 @@ export function AssetDetailPage() {
         <div className="flex items-center gap-3">
           <h1 className="text-lg font-bold">{asset.assetCode} — {asset.name}</h1>
           <StatusChip status={asset.status} label={options.ASSET_STATUS?.find((o) => o.code === asset.status)?.label} />
+          {due.status === "overdue" && <span className="text-xs font-semibold" style={{ color: "var(--error)" }}>Service overdue</span>}
         </div>
         {canManage && asset.status !== "retired" && (
           <div className="flex gap-2 text-xs">
@@ -132,6 +133,7 @@ export function AssetDetailPage() {
           <Info label="Meter" value={asset.currentReading != null ? `${asset.currentReading} ${asset.meterType}` : null} />
           <Info label="Last service" value={displayDate(asset.lastServiceDate)} /><Info label="Next service" value={displayDate(due.nextDueDate ?? asset.nextServiceDate)} />
           <Info label="Responsible" value={asset.responsiblePerson} />
+          <Info label="Supported stages" value={(asset.capabilities ?? []).map((item) => item.stageLabel).join(", ") || "None"} />
           {asset.archiveReason && <Info label="Archive reason" value={asset.archiveReason} />}
         </div>
       )}
@@ -182,7 +184,10 @@ export function AssetDetailPage() {
           <Field label={`Reading (${asset.meterType})`}><input aria-label="Reading" type="number" required className="eoss-input w-full" value={readingForm.reading} onChange={(e) => setReadingForm({ ...readingForm, reading: e.target.value })} /></Field>
           <Field label="Type">
             <select aria-label="Reading type" className="eoss-input w-full" value={readingForm.readingType} onChange={(e) => setReadingForm({ ...readingForm, readingType: e.target.value })}>
-              <option value="manual">Manual</option><option value="correction">Correction</option>
+              <option value="routine">Routine</option>
+              <option value="shift-end">Shift end</option>
+              <option value="post-maintenance">Post maintenance</option>
+              <option value="correction">Correction</option>
             </select>
           </Field>
           <Field label="Notes"><input aria-label="Reading notes" className="eoss-input w-full" value={readingForm.notes} onChange={(e) => setReadingForm({ ...readingForm, notes: e.target.value })} /></Field>

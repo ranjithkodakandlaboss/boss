@@ -3,6 +3,13 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { Plus, AlertTriangle, Search, X, Pencil, Trash2, Send, Scale, Sparkles, CheckCircle2 } from 'lucide-react';
 import { useStore } from './runtime';
+
+function shownDate(value) {
+  if (!value) return '—';
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(value));
+  const date = match ? new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3])) : new Date(value);
+  return Number.isNaN(date.getTime()) ? '—' : date.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
+}
 import StatusChip, { getStatusLabel } from '../../components/shared/StatusChip';
 import type { PurchaseRequisition, SupplierPO, SupplierQuotation } from './types';
 import { compareAndRecommendQuotations } from './quotationComparison';
@@ -258,9 +265,9 @@ export default function Procurement() {
                     {p.supplierName}
                     <div className="text-[11px] font-normal text-[var(--text-3)]">{placeLabel(p.deliverToSiteName, p.deliverToStoreName)}</div>
                   </td>
-                  <td className="px-4 py-3 text-xs" style={{ color: 'var(--text-2)' }}>{new Date(p.raisedDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}</td>
+                  <td className="px-4 py-3 text-xs" style={{ color: 'var(--text-2)' }}>{shownDate(p.raisedDate)}</td>
                   <td className="px-4 py-3 text-xs" style={{ color: p.status === 'overdue' ? 'var(--error,#DC2626)' : 'var(--text-2)', fontWeight: p.status === 'overdue' ? 600 : undefined }}>
-                    {p.committedDate ? new Date(p.committedDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : '—'}
+                    {shownDate(p.committedDate)}
                   </td>
                   <td className="px-4 py-3 text-sm text-center" style={{ color: 'var(--text-2)' }}>{p.lineCount}</td>
                   <td className="px-4 py-3 font-mono text-sm font-semibold" style={{ color: 'var(--text)' }}>₹{(p.totalValue / 1000).toFixed(1)}k</td>
@@ -317,8 +324,8 @@ export default function Procurement() {
                     {pr.raisedBy}
                     <div className="text-[11px] text-[var(--text-3)]">{placeLabel(pr.deliverToSiteName, pr.deliverToStoreName)}</div>
                   </td>
-                  <td className="px-4 py-3 text-xs" style={{ color: 'var(--text-2)' }}>{new Date(pr.raisedDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}</td>
-                  <td className="px-4 py-3 text-xs" style={{ color: 'var(--text-2)' }}>{new Date(pr.requiredBy).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}</td>
+                  <td className="px-4 py-3 text-xs" style={{ color: 'var(--text-2)' }}>{shownDate(pr.raisedDate)}</td>
+                  <td className="px-4 py-3 text-xs" style={{ color: 'var(--text-2)' }}>{shownDate(pr.requiredBy)}</td>
                   <td className="px-4 py-3 text-xs" style={{ color: 'var(--text-2)' }}>{pr.department || 'Production'}</td>
                   <td className="px-4 py-3 text-sm text-center" style={{ color: 'var(--text-2)' }}>{pr.lineCount}</td>
                   <td className="px-4 py-3"><StatusChip status={pr.priority} /></td>
@@ -364,7 +371,7 @@ export default function Procurement() {
                   <td className="px-4 py-3 font-mono text-xs" onClick={e => e.stopPropagation()}>
                     <button type="button" onClick={() => openWithOrigin(`/procurement/spo/${g.spoId}`)} className="text-[var(--brand)] hover:underline">{g.spoNumber}</button>
                   </td>
-                  <td className="px-4 py-3 text-xs" style={{ color: 'var(--text-2)' }}>{new Date(g.receivedDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}</td>
+                  <td className="px-4 py-3 text-xs" style={{ color: 'var(--text-2)' }}>{shownDate(g.receivedDate)}</td>
                   <td className="px-4 py-3 text-xs" style={{ color: 'var(--text-2)' }}>{g.receivedBy}</td>
                   <td className="px-4 py-3 font-mono text-xs" style={{ color: 'var(--text-2)' }}>{g.deliveryChallan}</td>
                   <td className="px-4 py-3"><StatusChip status={g.status} /></td>
@@ -525,8 +532,8 @@ export default function Procurement() {
                               <span className="text-[var(--text-3)]">{q.prNumber || '—'}</span>
                             )}
                           </td>
-                          <td className="text-xs" style={{ color: 'var(--text-2)' }}>{new Date(q.quoteDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}</td>
-                          <td className="text-xs" style={{ color: 'var(--text-2)' }}>{new Date(q.validUntil).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}</td>
+                          <td className="text-xs" style={{ color: 'var(--text-2)' }}>{shownDate(q.quoteDate)}</td>
+                          <td className="text-xs" style={{ color: 'var(--text-2)' }}>{shownDate(q.validUntil)}</td>
                           <td className="text-xs" style={{ color: 'var(--text-2)' }}>{q.deliveryDays} days</td>
                           <td className="text-xs" style={{ color: 'var(--text-2)' }}>{q.paymentTerms}</td>
                           <td className="font-mono text-sm font-semibold" style={{ color: 'var(--text)' }}>₹{(total / 1000).toFixed(1)}k</td>
@@ -682,7 +689,7 @@ export default function Procurement() {
                           )}
                           <span className="text-[11px] px-2 py-0.5 rounded bg-[var(--surface-2)] text-[var(--text-2)]">{a.requestType}</span>
                         </div>
-                        <div className="text-xs mt-0.5" style={{ color: 'var(--text-3)' }}>{a.requestedBy} · {new Date(a.requestedAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })} · {a.siteName ?? 'Company-wide / unassigned'}</div>
+                        <div className="text-xs mt-0.5" style={{ color: 'var(--text-3)' }}>{a.requestedBy} · {shownDate(a.requestedAt)} · {a.siteName ?? 'Company-wide / unassigned'}</div>
                         {a.description && <div className="text-xs mt-1" style={{ color: 'var(--text-2)' }}>{a.description}</div>}
                         {rejectionText && (
                           <div className="text-xs mt-1.5 px-2.5 py-1.5 rounded-lg bg-red-50 border border-red-200 text-red-800">
