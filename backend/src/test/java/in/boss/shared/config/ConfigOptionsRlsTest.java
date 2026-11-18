@@ -87,15 +87,21 @@ class ConfigOptionsRlsTest {
     }
 
     private void setTenant(UUID tenantId) {
+        setTenant(tenantId, Set.of("OWNER"));
+    }
+
+    private void setTenant(UUID tenantId, Set<String> roles) {
         String firebaseUid = "uid-" + tenantId + "-" + UUID.randomUUID();
-        BossContextHolder.set(new BossContext(tenantId, null, Set.of("OWNER"), null, firebaseUid));
+        BossContextHolder.set(new BossContext(tenantId, null, roles, null, firebaseUid));
         UUID userId = UUID.fromString(jdbc.queryForObject(
                 "INSERT INTO app_users (tenant_id, firebase_uid, email, display_name) "
                         + "VALUES (?, ?, ?, 'Config test user') RETURNING id::text",
                 String.class, tenantId, firebaseUid, firebaseUid + "@example.test"));
-        BossContextHolder.set(new BossContext(tenantId, userId, Set.of("OWNER"), null, firebaseUid));
+        BossContextHolder.set(new BossContext(tenantId, userId, roles, null, firebaseUid));
         var auth = new UsernamePasswordAuthenticationToken(
-                firebaseUid, null, List.of(new SimpleGrantedAuthority("ROLE_OWNER")));
+                firebaseUid, null, roles.stream()
+                        .map(role -> new SimpleGrantedAuthority("ROLE_" + role))
+                        .toList());
         SecurityContextHolder.getContext().setAuthentication(auth);
     }
 
@@ -184,6 +190,31 @@ class ConfigOptionsRlsTest {
                 .extracting(ConfigOptionDto::isActive).isEqualTo(false);
         assertThat(options.stream().filter(option -> !option.isSystem()).map(ConfigOptionDto::id).toList())
                 .containsExactlyElementsOf(reordered);
+    }
+
+    @Test
+    void dispatchRolesCanCreateOnlyDispatchOptionsAndCannotEditLabels() {
+        jdbc.update("""
+                INSERT INTO config_categories (code, name, scope) VALUES
+                  ('CARRIER', 'Carriers', 'tenant'),
+                  ('VEHICLE', 'Vehicles', 'tenant')
+                ON CONFLICT (code) DO NOTHING
+                """);
+
+        setTenant(tenantA, Set.of("OPS_MANAGER"));
+        ConfigOptionDto carrier = configService.createOption("CARRIER", "LOCAL_CARRIER", "Local carrier", 10);
+        assertThat(carrier.label()).isEqualTo("Local carrier");
+        assertThatThrownBy(() -> configService.createOption("PAYMENT_MODES",
+                "UNAUTHORIZED_MODE", "Unauthorized mode", 10))
+                .isInstanceOf(org.springframework.web.server.ResponseStatusException.class)
+                .hasMessageContaining("Only owners");
+        assertThatThrownBy(() -> configService.updateOption("CARRIER", carrier.id(), "Renamed carrier"))
+                .isInstanceOf(org.springframework.web.server.ResponseStatusException.class)
+                .hasMessageContaining("Only owners");
+
+        setTenant(tenantB, Set.of("STORE_KEEPER"));
+        ConfigOptionDto vehicle = configService.createOption("VEHICLE", "LOCAL_VEHICLE", "Local vehicle", 10);
+        assertThat(vehicle.label()).isEqualTo("Local vehicle");
     }
 
     @Test

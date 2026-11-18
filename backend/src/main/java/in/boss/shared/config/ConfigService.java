@@ -3,6 +3,7 @@ package in.boss.shared.config;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import in.boss.shared.audit.AuditService;
+import in.boss.shared.context.BossContext;
 import in.boss.shared.context.BossContextHolder;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -19,10 +20,12 @@ import java.util.concurrent.ConcurrentHashMap;
  *
  * Reads from tenant_config_options joined to config_categories.
  * Returns active options for the current tenant, ordered by sort_order.
- * Write operations are OWNER-only (see BossPermissions.CONFIG_WRITE).
+ * General configuration writes are OWNER-only; dispatch options have limited write access.
  */
 @Service
 public class ConfigService {
+
+    private static final Set<String> DISPATCH_OPTION_CATEGORIES = Set.of("CARRIER", "VEHICLE");
 
     private final JdbcTemplate jdbc;
     private final AuditService audit;
@@ -70,13 +73,14 @@ public class ConfigService {
         return getOptions(categoryCode, false);
     }
 
-    @PreAuthorize("hasRole('OWNER')")
+    @PreAuthorize("hasAnyRole('OWNER','OPS_MANAGER','STORE_KEEPER')")
     @Transactional
     public ConfigOptionDto createOption(String categoryCode, String code,
                                         String label, int sortOrder) {
         var ctx = BossContextHolder.get();
         if (ctx == null) throw new IllegalStateException("BossContext required");
 
+        requireOptionCreatePermission(ctx, categoryCode);
         requireTenantEditable(categoryCode);
         if (code == null || code.isBlank() || label == null || label.isBlank()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Code and label are required");
@@ -124,11 +128,12 @@ public class ConfigService {
         return created;
     }
 
-    @PreAuthorize("hasRole('OWNER')")
+    @PreAuthorize("hasAnyRole('OWNER','OPS_MANAGER','STORE_KEEPER')")
     @Transactional
     public ConfigOptionDto updateOption(String categoryCode, UUID optionId, String label) {
         var ctx = BossContextHolder.get();
         if (ctx == null) throw new IllegalStateException("BossContext required");
+        requireOwner(ctx);
         requireTenantEditable(categoryCode);
         if (label == null || label.isBlank()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Label is required");
@@ -295,6 +300,26 @@ public class ConfigService {
         if ("system".equals(scopes.get(0))) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN,
                     "System-controlled categories cannot be changed by tenants");
+        }
+    }
+
+    private static void requireOptionCreatePermission(BossContext context, String categoryCode) {
+        if (context.hasRole("OWNER")) {
+            return;
+        }
+        String normalizedCategory = categoryCode == null ? "" : categoryCode.toUpperCase(Locale.ROOT);
+        if (context.hasAnyRole("OPS_MANAGER", "STORE_KEEPER")
+                && DISPATCH_OPTION_CATEGORIES.contains(normalizedCategory)) {
+            return;
+        }
+        throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+                "Only owners may create options outside dispatch categories");
+    }
+
+    private static void requireOwner(BossContext context) {
+        if (!context.hasRole("OWNER")) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+                    "Only owners may edit configuration options");
         }
     }
 
