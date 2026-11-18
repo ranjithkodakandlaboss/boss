@@ -206,8 +206,8 @@ class MaintenanceFollowUpIntegrationTest extends BaseMasterDataIntegrationTest {
     @Test
     void eventNotesAndClosureDetailsArePersistedWhenCompletedAtCreation() {
         AssetResponse asset = maintenance.createAsset(asset("LTH-N", siteA, "CNC Bay"));
-        Instant down = Instant.now().minus(5, ChronoUnit.HOURS);
-        Instant done = Instant.now().minus(1, ChronoUnit.HOURS);
+        Instant down = micros(Instant.now().minus(5, ChronoUnit.HOURS));
+        Instant done = micros(Instant.now().minus(1, ChronoUnit.HOURS));
         EventResponse e = maintenance.createEvent(new EventRequest(asset.id(), "Breakdown", "High", "Overheating",
                 null, "Acme Contractors", null, null, down, null, done, List.of(), "Cleaned filter", "Watch temp",
                 "Clogged filter", "Replaced filter", "Closed after test run", "Filter x1"));
@@ -220,7 +220,7 @@ class MaintenanceFollowUpIntegrationTest extends BaseMasterDataIntegrationTest {
         assertThat(e.workDone()).isEqualTo("Replaced filter");
         assertThat(e.resolutionNotes()).isEqualTo("Closed after test run");
         assertThat(e.partsUsed()).isEqualTo("Filter x1");
-        assertThat(e.completionDate()).isEqualTo(done.truncatedTo(ChronoUnit.MICROS));
+        assertThat(e.completionDate()).isEqualTo(done);
     }
 
     @Test
@@ -230,15 +230,20 @@ class MaintenanceFollowUpIntegrationTest extends BaseMasterDataIntegrationTest {
         assertStatus(() -> maintenance.markRepaired(asset.id(), new RepairRequest(null, "x", "y", null)), HttpStatus.BAD_REQUEST);
         assertStatus(() -> maintenance.markRepaired(asset.id(),
                 new RepairRequest(Instant.now().minus(1, ChronoUnit.HOURS), " ", "y", null)), HttpStatus.BAD_REQUEST);
-        Instant done = Instant.now().minus(30, ChronoUnit.MINUTES);
+        Instant done = micros(Instant.now().minus(30, ChronoUnit.MINUTES));
         maintenance.markRepaired(asset.id(), new RepairRequest(done, "Worn bearing", "Replaced bearing", "Test run ok"));
         EventResponse closed = maintenance.getEvent(e.id());
         assertThat(closed.status()).isEqualTo("closed");
-        assertThat(closed.completionDate()).isEqualTo(done.truncatedTo(ChronoUnit.MICROS));
+        assertThat(closed.completionDate()).isEqualTo(done);
         assertThat(closed.rootCause()).isEqualTo("Worn bearing");
         assertThat(closed.workDone()).isEqualTo("Replaced bearing");
         assertThat(closed.resolutionNotes()).isEqualTo("Test run ok");
         assertThat(maintenance.getAsset(asset.id()).status()).isEqualTo("operational");
         assertThat(maintenance.assetActivity(asset.id())).isNotNull();
+    }
+
+    /** PostgreSQL timestamptz stores microseconds and rounds. A finer instant can come back one microsecond later. */
+    private static Instant micros(Instant instant) {
+        return instant.truncatedTo(ChronoUnit.MICROS);
     }
 }
