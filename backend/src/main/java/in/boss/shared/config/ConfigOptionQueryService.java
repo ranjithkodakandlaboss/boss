@@ -50,7 +50,7 @@ public class ConfigOptionQueryService {
     private List<ConfigOptionDto> loadOptions(UUID tenantId, String categoryCode, boolean includeInactive) {
         if ("ITEM_CATEGORY".equalsIgnoreCase(categoryCode)) {
             return jdbc.query(
-                    "SELECT id, code, name AS label, 0 AS sort_order, is_system, is_active "
+                    "SELECT id, code, name AS label, 0 AS sort_order, is_system, is_active, description "
                     + "FROM item_categories "
                     + "WHERE tenant_id = ? " + (includeInactive ? "" : "AND is_active = true ")
                     + "ORDER BY name",
@@ -61,7 +61,8 @@ public class ConfigOptionQueryService {
                             rs.getString("label"),
                             rs.getInt("sort_order"),
                             rs.getBoolean("is_system"),
-                            rs.getBoolean("is_active")),
+                            rs.getBoolean("is_active"),
+                            rs.getString("description") == null ? "" : rs.getString("description")),
                     tenantId);
         }
 

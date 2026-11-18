@@ -72,13 +72,7 @@ describe("configuration options admin", () => {
     expect(await screen.findByText("Bank transfer")).toBeInTheDocument();
     expect(screen.getByText("Protected")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Edit Cash" })).not.toBeInTheDocument();
-
-    await userEvent.click(screen.getByRole("button", { name: "Deactivate Cash" }));
-    const systemDialog = screen.getByRole("dialog");
-    await userEvent.click(within(systemDialog).getByRole("button", { name: "Deactivate value" }));
-    await waitFor(() => {
-      expect(vi.mocked(fetch).mock.calls.some(([input, init]) => String(input).includes("/system-cash/status") && init?.method === "PATCH")).toBe(true);
-    });
+    expect(screen.queryByRole("button", { name: "Deactivate Cash" })).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: "Edit Bank transfer" }));
     const labelInput = screen.getByRole("textbox", { name: "Display value" });
@@ -112,5 +106,21 @@ describe("configuration options admin", () => {
       expect(vi.mocked(fetch).mock.calls.some(([input, init]) => String(input).endsWith("/config/options/PAYMENT_MODES/order")
         && init?.method === "PUT")).toBe(true);
     });
+  });
+
+  it("shows dependency details when deactivation is rejected", async () => {
+    const fetcher = vi.mocked(fetch);
+    const original = fetcher.getMockImplementation();
+    fetcher.mockImplementation((input, init) => {
+      if (String(input).includes("/bank/status") && init?.method === "PATCH") {
+        return Promise.resolve(new Response(JSON.stringify({ detail: "Cannot deactivate category used by 1 active item" }), { status: 409 }));
+      }
+      if (!original) throw new Error("Missing fetch mock");
+      return original(input, init);
+    });
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "Deactivate Bank transfer" }));
+    await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Deactivate value" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("1 active item");
   });
 });

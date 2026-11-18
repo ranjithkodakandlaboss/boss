@@ -4,6 +4,8 @@ import com.google.firebase.FirebaseApp;
 import com.google.firebase.auth.FirebaseAuth;
 import in.boss.shared.context.BossContext;
 import in.boss.shared.context.BossContextHolder;
+import in.boss.masterdata.domain.ItemCategoryService;
+import in.boss.masterdata.domain.LifecycleException;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -17,6 +19,8 @@ import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import org.springframework.web.context.WebApplicationContext;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -27,6 +31,9 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
  * CI-gated test verifying Row-Level Security on tenant_config_options and
@@ -56,6 +63,8 @@ class ConfigOptionsRlsTest {
     @Autowired JdbcTemplate jdbc;
     @Autowired ConfigService configService;
     @Autowired IndustryTemplateService industryTemplateService;
+    @Autowired ItemCategoryService itemCategoryService;
+    @Autowired WebApplicationContext webContext;
 
     static UUID tenantA;
     static UUID tenantB;
@@ -254,26 +263,30 @@ class ConfigOptionsRlsTest {
     }
 
     @Test
-    void tenantCanDeactivateAndReactivateSystemOptionWithoutChangingItsDefinition() {
+    void tenantCannotDeactivateSystemOptions() {
         setTenant(tenantA);
         industryTemplateService.seedTenantDefaults(tenantA, "FABRICATION_STEEL");
         ConfigOptionDto protectedOption = configService.getOptions("PRODUCTION_STAGES").get(0);
 
         assertThat(protectedOption.isSystem()).isTrue();
-        configService.setOptionActive("PRODUCTION_STAGES", protectedOption.id(), false);
-        ConfigOptionDto deactivated = configService.getOptions("PRODUCTION_STAGES", true).stream()
-                .filter(option -> option.id().equals(protectedOption.id())).findFirst().orElseThrow();
-        assertThat(deactivated.isActive()).isFalse();
-        assertThat(deactivated.isSystem()).isTrue();
-        assertThat(deactivated.label()).isEqualTo(protectedOption.label());
+        assertThatThrownBy(() -> configService.setOptionActive("PRODUCTION_STAGES", protectedOption.id(), false))
+                .isInstanceOf(org.springframework.web.server.ResponseStatusException.class)
+                .hasMessageContaining("System-controlled");
+        assertThat(configService.getOptions("PRODUCTION_STAGES"))
+                .anyMatch(option -> option.id().equals(protectedOption.id()));
 
-        configService.setOptionActive("PRODUCTION_STAGES", protectedOption.id(), true);
-        assertThat(configService.getOptions("PRODUCTION_STAGES").stream()
-                .filter(option -> option.id().equals(protectedOption.id())).findFirst().orElseThrow().isActive()).isTrue();
+        ConfigOptionDto category = configService.getOptions("ITEM_CATEGORY").stream()
+                .filter(ConfigOptionDto::isSystem).findFirst().orElseThrow();
+        assertThatThrownBy(() -> configService.setOptionActive("ITEM_CATEGORY", category.id(), false))
+                .isInstanceOf(org.springframework.web.server.ResponseStatusException.class)
+                .hasMessageContaining("System-controlled");
+        assertThatThrownBy(() -> itemCategoryService.deleteCategory(category.id()))
+                .isInstanceOf(LifecycleException.class)
+                .hasMessageContaining("System-controlled");
     }
 
     @Test
-    void referencedItemCategoryCanBeDeactivatedButCannotBeRenamed() {
+    void activeItemBlocksDeactivationButInactiveHistoryIsPreserved() {
         setTenant(tenantB);
         ConfigOptionDto category = configService.createOption("ITEM_CATEGORY", "USED_CATEGORY", "Used Category", 10);
         UUID uomId = UUID.fromString(jdbc.queryForObject(
@@ -288,6 +301,11 @@ class ConfigOptionsRlsTest {
         assertThatThrownBy(() -> configService.updateOption("ITEM_CATEGORY", category.id(), "Renamed"))
                 .isInstanceOf(org.springframework.web.server.ResponseStatusException.class)
                 .hasMessageContaining("Item-category labels cannot be changed");
+        assertThatThrownBy(() -> configService.setOptionActive("ITEM_CATEGORY", category.id(), false))
+                .isInstanceOf(org.springframework.web.server.ResponseStatusException.class)
+                .hasMessageContaining("1 active item");
+        jdbc.update("UPDATE items SET is_active = FALSE WHERE tenant_id = ? AND category_id = ?",
+                tenantB, category.id());
         configService.setOptionActive("ITEM_CATEGORY", category.id(), false);
         ConfigOptionDto deactivated = configService.getOptions("ITEM_CATEGORY", true).stream()
                 .filter(option -> option.id().equals(category.id())).findFirst().orElseThrow();
@@ -295,5 +313,41 @@ class ConfigOptionsRlsTest {
         assertThat(deactivated.label()).isEqualTo("Used Category");
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM items WHERE tenant_id = ? AND category_id = ?",
                 Integer.class, tenantB, category.id())).isEqualTo(1);
+    }
+
+    @Test
+    void activeChildrenBlockDeactivationAndCannotReactivateUnderInactiveParent() {
+        setTenant(tenantA);
+        ConfigOptionDto parent = configService.createOption("ITEM_CATEGORY", "PARENT_GUARD", "Parent guard", 10);
+        ConfigOptionDto child = configService.createOption("ITEM_CATEGORY", "CHILD_GUARD", "Child guard", 10);
+        jdbc.update("UPDATE item_categories SET parent_id = ? WHERE id = ? AND tenant_id = ?",
+                parent.id(), child.id(), tenantA);
+        assertThatThrownBy(() -> configService.setOptionActive("ITEM_CATEGORY", parent.id(), false))
+                .isInstanceOf(org.springframework.web.server.ResponseStatusException.class)
+                .hasMessageContaining("1 active child category");
+        configService.setOptionActive("ITEM_CATEGORY", child.id(), false);
+        configService.setOptionActive("ITEM_CATEGORY", parent.id(), false);
+        assertThatThrownBy(() -> configService.setOptionActive("ITEM_CATEGORY", child.id(), true))
+                .isInstanceOf(org.springframework.web.server.ResponseStatusException.class)
+                .hasMessageContaining("inactive or unavailable parent");
+        setTenant(tenantB);
+        assertThatThrownBy(() -> configService.setOptionActive("ITEM_CATEGORY", parent.id(), true))
+                .isInstanceOf(org.springframework.web.server.ResponseStatusException.class)
+                .hasMessageContaining("Configuration option not found");
+    }
+
+    @Test
+    void itemCategoryOptionsEndpointIncludesProtectedAndInactiveMetadata() throws Exception {
+        setTenant(tenantA);
+        ConfigOptionDto category = configService.createOption("ITEM_CATEGORY", "ENDPOINT_GUARD", "Endpoint guard", 10);
+        jdbc.update("UPDATE item_categories SET description = 'Example category' WHERE id = ?", category.id());
+        configService.setOptionActive("ITEM_CATEGORY", category.id(), false);
+        MockMvcBuilders.webAppContextSetup(webContext).build()
+                .perform(get("/api/v1/config/options/ITEM_CATEGORY").param("includeInactive", "true"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[?(@.code == 'ENDPOINT_GUARD')].isActive").value(org.hamcrest.Matchers.contains(false)))
+                .andExpect(jsonPath("$[?(@.code == 'ENDPOINT_GUARD')].isSystem").value(org.hamcrest.Matchers.contains(false)))
+                .andExpect(jsonPath("$[?(@.code == 'ENDPOINT_GUARD')].description")
+                        .value(org.hamcrest.Matchers.contains("Example category")));
     }
 }
