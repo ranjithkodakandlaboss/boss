@@ -15,6 +15,8 @@ import org.springframework.web.server.ResponseStatusException;
 import java.math.BigDecimal;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Timestamp;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
@@ -58,11 +60,11 @@ public class QualityService {
                 LEFT JOIN production_jobs pj ON pj.id = qi.reference_id AND pj.tenant_id = qi.tenant_id
                      AND qi.reference_type IN ('production_job')
                 WHERE qi.tenant_id = ?
-                  AND (? IS NULL OR qi.inspection_type = ?)
-                  AND (? IS NULL OR qi.status = ?)
-                  AND (? IS NULL OR qi.inspection_number ILIKE '%' || ? || '%'
-                       OR i.name ILIKE '%' || ? || '%'
-                       OR i.code ILIKE '%' || ? || '%')
+                  AND (CAST(? AS text) IS NULL OR qi.inspection_type = CAST(? AS text))
+                  AND (CAST(? AS text) IS NULL OR qi.status = CAST(? AS text))
+                  AND (CAST(? AS text) IS NULL OR qi.inspection_number ILIKE '%' || CAST(? AS text) || '%'
+                       OR i.name ILIKE '%' || CAST(? AS text) || '%'
+                       OR i.code ILIKE '%' || CAST(? AS text) || '%')
                 ORDER BY qi.created_at DESC
                 LIMIT 500
                 """,
@@ -125,8 +127,8 @@ public class QualityService {
                             rs.getString("template_name"),
                             responses,
                             ncrs,
-                            rs.getObject("created_at", java.time.Instant.class),
-                            rs.getObject("updated_at", java.time.Instant.class));
+                            instant(rs, "created_at"),
+                            instant(rs, "updated_at"));
                 },
                 ctx.tenantId(), inspectionId);
         if (rows.isEmpty()) {
@@ -205,8 +207,7 @@ public class QualityService {
                 request.notes(),
                 ctx.tenantId(), inspectionId);
 
-        if ("fail".equals(result) && "job_stage".equals(current.referenceType())
-                && listNcrsForInspection(ctx.tenantId(), inspectionId).isEmpty()) {
+        if ("fail".equals(result) && listNcrsForInspection(ctx.tenantId(), inspectionId).isEmpty()) {
             createNcrForFailedInspection(ctx, current, rejected);
         }
 
@@ -253,14 +254,14 @@ public class QualityService {
                 FROM ncrs n
                 LEFT JOIN items i ON i.id = n.item_id AND i.tenant_id = n.tenant_id
                 LEFT JOIN app_users au ON au.id = n.raised_by
-                LEFT JOIN config_options co ON co.id = n.defect_category_id
+                LEFT JOIN tenant_config_options co ON co.id = n.defect_category_id AND co.tenant_id = n.tenant_id
                 LEFT JOIN concessions c ON c.ncr_id = n.id AND c.tenant_id = n.tenant_id
                 WHERE n.tenant_id = ?
-                  AND (? IS NULL OR n.status = ?)
-                  AND (? IS NULL OR n.ncr_number ILIKE '%' || ? || '%'
-                       OR i.name ILIKE '%' || ? || '%'
-                       OR i.code ILIKE '%' || ? || '%'
-                       OR n.defect_description ILIKE '%' || ? || '%')
+                  AND (CAST(? AS text) IS NULL OR n.status = CAST(? AS text))
+                  AND (CAST(? AS text) IS NULL OR n.ncr_number ILIKE '%' || CAST(? AS text) || '%'
+                       OR i.name ILIKE '%' || CAST(? AS text) || '%'
+                       OR i.code ILIKE '%' || CAST(? AS text) || '%'
+                       OR n.defect_description ILIKE '%' || CAST(? AS text) || '%')
                 ORDER BY n.created_at DESC
                 LIMIT 500
                 """,
@@ -288,7 +289,7 @@ public class QualityService {
                 LEFT JOIN quality_inspections qi ON qi.id = n.inspection_id AND qi.tenant_id = n.tenant_id
                 LEFT JOIN items i ON i.id = n.item_id AND i.tenant_id = n.tenant_id
                 LEFT JOIN production_jobs pj ON pj.id = n.job_id AND pj.tenant_id = n.tenant_id
-                LEFT JOIN config_options co ON co.id = n.defect_category_id
+                LEFT JOIN tenant_config_options co ON co.id = n.defect_category_id AND co.tenant_id = n.tenant_id
                 LEFT JOIN app_users ru ON ru.id = n.raised_by
                 LEFT JOIN app_users rv ON rv.id = n.resolved_by
                 WHERE n.tenant_id = ? AND n.id = ?
@@ -313,10 +314,10 @@ public class QualityService {
                             rs.getString("disposition"), rs.getString("resolution"),
                             rs.getObject("raised_by", UUID.class), rs.getString("raised_by_name"),
                             rs.getObject("resolved_by", UUID.class), rs.getString("resolved_by_name"),
-                            rs.getObject("resolved_at", java.time.Instant.class),
+                            instant(rs, "resolved_at"),
                             concessions,
-                            rs.getObject("created_at", java.time.Instant.class),
-                            rs.getObject("updated_at", java.time.Instant.class));
+                            instant(rs, "created_at"),
+                            instant(rs, "updated_at"));
                 },
                 ctx.tenantId(), ncrId);
         if (rows.isEmpty()) {
@@ -447,7 +448,7 @@ public class QualityService {
                 LEFT JOIN customers c ON c.id = cc.customer_id AND c.tenant_id = cc.tenant_id
                 LEFT JOIN app_users au ON au.id = cc.issued_by
                 WHERE cc.tenant_id = ?
-                  AND (? IS NULL OR cc.job_id = ?)
+                  AND (CAST(? AS uuid) IS NULL OR cc.job_id = CAST(? AS uuid))
                 ORDER BY cc.created_at DESC
                 """,
                 (rs, row) -> mapClearanceCert(rs),
@@ -459,12 +460,19 @@ public class QualityService {
         BossContext ctx = requireContext();
 
         UUID jobId = request.jobId();
-        UUID customerId = jdbc.query("""
-                SELECT customer_id FROM production_jobs WHERE tenant_id = ? AND id = ?
-                """, rs -> rs.next() ? rs.getObject("customer_id", UUID.class) : null,
+        List<UUID> customers = jdbc.query("""
+                SELECT c.customer_id
+                FROM production_jobs pj
+                LEFT JOIN cpos c ON c.id = pj.cpo_id AND c.tenant_id = pj.tenant_id
+                WHERE pj.tenant_id = ? AND pj.id = ?
+                """, (rs, row) -> rs.getObject("customer_id", UUID.class),
                 ctx.tenantId(), jobId);
-        if (customerId == null) {
+        if (customers.isEmpty()) {
             throw notFound("Production job not found");
+        }
+        UUID customerId = customers.get(0);
+        if (customerId == null) {
+            throw badRequest("Production job has no customer for a clearance certificate");
         }
 
         UUID id = UUID.randomUUID();
@@ -553,8 +561,8 @@ public class QualityService {
                        ipt.is_active, ipt.created_at
                 FROM inspection_parameter_templates ipt
                 WHERE ipt.tenant_id = ?
-                  AND (? IS NULL OR ipt.scope = ?)
-                  AND (? IS NULL OR ipt.inspection_type = ? OR ipt.inspection_type = 'any')
+                  AND (CAST(? AS text) IS NULL OR ipt.scope = CAST(? AS text))
+                  AND (CAST(? AS text) IS NULL OR ipt.inspection_type = CAST(? AS text) OR ipt.inspection_type = 'any')
                   AND (? IS FALSE OR ipt.is_active = TRUE)
                 ORDER BY ipt.name
                 """,
@@ -565,7 +573,7 @@ public class QualityService {
                             rs.getString("name"), rs.getString("description"),
                             rs.getString("scope"), rs.getString("inspection_type"),
                             rs.getBoolean("is_active"), items,
-                            rs.getObject("created_at", java.time.Instant.class));
+                            instant(rs, "created_at"));
                 },
                 ctx.tenantId(), scope, scope, inspectionType, inspectionType,
                 Boolean.TRUE.equals(activeOnly));
@@ -684,7 +692,7 @@ public class QualityService {
                 FROM ncrs n
                 LEFT JOIN items i ON i.id = n.item_id AND i.tenant_id = n.tenant_id
                 LEFT JOIN app_users au ON au.id = n.raised_by
-                LEFT JOIN config_options co ON co.id = n.defect_category_id
+                LEFT JOIN tenant_config_options co ON co.id = n.defect_category_id AND co.tenant_id = n.tenant_id
                 LEFT JOIN concessions c ON c.ncr_id = n.id AND c.tenant_id = n.tenant_id
                 WHERE n.tenant_id = ? AND n.inspection_id = ?
                 ORDER BY n.created_at
@@ -710,7 +718,7 @@ public class QualityService {
                         rs.getString("approved_by_name"),
                         rs.getString("approval_notes"),
                         rs.getString("status"),
-                        rs.getObject("created_at", java.time.Instant.class)),
+                        instant(rs, "created_at")),
                 tenantId, ncrId);
     }
 
@@ -742,13 +750,13 @@ public class QualityService {
                 rs.getObject("customer_id", UUID.class),
                 rs.getString("customer_name"),
                 rs.getString("status"),
-                rs.getObject("issued_at", java.time.Instant.class),
+                instant(rs, "issued_at"),
                 rs.getObject("issued_by", UUID.class),
                 rs.getString("issued_by_name"),
                 rs.getString("issued_by_customer_contact"),
                 rs.getString("customer_ref"),
                 rs.getString("notes"),
-                rs.getObject("created_at", java.time.Instant.class));
+                instant(rs, "created_at"));
     }
 
     private String determineFinalInspectionStatus(UUID tenantId, UUID jobId) {
@@ -812,7 +820,7 @@ public class QualityService {
         List<ChecklistResponseDto> existing = listChecklistResponses(tenantId, inspectionId);
         for (ChecklistResponseDto item : existing) {
             if (!item.isMandatory()) continue;
-            boolean answered = incoming != null && incoming.stream()
+            boolean answered = incoming != null && item.checklistItemId() != null && incoming.stream()
                     .anyMatch(r -> item.checklistItemId().equals(r.checklistItemId())
                             && (r.responseValue() != null || r.responsePass() != null));
             if (!answered && !item.answered()) {
@@ -880,7 +888,7 @@ public class QualityService {
                             rs.getString("name"), rs.getString("description"),
                             rs.getString("scope"), rs.getString("inspection_type"),
                             rs.getBoolean("is_active"), items,
-                            rs.getObject("created_at", java.time.Instant.class));
+                            instant(rs, "created_at"));
                 },
                 tenantId, templateId);
         if (rows.isEmpty()) throw notFound("Checklist template not found");
@@ -969,7 +977,7 @@ public class QualityService {
                 rs.getString("notes"),
                 rs.getObject("template_id", UUID.class),
                 rs.getString("template_name"),
-                rs.getObject("created_at", java.time.Instant.class));
+                instant(rs, "created_at"));
     }
 
     private NcrSummary mapNcrSummary(ResultSet rs) throws SQLException {
@@ -992,7 +1000,7 @@ public class QualityService {
                 rs.getObject("raised_by", UUID.class),
                 rs.getString("raised_by_name"),
                 rs.getString("concession_status"),
-                rs.getObject("created_at", java.time.Instant.class));
+                instant(rs, "created_at"));
     }
 
     private BossContext requireContext() {
@@ -1001,6 +1009,11 @@ public class QualityService {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Tenant user context required");
         }
         return ctx;
+    }
+
+    private static Instant instant(ResultSet rs, String column) throws SQLException {
+        Timestamp value = rs.getTimestamp(column);
+        return value == null ? null : value.toInstant();
     }
 
     private static ResponseStatusException notFound(String msg) {

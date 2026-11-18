@@ -46,8 +46,12 @@ class QualityModuleIntegrationTest extends BaseMasterDataIntegrationTest {
     @BeforeEach
     void setUp() {
         tenantId = provisionTenant("quality-test");
-        setTenantContext(tenantId, "OWNER");
-        UUID userId = BossContextHolder.get().userId();
+        UUID userId = UUID.randomUUID();
+        BossContextHolder.set(new BossContext(tenantId, userId, Set.of("OWNER"), null, null));
+        jdbc.update("""
+                INSERT INTO app_users (id, tenant_id, firebase_uid, email, display_name)
+                VALUES (?, ?, ?, ?, 'Quality Owner')
+                """, userId, tenantId, "uid-" + userId, "owner-" + userId + "@example.test");
 
         UUID legalEntityId = insert("""
                 INSERT INTO legal_entities (tenant_id, name, legal_name)
@@ -64,7 +68,7 @@ class QualityModuleIntegrationTest extends BaseMasterDataIntegrationTest {
                 """, tenantId);
         itemId = insert("""
                 INSERT INTO items (tenant_id, code, name, item_type, base_uom_id)
-                VALUES (?, 'FG-001', 'Finished Part', 'finished_good', ?) RETURNING id
+                VALUES (?, 'FG-001', 'Finished Part', 'finished_goods', ?) RETURNING id
                 """, tenantId, uomId);
         UUID customerId = insert("""
                 INSERT INTO customers (tenant_id, code, name)
@@ -72,36 +76,42 @@ class QualityModuleIntegrationTest extends BaseMasterDataIntegrationTest {
                 """, tenantId);
         UUID cpoId = insert("""
                 INSERT INTO cpos (tenant_id, cpo_number, customer_id, site_id, status, order_date, required_by_date, created_by)
-                VALUES (?, 'CPO-001', ?, ?, 'active', CURRENT_DATE, CURRENT_DATE + 30, ?) RETURNING id
+                VALUES (?, 'CPO-001', ?, ?, 'open', CURRENT_DATE, CURRENT_DATE + 30, ?) RETURNING id
                 """, tenantId, customerId, siteId, userId);
         UUID cpoLineId = insert("""
                 INSERT INTO cpo_lines (tenant_id, cpo_id, line_no, item_id, quantity, uom_id, unit_price)
                 VALUES (?, ?, 1, ?, 10, ?, 100) RETURNING id
                 """, tenantId, cpoId, itemId, uomId);
+        UUID categoryId = jdbc.queryForObject(
+                "SELECT id FROM config_categories WHERE code = 'PRODUCTION_STAGES'", UUID.class);
         UUID stageOptionId = insert("""
-                INSERT INTO config_options (tenant_id, category, code, label, sort_order)
-                VALUES (?, 'PRODUCTION_STAGE', 'ASSEMBLY', 'Assembly', 1) RETURNING id
-                """, tenantId);
+                INSERT INTO tenant_config_options (tenant_id, category_id, code, label)
+                VALUES (?, ?, 'ASSEMBLY', 'Assembly') RETURNING id
+                """, tenantId, categoryId);
         UUID routingId = insert("""
-                INSERT INTO routing_templates (tenant_id, name, finished_item_id, version, status, created_by)
-                VALUES (?, 'Default Routing', ?, 1, 'active', ?) RETURNING id
-                """, tenantId, itemId, userId);
+                INSERT INTO routing_templates (tenant_id, name, finished_item_id, version, status)
+                VALUES (?, 'Default Routing', ?, 'v1', 'active') RETURNING id
+                """, tenantId, itemId);
         insert("""
-                INSERT INTO routing_template_stages (tenant_id, routing_template_id, seq_no, stage_option_id,
-                        requires_inspection, is_optional)
-                VALUES (?, ?, 1, ?, TRUE, FALSE) RETURNING id
+                INSERT INTO routing_template_stages
+                  (tenant_id, routing_id, seq_no, stage_config_id, name, requires_inspection, is_optional)
+                VALUES (?, ?, 1, ?, 'Assembly', TRUE, FALSE) RETURNING id
                 """, tenantId, routingId, stageOptionId);
         jobId = insert("""
-                INSERT INTO production_jobs (tenant_id, job_number, cpo_id, cpo_line_id, item_id,
-                        quantity, uom_id, routing_template_id, status, priority, site_id, planned_start,
-                        planned_end, created_by, customer_id)
+                INSERT INTO production_jobs (tenant_id, job_number, cpo_id, cpo_line_id, finished_item_id,
+                        quantity, uom_id, routing_id, status, priority, site_id, planned_start,
+                        planned_end, created_by)
                 VALUES (?, 'JOB-001', ?, ?, ?, 10, ?, ?, 'released', 'normal', ?, CURRENT_DATE,
-                        CURRENT_DATE + 30, ?, ?) RETURNING id
-                """, tenantId, cpoId, cpoLineId, itemId, uomId, routingId, siteId, userId, customerId);
+                        CURRENT_DATE + 30, ?) RETURNING id
+                """, tenantId, cpoId, cpoLineId, itemId, uomId, routingId, siteId, userId);
+        jdbc.update("""
+                INSERT INTO job_costing_headers (tenant_id, job_id, est_material_cost, selling_price, status)
+                VALUES (?, ?, 0, 1000, 'estimated')
+                """, tenantId, jobId);
         stageId = insert("""
-                INSERT INTO job_stages (tenant_id, job_id, seq_no, stage_option_id, status,
+                INSERT INTO job_stages (tenant_id, job_id, seq_no, name, stage_config_option_id, status,
                         requires_inspection, is_optional)
-                VALUES (?, ?, 1, ?, 'in_progress', TRUE, FALSE) RETURNING id
+                VALUES (?, ?, 1, 'Assembly', ?, 'in_progress', TRUE, FALSE) RETURNING id
                 """, tenantId, jobId, stageOptionId);
 
         // Create a lot for lot-based tests
@@ -367,11 +377,6 @@ class QualityModuleIntegrationTest extends BaseMasterDataIntegrationTest {
     @Test
     void stageGateBlocksWithoutInspection() {
         setRole("OWNER");
-        // Enable inspection gate feature
-        jdbc.update("""
-                INSERT INTO tenant_feature_flags (tenant_id, feature_key, enabled)
-                VALUES (?, 'INSPECTION_GATE', TRUE) ON CONFLICT DO NOTHING
-                """, tenantId);
 
         assertThatThrownBy(() -> jobStageService.complete(jobId, stageId,
                 new in.boss.production.api.ProductionApiDtos.StageActionRequest("done")))
@@ -382,10 +387,6 @@ class QualityModuleIntegrationTest extends BaseMasterDataIntegrationTest {
     @Test
     void stageGatePassesAfterInspectionPass() {
         setRole("OWNER");
-        jdbc.update("""
-                INSERT INTO tenant_feature_flags (tenant_id, feature_key, enabled)
-                VALUES (?, 'INSPECTION_GATE', TRUE) ON CONFLICT DO NOTHING
-                """, tenantId);
 
         // Create and pass inspection for this stage
         UUID inspId = qualityService.createInspection(new CreateInspectionRequest(
@@ -403,10 +404,6 @@ class QualityModuleIntegrationTest extends BaseMasterDataIntegrationTest {
     @Test
     void stageGatePassesWithApprovedConcession() {
         setRole("OWNER");
-        jdbc.update("""
-                INSERT INTO tenant_feature_flags (tenant_id, feature_key, enabled)
-                VALUES (?, 'INSPECTION_GATE', TRUE) ON CONFLICT DO NOTHING
-                """, tenantId);
 
         UUID inspId = qualityService.createInspection(new CreateInspectionRequest(
                 "in_process", "job_stage", stageId, itemId, null,
@@ -427,26 +424,20 @@ class QualityModuleIntegrationTest extends BaseMasterDataIntegrationTest {
     @Test
     void passedInspectionOnDifferentJobDoesNotSatisfyGate() {
         setRole("OWNER");
-        jdbc.update("""
-                INSERT INTO tenant_feature_flags (tenant_id, feature_key, enabled)
-                VALUES (?, 'INSPECTION_GATE', TRUE) ON CONFLICT DO NOTHING
-                """, tenantId);
 
-        // Create and pass inspection referencing a DIFFERENT stage
-        UUID otherStageId = UUID.randomUUID();
+        // Create and pass inspection referencing this stage
         UUID inspId = qualityService.createInspection(new CreateInspectionRequest(
                 "in_process", "job_stage", stageId, itemId, null,
                 BigDecimal.TEN, null, null, LocalDate.now(), null)).id();
         qualityService.recordResult(inspId,
                 new RecordResultRequest("pass", BigDecimal.TEN, BigDecimal.ZERO, null, null));
 
-        // Insert a fresh inspection record pointing to a different stage (should not satisfy our stageId)
-        UUID differentStage = insert("""
-                INSERT INTO job_stages (tenant_id, job_id, seq_no, stage_option_id, status,
+        insert("""
+                INSERT INTO job_stages (tenant_id, job_id, seq_no, name, stage_config_option_id, status,
                         requires_inspection, is_optional)
-                VALUES (?, ?, 2, ?, 'in_progress', TRUE, FALSE) RETURNING id
+                VALUES (?, ?, 2, 'Pack', ?, 'pending', TRUE, FALSE) RETURNING id
                 """, tenantId, jobId,
-                jdbc.queryForObject("SELECT stage_option_id FROM job_stages WHERE id = ?",
+                jdbc.queryForObject("SELECT stage_config_option_id FROM job_stages WHERE id = ?",
                         UUID.class, stageId));
 
         // The original stageId still has a passed inspection, so gate is open
