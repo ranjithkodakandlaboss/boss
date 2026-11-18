@@ -13,6 +13,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
 
 import static in.boss.shared.security.BossPermissions.OWNER_OR_OPS;
@@ -31,10 +32,12 @@ public class JobStageService {
     private final JobCostingService costing;
     private final AuditService audit;
     private final OutboxPublisher outbox;
+    private final in.boss.maintenance.domain.MaintenanceService maintenance;
 
     public JobStageService(JdbcTemplate jdbc, ProductionSupport support, ProductionFeatureFlags flags,
                            ProductionMetrics metrics, ProductionQueryService query, JobCostingService costing,
-                           AuditService audit, OutboxPublisher outbox) {
+                           AuditService audit, OutboxPublisher outbox,
+                           in.boss.maintenance.domain.MaintenanceService maintenance) {
         this.jdbc = jdbc;
         this.support = support;
         this.flags = flags;
@@ -43,6 +46,7 @@ public class JobStageService {
         this.costing = costing;
         this.audit = audit;
         this.outbox = outbox;
+        this.maintenance = maintenance;
     }
 
     @PreAuthorize(PRODUCTION_EXECUTE)
@@ -55,6 +59,7 @@ public class JobStageService {
         requireRunnable(jobStatus);
         StageStatusMachine.assertTransition(stage.status(), StageStatusMachine.IN_PROGRESS);
         requirePriorClosed(context.tenantId(), jobId, stage.seq());
+        requireMachineAvailable(context.tenantId(), jobId, stageId);
         jdbc.update("""
                 UPDATE job_stages
                 SET status = 'in_progress', actual_start = COALESCE(actual_start, NOW()),
@@ -236,6 +241,16 @@ public class JobStageService {
             return null;
         }
         return request.note().trim();
+    }
+
+    private void requireMachineAvailable(UUID tenantId, UUID jobId, UUID stageId) {
+        List<String> centres = jdbc.query("SELECT work_centre FROM job_stages WHERE tenant_id = ? AND id = ?",
+                (rs, i) -> rs.getString(1), tenantId, stageId);
+        String blocker = maintenance.machineBlocker(tenantId, jobId, centres.isEmpty() ? null : centres.get(0));
+        if (blocker != null) {
+            throw ProductionSupport.conflict("Machine unavailable: open breakdown " + blocker
+                    + " blocks this job. Close the maintenance event before starting the stage.");
+        }
     }
 
     private record StageRow(UUID id, int seq, String status, boolean inspection, boolean optional, Instant started) {}
