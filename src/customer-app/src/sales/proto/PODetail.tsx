@@ -30,6 +30,7 @@ export default function PODetail() {
   const { goBack, originUrl } = useReturnNavigation('/sales?tab=pos');
   const [allocResultMsg, setAllocResultMsg] = useState<{ status: string; message: string; prId?: string; prNumber?: string } | null>(null);
   const [availabilityOverride, setAvailabilityOverride] = useState<string | null>(null);
+  const [confirmReserve, setConfirmReserve] = useState(false);
   const [bomAvailability, setBomAvailability] = useState<CpoMaterialAvailability | null>(null);
   const [availabilityLoading, setAvailabilityLoading] = useState(false);
   const [availabilityError, setAvailabilityError] = useState<string | null>(null);
@@ -416,22 +417,7 @@ export default function PODetail() {
               </button>
               <button
                 type="button"
-                onClick={async () => {
-                  const res = await assessAndAllocateCustomerPO(po.id, currentUser.name, { siteId: checkSiteId });
-                  if ('error' in res) {
-                    showToast({ type: 'error', title: 'Availability check failed', body: res.error });
-                  } else {
-                    setAvailabilityOverride(res.status);
-                    setAllocResultMsg({
-                      status: res.status,
-                      message: res.message,
-                      prId: res.createdPr?.id,
-                      prNumber: res.createdPr?.prNumber,
-                    });
-                    showToast({ type: 'success', title: 'Material availability confirmed', body: res.message });
-                    await reload();
-                  }
-                }}
+                onClick={() => setConfirmReserve(true)}
                 className="btn-primary text-xs inline-flex items-center gap-1.5"
               >
                 <Factory size={13} /> Confirm & Reserve
@@ -872,6 +858,39 @@ export default function PODetail() {
         )}
       </div>
     </div>
+
+    {/* Confirm & Reserve dialog */}
+    {confirmReserve && (
+      <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+        <div className="bg-[var(--surface)] rounded-2xl border p-6 max-w-sm w-full shadow-2xl" style={{ borderColor: 'var(--border)' }}>
+          <h3 className="text-base font-bold text-[var(--text)] mb-2">Confirm & Reserve Materials?</h3>
+          <p className="text-sm text-[var(--text-2)] mb-5">
+            Available stock will be reserved for <strong>{po.poNumber}</strong>. If any material is short, a Purchase Requisition will be automatically created to cover the shortage.
+          </p>
+          <div className="flex gap-3 justify-end">
+            <button onClick={() => setConfirmReserve(false)} className="px-4 py-2 rounded-lg text-sm border" style={{ borderColor: 'var(--border)', color: 'var(--text-2)' }}>Cancel</button>
+            <button
+              onClick={async () => {
+                setConfirmReserve(false);
+                const res = await assessAndAllocateCustomerPO(po.id, currentUser.name, { siteId: checkSiteId });
+                if ('error' in res) {
+                  showToast({ type: 'error', title: 'Availability check failed', body: res.error });
+                } else {
+                  setAvailabilityOverride(res.status);
+                  setAllocResultMsg({ status: res.status, message: res.message, prId: res.createdPr?.id, prNumber: res.createdPr?.prNumber });
+                  showToast({ type: 'success', title: 'Material availability confirmed', body: res.message });
+                  await reload();
+                }
+              }}
+              className="px-4 py-2 rounded-lg text-sm font-semibold text-white"
+              style={{ background: 'var(--brand-fill)' }}
+            >
+              Confirm & Reserve
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
   );
 }
 
