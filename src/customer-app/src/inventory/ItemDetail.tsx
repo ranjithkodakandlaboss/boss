@@ -39,7 +39,7 @@ export default function ItemDetail() {
       loadLots(`itemId=${id}`),
       loadJobs(),
       loadReservations(),
-      api<Array<{ id: string; itemId?: string; version?: number | string; status?: string; lines?: unknown[] }>>("/api/v1/boms").catch(() => []),
+      api<Array<{ id: string; itemId?: string; version?: number | string; status?: string; lines?: BomLine[] }>>("/api/v1/boms").catch(() => []),
     ]).then(([next, stock, itemLots, jobPage, reserved, boms]) => {
       setItem(next);
       setPositions(stock);
