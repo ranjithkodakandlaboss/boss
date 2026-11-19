@@ -27,7 +27,7 @@ export default function QuotationDetail() {
 
   const quotation = quotations.find(q => q.id === id);
   const rfq = rfqs.find(r => r.id === quotation?.rfqId);
-  const { goBack, originUrl } = useReturnNavigation(rfq ? `/sales/rfq/${rfq.id}` : '/sales?tab=rfqs');
+  const { goBack, originUrl } = useReturnNavigation('/sales?tab=quotations');
 
   const lines = useMemo(() => quotationLines.filter(l => l.quotationId === id), [quotationLines, id]);
 
@@ -440,9 +440,13 @@ export default function QuotationDetail() {
             </p>
             {confirming === 'submit' && quotation.costing?.requiresApproval && (
               <div className="mb-5">
-                <label htmlFor="override-reason" className="block text-xs font-medium text-[var(--text-2)] mb-1">Reason for below-threshold approval *</label>
+                <label htmlFor="override-reason" className="block text-xs font-medium text-[var(--text-2)] mb-1">Reason for below-threshold approval <span className="text-[var(--error)]">*</span></label>
                 <textarea id="override-reason" className="eoss-input w-full" rows={3} value={overrideReason}
-                  onChange={(event) => setOverrideReason(event.target.value)} />
+                  onChange={(event) => setOverrideReason(event.target.value)}
+                  placeholder="This quotation is below the cost threshold. Enter a justification to proceed." />
+                {!overrideReason.trim() && (
+                  <p className="text-xs text-[var(--error)] mt-1">Required — enter a justification to enable the Submit button.</p>
+                )}
               </div>
             )}
             <div className="flex gap-3 justify-end">

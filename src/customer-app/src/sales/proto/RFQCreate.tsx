@@ -44,23 +44,44 @@ function newLine(n: number): RFQLine {
 export default function RFQCreate() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { addRfq, addCustomer, currentUser, customers: CUSTOMERS, catalog, uoms, reload } = useStore();
+  const { addRfq, addCustomer, currentUser, customers: CUSTOMERS, catalog, uoms, reload, rfqs } = useStore();
   const [itemDraft, setItemDraft] = useState({ code: '', name: '', uomId: '' });
   const [itemError, setItemError] = useState('');
   const [savingItem, setSavingItem] = useState(false);
   const [step, setStep] = useState<Step>(1);
 
-  // Step 1: Header
-  const [customerId, setCustomerId] = useState(() => searchParams.get('customer') ?? '');
-  const [channel, setChannel] = useState('Email');
-  const [receivedDate, setReceivedDate] = useState(DEMO_NOW);
-  const [requiredBy, setRequiredBy] = useState('');
-  const [paymentTerms, setPaymentTerms] = useState('Net 30');
-  const [deliveryTerms, setDeliveryTerms] = useState('');
-  const [internalNotes, setInternalNotes] = useState('');
+  const copyFromId = searchParams.get('copyFrom');
+  const sourceRfq = copyFromId ? rfqs.find(r => r.id === copyFromId) : null;
 
-  // Step 2: Lines
-  const [lines, setLines] = useState<RFQLine[]>([newLine(1)]);
+  // Step 1: Header — do NOT pre-select customer when copying (RFQ-07: new customer required)
+  const [customerId, setCustomerId] = useState(() => searchParams.get('customer') ?? '');
+  const [channel, setChannel] = useState(() => sourceRfq?.channel ?? 'Email');
+  const [receivedDate, setReceivedDate] = useState(DEMO_NOW);
+  const [requiredBy, setRequiredBy] = useState(() => sourceRfq?.requiredBy ?? '');
+  const [paymentTerms, setPaymentTerms] = useState(() => sourceRfq?.paymentTerms ?? 'Net 30');
+  const [deliveryTerms, setDeliveryTerms] = useState(() => sourceRfq?.deliveryTerms ?? '');
+  const [internalNotes, setInternalNotes] = useState(() => sourceRfq?.internalNotes ?? '');
+
+  // Step 2: Lines — copy lines from source RFQ if copying (RFQ-07: keep same products)
+  const [lines, setLines] = useState<RFQLine[]>(() => {
+    if (sourceRfq?.lines && sourceRfq.lines.length > 0) {
+      return sourceRfq.lines.map((l, i) => ({
+        id: `line-${Date.now()}-${i + 1}`,
+        lineNumber: i + 1,
+        itemId: l.productId ?? '',
+        drawingNumber: l.drawingNumber ?? '',
+        drawingRevision: l.drawingRevision ?? 'A',
+        description: l.description ?? l.productName ?? '',
+        material: l.material ?? '',
+        quantity: l.qty ?? 1,
+        uom: l.uom ?? '',
+        targetPrice: l.targetPrice ?? '',
+        requiredBy: l.requiredDate ?? '',
+        notes: l.technicalNotes ?? '',
+      }));
+    }
+    return [newLine(1)];
+  });
 
   // Step 3: Technical
   const [techReqs, setTechReqs] = useState<TechReqs>({
@@ -167,8 +188,8 @@ export default function RFQCreate() {
           <ArrowLeft size={18} className="text-[var(--text-2)]" />
         </button>
         <div>
-          <h1 className="text-lg font-bold text-[var(--text)]">New RFQ</h1>
-          <p className="text-xs text-[var(--text-2)]">Customer Request for Quotation — commercial &amp; technical enquiry</p>
+          <h1 className="text-lg font-bold text-[var(--text)]">{sourceRfq ? 'Copy RFQ' : 'New RFQ'}</h1>
+          <p className="text-xs text-[var(--text-2)]">{sourceRfq ? `Copying lines from ${sourceRfq.rfqNumber} — select a new customer to continue` : 'Customer Request for Quotation — commercial & technical enquiry'}</p>
         </div>
       </div>
 
