@@ -193,7 +193,7 @@ public class DocumentVaultService {
         UUID linkedEntityId = request.linkedEntityId();
         String linkedEntityType = request.linkedEntityType();
         String linkedEntityRef = request.linkedEntityRef();
-        if (linkedEntityId != null && linkedEntityType != null) {
+        if (linkedEntityType != null) {
             validateLinkedEntity(tenantId, linkedEntityType, linkedEntityId);
         }
 
@@ -590,8 +590,50 @@ public class DocumentVaultService {
     }
 
     private void validateLinkedEntity(UUID tenantId, String type, UUID id) {
-        if (type == null || id == null) return;
         String normalized = type.trim().toLowerCase(Locale.ROOT);
+        String salesTable = switch (normalized) {
+            case "rfq" -> "rfqs";
+            case "quotation" -> "quotations";
+            case "customerpo", "customer_po", "customer po", "cpo" -> "cpos";
+            default -> null;
+        };
+        if (salesTable != null) {
+            if (id == null) {
+                throw new DocumentValidationException("A linked " + type + " ID is required");
+            }
+            Boolean active = jdbc.query("SELECT c.is_active FROM customers c JOIN " + salesTable
+                            + " s ON s.tenant_id = c.tenant_id AND s.customer_id = c.id"
+                            + " WHERE s.id = ? AND s.tenant_id = ? FOR UPDATE OF c",
+                    rs -> rs.next() ? rs.getBoolean("is_active") : null, id, tenantId);
+            if (Boolean.FALSE.equals(active)) {
+                throw new DocumentValidationException("New documents cannot be linked to an inactive customer's records");
+            }
+            String status = jdbc.query("SELECT status FROM " + salesTable
+                            + " WHERE id = ? AND tenant_id = ? FOR UPDATE",
+                    rs -> rs.next() ? rs.getString("status") : null, id, tenantId);
+            if (status == null) {
+                throw new DocumentValidationException("Linked " + type + " record not found for this tenant: " + id);
+            }
+            if ("cancelled".equals(status)) {
+                throw new DocumentValidationException("New documents cannot be linked to a cancelled " + type);
+            }
+            return;
+        }
+        if ("customer".equals(normalized)) {
+            if (id == null) {
+                throw new DocumentValidationException("A linked Customer ID is required");
+            }
+            Boolean active = jdbc.query("SELECT is_active FROM customers WHERE tenant_id = ? AND id = ? FOR UPDATE",
+                    rs -> rs.next() ? rs.getBoolean("is_active") : null, tenantId, id);
+            if (active == null) {
+                throw new DocumentValidationException("Linked Customer record not found for this tenant: " + id);
+            }
+            if (!active) {
+                throw new DocumentValidationException("New documents cannot be linked to an inactive customer");
+            }
+            return;
+        }
+        if (id == null) return;
         String table = switch (normalized) {
             case "supplier" -> "suppliers";
             case "customer" -> "customers";

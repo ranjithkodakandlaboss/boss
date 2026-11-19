@@ -1,10 +1,7 @@
-// @ts-nocheck
-import React from 'react';
-import { FileText, ExternalLink, Plus } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
-import { useStore } from '../runtime';
-import { computeDocumentExpiry } from '../documentExpiry';
-import { formatDisplayDate } from '../dates';
+import { useCallback, useEffect, useState, type ChangeEvent } from 'react';
+import { FileText, Upload } from 'lucide-react';
+import { downloadDocument, listDocuments, uploadLinkedDocument } from '../../../documents/api';
+import type { VaultDocument } from '../../../documents/types';
 
 interface LinkedDocumentsSectionProps {
   entityType: string;
@@ -12,98 +9,74 @@ interface LinkedDocumentsSectionProps {
   entityRef: string;
   entityName?: string;
   title?: string;
+  readOnly?: boolean;
 }
 
 export default function LinkedDocumentsSection({
-  entityType,
-  entityId,
-  entityRef,
-  entityName,
-  title = 'Documents',
+  entityType, entityId, entityRef, entityName, title = 'Documents', readOnly = false,
 }: LinkedDocumentsSectionProps) {
-  const navigate = useNavigate();
-  const { documents } = useStore();
-  const now = new Date();
+  const [documents, setDocuments] = useState<VaultDocument[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState('');
+  const load = useCallback(async () => {
+    const records: VaultDocument[] = [];
+    let page = 0;
+    let result;
+    do {
+      result = await listDocuments({ page: page++, size: 100 });
+      records.push(...result.content);
+    } while (result.content.length > 0 && records.length < result.totalElements);
+    setDocuments(records);
+  }, []);
 
-  const norm = (v?: string) => (v ?? '').trim().toLowerCase();
-  const targetRef = norm(entityRef);
-  const targetName = norm(entityName);
-  const targetType = norm(entityType);
+  useEffect(() => {
+    load().catch(error => setError(error instanceof Error ? error.message : 'Documents could not be loaded.'))
+      .finally(() => setLoading(false));
+  }, [load]);
 
-  const matchedDocs = documents.filter(doc => {
-    if (doc.status === 'superseded' || doc.status === 'archived') return false;
-    return doc.linkedEntities.some(le => {
-      const leRef = norm(le.ref);
-      const leType = norm(le.type);
-      const refMatches =
-        (entityId && leRef === norm(entityId)) ||
-        (targetRef && (leRef === targetRef || leRef.startsWith(`${targetRef} `))) ||
-        (targetName && leRef === targetName);
-      if (!refMatches) return false;
-      return !targetType || leType.includes(targetType) || targetType.includes(leType);
-    });
-  });
+  const normalize = (value?: string) => (value ?? '').replace(/[^a-z0-9]/gi, '').toLowerCase();
+  const matched = documents.filter(doc => doc.status !== 'archived' && doc.status !== 'superseded'
+    && doc.linkedEntities.some(link => normalize(link.type) === normalize(entityType)
+      && (entityId && (link.id === entityId || link.ref === entityId)
+        || link.ref === entityRef || !!entityName && link.ref === entityName)));
 
-  return (
-    <div className="rounded-xl border overflow-hidden" style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}>
-      <div className="px-4 py-3 border-b flex items-center justify-between" style={{ borderColor: 'var(--border)', background: 'var(--surface-2)' }}>
-        <span className="text-sm font-semibold" style={{ color: 'var(--text)' }}>
-          {title} ({matchedDocs.length})
-        </span>
-        <button
-          type="button"
-          onClick={() => navigate('/documents')}
-          className="inline-flex items-center gap-1 text-xs font-semibold hover:underline"
-          style={{ color: 'var(--brand)' }}
-        >
-          <Plus size={12} /> Document Vault
-        </button>
-      </div>
-      {matchedDocs.length === 0 ? (
-        <div className="px-4 py-5 text-sm" style={{ color: 'var(--text-3)' }}>
-          No active documents linked to {entityRef}.
-        </div>
-      ) : (
-        <div className="divide-y" style={{ borderColor: 'var(--border)' }}>
-          {matchedDocs.map(doc => {
-            const expiry = computeDocumentExpiry(doc, now);
-            return (
-              <div
-                key={doc.id}
-                onClick={() => navigate(`/documents/${doc.id}`)}
-                role="button"
-                tabIndex={0}
-                onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') navigate(`/documents/${doc.id}`); }}
-                className="px-4 py-3 flex items-center justify-between gap-3 hover:bg-[var(--surface-2)] cursor-pointer transition-colors"
-              >
-                <div className="flex items-center gap-2.5 min-w-0">
-                  <FileText size={15} style={{ color: 'var(--brand)' }} className="flex-shrink-0" />
-                  <div className="min-w-0">
-                    <div className="text-sm font-medium truncate" style={{ color: 'var(--text)' }}>{doc.title}</div>
-                    <div className="text-xs truncate" style={{ color: 'var(--text-3)' }}>
-                      {doc.docType} · v{doc.version}
-                      {doc.expiryDate ? ` · Expires ${formatDisplayDate(doc.expiryDate)}` : ''}
-                    </div>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2 flex-shrink-0">
-                  {expiry.status === 'expired' && (
-                    <span className="text-[10px] font-bold px-1.5 py-0.5 rounded" style={{ background: 'var(--error-bg,#FEF2F2)', color: 'var(--error,#DC2626)' }}>
-                      Expired
-                    </span>
-                  )}
-                  {expiry.status === 'expiring' && (
-                    <span className="text-[10px] font-bold px-1.5 py-0.5 rounded" style={{ background: 'var(--warning-bg,#FFFBEB)', color: 'var(--warning,#D97706)' }}>
-                      {expiry.daysToExpiry}d left
-                    </span>
-                  )}
-                  <ExternalLink size={13} style={{ color: 'var(--text-3)' }} />
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
+  async function attach(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file || !entityId || readOnly) return;
+    if (file.size > 20 * 1024 * 1024) {
+      setError('Choose a document no larger than 20 MB.');
+      return;
+    }
+    setError('');
+    setUploading(true);
+    try {
+      await uploadLinkedDocument(file, { type: entityType, id: entityId, ref: entityRef });
+      await load();
+    } catch (error) {
+      setError(error instanceof Error ? error.message : 'Document could not be attached.');
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  return <section className="rounded-xl border overflow-hidden" style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}>
+    <div className="px-4 py-3 border-b flex items-center justify-between gap-3" style={{ borderColor: 'var(--border)', background: 'var(--surface-2)' }}>
+      <span className="text-sm font-semibold text-[var(--text)]">{title} ({matched.length})</span>
+      {!readOnly && entityId && <label className="inline-flex items-center gap-1 text-xs font-semibold text-[var(--brand)] cursor-pointer">
+        <Upload size={13} /> {uploading ? 'Uploading...' : 'Attach document'}
+        <input aria-label="Attach document" type="file" className="sr-only" disabled={uploading} onChange={attach} />
+      </label>}
     </div>
-  );
+    {error && <p role="alert" className="px-4 py-3 text-xs text-[var(--error)]">{error}</p>}
+    {loading ? <p role="status" className="px-4 py-5 text-sm text-[var(--text-3)]">Loading documents...</p>
+      : matched.length === 0 ? <p className="px-4 py-5 text-sm text-[var(--text-3)]">No active documents linked to {entityRef}.</p>
+        : matched.map(doc => <button key={doc.id} type="button" className="w-full px-4 py-3 flex items-center gap-2 text-left hover:bg-[var(--surface-2)]"
+          onClick={() => downloadDocument(doc.id, doc.fileName ?? doc.title).catch(error => setError(error instanceof Error ? error.message : 'Document could not be downloaded.'))}>
+          <FileText size={15} className="shrink-0 text-[var(--brand)]" />
+          <span className="min-w-0"><span className="block truncate text-sm font-medium">{doc.title}</span>
+            <span className="block text-xs text-[var(--text-3)]">{doc.docType} · v{doc.version}</span></span>
+        </button>)}
+  </section>;
 }

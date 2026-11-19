@@ -61,8 +61,8 @@ type SalesState = {
   removeToast: (id: string) => void;
   reload: () => Promise<void>;
   addCustomer: (customer: Party) => Promise<Party | null>;
-  updateCustomer: (id: string, patch: Partial<Party>) => Promise<void | null>;
-  deactivateCustomer: (id: string) => Promise<void | null>;
+  updateCustomer: (id: string, patch: Partial<Party>) => Promise<boolean>;
+  deactivateCustomer: (id: string) => Promise<boolean>;
   addRfq: (rfq: CustomerRFQ) => Promise<CustomerRFQ | null>;
   copyRfq: (id: string) => Promise<CustomerRFQ | null>;
   updateRfq: (id: string, patch: Partial<CustomerRFQ>) => Promise<void | null>;
@@ -162,6 +162,8 @@ function toParty(customer: Customer): Party & { code?: string; line1?: string } 
     since: (customer.createdAt || "").slice(0, 10),
     code: customer.code,
     line1: customer.address?.line1 || "",
+    address: customer.address?.line1 || "",
+    rating: customer.rating ?? undefined,
   };
 }
 
@@ -175,12 +177,13 @@ function partyBody(party: Partial<Party> & { code?: string; line1?: string }, ex
     gstin: (party.gstin ?? existing?.gstin ?? "").trim().toUpperCase() || null,
     pan: (party.panNumber ?? existing?.panNumber ?? "").trim().toUpperCase() || null,
     address: {
-      line1: party.line1 ?? existing?.line1 ?? "",
+      line1: party.address ?? party.line1 ?? existing?.address ?? existing?.line1 ?? "",
       city: (party.city ?? existing?.city ?? "").trim(),
       state: (party.state ?? existing?.state ?? "").trim(),
     },
     creditLimit: Number(party.creditLimit ?? existing?.creditLimit ?? 0),
     creditDays: days(party.paymentTerms ?? existing?.paymentTerms),
+    rating: party.rating === undefined ? existing?.rating ?? null : party.rating,
     contacts: [{
       name: (party.contactPerson ?? existing?.contactPerson ?? "").trim(),
       email: (party.email ?? existing?.email ?? "").trim(),
@@ -198,6 +201,7 @@ function rfqStatus(rfq: Rfq, quoted: boolean): CustomerRFQ["status"] {
 }
 
 function quoteStatus(status: string): CustomerQuotation["status"] {
+  if (status === "cancelled") return "cancelled";
   if (status === "sent" || status === "negotiating") return "submitted";
   if (status === "rejected") return "rejected";
   if (status === "expired") return "expired";
@@ -208,6 +212,7 @@ function quoteStatus(status: string): CustomerQuotation["status"] {
 
 function poStatus(status: string): CustomerPO["status"] {
   if (status === "open") return "active";
+  if (status === "feasibility_pending") return "pending";
   if (status === "fulfilled") return "complete";
   if (status === "on_hold") return "on_hold";
   if (status === "partial") return "partial";
@@ -635,9 +640,17 @@ export function SalesProvider({ children }: { children?: ReactNode }) {
       }, { title: "Customer added", body: `${party.tradingName || party.legalName} is in the directory.` }),
       updateCustomer: async (id, patch) => {
         const existing = customers.find((item) => item.id === id) as Party & { code?: string; line1?: string } | undefined;
-        await guard(() => salesApi.saveCustomer(partyBody(patch, existing), id), { title: "Customer updated" });
+        const body = patch.status === "active" && Object.keys(patch).length === 1
+          ? { status: "active" }
+          : partyBody(patch, existing);
+        const result = await guard(() => salesApi.saveCustomer(body, id), { title: "Customer updated" });
+        return result !== null;
       },
-      deactivateCustomer: (id) => guard(() => salesApi.deactivateCustomer(id), { title: "Customer deactivated", body: "Historical RFQs, quotations and Customer POs stay readable." }),
+      deactivateCustomer: async (id) => {
+        const result = await guard(async () => { await salesApi.deactivateCustomer(id); return true; },
+          { title: "Customer deactivated", body: "Pending RFQs, quotations and Customer POs were cancelled. History stays readable." });
+        return result === true;
+      },
       addRfq: (rfq) => guard(async () => {
         const lines = lineRequests((rfq.lines ?? []) as unknown as Array<Record<string, unknown>>, catalog, uoms);
         if (lines.length === 0 || lines.some((line) => !line.itemId || !line.uomId || line.qty <= 0)) {
@@ -664,6 +677,7 @@ export function SalesProvider({ children }: { children?: ReactNode }) {
       copyRfq: (id) => guard(async () => {
         const src = rfqs.find((item) => item.id === id);
         if (!src) throw new Error("RFQ not found");
+        if (src.status === "cancelled") throw new Error("Cancelled RFQs cannot be copied.");
         const lines = lineRequests((src.lines ?? []) as unknown as Array<Record<string, unknown>>, catalog, uoms);
         const saved = await salesApi.saveRfq({
           customerId: src.customerId,

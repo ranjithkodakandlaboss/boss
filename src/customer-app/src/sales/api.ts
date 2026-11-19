@@ -1,5 +1,28 @@
 import { api, safeRandomUUID } from "../auth/api";
 
+async function downloadSalesPdf(path: string, fallbackName: string, failure: string) {
+  const token = (await import("../auth/session")).currentToken();
+  const base = import.meta.env.VITE_CUSTOMER_API_URL ?? "http://127.0.0.1:8080";
+  const response = await fetch(`${base}${path}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    throw new Error(body?.detail || body?.message || (response.status === 422
+      ? "Record a valid GSTIN or address state for both the seller and customer before downloading this document."
+      : failure));
+  }
+  const blob = await response.blob();
+  const browserUrl = URL;
+  const url = browserUrl.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  const named = /filename="([^"]+)"/.exec(response.headers.get("Content-Disposition") || "");
+  anchor.href = url;
+  anchor.download = named?.[1] || fallbackName;
+  anchor.click();
+  window.setTimeout(() => browserUrl.revokeObjectURL(url), 1000);
+}
+
 export type Page<T> = { content?: T[]; page?: number; totalElements?: number };
 export type Contact = { id?: string; name: string; role?: string; email?: string; phone?: string; isPrimary?: boolean };
 export type Customer = {
@@ -12,6 +35,7 @@ export type Customer = {
   address?: { city?: string; state?: string; line1?: string };
   creditLimit?: number;
   creditDays?: number;
+  rating?: number | null;
   status?: string;
   contacts?: Contact[];
   createdAt?: string;
@@ -332,23 +356,10 @@ export const salesApi = {
     headers: { "Idempotency-Key": key() },
     body: JSON.stringify(body),
   }),
-  async quotationPdf(id: string) {
-    const token = (await import("../auth/session")).currentToken();
-    const base = import.meta.env.VITE_CUSTOMER_API_URL ?? "http://127.0.0.1:8080";
-    const response = await fetch(`${base}/api/v1/quotations/${id}/document`, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-    });
-    if (!response.ok) throw new Error("Quotation PDF could not be downloaded");
-    const blob = await response.blob();
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    const named = /filename="([^"]+)"/.exec(response.headers.get("Content-Disposition") || "");
-    anchor.href = url;
-    anchor.download = named?.[1] || `quotation-${id}.pdf`;
-    anchor.click();
-    window.open(url, "_blank", "noopener");
-    URL.revokeObjectURL(url);
-  },
+  quotationPdf: (id: string) => downloadSalesPdf(`/api/v1/quotations/${id}/document`,
+    `quotation-${id}.pdf`, "Quotation PDF could not be downloaded"),
+  customerPoPdf: (id: string) => downloadSalesPdf(`/api/v1/cpos/${id}/document`,
+    `customer-po-${id}.pdf`, "Customer PO PDF could not be downloaded"),
   createDirectCpo: (body: {
     customerId: string; siteId: string; directOrderReason: string;
     customerPoRef?: string; deliveryTerms?: string; paymentTerms?: number;

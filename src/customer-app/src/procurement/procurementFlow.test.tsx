@@ -164,6 +164,7 @@ const customerPo = {
 };
 
 function salesFetch(url: string, init?: RequestInit, created?: { count: number }, feasibleMaterials?: Array<{ itemId: string; storeId?: string; requested: number; reserved: number; shortfall: number }>) {
+  if (url.includes("/customers")) return json(JSON.parse(page([{ id: "c1", code: "NW", name: "North Works", status: "active" }])));
   if (url.includes(`/cpos/${poId}/material-availability`)) return json({ cpoId: poId, materials: [{ itemId, itemCode: "SHAFT", itemName: "Shaft", uomSymbol: "EA", requiredQty: 4, eligibleStockQty: feasibleMaterials ? 0 : 4, reservedQty: 0, availableQty: feasibleMaterials ? 0 : 4, shortageQty: feasibleMaterials ? 4 : 0 }] });
   if (url.includes(`/cpos/${poId}/feasibility`) && init?.method === "POST") return json({ cpoId: poId, feasible: !feasibleMaterials, materials: feasibleMaterials ?? [{ itemId, storeId: undefined, requested: 4, reserved: 4, shortfall: 0 }] });
   if (url.includes("/cpos")) return json(JSON.parse(page([customerPo])));

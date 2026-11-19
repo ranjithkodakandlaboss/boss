@@ -95,7 +95,7 @@ public final class SalesApiDtos {
             @NotNull @Pattern(regexp = "sent|closed|cancelled") String status) {}
 
     public record QuotationStatusRequest(
-            @NotNull @Pattern(regexp = "sent|rejected|expired") String status,
+            @NotNull @Pattern(regexp = "sent|rejected|expired|cancelled") String status,
             @Size(max = 500) String note) {
         @JsonIgnore
         public QuotationStatusRequest(String status) {

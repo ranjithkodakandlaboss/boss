@@ -64,6 +64,9 @@ public class CustomerEntity {
     @Column(name = "credit_days")
     private Integer creditDays;
 
+    @Column(name = "rating")
+    private Integer rating;
+
     @Column(name = "is_active", nullable = false)
     private boolean isActive;
 

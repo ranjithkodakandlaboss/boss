@@ -27,6 +27,7 @@ public class CustomerDto {
     private Map<String, Object> address;
     private BigDecimal creditLimit;
     private Integer creditDays;
+    private Integer rating;
     private String status;
     private List<ContactDto> contacts;
     private Instant createdAt;

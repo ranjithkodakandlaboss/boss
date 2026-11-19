@@ -31,6 +31,11 @@ interface CatalogueItem {
   baseUomId: string;
   baseUomSymbol?: string;
 }
+interface OrderItem extends CatalogueItem {
+  itemType?: string;
+  uomId?: string;
+  uomSymbol?: string;
+}
 
 export default function CustomerPOCreate() {
   const navigate = useNavigate();
@@ -69,13 +74,13 @@ export default function CustomerPOCreate() {
   ]);
 
   useEffect(() => {
-    allPages<any>('/api/v1/items?status=active').then(items => {
-      setCatalogueItems(items.filter((i: any) => (i.itemType ?? '').toLowerCase() !== 'service').map((i: any) => ({
+    allPages<OrderItem>('/api/v1/items?status=active').then(items => {
+      setCatalogueItems(items.filter(i => ['finished_good', 'finished_goods', 'semi_finished'].includes((i.itemType ?? '').toLowerCase())).map(i => ({
         id: i.id, code: i.code, name: i.name,
         baseUomId: i.baseUomId ?? i.uomId ?? '',
         baseUomSymbol: i.baseUomSymbol ?? i.uomSymbol ?? '',
       })));
-    }).catch(() => undefined);
+    }).catch(error => showToast({ type: 'error', title: 'Order items did not load', body: error instanceof Error ? error.message : 'Please try again.' }));
   }, []);
 
   // If quotations finish loading after mount and 'direct' was selected by default, switch to quotation mode
@@ -137,6 +142,7 @@ export default function CustomerPOCreate() {
           gstRate: l.gstRate,
         })),
       });
+      await reload();
       navigate(`/sales/po/${saved.id}`, { state: { from: originUrl } });
     } catch (err) {
       showToast({ type: 'error', title: 'Could not create Direct Order', body: err instanceof Error ? err.message : 'Please try again.' });

@@ -25,6 +25,7 @@ interface GstBreakup {
 }
 
 interface Props {
+  customerPoId?: string;
   documentType: string;
   reference: string;
   date?: string;
@@ -44,6 +45,7 @@ interface Props {
 }
 
 export default function DocumentActions({
+  customerPoId,
   documentType,
   reference,
   date,
@@ -73,11 +75,25 @@ export default function DocumentActions({
   const [attachPdf, setAttachPdf] = useState(true);
   const [sent] = useState(false);
 
+  const showPdfError = (error: unknown) => showToast({
+    type: 'error',
+    title: 'PDF was not downloaded',
+    body: error instanceof Error ? error.message : 'The document could not be generated.',
+  });
+
   const openPrintPreview = () => {
+    if (customerPoId) {
+      salesApi.customerPoPdf(customerPoId).catch(showPdfError);
+      return;
+    }
+    if (documentType === 'Customer PO') {
+      showPdfError(new Error('Open a saved Customer PO before downloading its document.'));
+      return;
+    }
     if (documentType.toLowerCase().includes('quotation')) {
       const quote = quotations.find(item => item.quotationNumber === reference);
       if (quote) {
-        salesApi.quotationPdf(quote.id).catch(() => showToast({ type: 'error', title: 'PDF was not downloaded', body: 'The quotation document could not be generated.' }));
+        salesApi.quotationPdf(quote.id).catch(showPdfError);
         return;
       }
     }
@@ -196,10 +212,16 @@ export default function DocumentActions({
               <label className="block text-xs text-[var(--text-2)] mb-1">Message</label>
               <textarea rows={6} value={body} onChange={e => setBody(e.target.value)} className="eoss-input w-full font-sans text-xs" />
             </div>
-            <label className="flex items-center gap-2 text-xs text-[var(--text-2)]">
-              <input type="checkbox" checked={attachPdf} onChange={e => setAttachPdf(e.target.checked)} />
-              <span>Attach generated PDF copy ({reference}.pdf)</span>
-            </label>
+            {customerPoId ? (
+              <button type="button" onClick={openPrintPreview} className="btn-ghost text-xs inline-flex items-center gap-1.5">
+                <FileDown size={13} /> Download PDF
+              </button>
+            ) : (
+              <label className="flex items-center gap-2 text-xs text-[var(--text-2)]">
+                <input type="checkbox" checked={attachPdf} onChange={e => setAttachPdf(e.target.checked)} />
+                <span>Attach generated PDF copy ({reference}.pdf)</span>
+              </label>
+            )}
             <div className="flex justify-end gap-2 pt-2">
               <button type="button" onClick={() => setEmailOpen(false)} className="btn-ghost text-xs">Cancel</button>
               <button type="submit" disabled={sent} className="btn-primary text-xs inline-flex items-center gap-1.5">

@@ -76,7 +76,7 @@ export interface Party {
   creditLimit?: number;
   currency: string;
   category?: string; // for suppliers
-  rating?: number; // 1-5
+  rating?: number | null; // 1-5
   status: 'active' | 'inactive';
   contactPerson: string;
   phone: string;
@@ -1227,7 +1227,7 @@ export interface CustomerQuotation {
   quotationDate: string;
   validUntil: string;
   currency: string;
-  status: 'draft' | 'submitted' | 'accepted' | 'rejected' | 'expired' | 'revised' | 'superseded';
+  status: 'draft' | 'submitted' | 'accepted' | 'rejected' | 'expired' | 'revised' | 'superseded' | 'cancelled';
   totalValue: number;
   revision?: number;
   owner: string;

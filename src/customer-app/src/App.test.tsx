@@ -58,6 +58,16 @@ describe("customer app shell", () => {
     expect(screen.getByRole("heading", { name: "Customer Directory" })).toBeInTheDocument();
   });
 
+  it("keeps Customer Directory behind the add-customer sheet and on close", async () => {
+    renderAt("/sales?tab=customers");
+    await userEvent.click(await screen.findByRole("button", { name: "Add New Customer" }));
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Customer Directory" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Customer POs" })).not.toBeInTheDocument();
+    await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Close" }));
+    expect(await screen.findByRole("heading", { name: "Customer Directory" })).toBeInTheDocument();
+  });
+
   it("opens master-data configuration under Admin & Settings", async () => {
     renderAt("/admin?tab=master-data");
     expect(await screen.findByRole("heading", { name: "Master Data & Business Configuration" })).toBeInTheDocument();

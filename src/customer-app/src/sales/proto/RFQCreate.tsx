@@ -7,6 +7,7 @@ import { createItem, createUom } from '../api';
 import AddIfEmpty from './AddIfEmpty';
 import { newCustomer, saveUnit } from './quickMasters';
 import type { CustomerRFQ } from './types';
+import { uploadLinkedDocument } from '../../documents/api';
 
 type Step = 1 | 2 | 3 | 4 | 5;
 
@@ -44,7 +45,7 @@ function newLine(n: number): RFQLine {
 export default function RFQCreate() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { addRfq, addCustomer, currentUser, customers: ALL_CUSTOMERS, catalog, uoms, reload, rfqs } = useStore();
+  const { addRfq, addCustomer, currentUser, customers: ALL_CUSTOMERS, catalog, uoms, reload, rfqs, showToast } = useStore();
   const CUSTOMERS = ALL_CUSTOMERS.filter(c => c.status === 'active');
   const [itemDraft, setItemDraft] = useState({ code: '', name: '', uomId: '' });
   const [itemError, setItemError] = useState('');
@@ -90,8 +91,9 @@ export default function RFQCreate() {
     packagingRequirements: '', traceability: false, specialNotes: '',
   });
 
-  // Step 4: Documents (simulated)
   const [docNotes, setDocNotes] = useState('');
+  const [files, setFiles] = useState<File[]>([]);
+  const [saving, setSaving] = useState(false);
 
   const customer = CUSTOMERS.find(c => c.id === customerId);
   const customerLabel = (entry: { tradingName?: string; legalName?: string }) =>
@@ -141,6 +143,8 @@ export default function RFQCreate() {
   };
 
   const handleSubmit = async () => {
+    if (saving) return;
+    setSaving(true);
     const rfq: CustomerRFQ & Record<string, any> = {
       id: '',
       rfqNumber: '',
@@ -154,7 +158,7 @@ export default function RFQCreate() {
       owner: currentUser.name,
       paymentTerms,
       deliveryTerms,
-      internalNotes,
+      internalNotes: [internalNotes, docNotes].filter(Boolean).join('\n\n'),
       lines: lines.map(l => ({ ...l, qty: l.quantity, targetPrice: l.targetPrice === '' ? null : l.targetPrice })) as unknown as CustomerRFQ['lines'],
       technicalRequirements: {
         standards: techReqs.standards ? techReqs.standards.split('\n').map(s => s.trim()).filter(Boolean) : [],
@@ -165,12 +169,20 @@ export default function RFQCreate() {
         traceability: techReqs.traceability,
         specialNotes: techReqs.specialNotes,
       },
-      documents: docNotes ? [{ id: `doc-${Date.now()}`, name: 'Notes', type: 'Notes', revision: '—', notes: docNotes }] as unknown as CustomerRFQ['documents'] : [],
+      documents: [],
       clarifications: [],
       revisions: [{ id: `rev-${Date.now()}`, revision: 1, changedBy: currentUser.name, changeDescription: 'Initial issue', changedAt: DEMO_NOW }],
     };
     const saved = await addRfq(rfq as unknown as CustomerRFQ);
-    if (saved) navigate(`/sales/rfq/${saved.id}`);
+    if (saved) {
+      try {
+        for (const file of files) await uploadLinkedDocument(file, { type: 'RFQ', id: saved.id, ref: saved.rfqNumber });
+      } catch (error) {
+        showToast({ type: 'error', title: 'RFQ saved; not all documents attached', body: `${error instanceof Error ? error.message : 'Upload failed.'} Attach the remaining files from the RFQ Documents tab.` });
+      }
+      navigate(`/sales/rfq/${saved.id}`);
+    }
+    setSaving(false);
   };
 
   const steps = [
@@ -180,6 +192,8 @@ export default function RFQCreate() {
     { n: 4 as Step, label: 'Documents', icon: Upload },
     { n: 5 as Step, label: 'Review', icon: Eye },
   ];
+
+  if (sourceRfq?.status === 'cancelled') return <p className="p-8 text-sm text-[var(--text-2)]">Cancelled RFQs cannot be copied.</p>;
 
   return (
     <div className="flex flex-col h-full overflow-auto">
@@ -448,11 +462,12 @@ export default function RFQCreate() {
           {step === 4 && (
             <div className="space-y-4">
               <FormCard title="Attached Documents">
-                <div className="border-2 border-dashed rounded-xl p-8 text-center" style={{ borderColor: 'var(--border)' }}>
+                <label className="block border-2 border-dashed rounded-xl p-8 text-center cursor-pointer" style={{ borderColor: 'var(--border)' }}>
                   <Upload size={28} className="mx-auto text-[var(--text-3)] mb-3" />
-                  <p className="text-sm font-medium text-[var(--text-2)]">Drag & drop files or click to browse</p>
-                  <p className="text-xs text-[var(--text-3)] mt-1">File upload is not connected. Notes below are saved on the RFQ.</p>
-                </div>
+                  <span className="block text-sm font-medium text-[var(--text-2)]">Attach documents</span>
+                  <input aria-label="RFQ documents" type="file" multiple onChange={event => setFiles(Array.from(event.target.files ?? []))} className="block mt-3 w-full text-xs" />
+                  <span className="block text-xs text-[var(--text-3)] mt-1">Files are uploaded when the RFQ is saved (up to 20 MB each).</span>
+                </label>
               </FormCard>
               <FormCard title="Document Notes">
                 <textarea
@@ -526,10 +541,11 @@ export default function RFQCreate() {
         ) : (
           <button
             onClick={handleSubmit}
+            disabled={saving}
             className="flex items-center gap-1.5 px-5 py-2 rounded-lg text-sm font-semibold text-white"
             style={{ background: 'var(--brand-fill)' }}
           >
-            <Check size={15} /> Submit RFQ
+            <Check size={15} /> {saving ? 'Saving...' : 'Submit RFQ'}
           </button>
         )}
       </div>

@@ -39,7 +39,7 @@ class GstinValidationTest {
 
     @BeforeEach
     void setUp() {
-        customerService = new CustomerServiceImpl(customerRepo, customerContactRepo, auditService, null, null);
+        customerService = new CustomerServiceImpl(customerRepo, customerContactRepo, auditService, null, null, null);
         supplierService = new SupplierServiceImpl(supplierRepo, supplierContactRepo, auditService, null, null);
         BossContextHolder.set(new BossContext(tenantId, UUID.randomUUID(), Set.of("OWNER"), null, null));
     }

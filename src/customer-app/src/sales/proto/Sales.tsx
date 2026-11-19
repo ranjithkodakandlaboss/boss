@@ -19,7 +19,7 @@ import CustomerDirectory from './CustomerDirectory';
 type POTab = 'pos' | 'rfqs' | 'quotations' | 'customers';
 type SalesSortKey = 'number' | 'name' | 'date' | 'requiredBy' | 'value' | 'lines' | 'terms' | 'status' | 'channel' | 'quotation' | 'owner';
 
-export default function Sales() {
+export default function Sales({ backgroundSearch }: { backgroundSearch?: string }) {
   const { rfqs, quotations, customerPos, customers, jobs, currentUser, showToast, updateCustomerPo, updateRfq, addCustomerPO } = useStore();
   const navigate = useNavigate();
   const location = useLocation();
@@ -28,11 +28,11 @@ export default function Sales() {
   const fromSearch = (location.state as { from?: string } | null)?.from ?? '';
   // When Sales renders as a background behind a sheet (e.g. /sales/customers/new),
   // location.pathname is the sheet path, not '/sales'. Recover the tab from navigation state.
-  const listSearch = background?.pathname === '/sales'
+  const listSearch = backgroundSearch ?? (background?.pathname === '/sales'
     ? background.search
     : location.pathname === '/sales'
       ? location.search
-      : fromSearch.startsWith('/sales?') ? fromSearch.slice('/sales'.length) : '';
+      : fromSearch.startsWith('/sales?') ? fromSearch.slice('/sales'.length) : '');
   const listParams = new URLSearchParams(listSearch.replace(/^\?/, ''));
   const requestedTab = listParams.get('tab');
   const tab: POTab = requestedTab === 'rfqs' || requestedTab === 'quotations' || requestedTab === 'customers' || requestedTab === 'pos' ? requestedTab : 'pos';
@@ -75,15 +75,12 @@ export default function Sales() {
     const hasActiveJobs = linkedJobs.some(j => !['cancelled', 'complete'].includes(j.status));
     if (!po || po.status === 'complete' || po.status === 'cancelled' || hasActiveJobs) { showToast({ type: 'error', title: 'Cannot cancel PO', body: hasActiveJobs ? 'PO has active jobs. Cancel jobs first.' : 'This Customer PO is already closed or cancelled.' }); return; }
     updateCustomerPo(id, { status: 'cancelled' });
-    showToast({ type: 'success', title: 'Customer PO cancelled', body: 'The record remains available in history.' });
   };
 
   const handleDeleteRfq = (id: string) => {
-    const linked = customerPos.some(p => (p as any).rfqId === id);
     const rfq = rfqs.find(r => r.id === id);
-    if (linked || rfq?.status === 'converted') { showToast({ type: 'error', title: 'Cannot cancel RFQ', body: linked ? 'RFQ has an associated PO.' : 'A converted RFQ is preserved as transaction history.' }); return; }
+    if (!rfq || rfq.status === 'cancelled') return;
     updateRfq(id, { status: 'cancelled' });
-    showToast({ type: 'success', title: 'RFQ cancelled' });
   };
 
   const canCreate = ['owner', 'sales'].includes(currentUser.role);
@@ -164,7 +161,7 @@ export default function Sales() {
         <div>
           <h1 className="text-lg font-bold" style={{ color: 'var(--text)' }}>{tab === 'pos' ? 'Customer POs' : tab === 'rfqs' ? 'Customer RFQs' : tab === 'quotations' ? 'Quotations' : 'Customer Directory'}</h1>
           <p className="text-xs mt-0.5" style={{ color: 'var(--text-2)' }}>
-            <button type="button" onClick={() => { setTab('pos'); setStatusFilter('active'); }} className="font-semibold" style={{ color: 'var(--brand)' }}>
+            <button type="button" onClick={() => { selectTab('pos'); setStatusFilter('active'); }} className="font-semibold" style={{ color: 'var(--brand)' }}>
               {customerPos.filter(p => p.status === 'active').length} Active Customer POs
             </button>
             {' '}· {customers.filter(c => c.status === 'active').length} Active Customers · ₹{(totalActive / 100000).toFixed(1)}L in progress
@@ -320,7 +317,7 @@ export default function Sales() {
                       <td className="px-4 py-3 font-mono font-semibold text-xs" style={{ color: 'var(--text)' }}>
                         ₹{(p.totalValue / 100000).toFixed(1)}L
                       </td>
-                      <td className="px-4 py-3 text-center text-xs" style={{ color: 'var(--text-2)' }}>{p.lineCount}</td>
+                      <td className="px-4 py-3 text-left text-xs" style={{ color: 'var(--text-2)' }}>{p.lineCount}</td>
                       <td className="px-4 py-3 text-xs" style={{ color: 'var(--text-2)' }}>{p.paymentTerms}</td>
                       <td className="px-4 py-3">
                         <StatusChip status={p.status} />
@@ -374,7 +371,7 @@ export default function Sales() {
                     <td className="px-4 py-3 font-medium" style={{ color: 'var(--text)' }}>{r.customerName}</td>
                     <td className="px-4 py-3 text-xs" style={{ color: 'var(--text-2)' }}>{fmt(r.receivedDate)}</td>
                     <td className="px-4 py-3 text-xs" style={{ color: 'var(--text-2)' }}>{fmt(r.requiredBy)}</td>
-                    <td className="px-4 py-3 text-center text-xs" style={{ color: 'var(--text-2)' }}>{r.lineCount}</td>
+                    <td className="px-4 py-3 text-left text-xs" style={{ color: 'var(--text-2)' }}>{r.lineCount}</td>
                     <td className="px-4 py-3 text-xs" style={{ color: 'var(--text-2)' }}>{r.channel}</td>
                     <td className="px-4 py-3 text-xs" onClick={e => e.stopPropagation()}>
                       {(() => {
@@ -392,7 +389,7 @@ export default function Sales() {
                             Quote
                           </button>
                         )}
-                        {canCreate && !['cancelled', 'converted'].includes(r.status) && (
+                        {canCreate && r.status !== 'cancelled' && (
                           <button onClick={e => { e.stopPropagation(); handleDeleteRfq(r.id); }} className="p-1 rounded hover:bg-[var(--surface-2)]" title="Cancel Customer RFQ"><XCircle size={12} style={{ color: 'var(--error,#DC2626)' }} /></button>
                         )}
                       </div>
@@ -540,7 +537,7 @@ export default function Sales() {
           onSave={(rfq) => {
             showToast({ type: 'success', title: 'RFQ created', body: `${rfq.rfqNumber} opened.` });
             setShowNewRFQ(false);
-            setTab('rfqs');
+            selectTab('rfqs');
           }}
         />
       )}
