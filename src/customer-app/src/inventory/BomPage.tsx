@@ -151,6 +151,7 @@ function BomCalculator({ bom }: { bom: Bom }) {
       }));
       const result = await api<Explosion>(`/api/v1/items/${bom.itemId}/bom/explode`, {
         method: "POST",
+        headers: { "Idempotency-Key": safeRandomUUID() },
         body: JSON.stringify({ quantity: Number(quantity), specifications: values }),
       });
       setExplosion(result);
@@ -197,8 +198,7 @@ function BomCalculator({ bom }: { bom: Bom }) {
 }
 
 function BomForm({ items, uoms, onClose, onSaved }: { items: Item[]; uoms: Uom[]; onClose: () => void; onSaved: () => void }) {
-  const finished = items.filter((item) => item.itemType === "finished_goods" || item.itemType === "semi_finished");
-  const parents = finished.length > 0 ? finished : items;
+  const parents = items.filter((item) => item.itemType === "finished_goods" || item.itemType === "semi_finished");
   const [itemId, setItemId] = useState("");
   const [lines, setLines] = useState<BomLine[]>([{ componentItemId: "", qty: "", uomId: uoms[0]?.id ?? "", scrapFactor: 0 }]);
   const [error, setError] = useState("");
@@ -254,6 +254,7 @@ function BomForm({ items, uoms, onClose, onSaved }: { items: Item[]; uoms: Uom[]
             <option value="">Select finished item</option>
             {parents.map((item) => <option key={item.id} value={item.id}>{item.code} — {item.name}</option>)}
           </select>
+          {parents.length === 0 && <p className="mt-1 text-xs text-[var(--error)]">No finished goods or semi-finished items found. Add items with type "Finished Goods" or "Semi-Finished" in the Items catalogue first.</p>}
         </label>
         <div className="mt-4 space-y-2">
           {lines.map((line, index) => (
@@ -262,7 +263,7 @@ function BomForm({ items, uoms, onClose, onSaved }: { items: Item[]; uoms: Uom[]
                 <option value="">Component</option>
                 {items.filter((item) => item.id !== itemId && item.itemType !== "finished_goods" && item.itemType !== "service").map((item) => <option key={item.id} value={item.id}>{item.code} — {item.name}</option>)}
               </select>
-              <input aria-label={`Quantity ${index + 1}`} className="eoss-input text-left" inputMode="decimal" value={line.qty} onChange={(event) => update(index, { qty: event.target.value })} placeholder="Fixed qty (or default)" />
+              <input aria-label={`Quantity ${index + 1}`} className="eoss-input text-left" inputMode="decimal" value={line.qty} onChange={(event) => update(index, { qty: event.target.value })} placeholder="Fixed qty *" />
               <select aria-label={`Unit ${index + 1}`} className="eoss-input" value={line.uomId} onChange={(event) => update(index, { uomId: event.target.value })}>
                 {uoms.map((uom) => <option key={uom.id} value={uom.id}>{uom.symbol}</option>)}
               </select>

@@ -445,13 +445,33 @@ public final class SalesApiDtos {
             Instant decidedAt,
             List<CpoLineResponse> lines,
             Instant createdAt,
-            String paymentTermsText) {}
+            String paymentTermsText,
+            String directOrderReason,
+            String deliveryTerms) {}
 
     public record UpdateCpoRequest(
             @Size(max = 120) String customerPoRef,
             @Size(max = 2000) String notes,
             LocalDate requiredByDate,
             @Min(0) @Max(365) Integer paymentTerms) {}
+
+    public record CreateDirectCpoRequest(
+            @NotNull UUID customerId,
+            @NotNull UUID siteId,
+            @NotBlank @Size(max = 500) String directOrderReason,
+            @Size(max = 120) String customerPoRef,
+            @Size(max = 500) String deliveryTerms,
+            @Min(0) @Max(365) Integer paymentTerms,
+            @NotEmpty @Valid List<DirectCpoLine> lines) {
+        public record DirectCpoLine(
+                @NotNull UUID itemId,
+                @NotNull UUID uomId,
+                @Size(max = 120) String drawingNumber,
+                @Size(max = 500) String description,
+                @NotNull @DecimalMin("0.001") BigDecimal quantity,
+                @NotNull @DecimalMin("0") BigDecimal unitPrice,
+                @DecimalMin("0") @DecimalMax("100") BigDecimal gstRate) {}
+    }
 
     public record CpoStatusRequest(
             @NotNull @Pattern(regexp = "open|on_hold|feasibility_pending|feasibility_approved|cancelled")

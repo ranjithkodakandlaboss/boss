@@ -123,7 +123,8 @@ public final class ProcurementApiDtos {
             @NotNull UUID prLineId,
             @NotNull @DecimalMin("0.00") BigDecimal unitPrice,
             @Min(0) Integer leadTimeDays,
-            @DecimalMin("0.00") BigDecimal taxRate) {}
+            @DecimalMin("0.00") BigDecimal taxRate,
+            @DecimalMin("0.001") BigDecimal quotedQty) {}
 
     public record ReceiveSupplierQuotationRequest(
             LocalDate validUntil,

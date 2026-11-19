@@ -1,6 +1,7 @@
 package in.boss.sales.domain;
 
 import in.boss.sales.api.SalesApiDtos.AcceptQuotationRequest;
+import in.boss.sales.api.SalesApiDtos.CreateDirectCpoRequest;
 import in.boss.sales.api.SalesApiDtos.CpoResponse;
 import in.boss.sales.api.SalesApiDtos.PageResponse;
 import in.boss.sales.api.SalesApiDtos.RecordMaterialAvailabilityRequest;
@@ -209,6 +210,41 @@ public class CustomerPoService {
         CpoResponse result = cpoLookup.read(tenantId, cpoId);
         auditService.record("CPO", cpoId, "STATUS_" + nextStatus.toUpperCase(), toJson(before), toJson(result));
         return result;
+    }
+
+    @Transactional
+    @PreAuthorize(BossPermissions.CPO_TRANSITIONS)
+    public CpoResponse createDirect(CreateDirectCpoRequest request) {
+        BossContext context = requireContext();
+        UUID tenantId = context.tenantId();
+        UUID cpoId = UUID.randomUUID();
+        String cpoNumber = "CPO-" + LocalDate.now().format(DateTimeFormatter.BASIC_ISO_DATE)
+                + "-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase();
+        jdbc.update("""
+                INSERT INTO cpos
+                  (id, tenant_id, cpo_number, customer_id, site_id, status,
+                   customer_po_ref, order_date, payment_terms, direct_order_reason, delivery_terms, created_by)
+                VALUES (?, ?, ?, ?, ?, 'open', ?, CURRENT_DATE, ?, ?, ?, ?)
+                """,
+                cpoId, tenantId, cpoNumber, request.customerId(), request.siteId(),
+                request.customerPoRef(), request.paymentTerms(),
+                request.directOrderReason(), request.deliveryTerms(), context.userId());
+        int lineNo = 1;
+        for (CreateDirectCpoRequest.DirectCpoLine line : request.lines()) {
+            jdbc.update("""
+                    INSERT INTO cpo_lines
+                      (id, tenant_id, cpo_id, line_no, item_id, quantity, uom_id,
+                       unit_price, gst_rate, drawing_number, description)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    UUID.randomUUID(), tenantId, cpoId, lineNo++, line.itemId(),
+                    line.quantity(), line.uomId(), line.unitPrice(),
+                    line.gstRate() != null ? line.gstRate() : BigDecimal.ZERO,
+                    line.drawingNumber(), line.description());
+        }
+        CpoResponse created = cpoLookup.read(tenantId, cpoId);
+        auditService.record("CPO", cpoId, "CREATE_DIRECT", null, toJson(created));
+        return created;
     }
 
     private void copyLines(UUID tenantId, UUID quotationId, UUID cpoId) {

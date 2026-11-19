@@ -98,7 +98,8 @@ public class CpoLookup {
         List<Header> headers = jdbc.query("""
                 SELECT p.id, p.cpo_number, p.customer_id, p.quotation_id, p.customer_po_ref, p.status,
                        p.order_date, p.required_by_date, p.payment_terms, p.payment_terms_text, p.notes, p.discount_amount,
-                       p.source_revision, p.created_at, q.quotation_number, q.revision, q.rfq_id,
+                       p.source_revision, p.created_at, p.direct_order_reason, p.delivery_terms,
+                       q.quotation_number, q.revision, q.rfq_id,
                        q.decision_channel, q.decision_note, q.decided_by, q.decided_at, r.rfq_number
                   FROM cpos p
                   LEFT JOIN quotations q ON q.tenant_id = p.tenant_id AND q.id = p.quotation_id
@@ -126,7 +127,9 @@ public class CpoLookup {
                 rs.getString("decision_note"),
                 rs.getObject("decided_by", UUID.class),
                 instant(rs, "decided_at"),
-                rs.getString("rfq_number")), tenantId, cpoId);
+                rs.getString("rfq_number"),
+                rs.getString("direct_order_reason"),
+                rs.getString("delivery_terms")), tenantId, cpoId);
         if (headers.isEmpty()) {
             throw notFound("Customer PO not found");
         }
@@ -135,7 +138,9 @@ public class CpoLookup {
         List<CpoLineResponse> lines = jdbc.query("""
                 SELECT l.id, l.quotation_line_id, l.item_id, l.quantity, l.unit_price, l.gst_rate,
                        l.discount_pct, l.availability, l.shortage_qty, u.symbol,
-                       ql.drawing_number, ql.drawing_revision, ql.description
+                       COALESCE(l.drawing_number, ql.drawing_number) AS drawing_number,
+                       ql.drawing_revision,
+                       COALESCE(l.description, ql.description) AS description
                   FROM cpo_lines l
                   JOIN units_of_measure u ON u.tenant_id = l.tenant_id AND u.id = l.uom_id
                   LEFT JOIN quotation_lines ql ON ql.tenant_id = l.tenant_id AND ql.id = l.quotation_line_id
@@ -148,7 +153,7 @@ public class CpoLookup {
                 header.customerPoRef(), header.status(), header.orderDate(), header.requiredByDate(),
                 header.paymentTerms(), header.notes(), header.discountAmount(), header.decisionChannel(),
                 header.decisionNote(), header.decidedBy(), header.decidedAt(), lines, header.createdAt(),
-                header.paymentTermsText());
+                header.paymentTermsText(), header.directOrderReason(), header.deliveryTerms());
     }
 
     private CpoLineResponse line(ResultSet rs) throws SQLException {
@@ -206,5 +211,6 @@ public class CpoLookup {
                           String status, LocalDate orderDate, LocalDate requiredByDate, Integer paymentTerms,
                           String paymentTermsText, String notes, BigDecimal discountAmount, Integer sourceRevision, Instant createdAt,
                           String quotationNumber, Integer quotationRevision, UUID rfqId, String decisionChannel,
-                          String decisionNote, UUID decidedBy, Instant decidedAt, String rfqNumber) {}
+                          String decisionNote, UUID decidedBy, Instant decidedAt, String rfqNumber,
+                          String directOrderReason, String deliveryTerms) {}
 }
