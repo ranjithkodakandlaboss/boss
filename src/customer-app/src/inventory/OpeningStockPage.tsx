@@ -2,7 +2,8 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { ArrowLeft, Plus, Trash2 } from "lucide-react";
 import StockNav from "./stockNav";
-import { api, mutate, type Item, type Company, type Store } from "./api";
+import { api } from "../auth/api";
+import { mutate, type Item, type Company, type Store } from "./api";
 
 interface StockLine {
   id: string;
