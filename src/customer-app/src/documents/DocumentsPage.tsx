@@ -18,6 +18,8 @@ const CATEGORIES = [
   'Supplier Documents',
   'Company Certificates',
   'Asset Documents',
+  'Customer Documents',
+  'Sales Documents',
 ];
 
 interface ToastState {

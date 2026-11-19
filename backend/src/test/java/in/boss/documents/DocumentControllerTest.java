@@ -12,6 +12,8 @@ import in.boss.shared.context.BossContextHolder;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
@@ -76,6 +78,75 @@ class DocumentControllerTest extends BaseMasterDataIntegrationTest {
                 .andExpect(jsonPath("$.title").value("Machine Layout Drawing"))
                 .andExpect(jsonPath("$.category").value("Asset Documents"))
                 .andExpect(jsonPath("$.version").value(1));
+    }
+
+    @ParameterizedTest
+    @CsvSource({
+            "Sales Documents, RFQ",
+            "Sales Documents, CustomerPO",
+            "Customer Documents, Customer"
+    })
+    @WithMockUser(roles = "SALES_MANAGER")
+    @DisplayName("POST /api/v1/documents allows sales managers to attach linked sales and customer documents")
+    void salesManagerCanUploadLinkedSalesDocument(String category, String linkedEntityType) throws Exception {
+        String suffix = UUID.randomUUID().toString().substring(0, 8);
+        UUID customerId = UUID.fromString(jdbc.queryForObject(
+                "INSERT INTO customers (tenant_id, code, name) VALUES (?, ?, ?) RETURNING id::text",
+                String.class, tenantId, "DOC-CUST-" + suffix, "Sales Customer"));
+        String linkedEntityRef = linkedEntityType.equals("Customer") ? "Sales Customer" : "DOC-" + suffix;
+        UUID linkedEntityId = customerId;
+        if (!"Customer".equals(linkedEntityType)) {
+            UUID legalEntityId = UUID.fromString(jdbc.queryForObject(
+                    "INSERT INTO legal_entities (tenant_id, name, legal_name) VALUES (?, ?, ?) RETURNING id::text",
+                    String.class, tenantId, "Sales Entity " + suffix, "Sales Entity Legal " + suffix));
+            UUID siteId = UUID.fromString(jdbc.queryForObject(
+                    "INSERT INTO physical_sites (tenant_id, legal_entity_id, name, code) VALUES (?, ?, ?, ?) RETURNING id::text",
+                    String.class, tenantId, legalEntityId, "Sales Site " + suffix, "DOC-SITE-" + suffix));
+            if ("RFQ".equals(linkedEntityType)) {
+                linkedEntityId = UUID.fromString(jdbc.queryForObject(
+                        "INSERT INTO rfqs (tenant_id, rfq_number, customer_id, site_id, received_date, created_by) "
+                                + "VALUES (?, ?, ?, ?, CURRENT_DATE, ?) RETURNING id::text",
+                        String.class, tenantId, linkedEntityRef, customerId, siteId, userId));
+            } else {
+                linkedEntityId = UUID.fromString(jdbc.queryForObject(
+                        "INSERT INTO cpos (tenant_id, cpo_number, customer_id, site_id, status, order_date, created_by) "
+                                + "VALUES (?, ?, ?, ?, 'open', CURRENT_DATE, ?) RETURNING id::text",
+                        String.class, tenantId, linkedEntityRef, customerId, siteId, userId));
+            }
+        }
+        MockMultipartFile file = new MockMultipartFile(
+                "file", "sales-document.pdf", "application/pdf", "sales evidence".getBytes(StandardCharsets.UTF_8));
+
+        mockMvc.perform(multipart("/api/v1/documents")
+                        .file(file)
+                        .header("Idempotency-Key", UUID.randomUUID().toString())
+                        .param("title", "Sales document")
+                        .param("category", category)
+                        .param("docType", linkedEntityType + " Document")
+                        .param("linkedEntityType", linkedEntityType)
+                        .param("linkedEntityId", linkedEntityId.toString())
+                        .param("linkedEntityRef", linkedEntityRef))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.title").value("Sales document"))
+                .andExpect(jsonPath("$.category").value(category))
+                .andExpect(jsonPath("$.linkedEntities[0].id").value(linkedEntityId.toString()));
+    }
+
+    @Test
+    @WithMockUser(roles = "SALES_MANAGER")
+    @DisplayName("Sales managers can upload documents but cannot renew vault documents")
+    void salesManagerCannotRenewDocuments() throws Exception {
+        MockMultipartFile file = new MockMultipartFile(
+                "file", "sales-document.pdf", "application/pdf", "sales evidence".getBytes(StandardCharsets.UTF_8));
+        DocumentResponse document = documentService.uploadDocument(new CreateDocumentRequest(
+                "Sales document", "Sales Documents", "Sales evidence", null, null, 30, null, null, null, null), file);
+
+        mockMvc.perform(multipart("/api/v1/documents/{id}/renew", document.id())
+                        .file(new MockMultipartFile(
+                                "file", "renewed.pdf", "application/pdf", "new evidence".getBytes(StandardCharsets.UTF_8)))
+                        .header("Idempotency-Key", UUID.randomUUID().toString())
+                        .param("expiryDate", LocalDate.now().plusYears(1).toString()))
+                .andExpect(status().isForbidden());
     }
 
     @Test

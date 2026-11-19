@@ -1,6 +1,9 @@
 import { api, safeRandomUUID } from "../auth/api";
 import type { DocumentHistoryEntry, VaultDocument } from "./types";
 
+export const MAX_DOCUMENT_UPLOAD_BYTES = 10 * 1024 * 1024;
+export const MAX_DOCUMENT_UPLOAD_MESSAGE = "Choose a document no larger than 10 MB.";
+
 export interface DocumentListParams {
   category?: string;
   status?: string;
@@ -44,7 +47,7 @@ export function uploadDocument(formData: FormData): Promise<VaultDocument> {
 }
 
 export function uploadLinkedDocument(file: File, entity: { type: string; id: string; ref: string }): Promise<VaultDocument> {
-  if (file.size > 20 * 1024 * 1024) throw new Error('Choose a document no larger than 20 MB.');
+  if (file.size > MAX_DOCUMENT_UPLOAD_BYTES) throw new Error(MAX_DOCUMENT_UPLOAD_MESSAGE);
   const body = new FormData();
   body.append('file', file);
   body.append('title', file.name);

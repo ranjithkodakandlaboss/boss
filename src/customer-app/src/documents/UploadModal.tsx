@@ -1,6 +1,15 @@
 import { useEffect, useRef, useState, type ChangeEvent } from 'react';
 import { X } from 'lucide-react';
-import { loadAssets, loadCustomers, loadJobs, loadSuppliers, uploadDocument, type SimpleOption } from './api';
+import {
+  loadAssets,
+  loadCustomers,
+  loadJobs,
+  loadSuppliers,
+  MAX_DOCUMENT_UPLOAD_BYTES,
+  MAX_DOCUMENT_UPLOAD_MESSAGE,
+  uploadDocument,
+  type SimpleOption,
+} from './api';
 import type { VaultDocument } from './types';
 
 const CATEGORIES = [
@@ -10,6 +19,8 @@ const CATEGORIES = [
   'Supplier Documents',
   'Company Certificates',
   'Asset Documents',
+  'Customer Documents',
+  'Sales Documents',
 ];
 
 interface UploadModalProps {
@@ -89,6 +100,10 @@ export default function UploadModal({ onClose, onSuccess }: UploadModalProps) {
     }
     if (!form.file) {
       setErr('Please select a file');
+      return;
+    }
+    if (form.file.size > MAX_DOCUMENT_UPLOAD_BYTES) {
+      setErr(MAX_DOCUMENT_UPLOAD_MESSAGE);
       return;
     }
     if (form.issueDate && form.expiryDate && form.expiryDate < form.issueDate) {

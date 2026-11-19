@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useState, type ChangeEvent } from 'react';
 import { FileText, Upload } from 'lucide-react';
-import { downloadDocument, listDocuments, uploadLinkedDocument } from '../../../documents/api';
+import {
+  downloadDocument,
+  listDocuments,
+  MAX_DOCUMENT_UPLOAD_BYTES,
+  MAX_DOCUMENT_UPLOAD_MESSAGE,
+  uploadLinkedDocument,
+} from '../../../documents/api';
 import type { VaultDocument } from '../../../documents/types';
 
 interface LinkedDocumentsSectionProps {
@@ -45,8 +51,8 @@ export default function LinkedDocumentsSection({
     const file = event.target.files?.[0];
     event.target.value = '';
     if (!file || !entityId || readOnly) return;
-    if (file.size > 20 * 1024 * 1024) {
-      setError('Choose a document no larger than 20 MB.');
+    if (file.size > MAX_DOCUMENT_UPLOAD_BYTES) {
+      setError(MAX_DOCUMENT_UPLOAD_MESSAGE);
       return;
     }
     setError('');
