@@ -117,8 +117,8 @@
     <!-- Google Cloud Storage -->
     <dependency>
       <groupId>com.google.cloud</groupId>
-      <artifactId>google-cloud-storage</artifactId>
-      <version>2.44.1</version>
+      <artifactId>spring-cloud-gcp-starter-storage</artifactId>
+      <version>7.5.2</version>
     </dependency>
     <!-- The default Google HTTP transport gunzips Identity Toolkit responses twice on
          Java 21, so Firebase user creation and token checks fail closed. Apache HttpClient
