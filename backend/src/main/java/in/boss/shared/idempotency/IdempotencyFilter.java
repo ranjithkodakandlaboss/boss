@@ -98,9 +98,12 @@ public class IdempotencyFilter extends OncePerRequestFilter {
             return;
         }
 
-        // Read body eagerly so we can compute the hash before claiming the key
-        byte[] bodyBytes = readBodyBytes(request);
-        String requestHash = hashRequest(bodyBytes, request.getRequestURI(), request.getMethod());
+        // Read body eagerly for regular payloads so we can compute the hash.
+        // For multipart requests, do NOT consume or close request.getInputStream() because
+        // the servlet container / multipart resolver requires the stream to parse parts.
+        boolean multipart = isMultipart(request);
+        byte[] bodyBytes = multipart ? null : readBodyBytes(request);
+        String requestHash = hashRequest(bodyBytes, request.getRequestURI(), request.getMethod(), request);
 
         var ctx = BossContextHolder.get();
         UUID tenantId = ctx != null ? ctx.tenantId() : null;
@@ -195,11 +198,13 @@ public class IdempotencyFilter extends OncePerRequestFilter {
                                  UUID rowId)
             throws ServletException, IOException {
 
-        var rewound = new RewindableRequestWrapper(request, bodyBytes);
+        HttpServletRequest effectiveRequest = (bodyBytes != null)
+                ? new RewindableRequestWrapper(request, bodyBytes)
+                : request;
         var cachedResponse = new ContentCachingResponseWrapper(response);
 
         try {
-            chain.doFilter(rewound, cachedResponse);
+            chain.doFilter(effectiveRequest, cachedResponse);
         } catch (Exception e) {
             // Business logic threw: mark row as failed by expiring it, then rethrow
             expireRow(rowId);
@@ -276,21 +281,32 @@ public class IdempotencyFilter extends OncePerRequestFilter {
     // ---- helpers ----
 
     private static byte[] readBodyBytes(HttpServletRequest request) throws IOException {
-        try (InputStream is = request.getInputStream()) {
-            return is.readAllBytes();
-        }
+        InputStream is = request.getInputStream();
+        return is.readAllBytes();
     }
 
-    private static String hashRequest(byte[] body, String uri, String method) {
+    private static String hashRequest(byte[] body, String uri, String method, HttpServletRequest request) {
         try {
             MessageDigest md = MessageDigest.getInstance("SHA-256");
             md.update(method.getBytes(StandardCharsets.UTF_8));
             md.update(uri.getBytes(StandardCharsets.UTF_8));
-            md.update(body != null ? body : new byte[0]);
+            if (body != null) {
+                md.update(body);
+            } else {
+                String len = request.getHeader("Content-Length");
+                if (len != null) {
+                    md.update(len.getBytes(StandardCharsets.UTF_8));
+                }
+            }
             return HexFormat.of().formatHex(md.digest());
         } catch (Exception e) {
             return "unknown";
         }
+    }
+
+    private static boolean isMultipart(HttpServletRequest request) {
+        String ct = request.getContentType();
+        return ct != null && ct.toLowerCase().startsWith("multipart/");
     }
 
     private static void writeError(HttpServletResponse response, int status,
