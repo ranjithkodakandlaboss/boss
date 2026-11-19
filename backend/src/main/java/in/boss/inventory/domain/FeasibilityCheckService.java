@@ -11,6 +11,7 @@ import in.boss.inventory.persistence.InventoryReservationRepository.CustomerPoHe
 import in.boss.inventory.persistence.InventoryReservationRepository.CustomerPoLine;
 import in.boss.inventory.persistence.LotRow;
 import in.boss.masterdata.domain.BomExplosionService;
+import in.boss.masterdata.persistence.ItemRepository;
 import in.boss.shared.audit.AuditService;
 import in.boss.shared.context.BossContext;
 import in.boss.shared.context.BossContextHolder;
@@ -47,6 +48,7 @@ public class FeasibilityCheckService {
     private final InventoryMetrics metrics;
     private final AuditService auditService;
     private final ObjectMapper objectMapper;
+    private final ItemRepository itemRepository;
 
     public FeasibilityCheckService(InventoryReservationRepository reservationRepository,
                                    InventoryReservationPlanner planner,
@@ -56,7 +58,8 @@ public class FeasibilityCheckService {
                                    InventoryFeatureFlags featureFlags,
                                    InventoryMetrics metrics,
                                    AuditService auditService,
-                                   ObjectMapper objectMapper) {
+                                   ObjectMapper objectMapper,
+                                   ItemRepository itemRepository) {
         this.reservationRepository = reservationRepository;
         this.planner = planner;
         this.bomExplosionService = bomExplosionService;
@@ -66,6 +69,7 @@ public class FeasibilityCheckService {
         this.metrics = metrics;
         this.auditService = auditService;
         this.objectMapper = objectMapper;
+        this.itemRepository = itemRepository;
     }
 
     public FeasibilityResponse checkAndReserve(UUID cpoId) {
@@ -132,10 +136,21 @@ public class FeasibilityCheckService {
             if (remaining.signum() <= 0) {
                 continue;
             }
-            var materials = bomExplosionService.explodeBOM(line.itemId(), remaining).getFlatMaterials();
+            var result = bomExplosionService.explodeBOM(line.itemId(), remaining);
+            var materials = result.getFlatMaterials();
             if (materials == null || materials.isEmpty()) {
-                throw new InventoryValidationException(
-                        "A Customer PO line has no approved BOM with material requirements");
+                // No approved BOM — treat as a traded/stocked finished good:
+                // reserve the finished-good SKU itself from inventory.
+                var item = itemRepository.findByIdAndTenantId(line.itemId(), context.tenantId())
+                        .orElseThrow(() -> new InventoryValidationException(
+                                "Item on Customer PO line not found"));
+                if (!"finished_goods".equals(item.getItemType())) {
+                    throw new InventoryValidationException(
+                            "A Customer PO line has no approved BOM with material requirements");
+                }
+                // Traded or not-yet-manufactured: reserve the finished-good item itself.
+                totals.merge(line.itemId(), remaining, BigDecimal::add);
+                continue;
             }
             materials.forEach(material -> totals.merge(material.getItemId(), material.getQty(),
                     BigDecimal::add));

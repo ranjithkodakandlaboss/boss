@@ -28,7 +28,8 @@ export default function ItemDetail() {
   const [reactivateConfirm, setReactivateConfirm] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
-  const [itemBom, setItemBom] = useState<{ id: string; version?: number | string; status?: string; lines?: unknown[] } | null | undefined>(undefined);
+  type BomLine = { componentItemId?: string; componentItemCode?: string; componentItemName?: string; qty?: number | string; uomSymbol?: string; scrapFactor?: number | string };
+  const [itemBom, setItemBom] = useState<{ id: string; itemId?: string; version?: number | string; status?: string; lines?: BomLine[] } | null | undefined>(undefined);
 
   function load() {
     setLoading(true);
@@ -150,13 +151,29 @@ export default function ItemDetail() {
         </div>
         {itemBom === undefined && <p className="text-xs text-[var(--text-3)]">Loading…</p>}
         {itemBom === null && <p className="text-xs text-[var(--text-2)]">No BOM configured for this product. <Link to="/bom" className="font-semibold text-[var(--brand)]">Create one in Bill of Materials.</Link></p>}
-        {itemBom && (
-          <div className="grid grid-cols-3 gap-3 mt-1">
+        {itemBom && (<>
+          <div className="grid grid-cols-3 gap-3 mt-1 mb-3">
             <Fact label="Version" value={String(itemBom.version ?? "1")} />
             <Fact label="Status" value={itemBom.status ?? "—"} />
             <Fact label="Components" value={String((itemBom.lines ?? []).length)} />
           </div>
-        )}
+          {(itemBom.lines ?? []).length > 0 && (
+            <table className="w-full text-xs">
+              <thead><tr className="border-b" style={{ borderColor: "var(--border)" }}>{["Code", "Material", "Qty / Unit", "UOM", "Scrap %"].map((h) => <th key={h} className="px-2 py-1 text-left font-medium text-[var(--text-3)]">{h}</th>)}</tr></thead>
+              <tbody>
+                {(itemBom.lines ?? []).map((line, i) => (
+                  <tr key={line.componentItemId ?? i} className="border-b last:border-0" style={{ borderColor: "var(--border)" }}>
+                    <td className="px-2 py-1 font-mono">{line.componentItemCode ?? "—"}</td>
+                    <td className="px-2 py-1">{line.componentItemName ?? "—"}</td>
+                    <td className="px-2 py-1 font-mono">{line.qty ?? "—"}</td>
+                    <td className="px-2 py-1">{line.uomSymbol ?? "—"}</td>
+                    <td className="px-2 py-1">{line.scrapFactor != null && Number(line.scrapFactor) > 0 ? `${Number(line.scrapFactor) * 100}%` : "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </>)}
       </section>}
 
       <section className="overflow-hidden rounded-xl border" style={{ borderColor: "var(--border)" }}>

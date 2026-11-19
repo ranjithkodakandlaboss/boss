@@ -97,7 +97,16 @@ export function ItemForm({ item, onClose, onSaved }: { item?: Item; onClose: () 
   const [uomId, setUomId] = useState(item?.uomId ?? "");
   const [reorderPoint, setReorderPoint] = useState(item?.reorderPoint == null ? "" : String(item.reorderPoint));
   const [productKind, setProductKind] = useState((item as { productKind?: string })?.productKind ?? "");
-  const [specifications, setSpecifications] = useState<SpecificationDraft[]>([]);
+  const [specifications, setSpecifications] = useState<SpecificationDraft[]>(
+    (item?.specifications ?? []).map((s) => ({
+      key: s.key,
+      label: s.label,
+      uomId: s.uomId ?? "",
+      minValue: s.minValue == null ? "" : String(s.minValue),
+      maxValue: s.maxValue == null ? "" : String(s.maxValue),
+      defaultValue: s.defaultValue == null ? "" : String(s.defaultValue),
+    }))
+  );
   const [error, setError] = useState("");
   const [categoryError, setCategoryError] = useState("");
   const [uomError, setUomError] = useState("");
@@ -135,6 +144,10 @@ export function ItemForm({ item, onClose, onSaved }: { item?: Item; onClose: () 
           categoryId: categoryId || null,
           categoryLabel: category ? categoryName(category) : undefined,
           reorderPoint: reorderPoint === "" ? null : Number(reorderPoint),
+          ...(item.itemType === "FINISHED_GOOD" ? {
+            productKind: productKind || null,
+            specifications: specs.map((s) => ({ key: s.key.trim(), label: s.label.trim(), uomId: s.uomId || null, minValue: s.minValue === "" ? null : Number(s.minValue), maxValue: s.maxValue === "" ? null : Number(s.maxValue), defaultValue: s.defaultValue === "" ? null : Number(s.defaultValue) })),
+          } : {}),
         })
         : await mutate<Item>("/api/v1/items", "POST", {
           code: code.trim(),
@@ -225,7 +238,7 @@ export function ItemForm({ item, onClose, onSaved }: { item?: Item; onClose: () 
           </select>
         </label>
       </div>
-      {!item && itemType === "FINISHED_GOOD" && (
+      {((!item && itemType === "FINISHED_GOOD") || (item && item.itemType === "FINISHED_GOOD")) && (
         <fieldset className="mt-3 rounded-lg border p-3 text-xs" style={{ borderColor: "var(--border)" }}>
           <legend className="px-1 font-semibold">Product kind &amp; specifications</legend>
           <label className="mt-2 block">
