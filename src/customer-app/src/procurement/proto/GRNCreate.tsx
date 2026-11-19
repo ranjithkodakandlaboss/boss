@@ -62,6 +62,7 @@ export default function GRNCreate() {
   const [siteId, setSiteId] = useState(defaultSiteId);
   const [storeLocationId, setStoreLocationId] = useState(defaultQuarantineStore?.id || '');
   const [error, setError] = useState('');
+  const [submitting, setSubmitting] = useState(false);
 
   const buildDraftsForSpo = (targetSpoId: string): Record<string, LineReceiptDraft> => {
     const targetLines = supplierPoLines.filter(l => l.spoId === targetSpoId);
@@ -241,6 +242,8 @@ export default function GRNCreate() {
       setError(validation.message);
       return;
     }
+    if (submitting) return;
+    setSubmitting(true);
     const payloadLines = spoLines
       .map(line => {
         const draft = lineDrafts[line.id];
@@ -278,6 +281,7 @@ export default function GRNCreate() {
     if (res.error || !res.grn) {
       setError(res.error || 'Could not record GRN.');
       showToast({ type: 'error', title: 'Receipt failed', body: res.error || 'Validation failed.' });
+      setSubmitting(false);
       return;
     }
 
@@ -555,11 +559,11 @@ export default function GRNCreate() {
           </button>
           <button
             type="submit"
-            disabled={!validation.valid}
+            disabled={!validation.valid || submitting}
             className="px-5 py-2.5 rounded-xl text-sm font-semibold text-white disabled:opacity-40 inline-flex items-center gap-1.5"
             style={{ background: 'var(--success)' }}
           >
-            <Plus size={15} /> Save GRN & Record Lots
+            <Plus size={15} /> {submitting ? 'Saving…' : 'Save GRN & Record Lots'}
           </button>
         </div>
       </form>

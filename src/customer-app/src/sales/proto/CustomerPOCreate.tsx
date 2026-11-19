@@ -51,6 +51,7 @@ export default function CustomerPOCreate() {
   const [deliveryTerms, setDeliveryTerms] = useState('Ex-Works / By Road');
   const [customerPoRef, setCustomerPoRef] = useState('');
   const [confirmationNote, setConfirmationNote] = useState('');
+  const [creating, setCreating] = useState(false);
   const [directLines, setDirectLines] = useState<DirectLine[]>([
     { id: `dl-${Date.now()}`, drawingNumber: '', revision: '', description: '', orderedQty: 1, uom: '', rate: 0, requiredDate: '' },
   ]);
@@ -59,8 +60,10 @@ export default function CustomerPOCreate() {
   const directTotal = directLines.reduce((s, l) => s + l.orderedQty * l.rate, 0);
 
   const create = async () => {
+    if (creating) return;
     if (entryMode === 'quotation') {
       if (!selected) return;
+      setCreating(true);
       const saved = await convertQuotationToPO(selected.id, {
         id: '', poNumber: '', customerId: selected.customerId, customerName: selected.customerName,
         acceptedDate: TODAY, paymentTerms: selected.paymentTerms ?? 'Net 30', status: 'active',
@@ -69,6 +72,7 @@ export default function CustomerPOCreate() {
         customerPoRef, confirmationNote,
       });
       if (saved) navigate(`/sales/po/${saved.id}`, { state: { from: originUrl } });
+      else setCreating(false);
       return;
     }
     showToast({ type: 'error', title: 'Quotation required', body: 'A Customer PO is created by accepting a sent quotation. Direct entry is not saved, and accepted prices stay locked.' });
@@ -362,15 +366,15 @@ export default function CustomerPOCreate() {
         <button
           type="button"
           disabled={
-            entryMode === 'quotation'
+            creating || (entryMode === 'quotation'
               ? !selected
-              : !directCustomer || !directReason.trim() || directLines.some(l => !l.description.trim())
+              : !directCustomer || !directReason.trim() || directLines.some(l => !l.description.trim()))
           }
           onClick={create}
           className="flex items-center gap-2 px-5 py-2 rounded-lg text-sm font-semibold text-white disabled:opacity-40"
           style={{ background: 'var(--brand-fill)' }}
         >
-          <CheckCircle2 size={14} /> {entryMode === 'quotation' ? 'Create Customer PO' : 'Record Direct Customer PO'}
+          <CheckCircle2 size={14} /> {creating ? 'Creating…' : (entryMode === 'quotation' ? 'Create Customer PO' : 'Record Direct Customer PO')}
         </button>
       </div>
     </div>
