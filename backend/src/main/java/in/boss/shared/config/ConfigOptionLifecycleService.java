@@ -45,6 +45,7 @@ public class ConfigOptionLifecycleService {
         if (label == null || label.isBlank()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Label is required");
         }
+        lockQualityOption(context.tenantId(), categoryCode, optionId);
         ConfigOptionDto existing = queryService.findOption(context.tenantId(), categoryCode, optionId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
                         "Configuration option not found"));
@@ -96,6 +97,9 @@ public class ConfigOptionLifecycleService {
                     "System-controlled options cannot be deactivated");
         }
         if (existing.isActive() == active) return;
+        if (!active) {
+            checkQualityDependencies(context.tenantId(), categoryCode, optionId);
+        }
         if ("ITEM_CATEGORY".equalsIgnoreCase(categoryCode)) {
             if (!active) {
                 List<String> dependencies = findActiveCategoryDependencies(context.tenantId(), optionId);
@@ -152,6 +156,29 @@ public class ConfigOptionLifecycleService {
             dependencies.add(children + (children == 1 ? " active child category" : " active child categories"));
         }
         return dependencies;
+    }
+
+    private void checkQualityDependencies(UUID tenantId, String categoryCode, UUID optionId) {
+        String query;
+        if ("INSPECTION_TYPES".equalsIgnoreCase(categoryCode)) {
+            query = """
+                    SELECT EXISTS (SELECT 1 FROM quality_inspections
+                    WHERE tenant_id = ? AND inspection_type_option_id = ?
+                      AND status IN ('pending', 'in_progress'))
+                    """;
+        } else if ("DEFECT_CATEGORY".equalsIgnoreCase(categoryCode)) {
+            query = """
+                    SELECT EXISTS (SELECT 1 FROM ncrs
+                    WHERE tenant_id = ? AND defect_category_id = ?
+                      AND status NOT IN ('closed', 'scrapped'))
+                    """;
+        } else {
+            return;
+        }
+        if (Boolean.TRUE.equals(jdbc.queryForObject(query, Boolean.class, tenantId, optionId))) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "This option is used by active quality records and cannot be deactivated");
+        }
     }
 
     private void requireTenantEditable(String categoryCode) {

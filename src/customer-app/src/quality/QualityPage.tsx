@@ -5,6 +5,7 @@ import RecordSheet from "../components/shared/RecordSheet";
 import { useCustomer } from "../auth/CustomerState";
 import SortableHeader from "../components/shared/SortableHeader";
 import StatusChip from "../components/shared/StatusChip";
+import { allPages, type Item } from "../inventory/api";
 import {
   listInspections, listNcrs, createInspection, createNcr,
   listConfigOptions,
@@ -46,14 +47,20 @@ export default function QualityPage() {
   // Config options (CLAUDE.md Rule #10)
   const [inspectionTypes, setInspectionTypes] = useState<ConfigOption[]>([]);
   const [defectCategories, setDefectCategories] = useState<ConfigOption[]>([]);
-  const [severityOptions, setSeverityOptions] = useState<ConfigOption[]>([]);
+  const [inspectionOptionsLoading, setInspectionOptionsLoading] = useState(true);
+  const [defectOptionsLoading, setDefectOptionsLoading] = useState(true);
+  const [inspectionOptionsError, setInspectionOptionsError] = useState("");
+  const [defectOptionsError, setDefectOptionsError] = useState("");
+  const [items, setItems] = useState<Item[]>([]);
+  const [itemsError, setItemsError] = useState("");
 
   // New Inspection dialog
   const [showNewInspection, setShowNewInspection] = useState(false);
   const [newInspType, setNewInspType] = useState("");
   const [newInspWorkflowType, setNewInspWorkflowType] = useState("final");
-  const [newInspRefType, setNewInspRefType] = useState("job");
+  const [newInspRefType, setNewInspRefType] = useState("production_job");
   const [newInspRefId, setNewInspRefId] = useState("");
+  const [newInspItemId, setNewInspItemId] = useState("");
   const [newInspQty, setNewInspQty] = useState("1");
   const [newInspNotes, setNewInspNotes] = useState("");
   const [saving, setSaving] = useState(false);
@@ -79,18 +86,14 @@ export default function QualityPage() {
   }
 
   useEffect(() => {
-    listConfigOptions("INSPECTION_TYPES").then((opts) => {
-      setInspectionTypes(opts);
-      if (opts.length > 0 && !newInspType) setNewInspType(opts[0].id);
-    }).catch(() => {});
-    listConfigOptions("DEFECT_CATEGORY").then((opts) => {
-      setDefectCategories(opts);
-      if (opts.length > 0) setNcrDefectCategoryId(opts[0].id);
-    }).catch(() => {});
-    listConfigOptions("DEFECT_SEVERITY").then((opts) => {
-      setSeverityOptions(opts);
-      if (opts.length > 0) setNcrSeverity(opts[0].id);
-    }).catch(() => {});
+    listConfigOptions("INSPECTION_TYPES").then(setInspectionTypes)
+      .catch((e: Error) => setInspectionOptionsError(`Unable to load inspection categories: ${e.message}`))
+      .finally(() => setInspectionOptionsLoading(false));
+    listConfigOptions("DEFECT_CATEGORY").then(setDefectCategories)
+      .catch((e: Error) => setDefectOptionsError(`Unable to load defect categories: ${e.message}`))
+      .finally(() => setDefectOptionsLoading(false));
+    allPages<Item>("/api/v1/items?status=active").then(setItems)
+      .catch((e: Error) => setItemsError(`Unable to load items: ${e.message}`));
   }, []);
 
   useEffect(() => {
@@ -130,6 +133,14 @@ export default function QualityPage() {
 
   async function handleCreateInspection(e?: React.FormEvent) {
     if (e) e.preventDefault();
+    if (!newInspType || !newInspItemId || !newInspRefId.trim()) {
+      setSaveError("Select an inspection category and item, and enter a reference ID.");
+      return;
+    }
+    if (!newInspQty.trim() || !Number.isFinite(Number(newInspQty)) || Number(newInspQty) <= 0) {
+      setSaveError("Enter a quantity greater than zero.");
+      return;
+    }
     setSaving(true);
     setSaveError("");
     try {
@@ -138,7 +149,8 @@ export default function QualityPage() {
         inspectionTypeOptionId: newInspType || undefined,
         referenceType: newInspRefType,
         referenceId: newInspRefId,
-        quantityInspected: parseFloat(newInspQty) || 1,
+        itemId: newInspItemId,
+        quantityInspected: Number(newInspQty),
         notes: newInspNotes || undefined,
       });
       setShowNewInspection(false);
@@ -152,15 +164,25 @@ export default function QualityPage() {
 
   async function handleCreateNcr(e?: React.FormEvent) {
     if (e) e.preventDefault();
+    const inspection = inspections.find((entry) => entry.id === ncrInspectionId);
+    if (!inspection?.itemId || !ncrDefectCategoryId || !ncrSeverity || !ncrDefectDesc.trim()) {
+      setNcrSaveError("Select an inspection with an item, a defect category and severity, and enter a description.");
+      return;
+    }
+    if (!ncrQty.trim() || !Number.isFinite(Number(ncrQty)) || Number(ncrQty) <= 0) {
+      setNcrSaveError("Enter a quantity greater than zero.");
+      return;
+    }
     setSaving(true);
     setNcrSaveError("");
     try {
       const ncr = await createNcr({
         inspectionId: ncrInspectionId || undefined,
+        itemId: inspection.itemId,
         defectCategoryId: ncrDefectCategoryId || undefined,
         defectDescription: ncrDefectDesc,
         severity: ncrSeverity || undefined,
-        quantity: parseFloat(ncrQty) || 1,
+        quantity: Number(ncrQty),
       });
       setShowNewNcr(false);
       navigate(`/quality/ncr/${ncr.id}`);
@@ -334,22 +356,33 @@ export default function QualityPage() {
             <label className="block text-sm">
               <span className="text-[var(--text-2)] font-medium">Inspection category</span>
               <select className="mt-1 w-full eoss-input" value={newInspType} onChange={(e) => setNewInspType(e.target.value)}>
+                <option value="">— Select category —</option>
                 {inspectionTypes.map((opt) => (
                   <option key={opt.id} value={opt.id}>{opt.label}</option>
                 ))}
               </select>
+              {inspectionOptionsError && <p role="alert" className="text-xs text-red-600">{inspectionOptionsError}</p>}
+              {!inspectionOptionsLoading && !inspectionOptionsError && inspectionTypes.length === 0 && <p className="text-xs">No inspection categories available. Configure them in business settings.</p>}
+            </label>
+            <label className="block text-sm">
+              <span className="text-[var(--text-2)] font-medium">Item</span>
+              <select className="mt-1 w-full eoss-input" value={newInspItemId} onChange={(e) => setNewInspItemId(e.target.value)}>
+                <option value="">— Select item —</option>
+                {items.map((item) => <option key={item.id} value={item.id}>{item.code} · {item.name}</option>)}
+              </select>
+              {itemsError && <p role="alert" className="text-xs text-red-600">{itemsError}</p>}
             </label>
             <label className="block text-sm">
               <span className="text-[var(--text-2)] font-medium">Reference type</span>
               <select className="mt-1 w-full eoss-input" value={newInspRefType} onChange={(e) => setNewInspRefType(e.target.value)}>
-                <option value="job">Job</option>
+                <option value="production_job">Production Job</option>
                 <option value="job_stage">Job Stage</option>
-                <option value="lot">Lot</option>
+                <option value="grn">GRN</option>
               </select>
             </label>
             <label className="block text-sm">
-              <span className="text-[var(--text-2)] font-medium">Reference number</span>
-              <input required className="mt-1 w-full eoss-input" placeholder="e.g. J-200 or LOT-2024-001" value={newInspRefId} onChange={(e) => setNewInspRefId(e.target.value)} />
+              <span className="text-[var(--text-2)] font-medium">Reference ID</span>
+              <input required className="mt-1 w-full eoss-input" placeholder="Reference UUID" value={newInspRefId} onChange={(e) => setNewInspRefId(e.target.value)} />
             </label>
             <label className="block text-sm">
               <span className="text-[var(--text-2)] font-medium">Quantity inspected</span>
@@ -374,6 +407,15 @@ export default function QualityPage() {
         >
           <form onSubmit={handleCreateNcr} className="space-y-3">
             <label className="block text-sm">
+              <span className="text-[var(--text-2)] font-medium">Inspection</span>
+              <select className="mt-1 w-full eoss-input" value={ncrInspectionId} onChange={(e) => setNcrInspectionId(e.target.value)}>
+                <option value="">— Select inspection —</option>
+                {inspections.map((inspection) => (
+                  <option key={inspection.id} value={inspection.id}>{inspection.inspectionNumber} · {inspection.itemName ?? "No item"}</option>
+                ))}
+              </select>
+            </label>
+            <label className="block text-sm">
               <span className="text-[var(--text-2)] font-medium">Defect category</span>
               <select required className="mt-1 w-full eoss-input" value={ncrDefectCategoryId} onChange={(e) => setNcrDefectCategoryId(e.target.value)}>
                 <option value="">— Select category —</option>
@@ -381,6 +423,8 @@ export default function QualityPage() {
                   <option key={opt.id} value={opt.id}>{opt.label}</option>
                 ))}
               </select>
+              {defectOptionsError && <p role="alert" className="text-xs text-red-600">{defectOptionsError}</p>}
+              {!defectOptionsLoading && !defectOptionsError && defectCategories.length === 0 && <p className="text-xs">No defect categories available. Configure them in business settings.</p>}
             </label>
             <label className="block text-sm">
               <span className="text-[var(--text-2)] font-medium">Description</span>
@@ -390,9 +434,10 @@ export default function QualityPage() {
               <span className="text-[var(--text-2)] font-medium">Severity</span>
               <select className="mt-1 w-full eoss-input" value={ncrSeverity} onChange={(e) => setNcrSeverity(e.target.value)}>
                 <option value="">— Select severity —</option>
-                {severityOptions.map((opt) => (
-                  <option key={opt.id} value={opt.id}>{opt.label}</option>
-                ))}
+                <option value="critical">Critical</option>
+                <option value="major">Major</option>
+                <option value="medium">Medium</option>
+                <option value="minor">Minor</option>
               </select>
             </label>
             <label className="block text-sm">
