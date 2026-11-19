@@ -1,6 +1,7 @@
 package in.boss.sales.api;
 
 import in.boss.sales.domain.CustomerPoService;
+import in.boss.sales.domain.CpoMaterialAvailabilityService;
 import in.boss.shared.security.BossPermissions;
 import jakarta.validation.Valid;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -29,9 +30,12 @@ import static in.boss.inventory.api.InventoryApiDtos.FeasibilityResponse;
 public class SalesCpoController {
 
     private final CustomerPoService customerPoService;
+    private final CpoMaterialAvailabilityService materialAvailabilityService;
 
-    public SalesCpoController(CustomerPoService customerPoService) {
+    public SalesCpoController(CustomerPoService customerPoService,
+                              CpoMaterialAvailabilityService materialAvailabilityService) {
         this.customerPoService = customerPoService;
+        this.materialAvailabilityService = materialAvailabilityService;
     }
 
     @GetMapping
@@ -48,6 +52,11 @@ public class SalesCpoController {
     @GetMapping("/{cpoId}")
     public CpoResponse get(@PathVariable UUID cpoId) {
         return customerPoService.get(cpoId);
+    }
+
+    @GetMapping("/{cpoId}/material-availability")
+    public SalesApiDtos.CpoMaterialAvailability materialAvailability(@PathVariable UUID cpoId) {
+        return materialAvailabilityService.preview(cpoId);
     }
 
     @PutMapping("/{cpoId}")

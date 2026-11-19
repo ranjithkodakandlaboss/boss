@@ -457,6 +457,15 @@ public final class SalesApiDtos {
             @NotNull @Pattern(regexp = "open|on_hold|feasibility_pending|feasibility_approved|cancelled")
             String status) {}
 
+    public record CpoMaterialAvailability(
+            UUID cpoId, UUID siteId, String basis, List<String> limitations,
+            List<CpoMaterialAvailabilityLine> materials) {}
+
+    public record CpoMaterialAvailabilityLine(
+            UUID itemId, String itemCode, String itemName, UUID uomId, String uomSymbol,
+            BigDecimal requiredQty, BigDecimal eligibleStockQty, BigDecimal reservedQty,
+            BigDecimal availableQty, BigDecimal shortageQty) {}
+
     public record RecordMaterialAvailabilityRequest(
             @NotEmpty List<@Valid AvailabilityLine> lines) {
         public record AvailabilityLine(
