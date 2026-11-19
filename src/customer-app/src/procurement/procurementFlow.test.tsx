@@ -197,6 +197,7 @@ it("does not create a purchase requisition when all materials are available", as
   renderPo();
   expect((await screen.findAllByText("CPO-9")).length).toBeGreaterThan(0);
   await userEvent.click(screen.getByRole("button", { name: "Confirm & Reserve" }));
+  await userEvent.click(screen.getByRole("button", { name: "Confirm" }));
   expect((await screen.findAllByText(/All materials are available/)).length).toBeGreaterThan(0);
   expect(vi.mocked(fetch).mock.calls.some((call) => String(call[0]).includes("/prs") && call[1]?.method === "POST")).toBe(false);
   expect(vi.mocked(fetch).mock.calls.some((call) => String(call[0]).includes(`/cpos/${poId}/feasibility`) && call[1]?.method === "POST")).toBe(true);
@@ -210,6 +211,7 @@ it("creates one linked purchase requisition for BOM material shortfalls and uses
   renderPo();
   expect((await screen.findAllByText("CPO-9")).length).toBeGreaterThan(0);
   await userEvent.click(screen.getByRole("button", { name: "Confirm & Reserve" }));
+  await userEvent.click(screen.getByRole("button", { name: "Confirm" }));
   expect((await screen.findAllByText(/PR-SHORT/)).length).toBeGreaterThan(0);
   const posts = () => vi.mocked(fetch).mock.calls.filter((call) => String(call[0]).includes("/prs") && call[1]?.method === "POST");
   expect(posts()).toHaveLength(1);
@@ -223,6 +225,7 @@ it("creates one linked purchase requisition for BOM material shortfalls and uses
   const key = (posts()[0][1]?.headers as Headers).get("Idempotency-Key");
   expect(key).toBeTruthy();
   await userEvent.click(screen.getByRole("button", { name: "Confirm & Reserve" }));
+  await userEvent.click(screen.getByRole("button", { name: "Confirm" }));
   expect(await screen.findAllByText(/PR-SHORT/)).not.toHaveLength(0);
   expect(posts()).toHaveLength(2);
   expect((posts()[1][1]?.headers as Headers).get("Idempotency-Key")).toBe(key);
