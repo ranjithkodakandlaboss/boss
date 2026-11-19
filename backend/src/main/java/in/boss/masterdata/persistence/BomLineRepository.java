@@ -15,6 +15,7 @@ public interface BomLineRepository extends JpaRepository<BomLineEntity, UUID> {
     boolean existsByTenantIdAndComponentItemId(UUID tenantId, UUID componentItemId);
 
     @Query("SELECT COUNT(l) > 0 FROM BomLineEntity l JOIN BomHeaderEntity h ON l.bomHeaderId = h.id " +
-           "WHERE l.tenantId = :tenantId AND l.componentItemId = :itemId AND h.status = 'approved'")
+           "WHERE l.tenantId = :tenantId AND h.tenantId = l.tenantId " +
+           "AND l.componentItemId = :itemId AND h.status = 'approved'")
     boolean isComponentInActiveBom(@Param("tenantId") UUID tenantId, @Param("itemId") UUID itemId);
 }

@@ -17,6 +17,7 @@ import in.boss.masterdata.persistence.HsnCodeRepository;
 import in.boss.masterdata.persistence.ItemCategoryEntity;
 import in.boss.masterdata.persistence.ItemCategoryRepository;
 import in.boss.masterdata.persistence.ItemEntity;
+import in.boss.masterdata.persistence.ItemOperationalDependencies;
 import in.boss.masterdata.persistence.ItemRepository;
 import in.boss.masterdata.persistence.UnitOfMeasureEntity;
 import in.boss.masterdata.persistence.UnitOfMeasureRepository;
@@ -30,6 +31,7 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
@@ -39,6 +41,8 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -52,6 +56,7 @@ public class ItemServiceImpl implements ItemService {
     private final HsnCodeRepository hsnCodeRepository;
     private final BomHeaderRepository bomHeaderRepository;
     private final BomLineRepository bomLineRepository;
+    private final ItemOperationalDependencies operationalDependencies;
     private final AuditService auditService;
     private final MasterDataEventPublisher eventPublisher;
     private final ObjectMapper objectMapper;
@@ -62,6 +67,7 @@ public class ItemServiceImpl implements ItemService {
                            HsnCodeRepository hsnCodeRepository,
                            BomHeaderRepository bomHeaderRepository,
                            BomLineRepository bomLineRepository,
+                           ItemOperationalDependencies operationalDependencies,
                            AuditService auditService,
                            MasterDataEventPublisher eventPublisher,
                            ObjectMapper objectMapper) {
@@ -71,6 +77,7 @@ public class ItemServiceImpl implements ItemService {
         this.hsnCodeRepository = hsnCodeRepository;
         this.bomHeaderRepository = bomHeaderRepository;
         this.bomLineRepository = bomLineRepository;
+        this.operationalDependencies = operationalDependencies;
         this.auditService = auditService;
         this.eventPublisher = eventPublisher;
         this.objectMapper = objectMapper;
@@ -159,9 +166,10 @@ public class ItemServiceImpl implements ItemService {
     }
 
     @Override
+    @Transactional(isolation = Isolation.READ_COMMITTED)
     public ItemDto updateItem(UUID id, UpdateItemRequest request) {
         UUID tenantId = getTenantId();
-        ItemEntity entity = itemRepository.findByIdAndTenantId(id, tenantId)
+        ItemEntity entity = itemRepository.findLockedByIdAndTenantId(id, tenantId)
                 .orElseThrow(() -> new EntityNotFoundException("Item not found: " + id));
 
         if (request.isProductConfigurationProvided() || request.getProductKind() != null || request.getSpecifications() != null) {
@@ -169,10 +177,31 @@ public class ItemServiceImpl implements ItemService {
         }
         ItemDto oldDto = loadFullDto(entity, tenantId);
 
+        Optional<HsnCodeEntity> requestedHsn = Optional.empty();
+        if (request.getHsnCode() != null && !request.getHsnCode().isBlank()) {
+            requestedHsn = hsnCodeRepository.findByCode(request.getHsnCode().trim());
+        }
+        boolean identityChanged = (request.getName() != null && !request.getName().isBlank()
+                && !Objects.equals(entity.getName(), request.getName().trim()))
+                || (request.getDescription() != null && !Objects.equals(entity.getDescription(), request.getDescription()))
+                || (request.getCategoryId() != null && !Objects.equals(entity.getCategoryId(), request.getCategoryId()))
+                || (requestedHsn.isPresent() && !Objects.equals(entity.getHsnCodeId(), requestedHsn.get().getId()));
+        if (identityChanged) {
+            List<String> references = operationalDependencies.findReferences(tenantId, id);
+            if (!references.isEmpty()) {
+                throw new LifecycleException("Cannot change item identity: referenced by " + String.join(", ", references));
+            }
+        }
+
         if (request.getStatus() != null) {
+            if (!"active".equalsIgnoreCase(request.getStatus())
+                    && !"inactive".equalsIgnoreCase(request.getStatus())) {
+                throw new ValidationException("Invalid item status: " + request.getStatus());
+            }
             boolean newActive = "active".equalsIgnoreCase(request.getStatus());
             if (!newActive && entity.isActive()) {
                 checkNoActiveBomReference(tenantId, id, "deactivate");
+                checkNoOperationalDependencies(tenantId, id, "deactivate");
             }
             entity.setActive(newActive);
         }
@@ -186,8 +215,10 @@ public class ItemServiceImpl implements ItemService {
         if (request.getCategoryId() != null) {
             ItemCategoryEntity cat = categoryRepository.findByIdAndTenantId(request.getCategoryId(), tenantId)
                     .orElseThrow(() -> new ValidationException("Invalid category ID: " + request.getCategoryId()));
-            entity.setCategoryId(cat.getId());
-            entity.setCategoryLabelSnapshot(cat.getName());
+            if (!Objects.equals(entity.getCategoryId(), cat.getId())) {
+                entity.setCategoryId(cat.getId());
+                entity.setCategoryLabelSnapshot(cat.getName());
+            }
         }
         if (request.getStandardCost() != null) {
             entity.setStdCost(request.getStandardCost());
@@ -196,9 +227,8 @@ public class ItemServiceImpl implements ItemService {
             entity.setReorderQty(request.getReorderPoint());
         }
         if (request.getHsnCode() != null && !request.getHsnCode().isBlank()) {
-            var hsnOpt = hsnCodeRepository.findByCode(request.getHsnCode().trim());
-            if (hsnOpt.isPresent()) {
-                HsnCodeEntity hsn = hsnOpt.get();
+            if (requestedHsn.isPresent()) {
+                HsnCodeEntity hsn = requestedHsn.get();
                 entity.setHsnCodeId(hsn.getId());
                 entity.setGstRate(hsn.getGstRate());
             }
@@ -216,12 +246,14 @@ public class ItemServiceImpl implements ItemService {
     }
 
     @Override
+    @Transactional(isolation = Isolation.READ_COMMITTED)
     public void deleteItem(UUID id) {
         UUID tenantId = getTenantId();
-        ItemEntity entity = itemRepository.findByIdAndTenantId(id, tenantId)
+        ItemEntity entity = itemRepository.findLockedByIdAndTenantId(id, tenantId)
                 .orElseThrow(() -> new EntityNotFoundException("Item not found: " + id));
 
         checkNoActiveBomReference(tenantId, id, "delete");
+        checkNoOperationalDependencies(tenantId, id, "delete");
 
         ItemDto oldDto = loadFullDto(entity, tenantId);
         entity.setActive(false);
@@ -291,6 +323,14 @@ public class ItemServiceImpl implements ItemService {
         boolean isComponentInActiveBom = bomLineRepository.isComponentInActiveBom(tenantId, itemId);
         if (isComponentInActiveBom) {
             throw new LifecycleException("Cannot " + operation + " item: referenced as component in active BOM");
+        }
+    }
+
+    private void checkNoOperationalDependencies(UUID tenantId, UUID itemId, String operation) {
+        List<String> dependencies = operationalDependencies.findActive(tenantId, itemId);
+        if (!dependencies.isEmpty()) {
+            throw new LifecycleException("Cannot " + operation + " item: active dependencies: "
+                    + String.join(", ", dependencies));
         }
     }
 
