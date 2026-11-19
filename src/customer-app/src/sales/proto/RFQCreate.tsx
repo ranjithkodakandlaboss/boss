@@ -112,7 +112,7 @@ export default function RFQCreate() {
 
   const canNext: Record<Step, boolean> = {
     1: !!customerId && !!receivedDate && !!requiredBy,
-    2: lines.length > 0 && lines.every(l => l.itemId && l.drawingNumber && l.description && l.quantity > 0),
+    2: lines.length > 0 && lines.every(l => l.itemId && l.description && l.quantity > 0),
     3: true,
     4: true,
     5: true,
