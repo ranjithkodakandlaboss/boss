@@ -45,7 +45,7 @@ export default function ItemDetail() {
       setLots(itemLots);
       setJobs(jobPage);
       setReservations(reserved.filter((row) => row.itemId === id));
-      const matched = boms.find((b) => b.itemId === id);
+      const matched = Array.isArray(boms) ? boms.find((b) => b.itemId === id) : undefined;
       setItemBom(matched ?? null);
     }).catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "Inventory item not found."))
       .finally(() => setLoading(false));

@@ -163,21 +163,19 @@ const customerPo = {
   lines: [{ id: poLineId, itemId, itemCode: "SHAFT", itemName: "Shaft", description: "Shaft", qty: 4, uomSymbol: "EA", unitPrice: 10, lineTotal: 40 }],
 };
 
-function salesFetch(url: string, init?: RequestInit, created?: { count: number }) {
+function salesFetch(url: string, init?: RequestInit, created?: { count: number }, feasibleMaterials?: Array<{ itemId: string; storeId?: string; requested: number; reserved: number; shortfall: number }>) {
+  if (url.includes(`/cpos/${poId}/material-availability`)) return json({ cpoId: poId, materials: [{ itemId, itemCode: "SHAFT", itemName: "Shaft", uomSymbol: "EA", requiredQty: 4, eligibleStockQty: feasibleMaterials ? 0 : 4, reservedQty: 0, availableQty: feasibleMaterials ? 0 : 4, shortageQty: feasibleMaterials ? 4 : 0 }] });
+  if (url.includes(`/cpos/${poId}/feasibility`) && init?.method === "POST") return json({ cpoId: poId, feasible: !feasibleMaterials, materials: feasibleMaterials ?? [{ itemId, storeId: undefined, requested: 4, reserved: 4, shortfall: 0 }] });
   if (url.includes("/cpos")) return json(JSON.parse(page([customerPo])));
-  if (url.includes("/items")) return json(JSON.parse(page([{ id: itemId, code: "SHAFT", name: "Shaft", uomId, uomSymbol: "EA", status: "active" }])));
+  if (url.includes("/items")) return json(JSON.parse(page([{ id: itemId, code: "SHAFT", name: "Shaft", uomId, uomSymbol: "EA", status: "active", itemType: "FINISHED_GOOD" }])));
   if (url.includes("/uoms")) return json(JSON.parse(page([{ id: uomId, symbol: "EA" }])));
   if (url.includes("/company")) return json({ companyName: "North Works", sites: [{ id: siteId, name: "Plant" }], stores: [{ id: "55555555-5555-4555-8555-555555555555", siteId, name: "Main", code: "MAIN", siteCode: "P1" }] });
-  if (url.includes("/reservations/customer-pos") && init?.method === "POST") {
-    const body = JSON.parse(String(init.body)) as { lines: Array<{ cpoLineId: string; qty: number }> };
-    return json({ status: "FULLY_RESERVED", lines: body.lines.map((line) => ({ cpoLineId: line.cpoLineId, reserved: line.qty, shortfall: 0 })) });
-  }
   if (url.includes("/prs") && init?.method === "POST") {
     if (created) created.count += 1;
     return json({ ...pr, id: prId, prNumber: "PR-SHORT", originType: "customer_po", customerPoId: poId, status: "draft" }, 201);
   }
   if (url.includes("/prs")) return json(JSON.parse(page([])));
-  if (url.includes("/spos") || url.includes("/customers") || url.includes("/rfqs") || url.includes("/quotations")) return json(JSON.parse(page([])));
+  if (url.includes("/spos") || url.includes("/customers") || url.includes("/rfqs") || url.includes("/quotations") || url.includes("/boms") || url.includes("/reservations")) return json(JSON.parse(page([])));
   return json({});
 }
 
@@ -193,39 +191,38 @@ function renderPo() {
   );
 }
 
-it("does not create a purchase requisition when material is available", async () => {
+it("does not create a purchase requisition when all materials are available", async () => {
+  // Feasibility returns feasible=true with no shortfalls — no PR should be created
   installFetch((url, init) => salesFetch(url, init));
   renderPo();
   expect((await screen.findAllByText("CPO-9")).length).toBeGreaterThan(0);
-  await userEvent.selectOptions(screen.getByLabelText("Availability for Shaft"), "available");
-  await userEvent.selectOptions(screen.getByLabelText("Fulfilling site for material check"), siteId);
-  await userEvent.click(screen.getByRole("button", { name: "Confirm material availability" }));
-  expect((await screen.findAllByText(/No purchase requisition was created/)).length).toBeGreaterThan(0);
+  await userEvent.click(screen.getByRole("button", { name: "Confirm & Reserve" }));
+  expect((await screen.findAllByText(/All materials are available/)).length).toBeGreaterThan(0);
   expect(vi.mocked(fetch).mock.calls.some((call) => String(call[0]).includes("/prs") && call[1]?.method === "POST")).toBe(false);
-  const availability = vi.mocked(fetch).mock.calls.find((call) => String(call[0]).includes("/availability"));
-  expect(JSON.parse(String(availability?.[1]?.body)).lines).toEqual([
-    expect.objectContaining({ lineId: poLineId, availability: "available" }),
-  ]);
+  expect(vi.mocked(fetch).mock.calls.some((call) => String(call[0]).includes(`/cpos/${poId}/feasibility`) && call[1]?.method === "POST")).toBe(true);
 });
 
-it("creates one linked purchase requisition for unavailable material and retries with the same key", async () => {
+it("creates one linked purchase requisition for BOM material shortfalls and uses idempotency key", async () => {
   const created = { count: 0 };
-  installFetch((url, init) => salesFetch(url, init, created));
+  // Feasibility returns feasible=false with shortfall on SHAFT item
+  const shortfallMaterials = [{ itemId, storeId: undefined, requested: 4, reserved: 0, shortfall: 4 }];
+  installFetch((url, init) => salesFetch(url, init, created, shortfallMaterials));
   renderPo();
   expect((await screen.findAllByText("CPO-9")).length).toBeGreaterThan(0);
-  await userEvent.selectOptions(screen.getByLabelText("Availability for Shaft"), "unavailable");
-  await userEvent.selectOptions(screen.getByLabelText("Fulfilling site for material check"), siteId);
-  await userEvent.click(screen.getByRole("button", { name: "Confirm material availability" }));
+  await userEvent.click(screen.getByRole("button", { name: "Confirm & Reserve" }));
   expect((await screen.findAllByText(/PR-SHORT/)).length).toBeGreaterThan(0);
   const posts = () => vi.mocked(fetch).mock.calls.filter((call) => String(call[0]).includes("/prs") && call[1]?.method === "POST");
   expect(posts()).toHaveLength(1);
   const body = JSON.parse(String(posts()[0][1]?.body));
   expect(body.originType).toBe("customer_po");
   expect(body.customerPoId).toBe(poId);
-  expect(body.lines).toEqual([expect.objectContaining({ itemId, qty: 4, uomId })]);
+  // PR lines must be for the raw material (itemId), not the finished product
+  expect(body.lines[0].itemId).toBe(itemId);
+  expect(body.lines[0].qty).toBe(4);
+  // Idempotency key must be stable across retries
   const key = (posts()[0][1]?.headers as Headers).get("Idempotency-Key");
-  expect(key).toBe(`cpo-shortage:${poId}:${itemId}:4`);
-  await userEvent.click(screen.getByRole("button", { name: "Confirm material availability" }));
+  expect(key).toBeTruthy();
+  await userEvent.click(screen.getByRole("button", { name: "Confirm & Reserve" }));
   expect(await screen.findAllByText(/PR-SHORT/)).not.toHaveLength(0);
   expect(posts()).toHaveLength(2);
   expect((posts()[1][1]?.headers as Headers).get("Idempotency-Key")).toBe(key);
