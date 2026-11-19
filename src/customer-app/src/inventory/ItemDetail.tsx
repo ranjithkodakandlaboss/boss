@@ -136,7 +136,7 @@ export default function ItemDetail() {
 
       {error && <p role="alert" className="text-sm text-[var(--error)]">{error}</p>}
 
-      {item.itemType === "FINISHED_GOOD" && <section className="rounded-xl border p-4" style={{ borderColor: "var(--border)" }}>
+      {["finished_good", "finished_goods"].includes((item.itemType ?? "").toLowerCase()) && <section className="rounded-xl border p-4" style={{ borderColor: "var(--border)" }}>
         <h2 className="text-sm font-bold">Product specifications</h2>
         <p className="mt-1 text-xs text-[var(--text-2)]">Product kind: {item.productKind ? item.productKind.toLowerCase() : "Not specified"}.</p>
         {(item.specifications ?? []).length === 0 ? <p className="mt-2 text-xs">No specifications configured.</p> : <ul className="mt-2 space-y-1">
@@ -144,7 +144,7 @@ export default function ItemDetail() {
         </ul>}
       </section>}
 
-      {item.itemType === "FINISHED_GOOD" && <section className="rounded-xl border p-4" style={{ borderColor: "var(--border)" }}>
+      {["finished_good", "finished_goods", "semi_finished"].includes((item.itemType ?? "").toLowerCase()) && <section className="rounded-xl border p-4" style={{ borderColor: "var(--border)" }}>
         <div className="flex items-center justify-between mb-2">
           <h2 className="text-sm font-bold flex items-center gap-2"><Layers size={15} className="text-[var(--brand)]" /> Bill of Materials</h2>
           <Link to="/bom" className="text-xs font-semibold text-[var(--brand)]">{itemBom ? "Open BOM →" : "Configure BOM →"}</Link>

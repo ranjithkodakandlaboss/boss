@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import BomPage from "./BomPage";
 
@@ -72,5 +72,54 @@ describe("BOM specification calculator", () => {
         body: JSON.stringify({ quantity: 1, specifications: { length: 2, width: 3 } }),
       }),
     ));
+  });
+
+  it("lists FINISHED_GOOD and SEMI_FINISHED items in the Create BOM selector and excludes them from components", async () => {
+    allPagesMock.mockResolvedValue([
+      { id: "item-fg", code: "FG-01", name: "Steel Spoon", itemType: "FINISHED_GOOD", status: "active" },
+      { id: "item-sf", code: "SF-01", name: "Spoon Blank", itemType: "SEMI_FINISHED", status: "active" },
+      { id: "item-rm", code: "RM-01", name: "Steel Coil", itemType: "RAW_MATERIAL", status: "active" },
+      { id: "item-srv", code: "SRV-01", name: "Polishing Service", itemType: "SERVICE", status: "active" },
+    ]);
+    apiMock.mockImplementation((path: string) => {
+      if (path === "/api/v1/boms") return Promise.resolve([]);
+      if (path === "/api/v1/uoms") return Promise.resolve([{ id: "uom-1", name: "Piece", symbol: "PCS" }]);
+      return Promise.resolve([]);
+    });
+
+    render(<BomPage />);
+    const createBtn = await screen.findByRole("button", { name: "Create BOM" });
+    fireEvent.click(createBtn);
+
+    expect(await screen.findByRole("heading", { name: "Create bill of materials" })).toBeInTheDocument();
+    expect(screen.queryByText(/No finished goods or semi-finished items found/)).not.toBeInTheDocument();
+
+    const parentSelect = screen.getByLabelText("Finished item");
+    expect(within(parentSelect).getByRole("option", { name: "FG-01 — Steel Spoon" })).toBeInTheDocument();
+    expect(within(parentSelect).getByRole("option", { name: "SF-01 — Spoon Blank" })).toBeInTheDocument();
+    expect(within(parentSelect).queryByRole("option", { name: "RM-01 — Steel Coil" })).not.toBeInTheDocument();
+
+    const componentSelect = screen.getByLabelText("Component 1");
+    expect(within(componentSelect).getByRole("option", { name: "RM-01 — Steel Coil" })).toBeInTheDocument();
+    expect(within(componentSelect).getByRole("option", { name: "SF-01 — Spoon Blank" })).toBeInTheDocument();
+    expect(within(componentSelect).queryByRole("option", { name: "FG-01 — Steel Spoon" })).not.toBeInTheDocument();
+    expect(within(componentSelect).queryByRole("option", { name: "SRV-01 — Polishing Service" })).not.toBeInTheDocument();
+  });
+
+  it("shows warning message when no finished goods or semi-finished items exist", async () => {
+    allPagesMock.mockResolvedValue([
+      { id: "item-rm", code: "RM-01", name: "Steel Coil", itemType: "RAW_MATERIAL", status: "active" },
+    ]);
+    apiMock.mockImplementation((path: string) => {
+      if (path === "/api/v1/boms") return Promise.resolve([]);
+      if (path === "/api/v1/uoms") return Promise.resolve([{ id: "uom-1", name: "Piece", symbol: "PCS" }]);
+      return Promise.resolve([]);
+    });
+
+    render(<BomPage />);
+    const createBtn = await screen.findByRole("button", { name: "Create BOM" });
+    fireEvent.click(createBtn);
+
+    expect(await screen.findByText(/No finished goods or semi-finished items found/)).toBeInTheDocument();
   });
 });
