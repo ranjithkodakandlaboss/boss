@@ -177,10 +177,10 @@ jobs:
           SPRING_DATASOURCE_PASSWORD: boss
           BOSS_FIREBASE_PROJECT_ID: boss-ci
           BOSS_FIREBASE_CREDENTIAL_PATH: ""
-        run: mvn -B -ntp verify
+        run: mvn -B -ntp -U verify
 
       - name: Build and test Platform Admin API
-        run: mvn -B -ntp -f backend/platform-admin-api/pom.xml test
+        run: mvn -B -ntp -U -f backend/platform-admin-api/pom.xml test
 
       - name: Enforce 80% line coverage on new service classes
         run: ./scripts/check-new-service-coverage.sh
@@ -261,9 +261,9 @@ jobs:
           distribution: temurin
           cache: maven
       - name: Package customer API
-        run: mvn -B -ntp -f backend/pom.xml package -DskipTests
+        run: mvn -B -ntp -U -f backend/pom.xml package -DskipTests
       - name: Package Platform Admin API
-        run: mvn -B -ntp -f backend/platform-admin-api/pom.xml clean package -DskipTests
+        run: mvn -B -ntp -U -f backend/platform-admin-api/pom.xml clean package -DskipTests
       - name: Build Docker image (no push)
         run: docker build -t boss-api:ci .
 
