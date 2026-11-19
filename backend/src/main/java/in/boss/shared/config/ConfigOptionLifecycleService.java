@@ -45,7 +45,6 @@ public class ConfigOptionLifecycleService {
         if (label == null || label.isBlank()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Label is required");
         }
-        lockQualityOption(context.tenantId(), categoryCode, optionId);
         ConfigOptionDto existing = queryService.findOption(context.tenantId(), categoryCode, optionId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
                         "Configuration option not found"));
