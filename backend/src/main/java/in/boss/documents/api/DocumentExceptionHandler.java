@@ -40,4 +40,12 @@ public class DocumentExceptionHandler {
         pd.setTitle("Validation Failure");
         return pd;
     }
+
+    @ExceptionHandler(org.springframework.web.multipart.MaxUploadSizeExceededException.class)
+    public ProblemDetail handleMaxUploadSizeExceeded(org.springframework.web.multipart.MaxUploadSizeExceededException ex) {
+        ProblemDetail pd = ProblemDetail.forStatusAndDetail(HttpStatus.PAYLOAD_TOO_LARGE, "File size exceeds the maximum allowed limit");
+        pd.setType(URI.create("urn:boss:error:payload-too-large"));
+        pd.setTitle("Payload Too Large");
+        return pd;
+    }
 }

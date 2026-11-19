@@ -34,7 +34,14 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   const response = await fetch(`${base}${path}`, { ...init, headers });
   if (response.status === 204) return undefined as T;
   const text = await response.text();
-  const body = text ? JSON.parse(text) as { detail?: string; message?: string; error?: string } : {};
+  let body: { detail?: string; message?: string; error?: string } = {};
+  if (text) {
+    try {
+      body = JSON.parse(text);
+    } catch {
+      body = { message: text.length > 200 ? response.statusText || `Request failed with status ${response.status}` : text };
+    }
+  }
   if (!response.ok) throw new ApiError(response.status, body.detail || body.message || body.error || response.statusText || "The request was rejected");
   return body as T;
 }
