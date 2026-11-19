@@ -197,8 +197,18 @@ function BomCalculator({ bom }: { bom: Bom }) {
   );
 }
 
+function isBomParent(itemType?: string) {
+  const t = (itemType ?? "").toLowerCase();
+  return t === "finished_goods" || t === "finished_good" || t === "semi_finished";
+}
+
+function isBomComponent(itemType?: string) {
+  const t = (itemType ?? "").toLowerCase();
+  return t !== "finished_goods" && t !== "finished_good" && t !== "service";
+}
+
 function BomForm({ items, uoms, onClose, onSaved }: { items: Item[]; uoms: Uom[]; onClose: () => void; onSaved: () => void }) {
-  const parents = items.filter((item) => item.itemType === "finished_goods" || item.itemType === "semi_finished");
+  const parents = items.filter((item) => isBomParent(item.itemType));
   const [itemId, setItemId] = useState("");
   const [lines, setLines] = useState<BomLine[]>([{ componentItemId: "", qty: "", uomId: uoms[0]?.id ?? "", scrapFactor: 0 }]);
   const [error, setError] = useState("");
@@ -261,7 +271,7 @@ function BomForm({ items, uoms, onClose, onSaved }: { items: Item[]; uoms: Uom[]
             <div key={index} className="grid gap-2 md:grid-cols-5">
               <select aria-label={`Component ${index + 1}`} className="eoss-input" value={line.componentItemId} onChange={(event) => update(index, { componentItemId: event.target.value })}>
                 <option value="">Component</option>
-                {items.filter((item) => item.id !== itemId && item.itemType !== "finished_goods" && item.itemType !== "service").map((item) => <option key={item.id} value={item.id}>{item.code} — {item.name}</option>)}
+                {items.filter((item) => item.id !== itemId && isBomComponent(item.itemType)).map((item) => <option key={item.id} value={item.id}>{item.code} — {item.name}</option>)}
               </select>
               <input aria-label={`Quantity ${index + 1}`} className="eoss-input text-left" inputMode="decimal" value={line.qty} onChange={(event) => update(index, { qty: event.target.value })} placeholder="Fixed qty *" />
               <select aria-label={`Unit ${index + 1}`} className="eoss-input" value={line.uomId} onChange={(event) => update(index, { uomId: event.target.value })}>

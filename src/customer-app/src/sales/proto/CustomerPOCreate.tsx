@@ -70,7 +70,7 @@ export default function CustomerPOCreate() {
 
   useEffect(() => {
     allPages<any>('/api/v1/items?status=active').then(items => {
-      setCatalogueItems(items.filter((i: any) => i.itemType !== 'service').map((i: any) => ({
+      setCatalogueItems(items.filter((i: any) => (i.itemType ?? '').toLowerCase() !== 'service').map((i: any) => ({
         id: i.id, code: i.code, name: i.name,
         baseUomId: i.baseUomId ?? i.uomId ?? '',
         baseUomSymbol: i.baseUomSymbol ?? i.uomSymbol ?? '',
