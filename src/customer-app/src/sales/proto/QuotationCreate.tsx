@@ -1,6 +1,6 @@
 // @ts-nocheck
 import React, { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, Plus, Trash2, Check } from 'lucide-react';
 import { useStore } from './runtime';
 import AddIfEmpty from './AddIfEmpty';
@@ -54,13 +54,14 @@ function newLine(n: number, rfqLine?: any): QLine {
 export default function QuotationCreate() {
   const { rfqId } = useParams<{ rfqId: string }>();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { rfqs, customers, addCustomer, addQuotation, createDirectQuotation, currentUser, catalog, uoms, reload } = useStore();
 
   const rfq = rfqs.find(r => r.id === rfqId) as (typeof rfqs[0] & Record<string, any>) | undefined;
   const rfqLines: any[] = rfq?.lines ?? [];
   const isDirect = !rfqId;
 
-  const [customerId, setCustomerId] = useState('');
+  const [customerId, setCustomerId] = useState(() => searchParams.get('customer') ?? '');
   const [validDays, setValidDays] = useState('30');
   const [paymentTerms, setPaymentTerms] = useState('Net 30 days');
   const [deliveryTerms, setDeliveryTerms] = useState('Ex-Works / By Road · 2-3 weeks');

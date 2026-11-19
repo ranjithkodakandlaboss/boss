@@ -193,7 +193,7 @@ export default function Sales() {
           { id: 'pos', label: `Customer POs (${filteredPos.length})` },
           { id: 'rfqs', label: `RFQs (${filteredRfqs.length})` },
           { id: 'quotations', label: `Quotations (${filteredQuotations.length})` },
-          { id: 'customers', label: 'Customer Directory' },
+          { id: 'customers', label: `Customer Directory (${customers.filter(c => c.status === 'active').length})` },
         ] as { id: POTab; label: string }[]).map(t => (
           <button
             key={t.id}

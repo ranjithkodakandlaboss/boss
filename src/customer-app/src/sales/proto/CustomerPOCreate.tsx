@@ -43,7 +43,7 @@ export default function CustomerPOCreate() {
   const selectedQuoteLines = quotationLines.filter(l => l.quotationId === quotationId);
 
   // Direct Order state
-  const [customerId, setCustomerId] = useState(customers[0]?.id ?? '');
+  const [customerId, setCustomerId] = useState(() => searchParams.get('customer') || customers[0]?.id || '');
   const [directReason, setDirectReason] = useState('');
   const [deliverToSiteId, setDeliverToSiteId] = useState(sites[0]?.id ?? '');
   const [paymentTerms, setPaymentTerms] = useState('Net 30 days');

@@ -1,6 +1,6 @@
 // @ts-nocheck
 import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, ArrowRight, Plus, Trash2, Check, FileText, Package, Settings, Upload, Eye } from 'lucide-react';
 import { useStore } from './runtime';
 import { createItem, createUom } from '../api';
@@ -43,6 +43,7 @@ function newLine(n: number): RFQLine {
 
 export default function RFQCreate() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { addRfq, addCustomer, currentUser, customers: CUSTOMERS, catalog, uoms, reload } = useStore();
   const [itemDraft, setItemDraft] = useState({ code: '', name: '', uomId: '' });
   const [itemError, setItemError] = useState('');
@@ -50,7 +51,7 @@ export default function RFQCreate() {
   const [step, setStep] = useState<Step>(1);
 
   // Step 1: Header
-  const [customerId, setCustomerId] = useState('');
+  const [customerId, setCustomerId] = useState(() => searchParams.get('customer') ?? '');
   const [channel, setChannel] = useState('Email');
   const [receivedDate, setReceivedDate] = useState(DEMO_NOW);
   const [requiredBy, setRequiredBy] = useState('');
