@@ -21,6 +21,7 @@ interface DirectLine {
   description: string;
   orderedQty: number;
   rate: number;
+  gstRate: number;
 }
 
 interface CatalogueItem {
@@ -64,7 +65,7 @@ export default function CustomerPOCreate() {
   const [creating, setCreating] = useState(false);
   const [catalogueItems, setCatalogueItems] = useState<CatalogueItem[]>([]);
   const [directLines, setDirectLines] = useState<DirectLine[]>([
-    { id: `dl-${Date.now()}`, itemId: '', uomId: '', uomSymbol: '', drawingNumber: '', description: '', orderedQty: 1, rate: 0 },
+    { id: `dl-${Date.now()}`, itemId: '', uomId: '', uomSymbol: '', drawingNumber: '', description: '', orderedQty: 1, rate: 0, gstRate: 18 },
   ]);
 
   useEffect(() => {
@@ -75,6 +76,21 @@ export default function CustomerPOCreate() {
         baseUomSymbol: i.baseUomSymbol ?? i.uomSymbol ?? '',
       })));
     }).catch(() => undefined);
+  }, []);
+
+  // If quotations finish loading after mount and 'direct' was selected by default, switch to quotation mode
+  useEffect(() => {
+    if (!initialQuoteParam && available.length > 0 && entryMode === 'direct') {
+      setEntryMode('quotation');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [available.length]);
+
+  // Escape key closes/cancels the form
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') goBack(); };
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
   }, []);
 
   const directCustomer = customers.find(c => c.id === customerId);
@@ -97,8 +113,8 @@ export default function CustomerPOCreate() {
       return;
     }
     // Direct Order
-    if (!customerId || !deliverToSiteId || !directReason.trim() || directLines.some(l => !l.itemId || !l.uomId || l.orderedQty <= 0)) {
-      showToast({ type: 'error', title: 'Missing required fields', body: 'Select a customer, site, enter a reason, and ensure each line has an item and quantity.' });
+    if (!customerId || !deliverToSiteId || !directReason.trim() || directLines.some(l => !l.itemId || !l.uomId || !l.description.trim() || l.orderedQty <= 0)) {
+      showToast({ type: 'error', title: 'Missing required fields', body: 'Select a customer, site, enter a reason, and ensure each line has an item, description, and quantity.' });
       return;
     }
     setCreating(true);
@@ -115,10 +131,10 @@ export default function CustomerPOCreate() {
           itemId: l.itemId,
           uomId: l.uomId,
           drawingNumber: l.drawingNumber || undefined,
-          description: l.description || undefined,
+          description: l.description,
           quantity: l.orderedQty,
           unitPrice: l.rate,
-          gstRate: 0,
+          gstRate: l.gstRate,
         })),
       });
       navigate(`/sales/po/${saved.id}`, { state: { from: originUrl } });
@@ -336,6 +352,7 @@ export default function CustomerPOCreate() {
                           description: '',
                           orderedQty: 1,
                           rate: 0,
+                          gstRate: 18,
                         },
                       ])
                     }
@@ -346,63 +363,98 @@ export default function CustomerPOCreate() {
                 </div>
                 <div className="space-y-2.5">
                   {directLines.map((l, idx) => (
-                    <div key={l.id} className="grid grid-cols-2 md:grid-cols-6 gap-2 p-3 rounded-xl border border-[var(--border)] bg-[var(--surface-2)]/40 items-end">
-                      <div className="col-span-2">
-                        <label className="block text-[10px] text-[var(--text-3)] mb-0.5">Item *</label>
-                        <select
-                          className="eoss-input w-full text-xs"
-                          value={l.itemId}
-                          onChange={e => {
-                            const item = catalogueItems.find(ci => ci.id === e.target.value);
-                            setDirectLines(ls => ls.map((x, i) => i === idx ? { ...x, itemId: e.target.value, uomId: item?.baseUomId ?? '', uomSymbol: item?.baseUomSymbol ?? '' } : x));
-                          }}
-                        >
-                          <option value="">Select item…</option>
-                          {catalogueItems.map(ci => <option key={ci.id} value={ci.id}>{ci.code} — {ci.name}</option>)}
-                        </select>
-                      </div>
-                      <div>
-                        <label className="block text-[10px] text-[var(--text-3)] mb-0.5">Drawing #</label>
-                        <input
-                          className="eoss-input w-full text-xs font-mono"
-                          value={l.drawingNumber}
-                          onChange={e => setDirectLines(ls => ls.map((x, i) => (i === idx ? { ...x, drawingNumber: e.target.value } : x)))}
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] text-[var(--text-3)] mb-0.5">Qty {l.uomSymbol ? `(${l.uomSymbol})` : ''}</label>
-                        <input
-                          type="number"
-                          min={0.001}
-                          step="any"
-                          className="eoss-input w-full text-xs font-mono"
-                          value={l.orderedQty}
-                          onChange={e => setDirectLines(ls => ls.map((x, i) => (i === idx ? { ...x, orderedQty: Number(e.target.value) || 1 } : x)))}
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] text-[var(--text-3)] mb-0.5">Rate (₹)</label>
-                        <input
-                          type="number"
-                          min={0}
-                          className="eoss-input w-full text-xs font-mono"
-                          value={l.rate}
-                          onChange={e => setDirectLines(ls => ls.map((x, i) => (i === idx ? { ...x, rate: Number(e.target.value) || 0 } : x)))}
-                        />
-                      </div>
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="font-mono text-xs font-semibold text-[var(--text)]">
-                          ₹{(l.orderedQty * l.rate).toLocaleString('en-IN')}
-                        </span>
-                        {directLines.length > 1 && (
-                          <button
-                            type="button"
-                            onClick={() => setDirectLines(ls => ls.filter((_, i) => i !== idx))}
-                            className="p-1 text-red-500 hover:bg-red-50 rounded"
+                    <div key={l.id} className="p-3 rounded-xl border border-[var(--border)] bg-[var(--surface-2)]/40 space-y-2">
+                      {/* Row 1: Item, Drawing #, GST % */}
+                      <div className="grid grid-cols-2 md:grid-cols-5 gap-2 items-end">
+                        <div className="col-span-2">
+                          <label className="block text-[10px] text-[var(--text-3)] mb-0.5">Item *</label>
+                          <select
+                            className="eoss-input w-full text-xs"
+                            value={l.itemId}
+                            onChange={e => {
+                              const item = catalogueItems.find(ci => ci.id === e.target.value);
+                              setDirectLines(ls => ls.map((x, i) => i === idx ? { ...x, itemId: e.target.value, uomId: item?.baseUomId ?? '', uomSymbol: item?.baseUomSymbol ?? '' } : x));
+                            }}
                           >
-                            <Trash2 size={13} />
-                          </button>
-                        )}
+                            <option value="">Select item…</option>
+                            {catalogueItems.map(ci => <option key={ci.id} value={ci.id}>{ci.code} — {ci.name}</option>)}
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-[10px] text-[var(--text-3)] mb-0.5">Drawing # (optional)</label>
+                          <input
+                            className="eoss-input w-full text-xs font-mono"
+                            placeholder="e.g. DRG-001"
+                            value={l.drawingNumber}
+                            onChange={e => setDirectLines(ls => ls.map((x, i) => (i === idx ? { ...x, drawingNumber: e.target.value } : x)))}
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] text-[var(--text-3)] mb-0.5">GST % *</label>
+                          <input
+                            type="number"
+                            min={0}
+                            max={100}
+                            step="0.01"
+                            className="eoss-input w-full text-xs font-mono"
+                            value={l.gstRate}
+                            onChange={e => setDirectLines(ls => ls.map((x, i) => (i === idx ? { ...x, gstRate: Number(e.target.value) || 0 } : x)))}
+                          />
+                        </div>
+                        <div />
+                      </div>
+                      {/* Row 2: Description, Qty, Rate, Total */}
+                      <div className="grid grid-cols-2 md:grid-cols-5 gap-2 items-end">
+                        <div className="col-span-2">
+                          <label className="block text-[10px] text-[var(--text-3)] mb-0.5">Description *</label>
+                          <input
+                            className="eoss-input w-full text-xs"
+                            placeholder="Brief description of the item/work *"
+                            value={l.description}
+                            onChange={e => setDirectLines(ls => ls.map((x, i) => (i === idx ? { ...x, description: e.target.value } : x)))}
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] text-[var(--text-3)] mb-0.5">Qty {l.uomSymbol ? `(${l.uomSymbol})` : ''} *</label>
+                          <input
+                            type="number"
+                            min={0.001}
+                            step="any"
+                            className="eoss-input w-full text-xs font-mono"
+                            value={l.orderedQty}
+                            onChange={e => setDirectLines(ls => ls.map((x, i) => (i === idx ? { ...x, orderedQty: Number(e.target.value) || 1 } : x)))}
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] text-[var(--text-3)] mb-0.5">Rate (₹) *</label>
+                          <input
+                            type="number"
+                            min={0}
+                            className="eoss-input w-full text-xs font-mono"
+                            value={l.rate}
+                            onChange={e => setDirectLines(ls => ls.map((x, i) => (i === idx ? { ...x, rate: Number(e.target.value) || 0 } : x)))}
+                          />
+                        </div>
+                        <div className="flex items-center justify-between gap-2">
+                          <div>
+                            <div className="text-[10px] text-[var(--text-3)]">Total</div>
+                            <span className="font-mono text-xs font-semibold text-[var(--text)]">
+                              ₹{(l.orderedQty * l.rate).toLocaleString('en-IN')}
+                            </span>
+                            {l.gstRate > 0 && (
+                              <div className="text-[10px] text-[var(--text-3)]">+{l.gstRate}% GST</div>
+                            )}
+                          </div>
+                          {directLines.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={() => setDirectLines(ls => ls.filter((_, i) => i !== idx))}
+                              className="p-1 text-red-500 hover:bg-red-50 rounded"
+                            >
+                              <Trash2 size={13} />
+                            </button>
+                          )}
+                        </div>
                       </div>
                     </div>
                   ))}
@@ -425,7 +477,7 @@ export default function CustomerPOCreate() {
           disabled={
             creating || (entryMode === 'quotation'
               ? !selected
-              : !directCustomer || !deliverToSiteId || !directReason.trim() || directLines.some(l => !l.itemId || !l.uomId || l.orderedQty <= 0))
+              : !directCustomer || !deliverToSiteId || !directReason.trim() || directLines.some(l => !l.itemId || !l.uomId || !l.description.trim() || l.orderedQty <= 0))
           }
           onClick={create}
           className="flex items-center gap-2 px-5 py-2 rounded-lg text-sm font-semibold text-white disabled:opacity-40"
