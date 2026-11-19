@@ -28,8 +28,9 @@ import java.util.Set;
 import java.util.UUID;
 
 /**
- * Explodes the approved BOM of every Customer PO line and reserves all raw materials at the
- * CPO site in one transaction, or reserves nothing when any material is short.
+ * Explodes the approved BOM of every Customer PO line and reserves available raw materials at the
+ * CPO site in one transaction. Materials with sufficient stock are reserved; materials that are
+ * short are reported as shortfalls so the caller can raise purchase requisitions for them.
  */
 @Service
 @Transactional
@@ -85,14 +86,10 @@ public class FeasibilityCheckService {
 
         Map<UUID, BigDecimal> required = explodeRequirements(context, cpoId);
         List<ReservationPlan> plans = planner.planSiteRequirements(context, cpo.siteId(), required);
-        if (plans.stream().anyMatch(plan -> plan.shortfall().signum() > 0)) {
-            metrics.reservation("failed");
-            return new FeasibilityResponse(cpoId, false, plans.stream()
-                    .map(plan -> new ReservationLineResponse(plan.itemId(), null, plan.requested(),
-                            BigDecimal.ZERO.setScale(3), plan.shortfall(), List.of()))
-                    .toList());
-        }
+        boolean hasShortfall = plans.stream().anyMatch(plan -> plan.shortfall().signum() > 0);
 
+        // Reserve available quantities for all materials that have stock, even when some are short.
+        // Materials with no available stock produce a zero-allocation line with a shortfall.
         List<ReservationLineResponse> lines = new ArrayList<>();
         Set<StoreItem> changed = new HashSet<>();
         for (ReservationPlan plan : plans) {
@@ -116,8 +113,12 @@ public class FeasibilityCheckService {
         }
         changed.forEach(key -> replenishmentService.checkAfterStockChange(
                 context.tenantId(), key.itemId(), key.storeId()));
-        metrics.reservation("fully_reserved");
-        return new FeasibilityResponse(cpoId, true, lines);
+        if (hasShortfall) {
+            metrics.reservation("partially_reserved");
+        } else {
+            metrics.reservation("fully_reserved");
+        }
+        return new FeasibilityResponse(cpoId, !hasShortfall, lines);
     }
 
     public void releaseReservations(UUID cpoId) {
