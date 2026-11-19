@@ -21,7 +21,7 @@ public class StorageConfiguration {
     @ConditionalOnMissingBean(StorageService.class)
     public StorageService storageService(
             @Autowired(required = false) Storage storage,
-            @Value("${boss.documents.bucket:boss-documents-dev}") String bucketName,
+            @Value("${boss.documents.bucket:boss-dev-documents-201664309080}") String bucketName,
             @Value("${boss.documents.storage-type:gcs}") String storageType) {
         if ("in-memory".equalsIgnoreCase(storageType) || storage == null) {
             return new InMemoryStorageService();

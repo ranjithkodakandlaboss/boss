@@ -3,8 +3,8 @@ spring:
     name: boss-api
   servlet:
     multipart:
-      max-file-size: 5MB
-      max-request-size: 6MB
+      max-file-size: 50MB
+      max-request-size: 55MB
 
   datasource:
     url: ${DB_URL:jdbc:postgresql://localhost:5432/boss}
@@ -64,5 +64,5 @@ boss:
     project-id: ${FIREBASE_PROJECT_ID:boss-dev}
     credential-path: ${FIREBASE_CREDENTIAL_PATH:}
   documents:
-    bucket: ${BOSS_DOCUMENTS_BUCKET:boss-documents-dev}
+    bucket: ${BOSS_DOCUMENTS_BUCKET:boss-dev-documents-201664309080}
     storage-type: ${BOSS_DOCUMENTS_STORAGE_TYPE:gcs}
