@@ -781,82 +781,58 @@ export function SalesProvider({ children }: { children?: ReactNode }) {
         }), { title: "Customer PO note saved", body: "Commercial prices were not changed." });
       },
       resolvePoAmendment: () => showToast({ type: "error", title: "No pending revision", body: "Accepted prices stay on the Customer PO. There is no separate approval queue." }),
-      assessAndAllocateCustomerPO: async (poId: string, _actor?: string, options?: { siteId?: string; decisions?: Array<{ lineId: string; availability?: string; shortageQty?: number }> }) => {
+      assessAndAllocateCustomerPO: async (poId: string, _actor?: string, options?: { siteId?: string }) => {
         const po = customerPos.find((item) => item.id === poId);
-        const decisions = options?.decisions ?? [];
-        if (!po || decisions.length === 0 || decisions.some((decision) => !decision.availability)) {
-          return { error: "Mark every material line as available, unavailable, or partial." };
-        }
-        const storeId = stores[0]?.id;
-        const reserveLines = decisions.flatMap((decision) => {
-          if (decision.availability === "unavailable") return [];
-          const line = poLines.find((item) => item.id === decision.lineId);
-          const ordered = Number(line?.orderedQty);
-          const claimed = decision.availability === "partial" ? Number(decision.shortageQty) : 0;
-          const qty = ordered - claimed;
-          return qty > 0 ? [{ cpoLineId: decision.lineId, storeId, qty }] : [];
-        });
-        const reservedByLine = new Map<string, { reserved: number; shortfall: number }>();
-        if (reserveLines.length > 0 && !storeId) return { error: "A store is required before stock can be reserved." };
-        if (reserveLines.length > 0) {
-          try {
-            const response = await api<{ lines?: Array<{ cpoLineId: string; reserved: number | string; shortfall: number | string }> }>(
-              "/api/v1/inventory/reservations/customer-pos?partial=true",
-              { method: "POST", body: JSON.stringify({ cpoId: po.id, lines: reserveLines }) },
-            );
-            (response.lines ?? []).forEach((line) => reservedByLine.set(line.cpoLineId, { reserved: Number(line.reserved), shortfall: Number(line.shortfall) }));
-          } catch (error) {
-            return { error: failure(error) };
-          }
-        }
-        const recorded = decisions.map((decision) => {
-          const line = poLines.find((item) => item.id === decision.lineId);
-          const ordered = Number(line?.orderedQty);
-          if (decision.availability === "unavailable") return { lineId: decision.lineId, availability: "unavailable", shortageQty: ordered };
-          const result = reservedByLine.get(decision.lineId);
-          const reserved = result?.reserved ?? 0;
-          const shortfall = result ? result.shortfall : ordered;
-          const availability = reserved <= 0 ? "unavailable" : shortfall > 0 ? "partial" : "available";
-          return { lineId: decision.lineId, availability, shortageQty: shortfall > 0 ? shortfall : undefined };
-        });
+        if (!po) return { error: "Customer PO not found." };
+        const siteId = options?.siteId || sites[0]?.id;
+        if (!siteId) return { error: "Choose the fulfilling site before confirming material availability." };
+
+        // Call the backend feasibility endpoint which: (1) explodes BOMs for each CPO line,
+        // (2) reserves available raw materials, (3) returns material shortfalls.
+        let feasibility: { cpoId: string; feasible: boolean; materials: Array<{ itemId: string; storeId?: string; requested: number; reserved: number; shortfall: number }> };
         try {
-          await salesApi.recordAvailability(po.id, recorded);
+          feasibility = await salesApi.cpoFeasibility(po.id);
         } catch (error) {
           return { error: failure(error) };
         }
-        const shortages = recorded.filter((decision) => decision.availability !== "available");
-        if (shortages.length === 0) {
+
+        const shortfalls = (feasibility.materials ?? []).filter((m) => Number(m.shortfall) > 0);
+
+        // Update CPO availability status
+        const anyReserved = (feasibility.materials ?? []).some((m) => Number(m.reserved) > 0);
+        const availabilityStatus = feasibility.feasible
+          ? "available"
+          : anyReserved ? "partial" : "shortage";
+
+        if (shortfalls.length === 0) {
           await reload();
-          return { status: "available", message: "Material was confirmed available. No purchase requisition was created." };
+          return { status: "available", message: "All materials are available and reserved. No purchase requisition was created." };
         }
-        const siteId = options?.siteId || sites[0]?.id;
-        if (!siteId) return { error: "Choose the fulfilling site before creating a purchase requisition." };
+
+        // Build PR lines for material shortfalls only (BOM raw materials, not finished products)
         try {
-          const lines = shortages.map((decision) => {
-            const line = poLines.find((item) => item.id === decision.lineId);
-            const item = catalog.find((entry) => entry.id === line?.itemId);
-            const uom = uoms.find((entry) => entry.id === item?.uomId) || uoms.find((entry) => entry.symbol === line?.uom);
-            const qty = decision.availability === "partial" ? Number(decision.shortageQty) : Number(line?.orderedQty);
-            if (!item || !uom || !(qty > 0)) throw new Error("Each unavailable line needs its catalog item, unit, and a shortage quantity.");
-            if (decision.availability === "partial" && qty >= Number(line?.orderedQty)) {
-              throw new Error("A partial shortage must be less than the ordered quantity.");
-            }
-            return { itemId: item.id, qty, uomId: uom.id, requiredDate: po.requiredByDate || undefined, notes: `Shortage for ${po.poNumber}` };
+          const lines = shortfalls.map((mat) => {
+            const qty = Number(mat.shortfall);
+            const catalogItem = catalog.find((c) => c.id === mat.itemId);
+            if (!catalogItem || !(qty > 0)) throw new Error(`Material ${mat.itemId} could not be matched to the item catalogue.`);
+            const uom = uoms.find((u) => u.id === catalogItem.uomId);
+            if (!uom) throw new Error(`UOM not found for material ${catalogItem.name}.`);
+            return { itemId: catalogItem.id, qty, uomId: uom.id, requiredDate: po.requiredByDate || undefined, notes: `BOM shortage for ${po.poNumber}` };
           });
-          const signature = lines.map((line) => `${line.itemId}:${line.qty}`).sort().join("|");
+          const signature = lines.map((l) => `${l.itemId}:${l.qty}`).sort().join("|");
           const saved = await procurementApi.createPr({
             originType: "customer_po",
             customerPoId: po.id,
             siteId,
             requiredDate: po.requiredByDate || undefined,
             priority: "high",
-            notes: `Shortage cover for ${po.poNumber}`,
+            notes: `BOM material shortage cover for CPO ${po.poNumber}`,
             lines,
-          }, `cpo-shortage:${po.id}:${signature}`);
+          }, `cpo-bom-shortage:${po.id}:${signature}`);
           await reload();
           return {
-            status: shortages.length === decisions.length ? "awaiting_procurement" : "partially_available",
-            message: `Purchase requisition ${saved.prNumber} is ${saved.status} for the unavailable material.`,
+            status: availabilityStatus,
+            message: `Purchase requisition ${saved.prNumber} raised for ${shortfalls.length} material shortage${shortfalls.length > 1 ? 's' : ''}.`,
             createdPr: { id: saved.id, prNumber: saved.prNumber },
           };
         } catch (error) {
