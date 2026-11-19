@@ -40,4 +40,10 @@ public class UpdateItemRequest {
         this.specifications = specifications;
         this.productConfigurationProvided = true;
     }
+
+    /** Explicit JSON null sets the flag; the builder only sets the fields. Either one is a change. */
+    @JsonIgnore
+    public boolean changesProductConfiguration() {
+        return productConfigurationProvided || productKind != null || specifications != null;
+    }
 }

@@ -1,5 +1,6 @@
 package in.boss.masterdata.domain;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import in.boss.masterdata.api.dto.UpdateItemRequest;
 import in.boss.masterdata.domain.impl.ItemServiceImpl;
 import in.boss.masterdata.persistence.BomHeaderRepository;
@@ -125,6 +126,24 @@ class ItemLifecycleTest {
                 .isInstanceOf(LifecycleException.class).hasMessageContaining("BOM");
         assertThatThrownBy(() -> itemService.updateItem(itemId, UpdateItemRequest.builder().hsnCode("1234").build()))
                 .isInstanceOf(LifecycleException.class).hasMessageContaining("BOM");
+    }
+
+    @Test
+    void finishedGoodProductConfigurationCannotBeCleared() throws Exception {
+        UUID itemId = UUID.randomUUID();
+        ItemEntity item = ItemEntity.builder().id(itemId).tenantId(tenantId)
+                .itemType("finished_goods").isActive(true).build();
+        when(itemRepo.findLockedByIdAndTenantId(itemId, tenantId)).thenReturn(Optional.of(item));
+
+        assertThatThrownBy(() -> itemService.updateItem(itemId, UpdateItemRequest.builder()
+                .specifications(List.of()).build()))
+                .isInstanceOf(LifecycleException.class)
+                .hasMessageContaining("cannot be changed");
+
+        UpdateItemRequest clearKind = new ObjectMapper().readValue("{\"productKind\":null}", UpdateItemRequest.class);
+        assertThatThrownBy(() -> itemService.updateItem(itemId, clearKind))
+                .isInstanceOf(LifecycleException.class)
+                .hasMessageContaining("cannot be changed");
     }
 
     @Test
