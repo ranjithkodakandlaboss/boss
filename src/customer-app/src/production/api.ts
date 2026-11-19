@@ -63,6 +63,41 @@ export type CostSummary = {
   totalCost?: number;
   sellingPrice?: number;
   marginPct?: number;
+  materialStatus?: string;
+  labourStatus?: string;
+  overheadStatus?: string;
+};
+
+export type CostEntry = {
+  id: string;
+  entryType: string;
+  description: string;
+  qty?: number;
+  unitCost?: number;
+  amount: number;
+  estimated: boolean;
+  createdAt: string;
+};
+
+export type HistoricalCostReference = {
+  completedOrderCount: number;
+  totalQuantity: number;
+  totalActualCost: number;
+  weightedAverageUnitCost?: number;
+  basis: string;
+};
+
+export type JobCosting = {
+  jobId: string;
+  jobNumber: string;
+  estimatedCost: CostSummary;
+  actualCost: CostSummary;
+  variance?: number;
+  estimatedProfit?: number;
+  actualProfit?: number;
+  estimatedCostBasis: string;
+  historicalReference: HistoricalCostReference;
+  entries: CostEntry[];
 };
 
 export type ProductionJob = {
@@ -185,6 +220,10 @@ export function getJob(id: string) {
   return api<ProductionJob>(`/api/v1/jobs/${id}`);
 }
 
+export function getJobCosting(id: string) {
+  return api<JobCosting>(`/api/v1/jobs/${id}/costing`);
+}
+
 export function featureFlags() {
   return api<Record<string, boolean>>("/api/v1/jobs/features");
 }
@@ -265,7 +304,7 @@ export function concede(jobId: string, inspectionId: string, note: string) {
 }
 
 export function addCost(jobId: string, entryType: "LABOUR" | "OVERHEAD" | "OTHER", description: string, amount: number) {
-  return post(`/api/v1/jobs/${jobId}/costing`, { entryType, description, amount });
+  return post<CostEntry>(`/api/v1/jobs/${jobId}/costing`, { entryType, description, amount });
 }
 
 export type JobLotReservation = {

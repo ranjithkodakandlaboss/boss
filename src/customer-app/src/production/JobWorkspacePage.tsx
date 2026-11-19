@@ -8,9 +8,9 @@ import RecordSheet from "../components/shared/RecordSheet";
 import StatusChip from "../components/shared/StatusChip";
 import { createLot, lotFields } from "../inventory/inlineCreate";
 import {
-  addCost, cancelJob, concede, displayDate, featureFlags, getJob, issueMaterial, money, openInspection, readinessLabel,
+  addCost, cancelJob, concede, displayDate, featureFlags, getJob, getJobCosting, issueMaterial, money, openInspection, readinessLabel,
   recordInspection, releaseHold, returnMaterial, skipStage, usableLots,
-  type LotOption, type ProductionJob,
+  type JobCosting, type LotOption, type ProductionJob,
 } from "./api";
 
 const TABS = ["Overview", "Stages", "Materials", "Quality", "NCR / Rework", "Updates", "Blockers", "History"];
@@ -24,7 +24,8 @@ export default function JobWorkspacePage() {
   const canWrite = roles.some((role) => ["OWNER", "OPS_MANAGER", "PRODUCTION_SUPERVISOR"].includes(role));
   const canQuality = roles.some((role) => ["OWNER", "OPS_MANAGER", "QUALITY_INSPECTOR"].includes(role));
   const canConcede = roles.some((role) => ["OWNER", "OPS_MANAGER"].includes(role));
-  const canCost = roles.some((role) => ["OWNER", "OPS_MANAGER", "SALES_MANAGER", "PURCHASE_MANAGER", "ACCOUNTS_STAFF"].includes(role));
+  const canViewCost = roles.some((role) => ["OWNER", "OPS_MANAGER", "SALES_MANAGER", "PURCHASE_MANAGER", "ACCOUNTS_STAFF"].includes(role));
+  const canEditCost = roles.some((role) => ["OWNER", "OPS_MANAGER", "ACCOUNTS_STAFF"].includes(role));
   const [job, setJob] = useState<ProductionJob | null>(null);
   const [flags, setFlags] = useState<Record<string, boolean>>({});
   const [tab, setTab] = useState("Overview");
@@ -88,13 +89,26 @@ export default function JobWorkspacePage() {
       {tab === "NCR / Rework" && <Ncr job={job} />}
       {tab === "Updates" && <Updates job={job} />}
       {tab === "Blockers" && <Blockers job={job} />}
-      {tab === "History" && <History job={job} canCost={canCost && flags["production.job.costing"] !== false && !closed} onCost={(type, description, amount) => act(() => addCost(job.id, type, description, amount), "Cost recorded")} />}
+      {tab === "History" && <History
+        job={job}
+        canViewCost={canViewCost && flags["production.job.costing"] !== false}
+        canEditCost={canEditCost && flags["production.job.costing"] !== false && !closed}
+        onCost={(type, description, amount) => act(() => addCost(job.id, type, description, amount), "Cost recorded")}
+      />}
       {cancelOpen && <CancelDialog job={job} onClose={() => setCancelOpen(false)} onDone={() => { setCancelOpen(false); void load(); }} />}
     </div>
   );
 
-  function act(call: () => Promise<unknown>, done: string) {
-    call().then(() => { setNotice(done); return load(); }).catch((cause) => setError(cause instanceof ApiError ? cause.message : "The change was not saved"));
+  async function act(call: () => Promise<unknown>, done: string): Promise<boolean> {
+    try {
+      await call();
+      setNotice(done);
+      await load();
+      return true;
+    } catch (cause) {
+      setError(cause instanceof ApiError ? cause.message : "The change was not saved");
+      return false;
+    }
   }
 }
 
@@ -329,16 +343,88 @@ function Blockers({ job }: { job: ProductionJob }) {
   );
 }
 
-function History({ job, canCost, onCost }: { job: ProductionJob; canCost: boolean; onCost: (type: "LABOUR" | "OVERHEAD", description: string, amount: number) => void }) {
+function History({ job, canViewCost, canEditCost, onCost }: {
+  job: ProductionJob;
+  canViewCost: boolean;
+  canEditCost: boolean;
+  onCost: (type: "LABOUR" | "OVERHEAD", description: string, amount: number) => Promise<boolean>;
+}) {
   const [type, setType] = useState<"LABOUR" | "OVERHEAD">("LABOUR");
   const [description, setDescription] = useState("");
   const [amount, setAmount] = useState("");
+  const [costing, setCosting] = useState<JobCosting | null>(null);
+  const [costError, setCostError] = useState("");
+  const [costLoading, setCostLoading] = useState(false);
+
+  async function loadCosting() {
+    setCostLoading(true);
+    setCostError("");
+    try {
+      setCosting(await getJobCosting(job.id));
+    } catch (cause) {
+      setCostError(cause instanceof ApiError ? cause.message : "Costing could not be loaded");
+    } finally {
+      setCostLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    if (canViewCost) void loadCosting();
+  }, [job.id, canViewCost]);
+
   return (
     <div className="grid md:grid-cols-2 gap-4">
       <section className="text-sm space-y-3 md:col-span-2">
         <h2 className="font-bold">Record</h2>
         <p>Created {displayDate(job.createdAt)} · Started {displayDate(job.actualStart)} · Completed {displayDate(job.actualEnd)}</p>
-        <p>Estimated {money(job.estimatedCost?.totalCost)} · Actual {money(job.actualCost?.totalCost)} · Variance {money(job.variance)} · Margin {job.actualCost?.marginPct ?? "—"}%</p>
+        {canViewCost && (
+          <section aria-label="Job profitability" className="rounded-lg border p-3 space-y-3" style={{ borderColor: "var(--border)" }}>
+            <h3 className="font-bold">Order profitability</h3>
+            {costLoading && <p>Loading costing…</p>}
+            {costError && <p role="alert" style={{ color: "var(--error)" }}>{costError}</p>}
+            {costing && (
+              <>
+                <p className="text-xs" style={{ color: "var(--text-2)" }}>{costing.estimatedCostBasis}</p>
+                <div className="grid sm:grid-cols-2 gap-3">
+                  <div>
+                    <h4 className="font-semibold">Estimated</h4>
+                    <p>Revenue: {money(costing.estimatedCost.sellingPrice)}</p>
+                    <p>Material: {money(costing.estimatedCost.materialCost)} · {costStatus(costing.estimatedCost.materialStatus)}</p>
+                    <p>Labour: {money(costing.estimatedCost.labourCost)} · {costStatus(costing.estimatedCost.labourStatus)}</p>
+                    <p>Overhead: {money(costing.estimatedCost.overheadCost)} · {costStatus(costing.estimatedCost.overheadStatus)}</p>
+                    <p>Total: {money(costing.estimatedCost.totalCost)} · Profit: {money(costing.estimatedProfit)} · Margin: {costing.estimatedCost.marginPct == null ? "—" : `${costing.estimatedCost.marginPct}%`}</p>
+                  </div>
+                  <div>
+                    <h4 className="font-semibold">Actual</h4>
+                    <p>Revenue (locked to Customer PO): {money(costing.actualCost.sellingPrice)}</p>
+                    <p>Material: {money(costing.actualCost.materialCost)} · {costStatus(costing.actualCost.materialStatus)}</p>
+                    <p>Labour: {money(costing.actualCost.labourCost)} · {costStatus(costing.actualCost.labourStatus)}</p>
+                    <p>Overhead: {money(costing.actualCost.overheadCost)} · {costStatus(costing.actualCost.overheadStatus)}</p>
+                    <p>Total: {money(costing.actualCost.totalCost)} · Profit: {money(costing.actualProfit)} · Margin: {costing.actualCost.marginPct == null ? "—" : `${costing.actualCost.marginPct}%`}</p>
+                    <p>Variance (actual − estimated): {money(costing.variance)}</p>
+                  </div>
+                </div>
+                <div>
+                  <h4 className="font-semibold">Historical reference</h4>
+                  {costing.historicalReference.completedOrderCount === 0
+                    ? <p>No fully costed earlier jobs match this item and routing.</p>
+                    : <p>{costing.historicalReference.completedOrderCount} completed jobs · {money(costing.historicalReference.totalActualCost)} / {costing.historicalReference.totalQuantity} units = weighted average actual cost/unit {money(costing.historicalReference.weightedAverageUnitCost)}</p>}
+                  <p className="text-xs" style={{ color: "var(--text-2)" }}>{costing.historicalReference.basis}</p>
+                </div>
+                {costing.entries.length > 0 && (
+                  <div>
+                    <h4 className="font-semibold">Cost entries</h4>
+                    <ul className="text-xs space-y-1">
+                      {costing.entries.map((entry) => (
+                        <li key={entry.id}>{entry.estimated ? "Estimate" : "Actual"} · {entry.entryType} · {entry.description} · {money(entry.amount)} · {displayDate(entry.createdAt)}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </>
+            )}
+          </section>
+        )}
         <table className="w-full text-left text-xs">
           <caption className="text-left font-semibold mb-1">Stages</caption>
           <thead><tr><th>Stage</th><th>Work centre</th><th>Asset</th><th>Status</th></tr></thead>
@@ -355,15 +441,35 @@ function History({ job, canCost, onCost }: { job: ProductionJob; canCost: boolea
           <tbody>{(job.materials ?? []).map((material) => <tr key={material.id}><td>{material.itemCode}</td><td>{material.requiredQty}</td><td>{material.issuedQty}</td><td>{material.returnedQty}</td></tr>)}</tbody>
         </table>
       </section>
-      {canCost && (
-        <form className="space-y-2" onSubmit={(event) => { event.preventDefault(); onCost(type, description, Number(amount)); }}>
+      {canEditCost && (
+        <form className="space-y-2" onSubmit={async (event) => {
+          event.preventDefault();
+          if (await onCost(type, description, Number(amount))) {
+            await loadCosting();
+            setDescription("");
+            setAmount("");
+          }
+        }}>
           <h2 className="text-sm font-bold">Add labour or overhead</h2>
           <select className="eoss-input w-full" aria-label="Cost type" value={type} onChange={(event) => setType(event.target.value as "LABOUR" | "OVERHEAD")}><option value="LABOUR">Labour</option><option value="OVERHEAD">Overhead</option></select>
-          <input className="eoss-input w-full" aria-label="Cost description" value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Description" />
-          <input className="eoss-input w-full" aria-label="Cost amount" value={amount} onChange={(event) => setAmount(event.target.value)} placeholder="Amount" />
-          <button type="submit" className="px-3 py-1.5 rounded-lg text-xs font-semibold text-white" style={{ background: "var(--brand-fill)" }} disabled={!description || Number(amount) < 0}>Save cost</button>
+          <input className="eoss-input w-full" aria-label="Cost description / reason" value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Description or adjustment reason" />
+          <input className="eoss-input w-full" aria-label="Cost amount" type="number" min="0" step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} placeholder="Amount (enter 0 to confirm no cost)" />
+          <button type="submit" className="px-3 py-1.5 rounded-lg text-xs font-semibold text-white" style={{ background: "var(--brand-fill)" }} disabled={!description.trim() || amount === "" || Number(amount) < 0}>Save cost</button>
         </form>
       )}
     </div>
   );
+}
+
+function costStatus(status?: string) {
+  if (!status) return "Status unavailable";
+  return ({
+    captured: "Captured",
+    complete: "Complete",
+    captured_to_date: "Captured to date",
+    not_recorded: "Not recorded",
+    incomplete: "Incomplete",
+    missing_unit_cost: "Missing inventory unit cost",
+    not_applicable: "Not applicable",
+  } as Record<string, string>)[status] ?? status.replace(/_/g, " ");
 }

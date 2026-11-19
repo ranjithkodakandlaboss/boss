@@ -56,6 +56,18 @@ beforeEach(() => {
     if (url.includes("/eligible-cpos")) return Promise.resolve(json([{ cpoId, cpoLineId: lineId, cpoNumber: "CPO-100", customerName: "North Works", itemId, itemName: "Frame", qty: 10, sellingPrice: 1000, siteName: "Plant" }]));
     if (url.includes("/routing-templates")) return Promise.resolve(json([{ id: templateId, name: "Frame route", version: "v3", stageCount: 1 }]));
     if (url.includes("/inventory/lots")) return Promise.resolve(json({ content: [{ id: lotId, itemId, batchRef: "BATCH", availableQty: 20, siteId: "site" }] }));
+    if (url.endsWith(`/api/v1/jobs/${jobId}/costing`)) return Promise.resolve(json({
+      jobId,
+      jobNumber: "JOB-100",
+      estimatedCost: { materialCost: 50, totalCost: null, sellingPrice: 1000, materialStatus: "captured", labourStatus: "not_recorded", overheadStatus: "not_recorded" },
+      actualCost: { materialCost: null, labourCost: null, overheadCost: null, totalCost: null, sellingPrice: 1000, materialStatus: "not_recorded", labourStatus: "not_recorded", overheadStatus: "not_recorded" },
+      estimatedProfit: null,
+      actualProfit: null,
+      variance: null,
+      estimatedCostBasis: "BOM quantities valued using the item standard cost captured when the job was created.",
+      historicalReference: { completedOrderCount: 1, totalQuantity: 10, totalActualCost: 50, weightedAverageUnitCost: 5, basis: "Weighted average actual cost per unit from earlier completed jobs for the same item and routing revision. Job-level specifications are not captured." },
+      entries: [],
+    }));
     if (url.includes("/materials/issues") && init?.method === "POST") {
       expect(new Headers(init.headers).get("Idempotency-Key")).toBeTruthy();
       return Promise.resolve(json({ id: "issue-1", issueType: "issue", quantity: 20 }, 201));
@@ -94,11 +106,15 @@ it("opens a job from an eligible customer order and issues material", async () =
   await userEvent.selectOptions(await screen.findByLabelText("Lot for PLATE"), lotId);
   await userEvent.click(screen.getByRole("button", { name: "Issue" }));
   expect(await screen.findByText("Material issued")).toBeInTheDocument();
+  await userEvent.click(screen.getByRole("button", { name: "History" }));
+  expect(await screen.findByRole("heading", { name: "Order profitability" })).toBeInTheDocument();
+  expect(screen.getAllByText("Labour: — · Not recorded").length).toBeGreaterThan(0);
+  expect(screen.getByText(/1 completed jobs · ₹50 \/ 10 units = weighted average actual cost\/unit ₹5/)).toBeInTheDocument();
   const calls = vi.mocked(fetch).mock.calls.map(([input]) => String(input));
   expect(calls.some((url) => url.includes("status=available"))).toBe(true);
   expect(calls.some((url) => url.includes("status=reserved"))).toBe(true);
   expect(calls.some((url) => url.includes(`/inventory/reservations/lots?jobId=${jobId}`))).toBe(true);
-});
+}, 15000);
 
 it("issues a lot reserved to this job and hides a lot reserved to another job", async () => {
   const ownReserved = "22222222-2222-4222-8222-222222222222";

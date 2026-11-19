@@ -26,11 +26,14 @@ class ProductionJobView {
     private final JdbcTemplate jdbc;
     private final ProductionSupport support;
     private final ProductionMaterialReadiness readiness;
+    private final JobCostingService costing;
 
-    ProductionJobView(JdbcTemplate jdbc, ProductionSupport support, ProductionMaterialReadiness readiness) {
+    ProductionJobView(JdbcTemplate jdbc, ProductionSupport support, ProductionMaterialReadiness readiness,
+                      JobCostingService costing) {
         this.jdbc = jdbc;
         this.support = support;
         this.readiness = readiness;
+        this.costing = costing;
     }
 
     ProductionJobResponse map(ResultSet rs, int row) throws SQLException {
@@ -43,11 +46,10 @@ class ProductionJobView {
         LocalDate plannedEnd = date(rs, "planned_end");
         Risk risk = risk(status, materialReadiness, plannedEnd);
         boolean showMoney = support.commercial(support.requireContext());
-        CostSummary estimated = cost(rs, "est_", showMoney);
-        CostSummary actual = actualCost(rs, showMoney);
-        BigDecimal variance = showMoney
-                ? JobCostCalculator.variance(actual.totalCost(), estimated.totalCost())
-                : null;
+        JobCostingService.JobCostSummary costSummary = showMoney ? costing.summaryForJob(tenantId, jobId) : null;
+        CostSummary estimated = showMoney ? costSummary.estimatedCost() : emptyCost();
+        CostSummary actual = showMoney ? costSummary.actualCost() : emptyCost();
+        BigDecimal variance = showMoney ? costSummary.variance() : null;
         return new ProductionJobResponse(
                 jobId, rs.getString("job_number"), rs.getObject("cpo_id", UUID.class),
                 rs.getObject("cpo_line_id", UUID.class), rs.getString("cpo_number"),
@@ -210,34 +212,8 @@ class ProductionJobView {
         return plannedEnd == null ? null : ChronoUnit.DAYS.between(LocalDate.now(ZoneOffset.UTC), plannedEnd);
     }
 
-    private static CostSummary cost(ResultSet rs, String prefix, boolean showMoney) throws SQLException {
-        if (!showMoney) {
-            return emptyCost();
-        }
-        BigDecimal material = money(rs, prefix + "material_cost");
-        BigDecimal labour = money(rs, prefix + "labour_cost");
-        BigDecimal overhead = money(rs, prefix + "overhead_cost");
-        return new CostSummary(material, labour, overhead, JobCostCalculator.total(material, labour, overhead), null, null);
-    }
-
-    private static CostSummary actualCost(ResultSet rs, boolean showMoney) throws SQLException {
-        if (!showMoney) {
-            return emptyCost();
-        }
-        BigDecimal material = money(rs, "act_material_cost");
-        BigDecimal labour = money(rs, "act_labour_cost");
-        BigDecimal overhead = money(rs, "act_overhead_cost");
-        BigDecimal total = JobCostCalculator.total(material, labour, overhead);
-        BigDecimal selling = rs.getBigDecimal("selling_price");
-        return new CostSummary(material, labour, overhead, total, selling, JobCostCalculator.marginPct(selling, total));
-    }
-
     private static CostSummary emptyCost() {
-        return new CostSummary(null, null, null, null, null, null);
-    }
-
-    private static BigDecimal money(ResultSet rs, String column) throws SQLException {
-        return JobCostCalculator.money(rs.getBigDecimal(column));
+        return new CostSummary(null, null, null, null, null, null, null, null, null);
     }
 
     private static LocalDate date(ResultSet rs, String column) throws SQLException {

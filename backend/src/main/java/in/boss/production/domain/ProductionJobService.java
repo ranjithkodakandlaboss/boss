@@ -187,7 +187,7 @@ public class ProductionJobService {
                 routing.id(), routing.version(), line.siteId(), quantity, line.uomId(),
                 request.scheduledStart(), plannedEnd, priority, selling, context.userId());
         insertStages(context.tenantId(), jobId, stages);
-        BigDecimal estimated = insertMaterials(context, jobId, line, quantity);
+        MaterialEstimate estimated = insertMaterials(context, jobId, line, quantity);
         insertCostHeader(context.tenantId(), jobId, estimated, selling);
         audit.record("production_job", jobId, "CREATE", null, "{\"status\":\"planned\"}");
         outbox.publish("production_job", jobId, "production.job.created",
@@ -303,15 +303,16 @@ public class ProductionJobService {
         }
     }
 
-    private BigDecimal insertMaterials(BossContext context, UUID jobId, CpoLine line, BigDecimal quantity) {
+    private MaterialEstimate insertMaterials(BossContext context, UUID jobId, CpoLine line, BigDecimal quantity) {
         var exploded = explosion.explodeBOM(line.itemId(), quantity);
         if (exploded.getFlatMaterials() == null || exploded.getFlatMaterials().isEmpty()) {
             throw ProductionSupport.badRequest("An approved BOM is required to create a production job");
         }
         BigDecimal estimated = BigDecimal.ZERO;
+        boolean complete = true;
         for (var material : exploded.getFlatMaterials()) {
             ItemCost item = jdbc.query("""
-                    SELECT base_uom_id, COALESCE(std_cost, 0) AS std_cost
+                    SELECT base_uom_id, std_cost
                     FROM items WHERE tenant_id = ? AND id = ?
                     """, rs -> rs.next() ? new ItemCost(rs.getObject("base_uom_id", UUID.class),
                     rs.getBigDecimal("std_cost")) : null, context.tenantId(), material.getItemId());
@@ -327,26 +328,31 @@ public class ProductionJobService {
                       (id, tenant_id, job_id, item_id, required_qty, uom_id)
                     VALUES (?, ?, ?, ?, ?, ?)
                     """, UUID.randomUUID(), context.tenantId(), jobId, material.getItemId(), qty, item.uomId());
-            estimated = estimated.add(qty.multiply(item.stdCost()));
+            if (item.stdCost() == null) {
+                complete = false;
+            } else {
+                estimated = estimated.add(qty.multiply(item.stdCost()));
+            }
         }
         if (estimated.signum() == 0 && exploded.getFlatMaterials().isEmpty()) {
             throw ProductionSupport.badRequest("An approved BOM is required to create a production job");
         }
-        return JobCostCalculator.money(estimated);
+        return new MaterialEstimate(JobCostCalculator.money(estimated), complete);
     }
 
-    private void insertCostHeader(UUID tenantId, UUID jobId, BigDecimal estimated, BigDecimal selling) {
+    private void insertCostHeader(UUID tenantId, UUID jobId, MaterialEstimate estimated, BigDecimal selling) {
         UUID costingId = UUID.randomUUID();
         jdbc.update("""
                 INSERT INTO job_costing_headers
                   (id, tenant_id, job_id, est_material_cost, selling_price, status)
                 VALUES (?, ?, ?, ?, ?, 'estimated')
-                """, costingId, tenantId, jobId, estimated, selling);
+                """, costingId, tenantId, jobId, estimated.materialCost(), selling);
         jdbc.update("""
                 INSERT INTO job_costing_lines
-                  (id, tenant_id, costing_id, cost_type, description, amount, is_estimated)
-                VALUES (?, ?, ?, 'material', 'Estimated material from approved BOM', ?, TRUE)
-                """, UUID.randomUUID(), tenantId, costingId, estimated);
+                  (id, tenant_id, costing_id, cost_type, description, quantity, unit_cost, amount, is_estimated)
+                VALUES (?, ?, ?, 'material', 'Estimated BOM material; item standard cost snapshot', 1, ?, ?, TRUE)
+                """, UUID.randomUUID(), tenantId, costingId,
+                estimated.complete() ? estimated.materialCost() : null, estimated.materialCost());
     }
 
     private ProductionJobResponse changeStatus(UUID jobId, String target, String reason, boolean hold) {
@@ -473,4 +479,5 @@ public class ProductionJobService {
     }
 
     private record ItemCost(UUID uomId, BigDecimal stdCost) {}
+    private record MaterialEstimate(BigDecimal materialCost, boolean complete) {}
 }

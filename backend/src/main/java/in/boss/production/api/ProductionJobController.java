@@ -183,7 +183,7 @@ public class ProductionJobController {
 
     @PostMapping("/{jobId}/costing")
     @ResponseStatus(HttpStatus.CREATED)
-    @PreAuthorize(BossPermissions.COMMERCIAL_DATA_READ)
+    @PreAuthorize(BossPermissions.COSTING_WRITE)
     public CostEntryResponse addCost(@PathVariable UUID jobId, @Valid @RequestBody AddCostRequest request) {
         return costing.addEntry(jobId, request);
     }
