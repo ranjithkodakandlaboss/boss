@@ -6,6 +6,10 @@ export function listConfigOptions(category: string): Promise<ConfigOption[]> {
   return api<ConfigOption[]>(`/api/v1/config/options/${category}`).catch(() => []);
 }
 
+export function listDispatchMethods(): Promise<ConfigOption[]> {
+  return api<ConfigOption[]>("/api/v1/config/options/DISPATCH_METHOD");
+}
+
 export function createConfigOption(category: string, code: string, label: string): Promise<ConfigOption> {
   return api<ConfigOption>(`/api/v1/config/options/${category}`, {
     method: "POST",
@@ -112,6 +116,8 @@ export type DispatchSummary = {
   sourceStoreId?: string;
   sourceStoreName?: string;
   carrier?: string;
+  dispatchMethodOptionId?: string;
+  dispatchMethodLabel?: string;
   vehicleNumber?: string;
   driverName?: string;
   lrNumber?: string;
@@ -161,6 +167,7 @@ export type CreateDispatchRequest = {
   sourceStoreId?: string;
   sourceStoreName?: string;
   carrier?: string;
+  dispatchMethodOptionId?: string;
   vehicleNumber?: string;
   driverName?: string;
   lrNumber?: string;

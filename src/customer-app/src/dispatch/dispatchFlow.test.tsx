@@ -23,6 +23,8 @@ const mockDispatches = [
     sourceStoreId: "store-1",
     sourceStoreName: "FG Store",
     carrier: "Blue Dart",
+    dispatchMethodOptionId: "method-1",
+    dispatchMethodLabel: "Road Freight (historical)",
     vehicleNumber: "MH12AB1234",
     driverName: "Raju",
     lrNumber: "LR-101",
@@ -128,9 +130,11 @@ const mockJobs = [
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
 let postedReqs: { url: string; body: any }[] = [];
+let dispatchMethodsFail = false;
 
 beforeEach(() => {
   postedReqs = [];
+  dispatchMethodsFail = false;
   signIn("test-session");
   vi.stubGlobal(
     "fetch",
@@ -173,6 +177,10 @@ beforeEach(() => {
       }
       if (url.includes("/api/v1/config/options/VEHICLE")) {
         return Promise.resolve(json([{ id: "v-1", code: "MH12", label: "MH12AB1234" }]));
+      }
+      if (url.includes("/api/v1/config/options/DISPATCH_METHOD")) {
+        if (dispatchMethodsFail) return Promise.resolve(json({ message: "Unavailable" }, 500));
+        return Promise.resolve(json([{ id: "method-1", code: "ROAD", label: "Road Freight" }]));
       }
       if (url.includes("/api/v1/quality/jobs/job-1/dispatch-eligibility")) {
         return Promise.resolve(
@@ -244,10 +252,18 @@ it("renders dispatch landing page with KPI pills and table rows", async () => {
   expect(screen.getAllByText("DSP-2024-102").length).toBeGreaterThan(0);
   expect(screen.getAllByText("Tata Motors").length).toBeGreaterThan(0);
   expect(screen.getAllByText("Mahindra & Mahindra").length).toBeGreaterThan(0);
+  expect(screen.getByText("Road Freight (historical)")).toBeInTheDocument();
 
   // KPI buttons
   expect(screen.getByText("1 pending docs")).toBeInTheDocument();
   expect(screen.getByText("1 in transit")).toBeInTheDocument();
+});
+
+it("reports an error when dispatch methods cannot be loaded", async () => {
+  dispatchMethodsFail = true;
+  renderWithCustomer(<DispatchPage />);
+
+  expect(await screen.findByText("Error loading dispatch records")).toBeInTheDocument();
 });
 
 it("filters dispatch list by search input", async () => {
@@ -282,6 +298,10 @@ it("opens New Dispatch modal and creates dispatch", async () => {
   // Select customer
   const custSelect = screen.getByRole("combobox", { name: /Customer/i });
   await user.selectOptions(custSelect, "cust-1");
+  await user.selectOptions(
+    screen.getByRole("combobox", { name: /Dispatch Method/i }),
+    "method-1"
+  );
 
   // Create dispatch
   const createBtn = screen.getByRole("button", { name: "Create Dispatch" });
@@ -290,6 +310,8 @@ it("opens New Dispatch modal and creates dispatch", async () => {
   await waitFor(() => {
     expect(postedReqs.some((r) => r.url.endsWith("/api/v1/dispatches"))).toBe(true);
   });
+  expect(postedReqs.find((r) => r.url.endsWith("/api/v1/dispatches"))?.body.dispatchMethodOptionId)
+    .toBe("method-1");
 });
 
 it("renders Dispatch Detail page with details, shipment summary and packages", async () => {
@@ -303,6 +325,7 @@ it("renders Dispatch Detail page with details, shipment summary and packages", a
   expect(screen.getByText("Dispatch Details")).toBeInTheDocument();
   expect(screen.getByText("Shipment Summary")).toBeInTheDocument();
   expect(screen.getByText("Blue Dart")).toBeInTheDocument();
+  expect(screen.getByText("Road Freight (historical)")).toBeInTheDocument();
   expect(screen.getByText("MH12AB1234")).toBeInTheDocument();
   expect(screen.getByText(/Packages/)).toBeInTheDocument();
   expect(screen.getByText("PKG-01")).toBeInTheDocument();
