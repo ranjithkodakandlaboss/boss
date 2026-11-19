@@ -397,7 +397,7 @@ export default function CustomerDetail() {
           <p className="text-sm text-[var(--text-2)] mb-5">Historical RFQs, quotations and Customer POs stay readable. This can be undone by reactivating the customer.</p>
           <div className="flex gap-3">
             <button onClick={() => setConfirmDeactivate(false)} className="flex-1 py-2.5 border border-[var(--border)] rounded-xl text-sm text-[var(--text-2)]">Cancel</button>
-            <button onClick={() => { setConfirmDeactivate(false); deactivateCustomer(customer.id); }} className="flex-1 py-2.5 rounded-xl text-sm font-medium text-white" style={{ background: 'var(--error, #DC2626)' }}>Deactivate</button>
+            <button onClick={() => { setConfirmDeactivate(false); deactivateCustomer(customer.id).then(() => navigate('/sales?tab=customers')); }} className="flex-1 py-2.5 rounded-xl text-sm font-medium text-white" style={{ background: 'var(--error, #DC2626)' }}>Deactivate</button>
           </div>
         </div>
       </div>
