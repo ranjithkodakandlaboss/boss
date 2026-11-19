@@ -19,3 +19,4 @@ customer-api in.boss.production.domain.ProductionMetrics
 customer-api in.boss.production.domain.JobCostCalculator
 customer-api in.boss.identity.domain.CompanyLocationService
 customer-api in.boss.inventory.domain.InventoryLotReservationQuery
+customer-api in.boss.documents.domain.DocumentVaultService

@@ -17,5 +17,8 @@ boss:
   firebase:
     project-id: boss-test
     credential-path: ""
+  documents:
+    bucket: boss-documents-test
+    storage-type: in-memory
 
 # Testcontainers sets the datasource URL via DynamicPropertySource
