@@ -21,6 +21,7 @@ import ItemDetail from "../inventory/ItemDetail";
 import ItemMaster from "../inventory/ItemMaster";
 import LotDetail from "../inventory/LotDetail";
 import MaterialReturns from "../inventory/MaterialReturns";
+import OpeningStockPage from "../inventory/OpeningStockPage";
 import RemnantsPage from "../inventory/RemnantsPage";
 import SiteNeed from "../inventory/SiteNeed";
 import StockTransferPage from "../inventory/StockTransferPage";
@@ -73,6 +74,7 @@ export default function ScreenPage({ screen }: { screen: ScreenDef }) {
   if (screen.path === "inventory/transfers" || screen.path === "transfers") return <InventoryTransfers />;
   if (screen.path === "inventory/transfer") return <StockTransferPage />;
   if (screen.path === "inventory/returns") return <MaterialReturns />;
+  if (screen.path === "inventory/opening-stock") return <OpeningStockPage />;
   if (screen.path === "inventory/cycle") return <CycleCountPage />;
   if (screen.path === "inventory/remnants") return <RemnantsPage />;
   if (screen.path === "inventory/item/:id") return <ItemDetail />;

@@ -24,7 +24,9 @@ export default function CustomerForm({ customer, title, primaryLabel = 'Save Cha
 }) {
   const [form, setForm] = useState({ ...customer });
   const [error, setError] = useState('');
-  const update = (key: keyof Party, value: string | number) => setForm(prev => ({ ...prev, [key]: value }));
+  const update = (key: keyof Party, value: string | number) => { setForm(prev => ({ ...prev, [key]: value })); setError(''); };
+
+  const canSave = !!(form.legalName?.trim() && form.city?.trim() && form.contactPerson?.trim() && form.email?.trim() && form.gstin?.trim());
 
   const save = (e: React.FormEvent) => {
     e.preventDefault();
@@ -129,7 +131,7 @@ export default function CustomerForm({ customer, title, primaryLabel = 'Save Cha
     </div>
     <div className="sticky bottom-0 flex-shrink-0 flex justify-between px-6 py-4 border-t" style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}>
       <button type="button" onClick={onCancel} className="px-4 py-2 rounded-lg border text-sm" style={{ borderColor: 'var(--border)', color: 'var(--text-2)' }}>Cancel</button>
-      <button type="submit" className="flex items-center gap-2 px-5 py-2 rounded-lg text-sm font-semibold text-white" style={{ background: 'var(--brand)' }}><Save size={14} /> {primaryLabel}</button>
+      <button type="submit" disabled={!canSave} className="flex items-center gap-2 px-5 py-2 rounded-lg text-sm font-semibold text-white disabled:opacity-40 disabled:cursor-not-allowed" style={{ background: 'var(--brand)' }}><Save size={14} /> {primaryLabel}</button>
     </div>
   </form>;
 }
