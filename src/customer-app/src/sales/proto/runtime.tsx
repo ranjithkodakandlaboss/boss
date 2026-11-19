@@ -441,6 +441,7 @@ export function SalesProvider({ children }: { children?: ReactNode }) {
   const [customerPos, setCustomerPos] = useState<CustomerPO[]>([]);
   const [poLines, setPoLines] = useState<POLine[]>([]);
   const [catalog, setCatalog] = useState<CatalogItem[]>([]);
+  const [allItems, setAllItems] = useState<CatalogItem[]>([]);
   const [uoms, setUoms] = useState<UomOption[]>([]);
   const [sites, setSites] = useState<{ id: string; name: string }[]>([]);
   const [stores, setStores] = useState<{ id: string; siteId?: string }[]>([]);
@@ -458,13 +459,14 @@ export function SalesProvider({ children }: { children?: ReactNode }) {
   const removeToast = useCallback((id: string) => setToasts((current) => current.filter((item) => item.id !== id)), []);
 
   const reload = useCallback(async () => {
-    const [customerRows, rfqRows, quoteRows, poRows, itemRows, uomRows] = await Promise.all([
+    const [customerRows, rfqRows, quoteRows, poRows, itemRows, uomRows, allItemRows] = await Promise.all([
       allPages<Customer>("/api/v1/customers"),
       allPages<Rfq>("/api/v1/rfqs"),
       allPages<Quotation>("/api/v1/quotations"),
       allPages<Cpo>("/api/v1/cpos"),
-      allPages<CatalogItem>("/api/v1/items"),
+      allPages<CatalogItem>("/api/v1/items?itemType=FINISHED_GOOD&status=active"),
       allPages<UomOption>("/api/v1/uoms"),
+      allPages<CatalogItem>("/api/v1/items?status=active"),
     ]);
     const quoted = new Set(quoteRows.map((quote) => quote.rfqId).filter(Boolean));
     setCustomers(customerRows.map(toParty));
@@ -474,6 +476,7 @@ export function SalesProvider({ children }: { children?: ReactNode }) {
     setPoLines(mapPoLines(poRows));
     setCatalog(itemRows);
     setUoms(uomRows);
+    setAllItems(allItemRows);
     try {
       const company = await api<CompanyRecord>("/api/v1/company");
       setSites((company.sites ?? []).filter((site) => site.id && site.name).map((site) => ({ id: site.id as string, name: site.name })));
@@ -813,7 +816,7 @@ export function SalesProvider({ children }: { children?: ReactNode }) {
         try {
           const lines = shortfalls.map((mat) => {
             const qty = Number(mat.shortfall);
-            const catalogItem = catalog.find((c) => c.id === mat.itemId);
+            const catalogItem = allItems.find((c) => c.id === mat.itemId);
             if (!catalogItem || !(qty > 0)) throw new Error(`Material ${mat.itemId} could not be matched to the item catalogue.`);
             const uom = uoms.find((u) => u.id === catalogItem.uomId);
             if (!uom) throw new Error(`UOM not found for material ${catalogItem.name}.`);
@@ -842,7 +845,7 @@ export function SalesProvider({ children }: { children?: ReactNode }) {
       addDocument: () => showToast({ type: "info", title: "Document file was not stored", body: "Notes typed on the record are saved. File upload is not connected." }),
       appendAuditEvent: () => undefined,
     };
-  }, [auditEvents, catalog, companyConfig, currentUser, customerPos, customers, guard, jobs, poLines, purchaseReqs, quotations, ready, reload, removeToast, rfqs, showToast, sites, stores, supplierPos, toasts, uoms]);
+  }, [allItems, auditEvents, catalog, companyConfig, currentUser, customerPos, customers, guard, jobs, poLines, purchaseReqs, quotations, ready, reload, removeToast, rfqs, showToast, sites, stores, supplierPos, toasts, uoms]);
 
   return (
     <SalesContext.Provider value={value}>
