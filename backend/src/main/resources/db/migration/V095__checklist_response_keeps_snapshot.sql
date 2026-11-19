@@ -23,14 +23,6 @@ END $$;
 ALTER TABLE inspection_checklist_responses
     ALTER COLUMN checklist_item_id DROP NOT NULL;
 
-DO $$ BEGIN
-    IF NOT EXISTS (
-        SELECT 1 FROM pg_constraint
-        WHERE conname = 'inspection_checklist_responses_checklist_item_id_fkey'
-          AND conrelid = 'inspection_checklist_responses'::regclass
-    ) THEN
-        ALTER TABLE inspection_checklist_responses
-            ADD CONSTRAINT inspection_checklist_responses_checklist_item_id_fkey
-                FOREIGN KEY (checklist_item_id) REFERENCES checklist_items(id) ON DELETE SET NULL;
-    END IF;
-END $$;
+ALTER TABLE inspection_checklist_responses
+    ADD CONSTRAINT inspection_checklist_responses_checklist_item_id_fkey
+        FOREIGN KEY (checklist_item_id) REFERENCES checklist_items(id) ON DELETE SET NULL;

@@ -19,13 +19,17 @@ class SupplierLifecycleMigrationTest {
 
     @Test
     void reconcilesKnownLegacyValuesAndBackfillsOnlyUnambiguousSelectedQuotationLinks() throws Exception {
-        String schema = "supplier_lifecycle_" + UUID.randomUUID().toString().replace("-", "");
-        String url = BaseMasterDataIntegrationTest.postgres.getJdbcUrl();
+        // V095 looks up the checklist foreign key in schema public. A private schema
+        // makes that lookup miss, so this reconciliation runs in its own database.
+        String database = "sl_" + UUID.randomUUID().toString().replace("-", "");
+        String adminUrl = BaseMasterDataIntegrationTest.postgres.getJdbcUrl();
+        String url = databaseUrl(adminUrl, database);
         String user = BaseMasterDataIntegrationTest.postgres.getUsername();
         String password = BaseMasterDataIntegrationTest.postgres.getPassword();
+        String schema = "public";
 
         try {
-            createSchema(url, user, password, schema);
+            createDatabase(adminUrl, user, password, database);
             Flyway beforeReconciliation = flyway(url, user, password, schema, "070");
             beforeReconciliation.migrate();
 
@@ -68,7 +72,7 @@ class SupplierLifecycleMigrationTest {
             assertBackfilledLink(url, user, password, schema, fixture);
             assertNotNullAndTenantSafeSchema(url, user, password, schema);
         } finally {
-            dropSchema(url, user, password, schema);
+            dropDatabase(adminUrl, user, password, database);
         }
     }
 
@@ -82,10 +86,28 @@ class SupplierLifecycleMigrationTest {
                 .load();
     }
 
-    private static void createSchema(String url, String user, String password, String schema) throws SQLException {
-        try (Connection connection = DriverManager.getConnection(url, user, password);
+    private static String databaseUrl(String adminUrl, String database) {
+        if (!database.matches("[a-z0-9_]+")) {
+            throw new IllegalArgumentException("Unsafe database name");
+        }
+        int scheme = adminUrl.indexOf("://");
+        int slash = adminUrl.indexOf('/', scheme + 3);
+        int query = adminUrl.indexOf('?', slash);
+        String suffix = query >= 0 ? adminUrl.substring(query) : "";
+        return adminUrl.substring(0, slash + 1) + database + suffix;
+    }
+
+    private static void createDatabase(String adminUrl, String user, String password, String database) throws SQLException {
+        try (Connection connection = DriverManager.getConnection(adminUrl, user, password);
              Statement statement = connection.createStatement()) {
-            statement.execute("CREATE SCHEMA " + schema);
+            statement.execute("CREATE DATABASE " + database);
+        }
+    }
+
+    private static void dropDatabase(String adminUrl, String user, String password, String database) throws SQLException {
+        try (Connection connection = DriverManager.getConnection(adminUrl, user, password);
+             Statement statement = connection.createStatement()) {
+            statement.execute("DROP DATABASE IF EXISTS " + database + " WITH (FORCE)");
         }
     }
 
