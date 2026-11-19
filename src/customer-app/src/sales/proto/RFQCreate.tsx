@@ -466,7 +466,7 @@ export default function RFQCreate() {
                   <Upload size={28} className="mx-auto text-[var(--text-3)] mb-3" />
                   <span className="block text-sm font-medium text-[var(--text-2)]">Attach documents</span>
                   <input aria-label="RFQ documents" type="file" multiple onChange={event => setFiles(Array.from(event.target.files ?? []))} className="block mt-3 w-full text-xs" />
-                  <span className="block text-xs text-[var(--text-3)] mt-1">Files are uploaded when the RFQ is saved (up to 20 MB each).</span>
+                  <span className="block text-xs text-[var(--text-3)] mt-1">Files are uploaded when the RFQ is saved (up to 10 MB each).</span>
                 </label>
               </FormCard>
               <FormCard title="Document Notes">

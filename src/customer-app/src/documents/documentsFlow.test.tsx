@@ -233,6 +233,8 @@ describe("Document Vault Frontend Flow", () => {
     expect(screen.getByRole("button", { name: "Supplier Documents" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Company Certificates" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Asset Documents" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Customer Documents" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Sales Documents" })).toBeInTheDocument();
 
     // Expiry badges in toolbar
     expect(screen.getByRole("button", { name: "1 expiring" })).toBeInTheDocument();

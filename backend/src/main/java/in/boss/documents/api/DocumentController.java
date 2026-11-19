@@ -69,7 +69,7 @@ public class DocumentController {
 
     @PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     @ResponseStatus(HttpStatus.CREATED)
-    @PreAuthorize(BossPermissions.DOCUMENTS_MANAGE)
+    @PreAuthorize(BossPermissions.DOCUMENTS_UPLOAD)
     public DocumentResponse upload(
             @RequestPart("file") MultipartFile file,
             @RequestPart(value = "metadata", required = false) CreateDocumentRequest metadata,

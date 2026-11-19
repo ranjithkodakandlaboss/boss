@@ -52,6 +52,8 @@ components:
             - Supplier Documents
             - Company Certificates
             - Asset Documents
+            - Customer Documents
+            - Sales Documents
         status:
           type: string
           enum: [active, superseded, expired, archived]

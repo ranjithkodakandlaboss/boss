@@ -406,7 +406,7 @@ export default function QuotationCreate() {
             <label className="text-xs text-[var(--text-2)]">Attach documents
               <input aria-label="Quotation documents" type="file" multiple disabled={saving} onChange={event => setFiles(Array.from(event.target.files ?? []))} className="block w-full mt-2 text-xs" />
             </label>
-            <p className="text-xs text-[var(--text-3)] mt-2">Files are uploaded when the quotation is saved (up to 20 MB each).</p>
+            <p className="text-xs text-[var(--text-3)] mt-2">Files are uploaded when the quotation is saved (up to 10 MB each).</p>
           </Card>
         </div>
       </div>

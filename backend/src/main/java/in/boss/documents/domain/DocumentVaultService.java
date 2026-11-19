@@ -48,7 +48,9 @@ public class DocumentVaultService {
             "Material Certificates",
             "Supplier Documents",
             "Company Certificates",
-            "Asset Documents"
+            "Asset Documents",
+            "Customer Documents",
+            "Sales Documents"
     );
 
     private final JdbcTemplate jdbc;
@@ -185,7 +187,7 @@ public class DocumentVaultService {
     }
 
     @Transactional
-    @PreAuthorize(BossPermissions.DOCUMENTS_MANAGE)
+    @PreAuthorize(BossPermissions.DOCUMENTS_UPLOAD)
     public DocumentResponse uploadDocument(CreateDocumentRequest request, MultipartFile file) {
         BossContext ctx = requireContext();
         UUID tenantId = ctx.tenantId();

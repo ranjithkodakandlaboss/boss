@@ -227,6 +227,21 @@ it("uploads an RFQ attachment and reloads the persisted linked document", async 
   expect(uploaded[0]).toMatchObject({ linkedEntities: [{ type: "RFQ", id: "r1", ref: "RFQ-1" }] });
 });
 
+it("rejects Sales attachments above the backend's 10 MB limit before upload", async () => {
+  renderSales("/sales/rfq/r1");
+  await userEvent.click(await screen.findByRole("button", { name: /Documents/ }));
+  const contents = new Uint8Array(10 * 1024 * 1024 + 1);
+  await userEvent.upload(
+    screen.getByLabelText("Attach document"),
+    new File([contents], "oversized.pdf", { type: "application/pdf" }),
+  );
+
+  expect(await screen.findByRole("alert")).toHaveTextContent("no larger than 10 MB");
+  expect(vi.mocked(fetch).mock.calls.filter(([url, init]) =>
+    String(url).includes("/documents") && init?.method === "POST",
+  )).toHaveLength(0);
+});
+
 it.each([
   ["/sales/quotation/q1", "Quotation", "q1", "QT-1"],
   ["/sales/customers/c1/view", "Customer", "c1", "North Works"],
