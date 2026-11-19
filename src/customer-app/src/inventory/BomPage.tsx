@@ -28,7 +28,7 @@ type Bom = {
   lines?: BomLine[];
 };
 
-export default function BomPage() {
+export default function BomPage({ embedded = false }: { embedded?: boolean }) {
   const { user } = useCustomer();
   const canWrite = (user?.roles ?? []).some((role) => ["OWNER", "PRODUCTION_MANAGER", "OPS_MANAGER"].includes(role.role));
   const [boms, setBoms] = useState<Bom[]>([]);
@@ -59,8 +59,8 @@ export default function BomPage() {
   useEffect(() => { load(); }, []);
 
   return (
-    <div className="flex min-h-[calc(100vh-var(--topbar-h))] flex-col">
-      <StockNav />
+    <div className={embedded ? "flex flex-col" : "flex min-h-[calc(100vh-var(--topbar-h))] flex-col"}>
+      {!embedded && <StockNav />}
       <header className="flex flex-wrap items-center gap-3 px-5 py-3">
         <div>
           <h1 className="text-lg font-bold">Bills of materials</h1>

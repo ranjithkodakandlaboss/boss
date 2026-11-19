@@ -14,7 +14,7 @@ import StockNav from "./stockNav";
 const TYPES = ["RAW_MATERIAL", "SEMI_FINISHED", "FINISHED_GOOD", "CONSUMABLE", "SPARE_PART", "SERVICE"];
 const TRACKING_MODES = ["None", "Lot", "Heat", "Serial"] as const;
 
-export default function ItemMaster() {
+export default function ItemMaster({ embedded = false }: { embedded?: boolean }) {
   const navigate = useNavigate();
   const { user } = useCustomer();
   const canWrite = (user?.roles ?? []).some((role) => ["OWNER", "OPS_MANAGER", "STORE_KEEPER", "PURCHASE_MANAGER"].includes(role.role));
@@ -57,8 +57,8 @@ export default function ItemMaster() {
   ];
 
   return (
-    <div className="flex min-h-[calc(100vh-var(--topbar-h))] flex-col">
-      <StockNav />
+    <div className={embedded ? "flex flex-col" : "flex min-h-[calc(100vh-var(--topbar-h))] flex-col"}>
+      {!embedded && <StockNav />}
       <header className="flex flex-wrap items-center gap-3 px-5 py-3">
         <div>
           <h1 className="text-lg font-bold text-[var(--text)]">Item Master</h1>

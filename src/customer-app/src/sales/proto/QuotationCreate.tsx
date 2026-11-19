@@ -7,6 +7,7 @@ import AddIfEmpty from './AddIfEmpty';
 import { newCustomer, saveCatalogItem, saveUnit } from './quickMasters';
 import type { CustomerQuotation, CustomerQuotationLine } from './types';
 import { salesApi, type QuotationCostingConfig } from '../api';
+import CostingConfigEditor from '../../config/CostingConfigEditor';
 
 const DEMO_NOW = new Date().toISOString().slice(0, 10);
 const addDays = (d: string, n: number) => {
@@ -67,10 +68,7 @@ export default function QuotationCreate() {
   const [taxRatePct, setTaxRatePct] = useState(18);
   const [notes, setNotes] = useState('');
   const [costingConfig, setCostingConfig] = useState<QuotationCostingConfig>();
-  const [labourRatesText, setLabourRatesText] = useState('');
-  const [machineRatesText, setMachineRatesText] = useState('');
   const [costConfigMessage, setCostConfigMessage] = useState('');
-  const [savingCostConfig, setSavingCostConfig] = useState(false);
   const [lines, setLines] = useState<QLine[]>(
     rfqLines.length > 0 ? rfqLines.map((l, i) => newLine(i + 1, l)) : [newLine(1)]
   );
@@ -79,8 +77,6 @@ export default function QuotationCreate() {
   useEffect(() => {
     salesApi.quotationCostingConfig().then((config) => {
       setCostingConfig(config);
-      setLabourRatesText(config.labourRates.map((rate) => `${rate.name}, ${rate.ratePerHour}`).join('\n'));
-      setMachineRatesText(config.machineRates.map((rate) => `${rate.name}, ${rate.ratePerHour}`).join('\n'));
     }).catch((error) => {
       setCostConfigMessage(error instanceof Error ? error.message : 'Costing configuration could not be loaded.');
     });
@@ -110,33 +106,6 @@ export default function QuotationCreate() {
     setLines(current => current.map(line => line.id === id
       ? { ...line, [field]: { ...line[field], [name]: hours } }
       : line));
-  };
-
-  const parseRates = (value: string) => value.split('\n').map((entry) => entry.trim()).filter(Boolean).map((entry) => {
-    const [name, rawRate] = entry.split(',').map((part) => part.trim());
-    if (!name || !rawRate || !Number.isFinite(Number(rawRate)) || Number(rawRate) < 0) {
-      throw new Error('Enter rates one per line as “Activity, hourly rate”.');
-    }
-    return { name, ratePerHour: Number(rawRate) };
-  });
-
-  const saveCostingConfig = async () => {
-    if (!costingConfig) return;
-    setSavingCostConfig(true);
-    setCostConfigMessage('');
-    try {
-      const saved = await salesApi.saveQuotationCostingConfig({
-        ...costingConfig,
-        labourRates: parseRates(labourRatesText),
-        machineRates: parseRates(machineRatesText),
-      });
-      setCostingConfig(saved);
-      setCostConfigMessage('Costing configuration saved.');
-    } catch (error) {
-      setCostConfigMessage(error instanceof Error ? error.message : 'Costing configuration could not be saved.');
-    } finally {
-      setSavingCostConfig(false);
-    }
   };
 
   const handleSubmit = async () => {
@@ -395,35 +364,11 @@ export default function QuotationCreate() {
               configured rates, and the hours entered for each activity. The saved estimate and margin appear on
               the quotation before it can be submitted.
             </p>
+            {costConfigMessage && <p role="alert" className="mt-2 text-xs text-[var(--error)]">{costConfigMessage}</p>}
             {canConfigureCosting && costingConfig && (
               <details className="mt-4 border-t pt-3" style={{ borderColor: 'var(--border)' }}>
                 <summary className="cursor-pointer text-xs font-semibold text-[var(--brand)]">Configure costing and margin controls</summary>
-                <div className="grid md:grid-cols-2 gap-3 mt-3">
-                  <Field label="Labour rates (one per line: activity, rate/hour)">
-                    <textarea value={labourRatesText} onChange={(event) => setLabourRatesText(event.target.value)} className="eoss-input w-full font-mono" rows={4} />
-                  </Field>
-                  <Field label="Machine rates (one per line: stage, rate/hour)">
-                    <textarea value={machineRatesText} onChange={(event) => setMachineRatesText(event.target.value)} className="eoss-input w-full font-mono" rows={4} />
-                  </Field>
-                  {([
-                    ['overheadPerUnit', 'Overhead per unit'],
-                    ['consumablesPerUnit', 'Consumables per unit'],
-                    ['packagingPerUnit', 'Packaging per unit'],
-                    ['transportPerUnit', 'Transport per unit'],
-                    ['targetMarginPct', 'Target margin (%)'],
-                    ['minimumMarginPct', 'Minimum margin (%)'],
-                    ['approvalThresholdPct', 'Approval threshold (%)'],
-                  ] as const).map(([field, label]) => (
-                    <Field key={field} label={label}>
-                      <input type="number" min={0} step="0.01" value={costingConfig[field]} className="eoss-input w-full"
-                        onChange={(event) => setCostingConfig({ ...costingConfig, [field]: Number(event.target.value) || 0 })} />
-                    </Field>
-                  ))}
-                </div>
-                {costConfigMessage && <p className="mt-2 text-xs text-[var(--text-2)]">{costConfigMessage}</p>}
-                <button type="button" onClick={saveCostingConfig} disabled={savingCostConfig} className="mt-3 btn-primary text-xs disabled:opacity-50">
-                  {savingCostConfig ? 'Saving…' : 'Save costing controls'}
-                </button>
+                <div className="mt-3"><CostingConfigEditor initialConfig={costingConfig} onSaved={setCostingConfig} /></div>
               </details>
             )}
           </Card>
