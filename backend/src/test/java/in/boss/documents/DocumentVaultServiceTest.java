@@ -7,6 +7,7 @@ import in.boss.documents.api.DocumentDtos.DocumentResponse;
 import in.boss.documents.api.DocumentDtos.PageResponse;
 import in.boss.documents.api.DocumentDtos.RenewDocumentRequest;
 import in.boss.documents.domain.DocumentNotFoundException;
+import in.boss.documents.domain.DocumentLinkValidator;
 import in.boss.documents.domain.DocumentValidationException;
 import in.boss.documents.domain.DocumentVaultService;
 import in.boss.documents.domain.DocumentVaultService.StoredDocumentFile;
@@ -48,7 +49,7 @@ class DocumentVaultServiceTest extends BaseMasterDataIntegrationTest {
     @BeforeEach
     void setUp() {
         storageService = new InMemoryStorageService();
-        documentService = new DocumentVaultService(jdbc, storageService, auditService);
+        documentService = new DocumentVaultService(jdbc, storageService, auditService, new DocumentLinkValidator(jdbc));
 
         tenantA = provisionTenant("doc-vault-a-" + UUID.randomUUID().toString().substring(0, 8));
         tenantB = provisionTenant("doc-vault-b-" + UUID.randomUUID().toString().substring(0, 8));

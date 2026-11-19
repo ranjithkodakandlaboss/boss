@@ -153,16 +153,7 @@ public class CustomerServiceImpl implements CustomerService {
         UUID tenantId = getTenantId();
         CustomerEntity entity = customerRepository.findForUpdateByIdAndTenantId(id, tenantId)
                 .orElseThrow(() -> new EntityNotFoundException("Customer not found: " + id));
-        if (request.getStatus() != null
-                && !"active".equalsIgnoreCase(request.getStatus())
-                && !"inactive".equalsIgnoreCase(request.getStatus())) {
-            throw new ValidationException("Customer status must be active or inactive");
-        }
-        if (!entity.isActive()
-                && (!"active".equalsIgnoreCase(request.getStatus()) || request.changesProfile())) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT,
-                    "Inactive customers cannot be edited. Reactivate the customer first.");
-        }
+        validateCustomerUpdate(entity, request);
         if (entity.isActive() && "inactive".equalsIgnoreCase(request.getStatus())) {
             applicationEvents.publishEvent(new CustomerDeactivationRequested(tenantId, id));
         }
@@ -236,6 +227,19 @@ public class CustomerServiceImpl implements CustomerService {
         eventPublisher.publishEvent("CUSTOMER", saved.getId(), "CUSTOMER_UPDATED", newDto);
 
         return newDto;
+    }
+
+    private static void validateCustomerUpdate(CustomerEntity entity, UpdateCustomerRequest request) {
+        if (request.getStatus() != null
+                && !"active".equalsIgnoreCase(request.getStatus())
+                && !"inactive".equalsIgnoreCase(request.getStatus())) {
+            throw new ValidationException("Customer status must be active or inactive");
+        }
+        if (!entity.isActive()
+                && (!"active".equalsIgnoreCase(request.getStatus()) || request.changesProfile())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Inactive customers cannot be edited. Reactivate the customer first.");
+        }
     }
 
     @Override
