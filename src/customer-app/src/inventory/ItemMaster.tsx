@@ -144,10 +144,6 @@ export function ItemForm({ item, onClose, onSaved }: { item?: Item; onClose: () 
           categoryId: categoryId || null,
           categoryLabel: category ? categoryName(category) : undefined,
           reorderPoint: reorderPoint === "" ? null : Number(reorderPoint),
-          ...(item.itemType === "FINISHED_GOOD" ? {
-            productKind: productKind || null,
-            specifications: specs.map((s) => ({ key: s.key.trim(), label: s.label.trim(), uomId: s.uomId || null, minValue: s.minValue === "" ? null : Number(s.minValue), maxValue: s.maxValue === "" ? null : Number(s.maxValue), defaultValue: s.defaultValue === "" ? null : Number(s.defaultValue) })),
-          } : {}),
         })
         : await mutate<Item>("/api/v1/items", "POST", {
           code: code.trim(),
@@ -238,7 +234,7 @@ export function ItemForm({ item, onClose, onSaved }: { item?: Item; onClose: () 
           </select>
         </label>
       </div>
-      {((!item && itemType === "FINISHED_GOOD") || (item && item.itemType === "FINISHED_GOOD")) && (
+      {!item && itemType === "FINISHED_GOOD" && (
         <fieldset className="mt-3 rounded-lg border p-3 text-xs" style={{ borderColor: "var(--border)" }}>
           <legend className="px-1 font-semibold">Product kind &amp; specifications</legend>
           <label className="mt-2 block">

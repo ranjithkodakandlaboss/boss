@@ -90,10 +90,14 @@ public class FeasibilityCheckService {
 
         Map<UUID, BigDecimal> required = explodeRequirements(context, cpoId);
         List<ReservationPlan> plans = planner.planSiteRequirements(context, cpo.siteId(), required);
-        boolean hasShortfall = plans.stream().anyMatch(plan -> plan.shortfall().signum() > 0);
+        if (plans.stream().anyMatch(plan -> plan.shortfall().signum() > 0)) {
+            metrics.reservation("failed");
+            return new FeasibilityResponse(cpoId, false, plans.stream()
+                    .map(plan -> new ReservationLineResponse(plan.itemId(), null, plan.requested(),
+                            BigDecimal.ZERO.setScale(3), plan.shortfall(), List.of()))
+                    .toList());
+        }
 
-        // Reserve available quantities for all materials that have stock, even when some are short.
-        // Materials with no available stock produce a zero-allocation line with a shortfall.
         List<ReservationLineResponse> lines = new ArrayList<>();
         Set<StoreItem> changed = new HashSet<>();
         for (ReservationPlan plan : plans) {
@@ -117,12 +121,8 @@ public class FeasibilityCheckService {
         }
         changed.forEach(key -> replenishmentService.checkAfterStockChange(
                 context.tenantId(), key.itemId(), key.storeId()));
-        if (hasShortfall) {
-            metrics.reservation("partially_reserved");
-        } else {
-            metrics.reservation("fully_reserved");
-        }
-        return new FeasibilityResponse(cpoId, !hasShortfall, lines);
+        metrics.reservation("fully_reserved");
+        return new FeasibilityResponse(cpoId, true, lines);
     }
 
     public void releaseReservations(UUID cpoId) {

@@ -225,16 +225,9 @@ public class ItemServiceImpl implements ItemService {
         if (request.getReorderPoint() != null) {
             entity.setReorderQty(request.getReorderPoint());
         }
-        if (request.getProductKind() != null && "finished_goods".equals(entity.getItemType())) {
-            if (!List.of("MANUFACTURED", "TRADED").contains(request.getProductKind())) {
-                throw new ValidationException("Product kind must be MANUFACTURED or TRADED");
-            }
-            entity.setProductKind(request.getProductKind());
-        }
-        if (request.getSpecifications() != null && "finished_goods".equals(entity.getItemType())) {
-            List<ItemSpecification> specs = validateProductConfiguration(
-                    tenantId, entity.getItemType(), null, request.getSpecifications());
-            entity.setSpecifications(specs);
+        if ((request.getProductKind() != null || request.getSpecifications() != null)
+                && "finished_goods".equals(entity.getItemType())) {
+            throw new LifecycleException("Product kind and specifications cannot be changed after creation");
         }
         if (request.getHsnCode() != null && !request.getHsnCode().isBlank()) {
             if (requestedHsn.isPresent()) {
