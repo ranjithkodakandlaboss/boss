@@ -238,12 +238,13 @@ public class CustomerServiceImpl implements CustomerService {
             List<Predicate> predicates = new ArrayList<>();
             predicates.add(cb.equal(root.get("tenantId"), tenantId));
 
-            if (status != null && !status.isBlank()) {
+            if (status != null && !status.isBlank() && !"all".equalsIgnoreCase(status)) {
                 boolean active = "active".equalsIgnoreCase(status);
                 predicates.add(cb.equal(root.get("isActive"), active));
-            } else {
+            } else if (status == null || status.isBlank()) {
                 predicates.add(cb.isTrue(root.get("isActive")));
             }
+            // status=all: no isActive filter — return both active and inactive
             if (q != null && !q.isBlank()) {
                 String searchPattern = q.trim().toLowerCase(Locale.ROOT) + "%";
                 Predicate codeMatch = cb.like(cb.lower(root.get("code")), searchPattern);

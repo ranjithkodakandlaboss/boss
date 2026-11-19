@@ -460,7 +460,7 @@ export function SalesProvider({ children }: { children?: ReactNode }) {
 
   const reload = useCallback(async () => {
     const [customerRows, rfqRows, quoteRows, poRows, itemRows, uomRows, allItemRows] = await Promise.all([
-      allPages<Customer>("/api/v1/customers"),
+      allPages<Customer>("/api/v1/customers?status=all"),
       allPages<Rfq>("/api/v1/rfqs"),
       allPages<Quotation>("/api/v1/quotations"),
       allPages<Cpo>("/api/v1/cpos"),

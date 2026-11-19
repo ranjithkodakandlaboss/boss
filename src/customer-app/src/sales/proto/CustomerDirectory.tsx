@@ -64,7 +64,7 @@ export default function CustomerDirectory() {
           <option value="inactive">{getStatusLabel('inactive')}</option>
         </select>
       </div>
-      <p className="px-4 py-2 text-xs" style={{ color: 'var(--text-2)' }}>{customers.length} customers</p>
+      <p className="px-4 py-2 text-xs" style={{ color: 'var(--text-2)' }}>{filtered.length} of {customers.length} customers</p>
 
       {/* Table */}
       {filtered.length === 0 ? (
