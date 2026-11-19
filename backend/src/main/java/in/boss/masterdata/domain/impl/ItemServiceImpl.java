@@ -225,7 +225,7 @@ public class ItemServiceImpl implements ItemService {
         if (request.getReorderPoint() != null) {
             entity.setReorderQty(request.getReorderPoint());
         }
-        if (request.isProductConfigurationProvided() && "finished_goods".equals(entity.getItemType())) {
+        if (request.changesProductConfiguration() && "finished_goods".equals(entity.getItemType())) {
             throw new LifecycleException("Product kind and specifications cannot be changed after creation");
         }
         if (request.getHsnCode() != null && !request.getHsnCode().isBlank()) {
