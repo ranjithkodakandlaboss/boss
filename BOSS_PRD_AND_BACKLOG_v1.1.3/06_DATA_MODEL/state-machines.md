@@ -114,12 +114,16 @@ stateDiagram-v2
 ---
 
 ## 5. Customer Purchase Orders — CPO (`cpos`)
-**Migration:** `V020__cpos.sql`  
-**Database Constraint:** `CHECK (status IN ('open', 'partial', 'fulfilled', 'cancelled', 'on_hold'))`
+**Migration:** `V020__cpos.sql`, extended by `V102__cpo_feasibility_states.sql`
+**Database Constraint:** Includes `open`, `on_hold`, `partial`, `feasibility_pending`, `feasibility_approved`, `fulfilled`, and `cancelled`.
 
 ```mermaid
 stateDiagram-v2
     [*] --> open: CPO confirmed from accepted quote
+    open --> feasibility_pending: Submit for feasibility
+    feasibility_pending --> feasibility_approved: Approve when BOM materials can be reserved
+    feasibility_pending --> cancelled: Cancel CPO
+    feasibility_approved --> cancelled: Cancel CPO and release reservations
     open --> on_hold: Placed on hold (credit/engineering check)
     on_hold --> open: Hold released
     open --> partial: Partial shipment dispatched & invoiced
@@ -136,6 +140,9 @@ stateDiagram-v2
 | Source State | Target State | Triggering Event / Action | Permitted Principal | Side Effects / Enforcement |
 |---|---|---|---|---|
 | `[*]` | `open` | Record customer PO | `SALES_MANAGER`, `OWNER` | Production jobs and inventory reservations linked |
+| `open` | `feasibility_pending` | Submit CPO for feasibility | `SALES_MANAGER`, `OWNER` | CPO is locked for edits while materials are evaluated |
+| `feasibility_pending` | `feasibility_approved` | Approve feasible CPO | `SALES_MANAGER`, `OWNER` | BOM requirements are reserved atomically with the status change |
+| `feasibility_pending` / `feasibility_approved` | `cancelled` | Order cancellation | `SALES_MANAGER`, `OWNER` | Active CPO reservations are released atomically |
 | `open` | `on_hold` | Place CPO on hold | `SALES_MANAGER`, `OWNER` | Temporarily halts dispatch and production release |
 | `on_hold` | `open` | Resume CPO execution | `SALES_MANAGER`, `OWNER` | Dispatch and production resumed |
 | `open` | `partial` | First partial dispatch completed | System / Dispatcher | Dispatched quantities updated against line items |

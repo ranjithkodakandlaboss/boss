@@ -21,6 +21,7 @@ import static in.boss.sales.api.SalesApiDtos.CpoStatusRequest;
 import static in.boss.sales.api.SalesApiDtos.PageResponse;
 import static in.boss.sales.api.SalesApiDtos.RecordMaterialAvailabilityRequest;
 import static in.boss.sales.api.SalesApiDtos.UpdateCpoRequest;
+import static in.boss.inventory.api.InventoryApiDtos.FeasibilityResponse;
 
 @RestController
 @RequestMapping("/api/v1/cpos")
@@ -61,7 +62,14 @@ public class SalesCpoController {
     }
 
     @PatchMapping("/{cpoId}/status")
+    @PreAuthorize(BossPermissions.CPO_TRANSITIONS)
     public CpoResponse updateStatus(@PathVariable UUID cpoId, @Valid @RequestBody CpoStatusRequest request) {
         return customerPoService.updateStatus(cpoId, request.status());
+    }
+
+    @PostMapping("/{cpoId}/feasibility")
+    @PreAuthorize(BossPermissions.CPO_TRANSITIONS)
+    public FeasibilityResponse checkFeasibility(@PathVariable UUID cpoId) {
+        return customerPoService.checkFeasibility(cpoId);
     }
 }

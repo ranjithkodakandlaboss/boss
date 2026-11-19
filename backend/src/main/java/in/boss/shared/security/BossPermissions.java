@@ -60,6 +60,10 @@ public final class BossPermissions {
     public static final String SALES_WRITE =
             "hasAnyRole('OWNER','OPS_MANAGER','SALES_MANAGER')";
 
+    /** CPO state transitions are limited to the commercial owners defined by the state machine. */
+    public static final String CPO_TRANSITIONS =
+            "hasAnyRole('OWNER','SALES_MANAGER')";
+
     /** Owner, Ops Manager or Purchase Manager — procurement access. */
     public static final String PURCHASE_ACCESS =
             "hasAnyRole('OWNER','OPS_MANAGER','PURCHASE_MANAGER')";
