@@ -104,8 +104,7 @@ public class ItemServiceImpl implements ItemService {
 
         ItemCategoryEntity category = null;
         if (request.getCategoryId() != null) {
-            category = categoryRepository.findByIdAndTenantId(request.getCategoryId(), tenantId)
-                    .orElseThrow(() -> new ValidationException("Invalid category ID: " + request.getCategoryId()));
+            category = requireActiveCategory(tenantId, request.getCategoryId());
         }
 
         UUID hsnCodeId = null;
@@ -193,6 +192,7 @@ public class ItemServiceImpl implements ItemService {
             }
         }
 
+        boolean reactivating = !entity.isActive() && "active".equalsIgnoreCase(request.getStatus());
         if (request.getStatus() != null) {
             if (!"active".equalsIgnoreCase(request.getStatus())
                     && !"inactive".equalsIgnoreCase(request.getStatus())) {
@@ -212,10 +212,12 @@ public class ItemServiceImpl implements ItemService {
         if (request.getDescription() != null) {
             entity.setDescription(request.getDescription());
         }
-        if (request.getCategoryId() != null) {
-            ItemCategoryEntity cat = categoryRepository.findByIdAndTenantId(request.getCategoryId(), tenantId)
-                    .orElseThrow(() -> new ValidationException("Invalid category ID: " + request.getCategoryId()));
-            if (!Objects.equals(entity.getCategoryId(), cat.getId())) {
+        UUID selectedCategoryId = request.getCategoryId() != null ? request.getCategoryId() : entity.getCategoryId();
+        boolean categoryChanged = request.getCategoryId() != null
+                && !request.getCategoryId().equals(entity.getCategoryId());
+        if (selectedCategoryId != null && (categoryChanged || reactivating)) {
+            ItemCategoryEntity cat = requireActiveCategory(tenantId, selectedCategoryId);
+            if (categoryChanged) {
                 entity.setCategoryId(cat.getId());
                 entity.setCategoryLabelSnapshot(cat.getName());
             }
@@ -243,6 +245,15 @@ public class ItemServiceImpl implements ItemService {
         eventPublisher.publishEvent("ITEM", saved.getId(), "ITEM_UPDATED", newDto);
 
         return newDto;
+    }
+
+    private ItemCategoryEntity requireActiveCategory(UUID tenantId, UUID categoryId) {
+        ItemCategoryEntity category = categoryRepository.findLockedByIdAndTenantId(categoryId, tenantId)
+                .orElseThrow(() -> new ValidationException("Invalid category ID: " + categoryId));
+        if (!category.isActive()) {
+            throw new ValidationException("Category is inactive: " + categoryId);
+        }
+        return category;
     }
 
     @Override

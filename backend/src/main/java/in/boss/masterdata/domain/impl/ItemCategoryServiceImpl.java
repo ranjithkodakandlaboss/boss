@@ -7,6 +7,7 @@ import in.boss.masterdata.domain.DuplicateEntityException;
 import in.boss.masterdata.domain.EntityNotFoundException;
 import in.boss.masterdata.domain.ItemCategoryService;
 import in.boss.masterdata.domain.LifecycleException;
+import in.boss.masterdata.domain.ValidationException;
 import in.boss.masterdata.events.MasterDataEventPublisher;
 import in.boss.masterdata.persistence.ItemCategoryEntity;
 import in.boss.masterdata.persistence.ItemCategoryRepository;
@@ -78,6 +79,14 @@ public class ItemCategoryServiceImpl implements ItemCategoryService {
             throw new DuplicateEntityException("Category code already exists for this tenant: " + code);
         }
 
+        if (request.getParentId() != null) {
+            ItemCategoryEntity parent = categoryRepository.findLockedByIdAndTenantId(request.getParentId(), tenantId)
+                    .orElseThrow(() -> new ValidationException("Invalid parent category ID: " + request.getParentId()));
+            if (!parent.isActive()) {
+                throw new ValidationException("Parent category is inactive: " + request.getParentId());
+            }
+        }
+
         ItemCategoryEntity entity = ItemCategoryEntity.builder()
                 .id(UUID.randomUUID())
                 .tenantId(tenantId)
@@ -101,9 +110,12 @@ public class ItemCategoryServiceImpl implements ItemCategoryService {
     @Override
     public void deleteCategory(UUID id) {
         UUID tenantId = getTenantId();
-        ItemCategoryEntity entity = categoryRepository.findByIdAndTenantId(id, tenantId)
+        ItemCategoryEntity entity = categoryRepository.findLockedByIdAndTenantId(id, tenantId)
                 .orElseThrow(() -> new EntityNotFoundException("Category not found: " + id));
 
+        if (entity.isSystem()) {
+            throw new LifecycleException("System-controlled categories cannot be deactivated");
+        }
         if (!entity.isActive()) {
             return; // Already deleted
         }

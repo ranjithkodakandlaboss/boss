@@ -121,7 +121,7 @@ export default function ConfigOptionsAdmin() {
   }
 
   async function changeActive(option: ConfigOption) {
-    if (!category || !canManage || !category.tenantEditable) return;
+    if (!category || !canManage || !category.tenantEditable || (option.isSystem && option.isActive)) return;
     const action = option.isActive ? "deactivate" : "reactivate";
     if (option.isActive) {
       setConfirmOption(option);
@@ -180,7 +180,7 @@ export default function ConfigOptionsAdmin() {
       <div>
         <h2 className="text-sm font-bold text-[var(--text)]">Master Data &amp; Business Configuration</h2>
         <p className="mt-1 text-sm text-[var(--text-2)]">
-          Manage tenant reference values used by operational workflows. System-managed codes and labels stay protected; admins can deactivate values for new selections.
+          Manage tenant reference values used by operational workflows. System-managed values stay protected; tenant-managed values can be deactivated when safe.
         </p>
         <div className="mt-3 flex flex-wrap gap-2">
           <Link className="btn-ghost inline-flex items-center rounded-lg px-3 py-2 text-sm" to="/products">Product &amp; Material Master</Link>
@@ -248,10 +248,10 @@ export default function ConfigOptionsAdmin() {
                               <button type="button" disabled={saving} className="btn-ghost rounded p-2" aria-label={`Move ${option.label} down`} onClick={() => void move(option, 1)}><ArrowDown size={14} /></button>
                             </>
                           )}
-                          {!option.isSystem && option.isActive && <button type="button" disabled={saving} className="btn-ghost rounded p-2" aria-label={`Edit ${option.label}`} onClick={() => beginEdit(option)}><Pencil size={14} /></button>}
-                          <button type="button" disabled={saving} className="btn-ghost rounded p-2" aria-label={`${option.isActive ? "Deactivate" : "Reactivate"} ${option.label}`} onClick={() => void changeActive(option)}>
+                          {!option.isSystem && option.isActive && category.code !== "ITEM_CATEGORY" && <button type="button" disabled={saving} className="btn-ghost rounded p-2" aria-label={`Edit ${option.label}`} onClick={() => beginEdit(option)}><Pencil size={14} /></button>}
+                          {(!option.isSystem || !option.isActive) && <button type="button" disabled={saving} className="btn-ghost rounded p-2" aria-label={`${option.isActive ? "Deactivate" : "Reactivate"} ${option.label}`} onClick={() => void changeActive(option)}>
                             {option.isActive ? <LockKeyhole size={14} /> : <RotateCcw size={14} />}
-                          </button>
+                          </button>}
                         </div>
                       ) : option.isSystem ? <span className="text-xs text-[var(--text-2)]">Protected</span> : <span className="text-xs text-[var(--text-2)]">Read only</span>}
                     </td>

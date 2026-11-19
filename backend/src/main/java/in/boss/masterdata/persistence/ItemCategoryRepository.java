@@ -1,6 +1,8 @@
 package in.boss.masterdata.persistence;
 
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
+import jakarta.persistence.LockModeType;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
@@ -12,6 +14,8 @@ public interface ItemCategoryRepository extends JpaRepository<ItemCategoryEntity
     List<ItemCategoryEntity> findByTenantId(UUID tenantId);
     List<ItemCategoryEntity> findByTenantIdAndIsActiveTrue(UUID tenantId);
     Optional<ItemCategoryEntity> findByIdAndTenantId(UUID id, UUID tenantId);
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    Optional<ItemCategoryEntity> findLockedByIdAndTenantId(UUID id, UUID tenantId);
     Optional<ItemCategoryEntity> findByTenantIdAndCode(UUID tenantId, String code);
     boolean existsByTenantIdAndCode(UUID tenantId, String code);
     boolean existsByTenantIdAndParentIdAndIsActiveTrue(UUID tenantId, UUID parentId);

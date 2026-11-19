@@ -37,6 +37,7 @@ public class ConfigOptionLifecycleService {
         BossContext context = requireContext();
         requireOwner(context);
         requireTenantEditable(categoryCode);
+        lockOption(context.tenantId(), categoryCode, optionId);
         if ("ITEM_CATEGORY".equalsIgnoreCase(categoryCode)) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN,
                     "Item-category labels cannot be changed");
@@ -86,11 +87,37 @@ public class ConfigOptionLifecycleService {
         BossContext context = requireContext();
         requireOwner(context);
         requireTenantEditable(categoryCode);
+        lockOption(context.tenantId(), categoryCode, optionId);
         ConfigOptionDto existing = queryService.findOption(context.tenantId(), categoryCode, optionId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
                         "Configuration option not found"));
+        if (!active && existing.isSystem()) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+                    "System-controlled options cannot be deactivated");
+        }
         if (existing.isActive() == active) return;
         if ("ITEM_CATEGORY".equalsIgnoreCase(categoryCode)) {
+            if (!active) {
+                List<String> dependencies = findActiveCategoryDependencies(context.tenantId(), optionId);
+                if (!dependencies.isEmpty()) {
+                    throw new ResponseStatusException(HttpStatus.CONFLICT,
+                            "Cannot deactivate category used by " + String.join(", ", dependencies));
+                }
+            } else {
+                UUID parentId = jdbc.queryForObject(
+                        "SELECT parent_id FROM item_categories WHERE id = ? AND tenant_id = ?",
+                        UUID.class, optionId, context.tenantId());
+                if (parentId != null) {
+                    List<Boolean> parents = jdbc.query("""
+                            SELECT is_active FROM item_categories
+                            WHERE id = ? AND tenant_id = ? FOR UPDATE
+                            """, (rs, row) -> rs.getBoolean(1), parentId, context.tenantId());
+                    if (parents.isEmpty() || !parents.get(0)) {
+                        throw new ResponseStatusException(HttpStatus.CONFLICT,
+                                "Cannot reactivate a category with an inactive or unavailable parent");
+                    }
+                }
+            }
             jdbc.update("UPDATE item_categories SET is_active = ? WHERE id = ? AND tenant_id = ?",
                     active, optionId, context.tenantId());
         } else {
@@ -104,6 +131,27 @@ public class ConfigOptionLifecycleService {
             ConfigOptionHistoryService.record(jdbc, optionId, context, active ? "reactivate" : "deactivate",
                     existing.label(), existing.label());
         }
+    }
+
+    private void lockOption(UUID tenantId, String categoryCode, UUID optionId) {
+        String table = "ITEM_CATEGORY".equalsIgnoreCase(categoryCode) ? "item_categories" : "tenant_config_options";
+        jdbc.queryForList("SELECT id FROM " + table + " WHERE tenant_id = ? AND id = ? FOR UPDATE",
+                UUID.class, tenantId, optionId);
+    }
+
+    private List<String> findActiveCategoryDependencies(UUID tenantId, UUID categoryId) {
+        Integer items = jdbc.queryForObject("""
+                SELECT COUNT(*) FROM items WHERE tenant_id = ? AND category_id = ? AND is_active
+                """, Integer.class, tenantId, categoryId);
+        Integer children = jdbc.queryForObject("""
+                SELECT COUNT(*) FROM item_categories WHERE tenant_id = ? AND parent_id = ? AND is_active
+                """, Integer.class, tenantId, categoryId);
+        List<String> dependencies = new ArrayList<>();
+        if (items != null && items > 0) dependencies.add(items + (items == 1 ? " active item" : " active items"));
+        if (children != null && children > 0) {
+            dependencies.add(children + (children == 1 ? " active child category" : " active child categories"));
+        }
+        return dependencies;
     }
 
     private void requireTenantEditable(String categoryCode) {

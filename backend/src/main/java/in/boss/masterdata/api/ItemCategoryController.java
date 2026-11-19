@@ -3,6 +3,8 @@ package in.boss.masterdata.api;
 import in.boss.masterdata.api.dto.CreateItemCategoryRequest;
 import in.boss.masterdata.api.dto.ItemCategoryDto;
 import in.boss.masterdata.domain.ItemCategoryService;
+import in.boss.shared.config.ConfigOptionDto;
+import in.boss.shared.config.ConfigService;
 import in.boss.shared.security.BossPermissions;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
@@ -14,38 +16,30 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
-import java.util.Map;
 import java.util.UUID;
-import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/v1")
 public class ItemCategoryController {
 
     private final ItemCategoryService categoryService;
+    private final ConfigService configService;
 
-    public ItemCategoryController(ItemCategoryService categoryService) {
+    public ItemCategoryController(ItemCategoryService categoryService, ConfigService configService) {
         this.categoryService = categoryService;
+        this.configService = configService;
     }
 
     @GetMapping("/config/options/ITEM_CATEGORY")
     @PreAuthorize(BossPermissions.ANY_TENANT_USER)
-    public ResponseEntity<List<Map<String, Object>>> getItemCategoryConfigOptions() {
-        List<ItemCategoryDto> categories = categoryService.listCategories();
-        List<Map<String, Object>> options = categories.stream()
-                .map(c -> Map.of(
-                        "id", (Object) c.getId(),
-                        "code", c.getCode(),
-                        "label", c.getName(),
-                        "description", c.getDescription() != null ? c.getDescription() : "",
-                        "isActive", Boolean.TRUE.equals(c.getIsActive())
-                ))
-                .collect(Collectors.toList());
-        return ResponseEntity.ok(options);
+    public List<ConfigOptionDto> getItemCategoryConfigOptions(
+            @RequestParam(defaultValue = "false") boolean includeInactive) {
+        return configService.getOptions("ITEM_CATEGORY", includeInactive);
     }
 
     @GetMapping("/item-categories")
