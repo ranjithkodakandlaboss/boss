@@ -3,9 +3,6 @@ package in.boss.sales.domain;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import in.boss.masterdata.domain.CircularReferenceException;
-import in.boss.masterdata.domain.MaxBomLevelExceededException;
-import in.boss.masterdata.domain.ValidationException;
 import in.boss.sales.api.SalesApiDtos.CostRate;
 import in.boss.sales.api.SalesApiDtos.CreateQuotationLineRequest;
 import in.boss.sales.api.SalesApiDtos.QuotationCostingConfigRequest;
@@ -128,15 +125,9 @@ public class QuotationCostingService {
             CreateQuotationLineRequest line = lines.get(index);
             Map<String, BigDecimal> specificationValues = line.specificationValues() == null
                     ? Map.of() : line.specificationValues();
-            QuotationMaterialCostService.MaterialCostResult materialResult;
-            try {
-                materialResult = materialCostService.materialCostDetails(
-                            tenantId, line.itemId(), line.uomId(), specificationValues);
-            } catch (ValidationException | CircularReferenceException | MaxBomLevelExceededException error) {
-                if (!preview) throw error;
-                materialResult = new QuotationMaterialCostService.MaterialCostResult(
-                        null, null, "cannot be costed: " + error.getMessage());
-            }
+            QuotationMaterialCostService.MaterialCostResult materialResult = preview
+                    ? materialCostService.previewMaterialCostDetails(tenantId, line.itemId(), line.uomId(), specificationValues)
+                    : materialCostService.materialCostDetails(tenantId, line.itemId(), line.uomId(), specificationValues);
             BigDecimal materialCost = materialResult.amount();
             if (materialCost == null) {
                 available = false;

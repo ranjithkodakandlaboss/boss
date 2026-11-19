@@ -54,11 +54,14 @@ public class DocumentVaultService {
     private final JdbcTemplate jdbc;
     private final StorageService storageService;
     private final AuditService auditService;
+    private final DocumentLinkValidator linkValidator;
 
-    public DocumentVaultService(JdbcTemplate jdbc, StorageService storageService, AuditService auditService) {
+    public DocumentVaultService(JdbcTemplate jdbc, StorageService storageService, AuditService auditService,
+                                DocumentLinkValidator linkValidator) {
         this.jdbc = jdbc;
         this.storageService = storageService;
         this.auditService = auditService;
+        this.linkValidator = linkValidator;
     }
 
     @Transactional(readOnly = true)
@@ -194,7 +197,7 @@ public class DocumentVaultService {
         String linkedEntityType = request.linkedEntityType();
         String linkedEntityRef = request.linkedEntityRef();
         if (linkedEntityType != null) {
-            validateLinkedEntity(tenantId, linkedEntityType, linkedEntityId);
+            linkValidator.validate(tenantId, linkedEntityType, linkedEntityId);
         }
 
         UUID documentId = UUID.randomUUID();
@@ -586,69 +589,6 @@ public class DocumentVaultService {
         }
         if (request.reminderDays() != null && (request.reminderDays() < 1 || request.reminderDays() > 365)) {
             throw new DocumentValidationException("Reminder days must be between 1 and 365");
-        }
-    }
-
-    private void validateLinkedEntity(UUID tenantId, String type, UUID id) {
-        String normalized = type.trim().toLowerCase(Locale.ROOT);
-        String salesTable = switch (normalized) {
-            case "rfq" -> "rfqs";
-            case "quotation" -> "quotations";
-            case "customerpo", "customer_po", "customer po", "cpo" -> "cpos";
-            default -> null;
-        };
-        if (salesTable != null) {
-            if (id == null) {
-                throw new DocumentValidationException("A linked " + type + " ID is required");
-            }
-            Boolean active = jdbc.query("SELECT c.is_active FROM customers c JOIN " + salesTable
-                            + " s ON s.tenant_id = c.tenant_id AND s.customer_id = c.id"
-                            + " WHERE s.id = ? AND s.tenant_id = ? FOR UPDATE OF c",
-                    rs -> rs.next() ? rs.getBoolean("is_active") : null, id, tenantId);
-            if (Boolean.FALSE.equals(active)) {
-                throw new DocumentValidationException("New documents cannot be linked to an inactive customer's records");
-            }
-            String status = jdbc.query("SELECT status FROM " + salesTable
-                            + " WHERE id = ? AND tenant_id = ? FOR UPDATE",
-                    rs -> rs.next() ? rs.getString("status") : null, id, tenantId);
-            if (status == null) {
-                throw new DocumentValidationException("Linked " + type + " record not found for this tenant: " + id);
-            }
-            if ("cancelled".equals(status)) {
-                throw new DocumentValidationException("New documents cannot be linked to a cancelled " + type);
-            }
-            return;
-        }
-        if ("customer".equals(normalized)) {
-            if (id == null) {
-                throw new DocumentValidationException("A linked Customer ID is required");
-            }
-            Boolean active = jdbc.query("SELECT is_active FROM customers WHERE tenant_id = ? AND id = ? FOR UPDATE",
-                    rs -> rs.next() ? rs.getBoolean("is_active") : null, tenantId, id);
-            if (active == null) {
-                throw new DocumentValidationException("Linked Customer record not found for this tenant: " + id);
-            }
-            if (!active) {
-                throw new DocumentValidationException("New documents cannot be linked to an inactive customer");
-            }
-            return;
-        }
-        if (id == null) return;
-        String table = switch (normalized) {
-            case "supplier" -> "suppliers";
-            case "customer" -> "customers";
-            case "job" -> "production_jobs";
-            case "asset" -> "assets";
-            default -> null;
-        };
-
-        if (table != null) {
-            Integer count = jdbc.queryForObject(
-                    "SELECT COUNT(*) FROM " + table + " WHERE id = ? AND tenant_id = ?",
-                    Integer.class, id, tenantId);
-            if (count == null || count == 0) {
-                throw new DocumentValidationException("Linked " + type + " record not found for this tenant: " + id);
-            }
         }
     }
 

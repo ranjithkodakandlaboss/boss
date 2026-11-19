@@ -39,6 +39,15 @@ public class QuotationMaterialCostService {
         return materialCostDetails(tenantId, finishedItemId, quoteUomId, Map.of()).amount();
     }
 
+    public MaterialCostResult previewMaterialCostDetails(UUID tenantId, UUID finishedItemId, UUID quoteUomId,
+                                                         Map<String, BigDecimal> specifications) {
+        try {
+            return materialCostDetails(tenantId, finishedItemId, quoteUomId, specifications);
+        } catch (ValidationException | CircularReferenceException | MaxBomLevelExceededException error) {
+            return new MaterialCostResult(null, null, "cannot be costed: " + error.getMessage());
+        }
+    }
+
     public MaterialCostResult materialCostDetails(UUID tenantId, UUID finishedItemId, UUID quoteUomId,
                                                   Map<String, BigDecimal> specifications) {
         ItemDto finishedItem = itemService.getItem(finishedItemId);

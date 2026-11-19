@@ -79,12 +79,7 @@ public class CustomerPoService {
             }
             return new AcceptResult(existing, false);
         }
-        if (!ACCEPTABLE.contains(quotation.status())) {
-            throw conflict("Only a sent or negotiating quotation can be accepted");
-        }
-        if (quotation.validUntil() != null && quotation.validUntil().isBefore(LocalDate.now())) {
-            throw conflict("Quotation validity has passed. Revise it before recording acceptance.");
-        }
+        validateAcceptableQuotation(quotation);
         String note = request == null ? null : request.confirmationNote();
         String customerPoRef = request == null ? null : request.customerPoRef();
         UUID cpoId = UUID.randomUUID();
@@ -126,6 +121,15 @@ public class CustomerPoService {
         auditService.record("QUOTATION", quotationId, "OWNER_ACCEPTANCE", toJson(beforeDecision), toJson(afterDecision));
         auditService.record("CPO", cpoId, "CREATE_FROM_ACCEPTANCE", null, toJson(created));
         return new AcceptResult(created, true);
+    }
+
+    private static void validateAcceptableQuotation(QuotationLock quotation) {
+        if (!ACCEPTABLE.contains(quotation.status())) {
+            throw conflict("Only a sent or negotiating quotation can be accepted");
+        }
+        if (quotation.validUntil() != null && quotation.validUntil().isBefore(LocalDate.now())) {
+            throw conflict("Quotation validity has passed. Revise it before recording acceptance.");
+        }
     }
 
     @Transactional(readOnly = true)
