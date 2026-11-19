@@ -56,10 +56,12 @@ public class IdempotencyFilter extends OncePerRequestFilter {
 
     // WhatsApp webhook uses X-WhatsApp-Message-ID for deduplication (per whatsapp.yaml).
     // Config reads are GET-only and already exempt by method check.
+    // BOM explosion is a pure calculation — no state mutations — so it is exempt regardless of method.
     private static final AntPathMatcher PATH_MATCHER = new AntPathMatcher();
     private static final List<String> EXEMPT_PATHS = List.of(
         "/api/*/messaging/webhook/whatsapp",
-        "/api/*/messaging/webhook/whatsapp/**"
+        "/api/*/messaging/webhook/whatsapp/**",
+        "/api/*/items/*/bom/explode"
     );
 
     private final JdbcTemplate jdbc;
