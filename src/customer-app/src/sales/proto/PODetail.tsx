@@ -889,7 +889,7 @@ export default function PODetail() {
               className="px-4 py-2 rounded-lg text-sm font-semibold text-white"
               style={{ background: 'var(--brand-fill)' }}
             >
-              Confirm & Reserve
+              Confirm
             </button>
           </div>
         </div>
