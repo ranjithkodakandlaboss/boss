@@ -24,7 +24,7 @@ export default function CustomerForm({ customer, title, primaryLabel = 'Save Cha
 }) {
   const [form, setForm] = useState({ ...customer });
   const [error, setError] = useState('');
-  const update = (key: keyof Party, value: string | number) => { setForm(prev => ({ ...prev, [key]: value })); setError(''); };
+  const update = (key: keyof Party, value: string | number | null) => { setForm(prev => ({ ...prev, [key]: value })); setError(''); };
 
   const canSave = !!(form.legalName?.trim() && form.city?.trim() && form.contactPerson?.trim() && form.email?.trim() && form.gstin?.trim());
 
@@ -62,6 +62,7 @@ export default function CustomerForm({ customer, title, primaryLabel = 'Save Cha
       email: form.email.trim(),
       paymentTerms: form.paymentTerms,
       creditLimit: Number(form.creditLimit) || 0,
+      rating: form.rating,
     });
   };
 
@@ -123,6 +124,12 @@ export default function CustomerForm({ customer, title, primaryLabel = 'Save Cha
             </label>
             <label className="text-xs font-medium" style={{ color: 'var(--text-2)' }}>Credit Limit (₹)
               <input type="number" min="0" value={form.creditLimit ?? 0} onChange={e => update('creditLimit', Number(e.target.value))} className="eoss-input w-full mt-1" />
+            </label>
+            <label className="text-xs font-medium" style={{ color: 'var(--text-2)' }}>Customer rating
+              <select value={form.rating ?? ''} onChange={e => update('rating', e.target.value === '' ? null : Number(e.target.value))} className="eoss-input w-full mt-1">
+                <option value="">Not rated</option>
+                {[1, 2, 3, 4, 5].map(rating => <option key={rating} value={rating}>{rating} / 5</option>)}
+              </select>
             </label>
           </div>
         </section>

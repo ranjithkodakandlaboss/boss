@@ -10,6 +10,7 @@ import in.boss.masterdata.domain.DuplicateEntityException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.security.test.context.support.WithMockUser;
 
 import java.math.BigDecimal;
 import java.util.List;
@@ -19,6 +20,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+@WithMockUser(roles = "OWNER")
 class CustomerCrudTest extends BaseMasterDataIntegrationTest {
 
     @Autowired

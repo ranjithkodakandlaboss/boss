@@ -3,6 +3,9 @@ package in.boss.sales.domain;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import in.boss.masterdata.domain.CircularReferenceException;
+import in.boss.masterdata.domain.MaxBomLevelExceededException;
+import in.boss.masterdata.domain.ValidationException;
 import in.boss.sales.api.SalesApiDtos.CostRate;
 import in.boss.sales.api.SalesApiDtos.CreateQuotationLineRequest;
 import in.boss.sales.api.SalesApiDtos.QuotationCostingConfigRequest;
@@ -95,6 +98,17 @@ public class QuotationCostingService {
     @Transactional(readOnly = true)
     public QuotationCostingSnapshot calculate(UUID tenantId, List<CreateQuotationLineRequest> lines,
                                                BigDecimal discountAmount) {
+        return calculate(tenantId, lines, discountAmount, false);
+    }
+
+    @Transactional(readOnly = true)
+    public QuotationCostingSnapshot preview(UUID tenantId, List<CreateQuotationLineRequest> lines,
+                                             BigDecimal discountAmount) {
+        return calculate(tenantId, lines, discountAmount, true);
+    }
+
+    private QuotationCostingSnapshot calculate(UUID tenantId, List<CreateQuotationLineRequest> lines,
+                                                BigDecimal discountAmount, boolean preview) {
         QuotationCostingConfigResponse config = loadConfig(tenantId);
         Map<String, BigDecimal> labourRates = ratesByName(config.labourRates());
         Map<String, BigDecimal> machineRates = ratesByName(config.machineRates());
@@ -114,19 +128,33 @@ public class QuotationCostingService {
             CreateQuotationLineRequest line = lines.get(index);
             Map<String, BigDecimal> specificationValues = line.specificationValues() == null
                     ? Map.of() : line.specificationValues();
-            QuotationMaterialCostService.MaterialCostResult materialResult =
-                    materialCostService.materialCostDetails(
+            QuotationMaterialCostService.MaterialCostResult materialResult;
+            try {
+                materialResult = materialCostService.materialCostDetails(
                             tenantId, line.itemId(), line.uomId(), specificationValues);
+            } catch (ValidationException | CircularReferenceException | MaxBomLevelExceededException error) {
+                if (!preview) throw error;
+                materialResult = new QuotationMaterialCostService.MaterialCostResult(
+                        null, null, "cannot be costed: " + error.getMessage());
+            }
             BigDecimal materialCost = materialResult.amount();
             if (materialCost == null) {
                 available = false;
-                unavailableReasons.add("Line " + (index + 1) + " has no approved BOM or fully valued inventory");
+                unavailableReasons.add("Line " + (index + 1) + " " + materialResult.unavailableReason());
                 materialCost = BigDecimal.ZERO;
             } else {
                 materialCost = money(materialCost.multiply(line.qty()));
             }
-            BigDecimal labourCost = hoursCost(line.labourHours(), labourRates, "labour");
-            BigDecimal machineCost = hoursCost(line.machineHours(), machineRates, "machine");
+            BigDecimal labourCost = BigDecimal.ZERO;
+            BigDecimal machineCost = BigDecimal.ZERO;
+            try {
+                labourCost = hoursCost(line.labourHours(), labourRates, "labour");
+                machineCost = hoursCost(line.machineHours(), machineRates, "machine");
+            } catch (ResponseStatusException error) {
+                if (!preview) throw error;
+                available = false;
+                unavailableReasons.add("Line " + (index + 1) + " cannot be costed: " + error.getReason());
+            }
             BigDecimal overheadCost = money(config.overheadPerUnit().multiply(line.qty()));
             BigDecimal consumablesCost = money(config.consumablesPerUnit().multiply(line.qty()));
             BigDecimal packagingCost = money(config.packagingPerUnit().multiply(line.qty()));

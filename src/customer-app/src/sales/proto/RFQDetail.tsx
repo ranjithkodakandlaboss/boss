@@ -9,6 +9,7 @@ import { useStore } from './runtime';
 import StatusChip from '../../components/shared/StatusChip';
 import RecordHistoryPanel from './workflow/RecordHistoryPanel';
 import type { CustomerRFQ } from './types';
+import LinkedDocumentsSection from './workflow/LinkedDocumentsSection';
 
 const fmt = (d: string | null | undefined) => { if (!d) return '—'; const dt = new Date(d); return isNaN(dt.getTime()) ? '—' : dt.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }); };
 const fmtMoney = (n: number) => `₹${n.toLocaleString('en-IN')}`;
@@ -19,7 +20,7 @@ export default function RFQDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { rfqs, quotations, customerPos, currentUser, copyRfq } = useStore();
+  const { customers, rfqs, quotations, customerPos, currentUser, copyRfq } = useStore();
   const [tab, setTab] = useState<Tab>('lines');
 
   const rfq = rfqs.find(r => r.id === id) as (CustomerRFQ & Record<string, any>) | undefined;
@@ -31,8 +32,9 @@ export default function RFQDetail() {
 
   const linkedQuotation = quotations.find(q => q.rfqId === rfq.id);
   const convertedPo = customerPos.find(po => po.id === rfq.convertedPoId || po.rfqId === rfq.id || po.quotationRef === linkedQuotation?.quotationNumber);
-  const canQuote = ['owner', 'sales'].includes(currentUser.role) && rfq.status === 'open';
-  const canConvert = linkedQuotation?.status === 'accepted' && rfq.status !== 'converted';
+  const customerActive = customers.some(c => c.id === rfq.customerId && c.status === 'active');
+  const canQuote = customerActive && ['owner', 'sales'].includes(currentUser.role) && rfq.status === 'open';
+  const canConvert = customerActive && linkedQuotation?.status === 'accepted' && !['converted', 'cancelled'].includes(rfq.status);
   const returnTo = searchParams.get('from') || '/sales?tab=rfqs';
 
   const lines: any[] = rfq.lines ?? [];
@@ -65,7 +67,7 @@ export default function RFQDetail() {
     { id: 'lines', label: 'Line Items', count: lines.length },
     { id: 'technical', label: 'Technical & Quality' },
     { id: 'commercial', label: 'Commercial & Delivery' },
-    { id: 'documents', label: 'Documents', count: documents.length },
+    { id: 'documents', label: 'Documents' },
     { id: 'clarifications', label: 'Clarifications', count: clarifications.length },
     { id: 'history', label: 'Revision History', count: revisions.length },
   ];
@@ -91,10 +93,10 @@ export default function RFQDetail() {
             </div>
           </div>
           <div className="flex items-center gap-2 flex-wrap justify-end">
-            {['owner', 'sales'].includes(currentUser.role) && (
+            {customerActive && ['owner', 'sales'].includes(currentUser.role) && rfq.status !== 'cancelled' && (
               <button onClick={() => navigate(`/sales/rfq/new?copyFrom=${rfq.id}`)} className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-semibold border" style={{ borderColor: 'var(--border)', color: 'var(--text-2)' }}>Copy RFQ</button>
             )}
-            {['owner', 'sales'].includes(currentUser.role) && !['converted', 'cancelled'].includes(rfq.status) && <button onClick={() => navigate(`/sales/rfq/${rfq.id}/edit`)} className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-semibold border" style={{ borderColor: 'var(--border)', color: 'var(--text-2)' }}>Edit RFQ</button>}
+            {customerActive && ['owner', 'sales'].includes(currentUser.role) && !['converted', 'cancelled'].includes(rfq.status) && <button onClick={() => navigate(`/sales/rfq/${rfq.id}/edit`)} className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-semibold border" style={{ borderColor: 'var(--border)', color: 'var(--text-2)' }}>Edit RFQ</button>}
             {canQuote && (
               <button
                 onClick={() => navigate(`/sales/rfq/${rfq.id}/quotation/new`)}
@@ -309,22 +311,7 @@ export default function RFQDetail() {
         )}
 
         {tab === 'documents' && (
-          <div className="space-y-2 max-w-2xl">
-            {documents.length === 0 ? (
-              <div className="text-center py-12 text-sm text-[var(--text-3)]">No documents attached.</div>
-            ) : (
-              documents.map((d: any, i: number) => (
-                <div key={d.id ?? i} className="flex items-center gap-3 p-3 rounded-lg border" style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}>
-                  <Paperclip size={16} className="text-[var(--brand)] flex-shrink-0" />
-                  <div className="flex-1 min-w-0">
-                    <div className="text-sm font-medium text-[var(--text)] truncate">{d.name ?? d.fileName ?? d.filename}</div>
-                    <div className="text-xs text-[var(--text-3)]">{d.type ?? d.documentType ?? d.docType ?? 'Document'} · Rev {d.revision ?? d.version ?? '—'}</div>
-                  </div>
-                  <span className="text-xs text-[var(--text-3)] flex-shrink-0">{d.uploadedAt ? fmt(d.uploadedAt) : ''}</span>
-                </div>
-              ))
-            )}
-          </div>
+          <LinkedDocumentsSection entityType="RFQ" entityId={rfq.id} entityRef={rfq.rfqNumber} readOnly={!customerActive || rfq.status === 'cancelled' || !['owner', 'sales'].includes(currentUser.role)} />
         )}
 
         {tab === 'clarifications' && (

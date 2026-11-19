@@ -80,6 +80,15 @@ public class DispatchService {
         // Validate customer belongs to tenant
         validateCustomer(tenantId, req.customerId());
         validateDispatchMethodOption(tenantId, req.dispatchMethodOptionId());
+        if (req.cpoId() != null) {
+            String status = jdbc.query("""
+                    SELECT status FROM cpos WHERE tenant_id = ? AND id = ? FOR UPDATE
+                    """, rs -> rs.next() ? rs.getString("status") : null, tenantId, req.cpoId());
+            if (status == null) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Customer PO was not found for this tenant");
+            }
+            requireDispatchableOrder(status);
+        }
 
         // Validate site if provided, or fallback to default site
         UUID siteId = resolveSiteId(tenantId, req.sourceSiteId());
@@ -542,12 +551,26 @@ public class DispatchService {
                     "Invalid status transition from " + oldStatus + " to " + nextStatus);
         }
 
-        // If transitioning to dispatched, check Quality eligibility if job exists
-        if ("dispatched".equals(nextStatus) && current.jobId() != null) {
-            var eligibility = qualityService.computeEligibility(tenantId, current.jobId());
-            if (!eligibility.eligible()) {
-                throw new ResponseStatusException(HttpStatus.CONFLICT,
-                        "Cannot dispatch: Quality inspection gate active. " + eligibility.reason());
+        if ("dispatched".equals(nextStatus)) {
+            List<String> orderStatuses = jdbc.query("""
+                    SELECT c.status FROM cpos c
+                    WHERE c.tenant_id = ? AND (
+                        c.id = (SELECT d.cpo_id FROM dispatches d WHERE d.tenant_id = c.tenant_id AND d.id = ?)
+                        OR EXISTS (
+                            SELECT 1 FROM dispatch_lines dl
+                            JOIN cpo_lines cl ON cl.tenant_id = dl.tenant_id AND cl.id = dl.cpo_line_id
+                            WHERE dl.tenant_id = c.tenant_id AND dl.dispatch_id = ? AND cl.cpo_id = c.id
+                        )
+                    )
+                    ORDER BY c.id FOR UPDATE
+                    """, (rs, row) -> rs.getString("status"), tenantId, dispatchId, dispatchId);
+            orderStatuses.forEach(DispatchService::requireDispatchableOrder);
+            if (current.jobId() != null) {
+                var eligibility = qualityService.computeEligibility(tenantId, current.jobId());
+                if (!eligibility.eligible()) {
+                    throw new ResponseStatusException(HttpStatus.CONFLICT,
+                            "Cannot dispatch: Quality inspection gate active. " + eligibility.reason());
+                }
             }
         }
 
@@ -808,14 +831,25 @@ public class DispatchService {
 
     private void validateCpoLineLimit(UUID tenantId, UUID cpoLineId, BigDecimal reqQty) {
         var cpoLineData = jdbc.queryForMap(
-                "SELECT quantity, delivered_qty FROM cpo_lines WHERE tenant_id = ? AND id = ?",
+                """
+                SELECT l.quantity, l.delivered_qty, c.status
+                  FROM cpo_lines l JOIN cpos c ON c.tenant_id = l.tenant_id AND c.id = l.cpo_id
+                 WHERE l.tenant_id = ? AND l.id = ? FOR UPDATE OF c
+                """,
                 tenantId, cpoLineId);
+        requireDispatchableOrder((String) cpoLineData.get("status"));
         BigDecimal orderedQty = (BigDecimal) cpoLineData.get("quantity");
         BigDecimal alreadyDelivered = (BigDecimal) cpoLineData.get("delivered_qty");
         BigDecimal remaining = orderedQty.subtract(alreadyDelivered != null ? alreadyDelivered : BigDecimal.ZERO);
         if (reqQty != null && reqQty.compareTo(remaining) > 0) {
             throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
                     "Dispatch quantity " + reqQty + " exceeds eligible outstanding quantity " + remaining);
+        }
+    }
+
+    private static void requireDispatchableOrder(String status) {
+        if ("cancelled".equals(status)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "A cancelled Customer PO cannot be dispatched");
         }
     }
 

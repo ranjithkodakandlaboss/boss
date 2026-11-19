@@ -49,7 +49,11 @@ function page(content: unknown[]) {
 }
 
 function installFetch(handler: (url: string, init?: RequestInit) => Response | Promise<Response>) {
-  vi.stubGlobal("fetch", vi.fn((input: RequestInfo, init?: RequestInit) => Promise.resolve(handler(String(input), init))));
+  vi.stubGlobal("fetch", vi.fn((input: RequestInfo, init?: RequestInit) => Promise.resolve(
+    String(input).includes("/customers")
+      ? new Response(page([{ id: "c1", code: "NW", name: "North Works", status: "active" }]), { status: 200 })
+      : handler(String(input), init),
+  )));
 }
 
 beforeEach(() => {
@@ -132,4 +136,20 @@ it("requires a reason before submitting a below-threshold quotation and sends it
     status: "sent",
     note: "Strategic customer commitment",
   });
+});
+
+it("keeps the confirmation open and displays validation feedback when submit conflicts", async () => {
+  quotation.status = "draft";
+  installFetch((url) => {
+    if (url.includes("/status")) return new Response(JSON.stringify({ message: "Line 1: material has no inventory valuation" }), { status: 409 });
+    if (url.includes("/quotations")) return new Response(page([quotation]), { status: 200 });
+    if (url.includes("/customers") || url.includes("/rfqs") || url.includes("/cpos") || url.includes("/items") || url.includes("/uoms")) return new Response(page([]), { status: 200 });
+    if (url.includes("/history")) return new Response("[]", { status: 200 });
+    return new Response("{}", { status: 200 });
+  });
+  renderQuote();
+  await userEvent.click(await screen.findByRole("button", { name: "Submit to Customer" }));
+  await userEvent.click(screen.getByRole("button", { name: "Submit" }));
+  expect(await screen.findByText("Line 1: material has no inventory valuation")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Submit" })).toBeEnabled();
 });

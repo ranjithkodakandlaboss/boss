@@ -1,9 +1,14 @@
 package in.boss.sales.api;
 
 import in.boss.sales.domain.CustomerPoService;
+import in.boss.sales.domain.CustomerPoDocumentService;
 import in.boss.sales.domain.CpoMaterialAvailabilityService;
 import in.boss.shared.security.BossPermissions;
 import jakarta.validation.Valid;
+import org.springframework.http.ContentDisposition;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
@@ -32,11 +37,14 @@ public class SalesCpoController {
 
     private final CustomerPoService customerPoService;
     private final CpoMaterialAvailabilityService materialAvailabilityService;
+    private final CustomerPoDocumentService documentService;
 
     public SalesCpoController(CustomerPoService customerPoService,
-                              CpoMaterialAvailabilityService materialAvailabilityService) {
+                              CpoMaterialAvailabilityService materialAvailabilityService,
+                              CustomerPoDocumentService documentService) {
         this.customerPoService = customerPoService;
         this.materialAvailabilityService = materialAvailabilityService;
+        this.documentService = documentService;
     }
 
     @PostMapping
@@ -59,6 +67,16 @@ public class SalesCpoController {
     @GetMapping("/{cpoId}")
     public CpoResponse get(@PathVariable UUID cpoId) {
         return customerPoService.get(cpoId);
+    }
+
+    @GetMapping(value = "/{cpoId}/document", produces = MediaType.APPLICATION_PDF_VALUE)
+    public ResponseEntity<byte[]> document(@PathVariable UUID cpoId) {
+        var document = documentService.render(cpoId);
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION,
+                        ContentDisposition.attachment().filename(document.filename()).build().toString())
+                .contentType(MediaType.APPLICATION_PDF)
+                .body(document.pdf());
     }
 
     @GetMapping("/{cpoId}/material-availability")

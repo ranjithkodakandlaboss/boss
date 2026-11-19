@@ -146,6 +146,16 @@ Error body shape (all error responses):
 
 ---
 
+## Sales PDF downloads
+
+`GET /api/v1/quotations/{quotationId}/document` and `GET /api/v1/cpos/{cpoId}/document`
+download an `application/pdf` attachment. Both use the document site's seller
+registration and the customer's stored billing identity. For domestic GST classification
+they use the state code of a supplied GSTIN, or a recognized address state if the
+GSTIN is absent. A taxable document without sufficient jurisdiction data returns 422.
+Rupee amounts use Indian digit grouping, for example `INR 2,25,000.00`.
+These routes generate a printable copy; they do not send email or WhatsApp messages.
+
 ## Customer PO material availability preview
 
 `GET /api/v1/cpos/{cpoId}/material-availability` returns consolidated remaining
@@ -164,6 +174,39 @@ reconcile existing reservations and persist its own requirement snapshot; it mus
 trust or reuse a previous preview as authorization to allocate stock or create a PR.
 Inventory reservations use three-decimal quantities, so that operation must define
 safe rounding rather than silently truncating the preview's exact requirements.
+
+## Sales lifecycle
+
+- Quotation detail and list GETs show a live preview for drafts with missing or
+  incomplete costing. This does not save a new snapshot or change historical records.
+- `PATCH /api/v1/quotations/{id}/status` with `{"status":"sent"}` retries a missing
+  or incomplete draft costing snapshot. Complete snapshots are retained. The
+  drawing-number, fully valued on-hand inventory, and margin-approval rules
+  still apply. Read the error `detail` for the specific blocker.
+- Send `{"status":"cancelled"}` to the RFQ or quotation status endpoint to
+  cancel linked quotations and Customer POs in the same transaction. The
+  existing Customer PO cancellation policy still applies; a fulfilled PO
+  blocks the cascade. Cancellation does not delete records or cancel existing
+  production jobs, requisitions, or dispatches.
+- `POST /api/v1/cpos` returns a flat Customer PO with an `id` and null
+  `quotationId` for a direct order. Direct order lines accept active finished
+  and semi-finished items only.
+- Customer `rating` is an optional integer from 0 to 5. On PATCH, omit it to
+  retain the current rating or send `null` to clear it. Document Vault uploads
+  may link to `Customer`, `RFQ`, `Quotation`, or `CustomerPO`; cancelled sales
+  records cannot receive new links.
+- Customer deactivation (`DELETE /api/v1/customers/{id}` or PATCH with
+  `{"status":"inactive"}`) is atomic. Active (`open`), partially fulfilled, or
+  feasibility-approved Customer POs block deactivation with 409. Pending
+  (`feasibility_pending`) and on-hold POs also block it if they have any
+  non-cancelled production job, delivered quantity, or invoiced quantity.
+  Otherwise pending/on-hold POs, pending RFQs, and pending quotations are
+  cancelled through the normal audited lifecycle, releasing PO reservations.
+  Fulfilled POs and completed quotation history remain unchanged.
+- Inactive customers and their sales records are read-only and cannot receive
+  new document links or new sales records. Reactivation is a separate,
+  status-only customer PATCH (`{"status":"active"}`); combining reactivation
+  with profile edits is rejected. Reactivation does not reopen cancelled records.
 
 ---
 

@@ -3,6 +3,7 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, Plus, Trash2, Check } from 'lucide-react';
 import { useStore } from './runtime';
+import { uploadLinkedDocument } from '../../documents/api';
 import AddIfEmpty from './AddIfEmpty';
 import { newCustomer, saveCatalogItem, saveUnit } from './quickMasters';
 import type { CustomerQuotation, CustomerQuotationLine } from './types';
@@ -55,7 +56,7 @@ export default function QuotationCreate() {
   const { rfqId } = useParams<{ rfqId: string }>();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { rfqs, customers, addCustomer, addQuotation, createDirectQuotation, currentUser, catalog, uoms, reload } = useStore();
+  const { rfqs, customers, addCustomer, addQuotation, createDirectQuotation, currentUser, catalog, uoms, reload, showToast } = useStore();
 
   const rfq = rfqs.find(r => r.id === rfqId) as (typeof rfqs[0] & Record<string, any>) | undefined;
   const rfqLines: any[] = rfq?.lines ?? [];
@@ -68,6 +69,7 @@ export default function QuotationCreate() {
   const [discountAmount, setDiscountAmount] = useState(0);
   const [taxRatePct, setTaxRatePct] = useState(18);
   const [notes, setNotes] = useState('');
+  const [files, setFiles] = useState<File[]>([]);
   const [costingConfig, setCostingConfig] = useState<QuotationCostingConfig>();
   const [costConfigMessage, setCostConfigMessage] = useState('');
   const [saving, setSaving] = useState(false);
@@ -86,6 +88,7 @@ export default function QuotationCreate() {
   }, []);
 
   if (rfqId && !rfq) return <div className="p-8 text-sm text-[var(--text-2)]">RFQ not found.</div>;
+  if (rfq?.status === 'cancelled') return <p className="p-8 text-sm text-[var(--text-2)]">Quotations cannot be created from a cancelled RFQ.</p>;
 
   const directCustomer = customers.find(c => c.id === customerId);
   const activeCustomerId = rfq ? rfq.customerId : (directCustomer?.id ?? '');
@@ -162,7 +165,14 @@ export default function QuotationCreate() {
     setSaving(true);
     try {
       const saved = isDirect ? await createDirectQuotation(quotation, qLines) : await addQuotation(quotation, qLines);
-      if (saved) navigate(`/sales/quotation/${saved.id}`, { state: { from: rfq ? `/sales/rfq/${rfq.id}` : '/sales?tab=rfqs' } });
+      if (saved) {
+        try {
+          for (const file of files) await uploadLinkedDocument(file, { type: 'Quotation', id: saved.id, ref: saved.quotationNumber });
+        } catch (error) {
+          showToast({ type: 'error', title: 'Quotation saved; not all documents attached', body: `${error instanceof Error ? error.message : 'Upload failed.'} Attach the remaining files from the quotation view.` });
+        }
+        navigate(`/sales/quotation/${saved.id}`, { state: { from: rfq ? `/sales/rfq/${rfq.id}` : '/sales?tab=rfqs' } });
+      }
       else setFormError('Quotation could not be saved. Please try again.');
     } catch (err: unknown) {
       setFormError(err instanceof Error ? err.message : 'Quotation could not be saved.');
@@ -391,6 +401,12 @@ export default function QuotationCreate() {
           {/* Notes */}
           <Card title="Notes to Customer">
             <textarea value={notes} onChange={e => setNotes(e.target.value)} className="eoss-input w-full" rows={3} placeholder="Validity, delivery lead time, exclusions, special terms…" />
+          </Card>
+          <Card title="Documents">
+            <label className="text-xs text-[var(--text-2)]">Attach documents
+              <input aria-label="Quotation documents" type="file" multiple disabled={saving} onChange={event => setFiles(Array.from(event.target.files ?? []))} className="block w-full mt-2 text-xs" />
+            </label>
+            <p className="text-xs text-[var(--text-3)] mt-2">Files are uploaded when the quotation is saved (up to 20 MB each).</p>
           </Card>
         </div>
       </div>

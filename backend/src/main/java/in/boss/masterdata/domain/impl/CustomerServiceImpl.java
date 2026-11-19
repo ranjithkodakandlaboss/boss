@@ -12,6 +12,7 @@ import in.boss.masterdata.domain.DuplicateEntityException;
 import in.boss.masterdata.domain.EntityNotFoundException;
 import in.boss.masterdata.domain.ValidationException;
 import in.boss.masterdata.events.MasterDataEventPublisher;
+import in.boss.masterdata.events.CustomerDeactivationRequested;
 import in.boss.masterdata.persistence.CustomerContactEntity;
 import in.boss.masterdata.persistence.CustomerContactRepository;
 import in.boss.masterdata.persistence.CustomerEntity;
@@ -24,7 +25,10 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
+import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.http.HttpStatus;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Instant;
 import java.util.ArrayList;
@@ -47,17 +51,20 @@ public class CustomerServiceImpl implements CustomerService {
     private final AuditService auditService;
     private final MasterDataEventPublisher eventPublisher;
     private final ObjectMapper objectMapper;
+    private final ApplicationEventPublisher applicationEvents;
 
     public CustomerServiceImpl(CustomerRepository customerRepository,
                                CustomerContactRepository contactRepository,
                                AuditService auditService,
                                MasterDataEventPublisher eventPublisher,
-                               ObjectMapper objectMapper) {
+                               ObjectMapper objectMapper,
+                               ApplicationEventPublisher applicationEvents) {
         this.customerRepository = customerRepository;
         this.contactRepository = contactRepository;
         this.auditService = auditService;
         this.eventPublisher = eventPublisher;
         this.objectMapper = objectMapper;
+        this.applicationEvents = applicationEvents;
     }
 
     private UUID getTenantId() {
@@ -78,6 +85,7 @@ public class CustomerServiceImpl implements CustomerService {
         }
 
         validateGstinAndPan(request.getGstin(), request.getPan());
+        validateRating(request.getRating());
 
         Instant now = Instant.now();
         UUID customerId = UUID.randomUUID();
@@ -95,6 +103,7 @@ public class CustomerServiceImpl implements CustomerService {
                 .shippingAddress(toJson(request.getAddress()))
                 .creditLimit(request.getCreditLimit())
                 .creditDays(request.getCreditDays() != null ? request.getCreditDays() : 30)
+                .rating(request.getRating())
                 .isActive(true)
                 .createdAt(now)
                 .updatedAt(now)
@@ -142,11 +151,28 @@ public class CustomerServiceImpl implements CustomerService {
     @Override
     public CustomerDto updateCustomer(UUID id, UpdateCustomerRequest request) {
         UUID tenantId = getTenantId();
-        CustomerEntity entity = customerRepository.findByIdAndTenantId(id, tenantId)
+        CustomerEntity entity = customerRepository.findForUpdateByIdAndTenantId(id, tenantId)
                 .orElseThrow(() -> new EntityNotFoundException("Customer not found: " + id));
+        if (request.getStatus() != null
+                && !"active".equalsIgnoreCase(request.getStatus())
+                && !"inactive".equalsIgnoreCase(request.getStatus())) {
+            throw new ValidationException("Customer status must be active or inactive");
+        }
+        if (!entity.isActive()
+                && (!"active".equalsIgnoreCase(request.getStatus()) || request.changesProfile())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Inactive customers cannot be edited. Reactivate the customer first.");
+        }
+        if (entity.isActive() && "inactive".equalsIgnoreCase(request.getStatus())) {
+            applicationEvents.publishEvent(new CustomerDeactivationRequested(tenantId, id));
+        }
 
         List<CustomerContactEntity> currentContacts = contactRepository.findByTenantIdAndCustomerId(tenantId, id);
         CustomerDto oldDto = toDto(entity, currentContacts);
+        if (request.changesRating()) {
+            validateRating(request.getRating());
+            entity.setRating(request.getRating());
+        }
 
         if (request.getGstin() != null || request.getPan() != null) {
             validateGstinAndPan(
@@ -215,8 +241,12 @@ public class CustomerServiceImpl implements CustomerService {
     @Override
     public void deleteCustomer(UUID id) {
         UUID tenantId = getTenantId();
-        CustomerEntity entity = customerRepository.findByIdAndTenantId(id, tenantId)
+        CustomerEntity entity = customerRepository.findForUpdateByIdAndTenantId(id, tenantId)
                 .orElseThrow(() -> new EntityNotFoundException("Customer not found: " + id));
+        if (!entity.isActive()) {
+            return;
+        }
+        applicationEvents.publishEvent(new CustomerDeactivationRequested(tenantId, id));
 
         List<CustomerContactEntity> contacts = contactRepository.findByTenantIdAndCustomerId(tenantId, id);
         CustomerDto oldDto = toDto(entity, contacts);
@@ -274,6 +304,12 @@ public class CustomerServiceImpl implements CustomerService {
                 .build();
     }
 
+    private static void validateRating(Integer rating) {
+        if (rating != null && (rating < 0 || rating > 5)) {
+            throw new ValidationException("Customer rating must be between 0 and 5");
+        }
+    }
+
     private void validateGstinAndPan(String gstin, String pan) {
         if (gstin != null && !gstin.isBlank()) {
             String trimmed = gstin.trim();
@@ -319,6 +355,7 @@ public class CustomerServiceImpl implements CustomerService {
                 .address(addressMap)
                 .creditLimit(entity.getCreditLimit())
                 .creditDays(entity.getCreditDays())
+                .rating(entity.getRating())
                 .status(entity.isActive() ? "active" : "inactive")
                 .contacts(contactDtos)
                 .createdAt(entity.getCreatedAt())

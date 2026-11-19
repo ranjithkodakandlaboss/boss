@@ -14,6 +14,7 @@ import RecordHistoryPanel from './workflow/RecordHistoryPanel';
 import { useReturnNavigation } from './useReturnNavigation';
 import { salesApi, type CpoMaterialAvailability } from '../api';
 import OrderJourneyCard, { type JourneyStep } from './workflow/OrderJourneyCard';
+import LinkedDocumentsSection from './workflow/LinkedDocumentsSection';
 
 type DetailTab = 'overview' | 'lines' | 'amendments' | 'jobs' | 'documents' | 'history';
 
@@ -21,7 +22,7 @@ export default function PODetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const {
-    customerPos, poLines, poAmendments, jobs, jobMaterialReqs, quotations, rfqs,
+    customers, customerPos, poLines, poAmendments, jobs, jobMaterialReqs, quotations, rfqs,
     purchaseReqs, supplierInvitations, supplierQuotations, grns, dispatches, invoices,
     payments, paymentAllocations,
     materials, lots, storeLocations, sites, supplierPos, supplierPoLines,
@@ -72,8 +73,9 @@ export default function PODetail() {
   const linkedPaymentIds = new Set(paymentAllocations.filter(a => linkedInvoices.some(i => i.id === a.invoiceId)).map(a => a.paymentId));
   const linkedPayments = payments.filter(p => linkedPaymentIds.has(p.id) && p.status !== 'reversed');
   const [checkSiteId, setCheckSiteId] = useState(po.deliverToSiteId ?? sites[0]?.id ?? '');
-  const canEdit = ['owner', 'sales'].includes(currentUser.role);
-  const canApprove = currentUser.role === 'owner';
+  const customerActive = customers.some(c => c.id === po.customerId && c.status === 'active');
+  const canEdit = customerActive && ['owner', 'sales'].includes(currentUser.role) && po.status !== 'cancelled';
+  const canApprove = customerActive && currentUser.role === 'owner' && po.status !== 'cancelled';
   const returnTo = searchParams.get('from') || '/sales?tab=pos';
 
   // Build Order Journey steps from real linked records
@@ -282,7 +284,7 @@ export default function PODetail() {
           {/* Contextual Actions */}
           <div className="flex items-center gap-2">
             {canApprove && po.status === 'pending' && (
-              <button onClick={() => { updateCustomerPo(po.id, { status: 'active' }); showToast({ type: 'success', title: 'Customer PO approved', body: `${po.poNumber} is now released for execution.` }); }} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-semibold text-white" style={{ background: 'var(--success,#16A34A)' }}><CheckCircle2 size={14} /> Approve Customer PO</button>
+              <button onClick={() => setConfirmReserve(true)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-semibold text-white" style={{ background: 'var(--success,#16A34A)' }}><CheckCircle2 size={14} /> Approve Customer PO</button>
             )}
             {canApprove && pendingAmendment && <><button onClick={() => resolvePoAmendment(pendingAmendment.id, 'approved', currentUser.name)} className="px-3 py-1.5 rounded-lg text-sm font-semibold text-white" style={{ background: 'var(--success,#16A34A)' }}>Approve Amendment</button><button onClick={() => resolvePoAmendment(pendingAmendment.id, 'rejected', currentUser.name)} className="px-3 py-1.5 rounded-lg text-sm font-semibold border" style={{ borderColor: 'var(--error)', color: 'var(--error)' }}>Reject Amendment</button></>}
             {canEdit && po.status === 'active' && (
@@ -292,7 +294,7 @@ export default function PODetail() {
               <button type="button" onClick={() => updateCustomerPo(po.id, { status: 'active' })} className="px-3 py-1.5 rounded-lg border text-sm font-medium" style={{ borderColor: 'var(--border)', color: 'var(--text-2)' }}>Release</button>
             )}
             {canCancel && (
-              <button onClick={() => { updateCustomerPo(po.id, { status: 'cancelled' }); showToast({ type: 'success', title: 'Customer PO cancelled', body: `${po.poNumber} preserved in history.` }); }} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-sm font-medium" style={{ borderColor: 'var(--error,#DC2626)', color: 'var(--error,#DC2626)' }}><Ban size={14} /> Cancel PO</button>
+              <button onClick={() => updateCustomerPo(po.id, { status: 'cancelled' })} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-sm font-medium" style={{ borderColor: 'var(--error,#DC2626)', color: 'var(--error,#DC2626)' }}><Ban size={14} /> Cancel PO</button>
             )}
             {canAmend && (
               <>
@@ -306,6 +308,7 @@ export default function PODetail() {
               </>
             )}
             <DocumentActions
+              customerPoId={po.id}
               documentType="Customer PO"
               reference={po.poNumber}
               date={po.acceptedDate}
@@ -408,7 +411,7 @@ export default function PODetail() {
                     Preview BOM-derived material requirements against current inventory. Confirm to reserve available stock and raise a Purchase Requisition for shortages.
                   </p>
                 </div>
-                <div className="flex items-center gap-2">
+                <fieldset disabled={!canEdit} aria-label="Material availability actions" className="flex items-center gap-2">
                   <AddIfEmpty
                     empty={sites.length === 0}
                     title="No sites yet"
@@ -434,7 +437,7 @@ export default function PODetail() {
                   </AddIfEmpty>
                   <button
                     type="button"
-                    disabled={availabilityLoading}
+                    disabled={availabilityLoading || po.status === 'cancelled'}
                     onClick={async () => {
                       setAvailabilityError(null);
                       setBomAvailability(null);
@@ -454,12 +457,13 @@ export default function PODetail() {
                   </button>
                   <button
                     type="button"
+                    disabled={!canEdit}
                     onClick={() => setConfirmReserve(true)}
                     className="btn-primary text-xs inline-flex items-center gap-1.5"
                   >
                     <Factory size={13} /> Confirm & Reserve
                   </button>
-                </div>
+                </fieldset>
               </div>
 
               {availabilityError && (
@@ -490,7 +494,7 @@ export default function PODetail() {
                       Note: {bomAvailability.limitations.join(' ')}
                     </div>
                   )}
-                  <table className="eoss-table">
+                  <table className="eoss-table [&_th:not(:first-child)]:text-right [&_td:not(:first-child)]:whitespace-nowrap">
                     <thead>
                       <tr>
                         <th>Material (from BOM)</th>
@@ -656,13 +660,13 @@ export default function PODetail() {
                       Create Revised PO
                     </button>
                   )}
-                  <Link
+                  {canEdit && <Link
                     to={`/finance/invoice/new?poId=${po.id}${linkedDispatches[0] ? `&dispatchId=${linkedDispatches[0].id}` : ''}`}
                     className="w-full py-2 rounded-lg text-xs font-semibold text-white text-center block hover:opacity-90 transition-opacity"
                     style={{ background: 'var(--brand-fill)' }}
                   >
                     + Create Customer Invoice
-                  </Link>
+                  </Link>}
                 </div>
               </Card>
 
@@ -822,23 +826,7 @@ export default function PODetail() {
 
         {activeTab === 'documents' && (
           <div className="p-6 max-w-4xl">
-            <div className="rounded-xl border p-5" style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}>
-              <p className="text-sm mb-4" style={{ color: 'var(--text-2)' }}>
-                Attach the customer's purchase order document, drawings, revision notes and other supporting files.
-              </p>
-              <label
-                className="flex flex-col items-center justify-center gap-2 border-2 border-dashed rounded-xl p-10 cursor-pointer hover:opacity-80 transition-opacity"
-                style={{ borderColor: 'var(--border)' }}
-              >
-                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" style={{ color: 'var(--text-3)' }}>
-                  <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12"/>
-                </svg>
-                <span className="text-sm font-medium" style={{ color: 'var(--text-2)' }}>Drop file, screenshot or photo here</span>
-                <span className="text-xs" style={{ color: 'var(--text-3)' }}>PDF, JPG, PNG up to 20 MB</span>
-                <input type="file" className="hidden" accept=".pdf,.jpg,.jpeg,.png" />
-              </label>
-              <p className="mt-3 text-xs text-center" style={{ color: 'var(--text-3)' }}>No documents attached yet.</p>
-            </div>
+            <LinkedDocumentsSection entityType="CustomerPO" entityId={po.id} entityRef={po.poNumber} readOnly={!canEdit} />
           </div>
         )}
 

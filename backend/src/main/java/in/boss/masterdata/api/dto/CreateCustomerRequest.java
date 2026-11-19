@@ -30,5 +30,6 @@ public class CreateCustomerRequest {
     private Map<String, Object> address;
     private BigDecimal creditLimit;
     private Integer creditDays;
+    private Integer rating;
     private List<ContactDto> contacts;
 }

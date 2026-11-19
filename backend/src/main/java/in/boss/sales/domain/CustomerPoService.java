@@ -44,17 +44,20 @@ public class CustomerPoService {
     private final AuditService auditService;
     private final ObjectMapper objectMapper;
     private final InventoryService inventoryService;
+    private final SalesCustomerGuard customerGuard;
 
     public CustomerPoService(JdbcTemplate jdbc,
                              CpoLookup cpoLookup,
                              AuditService auditService,
                              ObjectMapper objectMapper,
-                             InventoryService inventoryService) {
+                             InventoryService inventoryService,
+                             SalesCustomerGuard customerGuard) {
         this.jdbc = jdbc;
         this.cpoLookup = cpoLookup;
         this.auditService = auditService;
         this.objectMapper = objectMapper;
         this.inventoryService = inventoryService;
+        this.customerGuard = customerGuard;
     }
 
     public record AcceptResult(CpoResponse cpo, boolean created) {}
@@ -63,7 +66,12 @@ public class CustomerPoService {
     public AcceptResult accept(UUID quotationId, AcceptQuotationRequest request) {
         BossContext context = requireContext();
         UUID tenantId = context.tenantId();
+        customerGuard.requireActiveForRecord(tenantId, "quotations", quotationId);
+        SalesService.lockQuotationRfq(jdbc, tenantId, quotationId);
         QuotationLock quotation = lockQuotation(tenantId, quotationId);
+        if ("cancelled".equals(quotation.status())) {
+            throw conflict("A cancelled quotation cannot be accepted");
+        }
         CpoResponse existing = cpoLookup.findByQuotation(tenantId, quotationId);
         if (existing != null || "accepted".equals(quotation.status())) {
             if (existing == null) {
@@ -159,6 +167,46 @@ public class CustomerPoService {
     }
 
     @Transactional
+    public void cancelOrdersForQuotation(UUID quotationId) {
+        UUID tenantId = requireContext().tenantId();
+        List<UUID> ids = jdbc.query("""
+                SELECT id FROM cpos WHERE tenant_id = ? AND quotation_id = ? AND status <> 'cancelled'
+                 ORDER BY id FOR UPDATE
+                """, (rs, row) -> rs.getObject("id", UUID.class), tenantId, quotationId);
+        for (UUID id : ids) {
+            transitionStatus(id, "cancelled", false);
+        }
+    }
+
+    @Transactional
+    public void cancelPendingForCustomer(UUID customerId) {
+        UUID tenantId = requireContext().tenantId();
+        customerGuard.requireActive(tenantId, customerId);
+        List<UUID> ids = jdbc.query("""
+                SELECT id FROM cpos WHERE tenant_id = ? AND customer_id = ?
+                  AND status NOT IN ('cancelled', 'fulfilled') ORDER BY id FOR UPDATE
+                """, (rs, row) -> rs.getObject("id", UUID.class), tenantId, customerId);
+        Boolean ongoing = jdbc.queryForObject("""
+                SELECT EXISTS (
+                  SELECT 1 FROM cpos p WHERE p.tenant_id = ? AND p.customer_id = ?
+                    AND p.status NOT IN ('cancelled', 'fulfilled')
+                    AND (p.status NOT IN ('on_hold', 'feasibility_pending')
+                      OR EXISTS (SELECT 1 FROM cpo_lines l WHERE l.tenant_id = p.tenant_id
+                        AND l.cpo_id = p.id AND (l.delivered_qty > 0 OR l.invoiced_qty > 0))
+                      OR EXISTS (SELECT 1 FROM production_jobs j WHERE j.tenant_id = p.tenant_id
+                        AND j.status <> 'cancelled'
+                        AND (j.cpo_id = p.id OR j.cpo_line_id IN (
+                          SELECT l.id FROM cpo_lines l WHERE l.tenant_id = p.tenant_id AND l.cpo_id = p.id)))))
+                """, Boolean.class, tenantId, customerId);
+        if (Boolean.TRUE.equals(ongoing)) {
+            throw conflict("Customer has an active or ongoing Customer PO. Complete or cancel it before deactivating.");
+        }
+        for (UUID id : ids) {
+            transitionStatus(id, "cancelled", false);
+        }
+    }
+
+    @Transactional
     @PreAuthorize(BossPermissions.CPO_TRANSITIONS)
     public FeasibilityResponse checkFeasibility(UUID cpoId) {
         UUID tenantId = requireContext().tenantId();
@@ -217,6 +265,16 @@ public class CustomerPoService {
     public CpoResponse createDirect(CreateDirectCpoRequest request) {
         BossContext context = requireContext();
         UUID tenantId = context.tenantId();
+        customerGuard.requireActive(tenantId, request.customerId());
+        for (CreateDirectCpoRequest.DirectCpoLine line : request.lines()) {
+            String itemType = jdbc.query("""
+                    SELECT item_type FROM items WHERE tenant_id = ? AND id = ? AND is_active
+                    """, rs -> rs.next() ? rs.getString("item_type") : null, tenantId, line.itemId());
+            if (itemType == null || !Set.of("finished_goods", "semi_finished").contains(itemType)) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "Direct Customer PO lines must use an active finished or semi-finished item: " + line.itemId());
+            }
+        }
         UUID cpoId = UUID.randomUUID();
         String cpoNumber = "CPO-" + LocalDate.now().format(DateTimeFormatter.BASIC_ISO_DATE)
                 + "-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase();
@@ -295,6 +353,7 @@ public class CustomerPoService {
     }
 
     private String lockStatus(UUID tenantId, UUID cpoId) {
+        customerGuard.requireActiveForRecord(tenantId, "cpos", cpoId);
         List<CpoStatusRow> rows = jdbc.query(
                 "SELECT status, site_id FROM cpos WHERE tenant_id = ? AND id = ? FOR UPDATE",
                 (rs, rowNum) -> new CpoStatusRow(rs.getString("status"),

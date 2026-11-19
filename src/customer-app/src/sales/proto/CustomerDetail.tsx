@@ -17,9 +17,10 @@ export default function CustomerDetail() {
   const location = useLocation();
   const { openRecord } = useReturnNavigation('/sales?tab=customers');
   const openCreate = (path: string) => navigate(path, { state: { background: location, from: `${location.pathname}${location.search}` } });
-  const { customers, customerPos, rfqs, quotations, documents, invoices, payments, addDocument, currentUser, showToast, deactivateCustomer, updateCustomer } = useStore();
+  const { customers, customerPos, rfqs, quotations, invoices, payments, currentUser, showToast, deactivateCustomer, updateCustomer } = useStore();
   const [tab, setTab] = useState<Tab>('overview');
   const [confirmDeactivate, setConfirmDeactivate] = useState(false);
+  const [deactivating, setDeactivating] = useState(false);
   const fmtSince = useCallback((raw: string) => {
     if (!raw) return '—';
     const d = new Date(raw.length === 4 ? `${raw}-01-01` : raw);
@@ -35,8 +36,17 @@ export default function CustomerDetail() {
   );
 
   const orders = customerPos.filter(po => po.customerId === id);
+  const isActive = customer.status === 'active';
+  const deactivate = async () => {
+    setDeactivating(true);
+    try {
+      if (await deactivateCustomer(customer.id)) navigate('/sales?tab=customers');
+    } finally {
+      setDeactivating(false);
+      setConfirmDeactivate(false);
+    }
+  };
   const customerRfqs = rfqs.filter(r => r.customerId === id);
-  const customerDocuments = documents.filter(d => d.linkedEntities.some(e => e.type === 'Customer' && (e.ref === id || e.ref === customer?.tradingName)));
   const customerInvoiceRecords = invoices.filter(
     invoice => invoice.customerId === id && invoice.status !== 'void' && invoice.status !== 'cancelled' && invoice.status !== 'draft',
   );
@@ -64,7 +74,7 @@ export default function CustomerDetail() {
 
   return (
     <>
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full min-w-0 overflow-hidden">
       {/* Header */}
       <div className="flex-shrink-0 px-6 py-4 border-b" style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}>
         <div className="flex items-center gap-1.5 text-xs mb-3" style={{ color: 'var(--text-3)' }}>
@@ -89,10 +99,10 @@ export default function CustomerDetail() {
           </div>
           {customer.status === 'active' && <button type="button" onClick={() => setConfirmDeactivate(true)} className="px-3 py-1.5 rounded-lg border text-sm font-medium" style={{ borderColor: 'var(--border)', color: 'var(--text-2)' }}>Deactivate</button>}
           {customer.status !== 'active' && <button type="button" onClick={() => updateCustomer(customer.id, { status: 'active' })} className="px-3 py-1.5 rounded-lg border text-sm font-medium" style={{ borderColor: 'var(--border)', color: 'var(--text-2)' }}>Reactivate</button>}
-          <button onClick={() => navigate(`/sales/customers/${customer.id}/edit`)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-sm font-medium hover:opacity-80"
+          {isActive && <button onClick={() => navigate(`/sales/customers/${customer.id}/edit`)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-sm font-medium hover:opacity-80"
             style={{ borderColor: 'var(--border)', color: 'var(--text-2)' }}>
             <Edit2 size={13} /> Edit
-          </button>
+          </button>}
         </div>
         <div className="mt-4 flex items-center gap-6 flex-wrap">
           <SBadge label="Customer Since" value={fmtSince(customer.since)} />
@@ -105,7 +115,7 @@ export default function CustomerDetail() {
       </div>
 
       {/* Tabs */}
-      <div className="flex-shrink-0 flex items-center border-b px-6" style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}>
+      <div className="flex-shrink-0 flex items-center overflow-x-auto border-b px-6" style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}>
         {TABS.map(t => (
           <button key={t.key} onClick={() => setTab(t.key)}
             className="relative px-4 py-3 text-sm font-medium transition-colors whitespace-nowrap"
@@ -181,11 +191,11 @@ export default function CustomerDetail() {
                   </button>
                   <button onClick={() => setTab('documents')} className="w-full text-left px-3 py-2 rounded-lg border text-xs font-medium hover:opacity-80"
                     style={{ borderColor: 'var(--border)', background: 'var(--surface-2)', color: 'var(--text-2)' }}>
-                    {customerDocuments.length} Customer Document{customerDocuments.length !== 1 ? 's' : ''} →
+                    Customer Documents →
                   </button>
                 </div>
               </Card>
-              <Card title="Quick Actions">
+              {isActive && <Card title="Quick Actions">
                 <div className="space-y-2">
                   <button onClick={() => openCreate(`/sales/rfq/new?customer=${id}`)} className="w-full text-left px-3 py-2 rounded-lg border text-xs font-semibold hover:opacity-80"
                     style={{ borderColor: 'var(--brand)', color: 'var(--brand)', background: 'var(--surface)' }}>
@@ -200,7 +210,7 @@ export default function CustomerDetail() {
                     + Add Customer PO
                   </button>
                 </div>
-              </Card>
+              </Card>}
             </div>
           </div>
         )}
@@ -385,13 +395,13 @@ export default function CustomerDetail() {
 
         {tab === 'documents' && (
           <div className="max-w-2xl space-y-4">
-            <label className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-semibold text-white cursor-pointer" style={{ background: 'var(--brand-fill)' }}><Upload size={14} /> Upload Customer Document<input type="file" className="hidden" onChange={e => { const file = e.target.files?.[0]; if (!file) return; addDocument({ id: `doc-customer-${Date.now()}`, title: file.name, docType: 'Customer Document', category: 'Customer Documents', uploadedBy: currentUser.name, uploadedAt: new Date().toISOString().slice(0, 10), version: 1, fileSize: `${Math.max(1, Math.round(file.size / 1024))} KB`, linkedEntities: [{ type: 'Customer', ref: customer.tradingName }] }); showToast({ type: 'success', title: 'Customer document uploaded', body: `${file.name} is associated with ${customer.tradingName}.` }); e.target.value = ''; }} /></label>
             <LinkedDocumentsSection
               entityType="Customer"
               entityId={customer.id}
               entityRef={customer.tradingName}
               entityName={customer.legalName}
               title="Customer Documents"
+              readOnly={!isActive || !['owner', 'sales'].includes(currentUser.role)}
             />
           </div>
         )}
@@ -413,10 +423,10 @@ export default function CustomerDetail() {
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4" onClick={() => setConfirmDeactivate(false)}>
         <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl w-full max-w-md p-6 shadow-2xl" onClick={e => e.stopPropagation()}>
           <h3 className="font-bold text-[var(--text)] mb-1">Deactivate Customer?</h3>
-          <p className="text-sm text-[var(--text-2)] mb-5">Historical RFQs, quotations and Customer POs stay readable. This can be undone by reactivating the customer.</p>
+          <p className="text-sm text-[var(--text-2)] mb-5">Pending RFQs, quotations and Customer POs will be cancelled. Active or ongoing POs must be completed or cancelled first. The inactive customer and history stay read-only; reactivation will not reopen cancelled records.</p>
           <div className="flex gap-3">
-            <button onClick={() => setConfirmDeactivate(false)} className="flex-1 py-2.5 border border-[var(--border)] rounded-xl text-sm text-[var(--text-2)]">Cancel</button>
-            <button onClick={() => { setConfirmDeactivate(false); deactivateCustomer(customer.id).then(() => navigate('/sales?tab=customers')); }} className="flex-1 py-2.5 rounded-xl text-sm font-medium text-white" style={{ background: 'var(--error, #DC2626)' }}>Deactivate</button>
+            <button disabled={deactivating} onClick={() => setConfirmDeactivate(false)} className="flex-1 py-2.5 border border-[var(--border)] rounded-xl text-sm text-[var(--text-2)]">Cancel</button>
+            <button disabled={deactivating} onClick={deactivate} className="flex-1 py-2.5 rounded-xl text-sm font-medium text-white" style={{ background: 'var(--error, #DC2626)' }}>{deactivating ? 'Deactivating…' : 'Deactivate'}</button>
           </div>
         </div>
       </div>

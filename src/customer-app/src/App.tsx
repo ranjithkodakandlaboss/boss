@@ -54,6 +54,9 @@ import DocumentsPage from "./documents/DocumentsPage";
 import DocumentDetailPage from "./documents/DocumentDetailPage";
 
 function Background({ pathname }: { pathname: string }) {
+  if (pathname.split("?")[0] === "/sales") {
+    return <SalesHome backgroundSearch={pathname.includes("?") ? pathname.slice(pathname.indexOf("?")) : ""} />;
+  }
   const screen = findScreen(pathname.split("?")[0]);
   if (!screen) return null;
   return <ScreenPage screen={screen} />;
@@ -71,14 +74,14 @@ function SheetFrame({ parent, children }: { parent: string; children: ReactNode 
   return (
     <div className="fixed inset-0 z-[60] flex justify-end bg-black/40">
       <button type="button" className="absolute inset-0" aria-label="Close" onClick={() => navigate(parent)} />
-      <div role="dialog" aria-modal="true" className="relative flex h-full w-full flex-col bg-[var(--bg)] shadow-2xl md:w-[min(860px,94vw)]" style={{ borderLeft: "1px solid var(--border)" }}>
+      <div role="dialog" aria-modal="true" className="relative flex h-full min-w-0 w-full flex-col overflow-hidden bg-[var(--bg)] shadow-2xl md:w-[min(860px,94vw)]" style={{ borderLeft: "1px solid var(--border)" }}>
         <header className="flex h-12 items-center justify-between px-4 border-b" style={{ borderColor: "var(--border)", background: "var(--surface)" }}>
           <span className="text-xs font-semibold uppercase tracking-wide text-[var(--text-3)]">Record</span>
           <button type="button" onClick={() => navigate(parent)} className="inline-flex h-8 items-center gap-1 rounded-lg px-2 text-sm font-semibold">
             <X size={16} /> Close
           </button>
         </header>
-        <div className="min-h-0 flex-1 overflow-auto">{children}</div>
+        <div className="min-h-0 min-w-0 flex-1 overflow-auto">{children}</div>
       </div>
     </div>
   );

@@ -9,6 +9,7 @@ import DocumentActions from './workflow/DocumentActions';
 import RelatedRecordsPanel from './workflow/RelatedRecordsPanel';
 import RecordHistoryPanel from './workflow/RecordHistoryPanel';
 import { useReturnNavigation } from './useReturnNavigation';
+import LinkedDocumentsSection from './workflow/LinkedDocumentsSection';
 
 const fmt = (d: string | null | undefined) => { if (!d) return '—'; const dt = new Date(d); return isNaN(dt.getTime()) ? '—' : dt.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }); };
 const fmtMoney = (n: number) => `₹${n.toLocaleString('en-IN')}`;
@@ -17,13 +18,14 @@ export default function QuotationDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { quotations, quotationLines, rfqs, customerPos, currentUser, updateQuotation, reviseQuotation, convertQuotationToPO, updateRfq, showToast } = useStore();
+  const { customers, quotations, quotationLines, rfqs, customerPos, currentUser, updateQuotation, reviseQuotation, convertQuotationToPO, updateRfq, showToast } = useStore();
   const [confirming, setConfirming] = useState<'submit' | 'accept' | 'convert' | 'decline' | null>(null);
   const [reviseModal, setReviseModal] = useState(false);
   const [reviseDiscount, setReviseDiscount] = useState('0');
   const [reviseNotes, setReviseNotes] = useState('');
   const [reviseLines, setReviseLines] = useState<{ id: string; productName: string; uom: string; orderedQty: string; unitPrice: string }[]>([]);
   const [overrideReason, setOverrideReason] = useState('');
+  const [submitting, setSubmitting] = useState(false);
 
   const quotation = quotations.find(q => q.id === id);
   const rfq = rfqs.find(r => r.id === quotation?.rfqId);
@@ -41,11 +43,12 @@ export default function QuotationDetail() {
   const childRevisions = quotations.filter(q => q.parentQuotationId === quotation.id);
   const existingPO = customerPos.find(p => p.quotationId === quotation.id || (p as any).quotationRef === quotation.quotationNumber);
 
-  const canSubmit = quotation.status === 'draft' && ['owner', 'sales'].includes(currentUser.role);
-  const canAccept = quotation.status === 'submitted' && ['owner', 'sales'].includes(currentUser.role);
+  const customerActive = customers.some(c => c.id === quotation.customerId && c.status === 'active');
+  const canSubmit = customerActive && quotation.status === 'draft' && ['owner', 'sales'].includes(currentUser.role);
+  const canAccept = customerActive && quotation.status === 'submitted' && ['owner', 'sales'].includes(currentUser.role);
   const activeRevisionExists = childRevisions.some(r => r.status !== 'draft');
-  const canRevise = !['accepted', 'superseded'].includes(quotation.status) && !existingPO && !activeRevisionExists && ['owner', 'sales'].includes(currentUser.role);
-  const canConvert = quotation.status === 'accepted' && !existingPO && !activeRevisionExists && ['owner', 'sales'].includes(currentUser.role);
+  const canRevise = customerActive && !['accepted', 'superseded', 'cancelled'].includes(quotation.status) && !existingPO && !activeRevisionExists && ['owner', 'sales'].includes(currentUser.role);
+  const canConvert = customerActive && quotation.status === 'accepted' && !existingPO && !activeRevisionExists && ['owner', 'sales'].includes(currentUser.role);
 
   const handleReviseQuotation = async () => {
     const disc = Number(reviseDiscount) || 0;
@@ -64,8 +67,14 @@ export default function QuotationDetail() {
   };
 
   const handleSubmit = async () => {
-    await updateQuotation(quotation.id, { status: 'submitted', notes: overrideReason });
-    setConfirming(null);
+    if (submitting) return;
+    setSubmitting(true);
+    try {
+      const saved = await updateQuotation(quotation.id, { status: 'submitted', notes: overrideReason });
+      if (saved) setConfirming(null);
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const handleAccept = async () => {
@@ -295,7 +304,7 @@ export default function QuotationDetail() {
                   <td className="text-xs text-[var(--text-2)]">{l.uom}</td>
                   <td className="font-mono text-sm text-right">{fmtMoney(l.unitPrice)}</td>
                   <td className="font-mono text-sm text-right font-semibold">{fmtMoney(l.value)}</td>
-                  <td className="text-sm text-[var(--text-2)]">{fmt(l.requiredDate)}</td>
+                  <td className="font-mono text-xs whitespace-nowrap text-[var(--text-2)]">{fmt(l.requiredDate)}</td>
                 </tr>
               ))}
             </tbody>
@@ -390,6 +399,9 @@ export default function QuotationDetail() {
           )}
         </div>
 
+        <div className="mt-4">
+          <LinkedDocumentsSection entityType="Quotation" entityId={quotation.id} entityRef={quotation.quotationNumber} readOnly={!customerActive || quotation.status === 'cancelled' || !['owner', 'sales'].includes(currentUser.role)} />
+        </div>
         {quotation.notes && (
           <div className="mt-4 rounded-xl border p-4" style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}>
             <div className="text-xs font-bold text-[var(--text-3)] uppercase tracking-wider mb-2">Notes</div>
@@ -453,7 +465,7 @@ export default function QuotationDetail() {
               <button onClick={() => setConfirming(null)} className="px-4 py-2 rounded-lg text-sm border" style={{ borderColor: 'var(--border)', color: 'var(--text-2)' }}>Cancel</button>
               <button
                 onClick={confirming === 'convert' ? handleConvertToPO : confirming === 'submit' ? handleSubmit : confirming === 'decline' ? () => { handleDecision('rejected'); setConfirming(null); } : handleAccept}
-                disabled={confirming === 'submit' && quotation.costing?.requiresApproval && !overrideReason.trim()}
+                disabled={submitting || confirming === 'submit' && quotation.costing?.requiresApproval && !overrideReason.trim()}
                 className="px-4 py-2 rounded-lg text-sm font-semibold text-white"
                 style={{ background: confirming === 'decline' ? 'var(--error, #DC2626)' : confirming === 'convert' ? 'var(--brand-fill)' : '#16a34a' }}
               >

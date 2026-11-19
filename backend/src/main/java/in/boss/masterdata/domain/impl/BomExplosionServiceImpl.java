@@ -36,7 +36,9 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 
 @Service
-@Transactional(readOnly = true)
+@Transactional(readOnly = true, noRollbackFor = {
+        ValidationException.class, CircularReferenceException.class, MaxBomLevelExceededException.class
+})
 public class BomExplosionServiceImpl implements BomExplosionService {
 
     private final BomHeaderRepository bomHeaderRepository;

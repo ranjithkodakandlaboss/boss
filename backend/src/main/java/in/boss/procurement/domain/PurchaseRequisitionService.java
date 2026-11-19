@@ -634,11 +634,14 @@ public class PurchaseRequisitionService {
     }
 
     private void requireCustomerPo(UUID tenantId, UUID customerPoId) {
-        Integer count = jdbc.queryForObject(
-                "SELECT COUNT(*) FROM cpos WHERE tenant_id = ? AND id = ?",
-                Integer.class, tenantId, customerPoId);
-        if (count == null || count == 0) {
+        String status = jdbc.query(
+                "SELECT status FROM cpos WHERE tenant_id = ? AND id = ? FOR UPDATE",
+                rs -> rs.next() ? rs.getString("status") : null, tenantId, customerPoId);
+        if (status == null) {
             throw badRequest("Customer PO was not found for this tenant");
+        }
+        if ("cancelled".equals(status)) {
+            throw conflict("A cancelled Customer PO cannot start a purchase requisition");
         }
     }
 

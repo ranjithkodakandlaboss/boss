@@ -43,6 +43,19 @@ export function uploadDocument(formData: FormData): Promise<VaultDocument> {
   });
 }
 
+export function uploadLinkedDocument(file: File, entity: { type: string; id: string; ref: string }): Promise<VaultDocument> {
+  if (file.size > 20 * 1024 * 1024) throw new Error('Choose a document no larger than 20 MB.');
+  const body = new FormData();
+  body.append('file', file);
+  body.append('title', file.name);
+  body.append('category', entity.type === 'Customer' ? 'Customer Documents' : 'Sales Documents');
+  body.append('docType', `${entity.type} Document`);
+  body.append('linkedEntityType', entity.type);
+  body.append('linkedEntityId', entity.id);
+  body.append('linkedEntityRef', entity.ref);
+  return uploadDocument(body);
+}
+
 export function renewDocument(id: string, formData: FormData): Promise<VaultDocument> {
   return api<VaultDocument>(`/api/v1/documents/${id}/renew`, {
     method: 'POST',
