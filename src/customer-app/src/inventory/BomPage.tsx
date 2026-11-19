@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useState } from "react";
-import { api } from "../auth/api";
+import { api, safeRandomUUID } from "../auth/api";
 import { useCustomer } from "../auth/CustomerState";
 import ErrorState from "../components/shared/ErrorState";
 import LoadingState from "../components/shared/LoadingState";
@@ -210,6 +210,7 @@ function BomForm({ items, uoms, onClose, onSaved }: { items: Item[]; uoms: Uom[]
 
   async function submit(event: FormEvent) {
     event.preventDefault();
+    if (saving) return;
     if (!itemId) {
       setError("Select the finished item this BOM produces.");
       return;
@@ -224,6 +225,7 @@ function BomForm({ items, uoms, onClose, onSaved }: { items: Item[]; uoms: Uom[]
     try {
       await api(`/api/v1/items/${itemId}/bom`, {
         method: "POST",
+        headers: { "Idempotency-Key": safeRandomUUID() },
         body: JSON.stringify({
           lines: lines.map((line) => ({
             componentItemId: line.componentItemId,
