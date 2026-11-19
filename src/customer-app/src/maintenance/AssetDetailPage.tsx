@@ -236,9 +236,38 @@ export function MaintenanceEventDetailPage() {
         <Info label="Planned" value={displayDate(event.plannedDate)} /><Info label="Downtime start" value={displayDateTime(event.downtimeStart)} />
         <Info label="Completed" value={displayDateTime(event.completionDate)} /><Info label="Downtime" value={(() => { if (event.downtimeHours != null) return `${event.downtimeHours} h`; if (event.downtimeStart && event.completionDate) { const h = (new Date(event.completionDate).getTime() - new Date(event.downtimeStart).getTime()) / 3600000; return `${h.toFixed(2)} h (computed)`; } return null; })()} />
         <Info label="Affected jobs" value={event.affectedJobs.map((j) => j.jobNumber).join(", ")} />
+        <Info label="Responsible owner" value={event.responsibleOwner} />
         <Info label="Description" value={event.symptom} /><Info label="Corrective action" value={event.correctiveAction} /><Info label="Notes" value={event.notes} />
         {event.status === "closed" && <><Info label="Root cause" value={event.rootCause} /><Info label="Work done" value={event.workDone} /><Info label="Resolution" value={event.resolutionNotes} /><Info label="Parts used" value={event.partsUsed} /></>}
       </div>
+      {event.affectedStages.length > 0 && (
+        <section className="space-y-2" aria-label="Production impact">
+          <h2 className="font-semibold text-sm">Affected production stages</h2>
+          <p className="text-xs text-[var(--text-3)]">
+            These are the incomplete stages assigned to this asset. Machine availability is checked at stage start, so the whole job is not put on hold.
+            Required-by dates are for triage only; delivery dates are not recalculated and the responsible owner is not notified automatically.
+            Alternatives are operational assets at this site with the same configured stage capability; current loading is not considered.
+          </p>
+          <div className="space-y-2">
+            {event.affectedStages.map((stage) => (
+              <article key={stage.id} className="border border-[var(--border)] rounded-lg p-3 space-y-1">
+                <p className="text-sm font-semibold">Job {stage.jobNumber} · {stage.sequence}. {stage.name} · {stage.status}</p>
+                {(stage.customerOrderNumber || stage.requiredByDate) && (
+                  <p className="text-xs text-[var(--text-2)]">
+                    {stage.customerOrderNumber ? `Customer order ${stage.customerOrderNumber}` : "Customer order"}
+                    {stage.requiredByDate ? ` · Required by ${displayDate(stage.requiredByDate)}` : ""}
+                  </p>
+                )}
+                <p className="text-xs text-[var(--text-2)]">
+                  {stage.alternatives.length > 0
+                    ? `Other capable assets: ${stage.alternatives.map((alternative) => `${alternative.assetCode} — ${alternative.name}`).join(", ")}`
+                    : "No operational alternative with this configured stage capability is available at this site."}
+                </p>
+              </article>
+            ))}
+          </div>
+        </section>
+      )}
       {actionError && <p role="alert" className="text-xs" style={{ color: "var(--error)" }}>{actionError}</p>}
       {canManage && event.status !== "closed" && (
         <div className="border border-[var(--border)] rounded-xl p-4 space-y-3 max-w-xl">

@@ -49,6 +49,19 @@ export type MaintenanceEvent = {
   completionDate?: string | null;
   downtimeHours?: number | null;
   affectedJobs: { id: string; jobNumber: string }[];
+  affectedStages: {
+    id: string;
+    jobId: string;
+    jobNumber: string;
+    sequence: number;
+    name: string;
+    status: string;
+    customerOrderNumber?: string | null;
+    requiredByDate?: string | null;
+    alternatives: { id: string; assetCode: string; name: string; workCentre?: string | null }[];
+  }[];
+  responsibleUserId?: string | null;
+  responsibleOwner?: string | null;
   rootCause?: string | null;
   correctiveAction?: string | null;
   workDone?: string | null;
