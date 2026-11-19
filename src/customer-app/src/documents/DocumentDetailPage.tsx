@@ -4,7 +4,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { useCustomer } from '../auth/CustomerState';
 import StatusChip from '../components/shared/StatusChip';
 import { formatDisplayDate } from '../sales/proto/dates';
-import { downloadDocumentUrl, getDocument } from './api';
+import { downloadDocument, getDocument } from './api';
 import { computeDocumentExpiry } from './documentExpiry';
 import type { VaultDocument } from './types';
 import RenewDocumentModal from './RenewDocumentModal';
@@ -130,8 +130,9 @@ export default function DocumentDetailPage() {
   };
 
   const handleDownloadFile = () => {
-    const url = downloadDocumentUrl(document.id);
-    window.open(url, '_blank');
+    downloadDocument(document.id, document.fileName).catch((err: unknown) => {
+      showToast({ type: 'error', title: 'Download failed', body: err instanceof Error ? err.message : 'Could not download file.' });
+    });
   };
 
   return (
