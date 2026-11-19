@@ -158,5 +158,13 @@ public final class BossPermissions {
     public static final String INVOICE_READ =
             "hasAnyRole('OWNER','OPS_MANAGER','ACCOUNTS_STAFF','SALES_MANAGER')";
 
+    /** Anyone who can view documents in the vault. */
+    public static final String DOCUMENTS_READ =
+            "hasAnyRole('OWNER','OPS_MANAGER','SALES_MANAGER','PURCHASE_MANAGER','PRODUCTION_SUPERVISOR','QUALITY_INSPECTOR','ACCOUNTS_STAFF','STORE_KEEPER','FIELD_WORKER')";
+
+    /** Upload, renew, or archive documents (Owner, Ops Manager, Purchase Manager/Buyer, Quality Inspector). */
+    public static final String DOCUMENTS_MANAGE =
+            "hasAnyRole('OWNER','OPS_MANAGER','PURCHASE_MANAGER','QUALITY_INSPECTOR')";
+
     private BossPermissions() {}
 }

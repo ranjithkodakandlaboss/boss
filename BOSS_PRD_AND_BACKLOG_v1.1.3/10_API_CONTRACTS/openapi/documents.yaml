@@ -1,0 +1,422 @@
+openapi: "3.1.0"
+info:
+  title: BOSS Document Vault API
+  version: "1.0.0"
+  description: |
+    Document Vault management API for uploading, versioning, renewing, archiving,
+    retrieving, downloading, and associating documents with business entities.
+
+servers:
+  - url: https://api.boss.app/api/v1
+
+security:
+  - firebaseBearer: []
+
+components:
+  securitySchemes:
+    firebaseBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    DocumentResponse:
+      type: object
+      required:
+        - id
+        - title
+        - docType
+        - category
+        - status
+        - version
+        - fileName
+        - fileSize
+        - fileSizeBytes
+        - uploadedBy
+        - uploadedAt
+        - linkedEntities
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        docType:
+          type: string
+        category:
+          type: string
+          enum:
+            - Job Documents
+            - Quality Documents
+            - Material Certificates
+            - Supplier Documents
+            - Company Certificates
+            - Asset Documents
+        status:
+          type: string
+          enum: [active, superseded, expired, archived]
+        issueDate:
+          type: string
+          format: date
+          nullable: true
+        expiryDate:
+          type: string
+          format: date
+          nullable: true
+        reminderDays:
+          type: integer
+          nullable: true
+        certStatus:
+          type: string
+          enum: [ai_extracted, verified, pending]
+          nullable: true
+        version:
+          type: integer
+        fileName:
+          type: string
+        fileSize:
+          type: string
+        fileSizeBytes:
+          type: integer
+          format: int64
+        contentType:
+          type: string
+          nullable: true
+        uploadedBy:
+          type: string
+        uploadedAt:
+          type: string
+          format: date-time
+        archivedAt:
+          type: string
+          format: date-time
+          nullable: true
+        archivedBy:
+          type: string
+          nullable: true
+        archiveReason:
+          type: string
+          nullable: true
+        linkedEntities:
+          type: array
+          items:
+            $ref: '#/components/schemas/LinkedEntity'
+
+    LinkedEntity:
+      type: object
+      required:
+        - type
+        - ref
+      properties:
+        type:
+          type: string
+        ref:
+          type: string
+        id:
+          type: string
+          format: uuid
+          nullable: true
+
+    DocumentPageResponse:
+      type: object
+      required:
+        - content
+        - page
+        - size
+        - totalElements
+      properties:
+        content:
+          type: array
+          items:
+            $ref: '#/components/schemas/DocumentResponse'
+        page:
+          type: integer
+        size:
+          type: integer
+        totalElements:
+          type: integer
+          format: int64
+
+    DocumentHistoryEntry:
+      type: object
+      required:
+        - id
+        - action
+        - description
+        - actor
+        - timestamp
+      properties:
+        id:
+          type: string
+          format: uuid
+        action:
+          type: string
+        description:
+          type: string
+        actor:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        details:
+          type: object
+          additionalProperties: true
+
+    ArchiveDocumentRequest:
+      type: object
+      required:
+        - reason
+      properties:
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 1000
+
+paths:
+  /documents:
+    get:
+      summary: List documents in the vault
+      operationId: listDocuments
+      parameters:
+        - name: category
+          in: query
+          schema:
+            type: string
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [active, superseded, expired, archived]
+        - name: attention
+          in: query
+          schema:
+            type: string
+            enum: [all, expiring, expired, due]
+        - name: includeArchived
+          in: query
+          schema:
+            type: boolean
+        - name: q
+          in: query
+          schema:
+            type: string
+        - name: entityType
+          in: query
+          schema:
+            type: string
+        - name: entityId
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 0
+        - name: size
+          in: query
+          schema:
+            type: integer
+            default: 50
+      responses:
+        '200':
+          description: Paginated list of documents
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocumentPageResponse'
+
+    post:
+      summary: Upload a new document
+      operationId: uploadDocument
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - title
+                - category
+                - file
+              properties:
+                title:
+                  type: string
+                category:
+                  type: string
+                docType:
+                  type: string
+                issueDate:
+                  type: string
+                  format: date
+                expiryDate:
+                  type: string
+                  format: date
+                reminderDays:
+                  type: integer
+                certStatus:
+                  type: string
+                linkedEntityType:
+                  type: string
+                linkedEntityId:
+                  type: string
+                  format: uuid
+                linkedEntityRef:
+                  type: string
+                file:
+                  type: string
+                  format: binary
+      responses:
+        '201':
+          description: Document uploaded successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocumentResponse'
+        '400':
+          description: Validation error
+
+  /documents/{id}:
+    get:
+      summary: Retrieve document details
+      operationId: getDocument
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Document details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocumentResponse'
+        '404':
+          description: Document not found
+
+  /documents/{id}/renew:
+    post:
+      summary: Renew document with new version and expiry
+      operationId: renewDocument
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - expiryDate
+                - file
+              properties:
+                issueDate:
+                  type: string
+                  format: date
+                expiryDate:
+                  type: string
+                  format: date
+                reminderDays:
+                  type: integer
+                notes:
+                  type: string
+                file:
+                  type: string
+                  format: binary
+      responses:
+        '200':
+          description: Document renewed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocumentResponse'
+        '400':
+          description: Validation error
+        '404':
+          description: Document not found
+
+  /documents/{id}/archive:
+    patch:
+      summary: Archive a document with mandatory reason
+      operationId: archiveDocument
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ArchiveDocumentRequest'
+      responses:
+        '200':
+          description: Document archived successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocumentResponse'
+        '400':
+          description: Validation error
+        '404':
+          description: Document not found
+
+  /documents/{id}/download:
+    get:
+      summary: Download document file
+      operationId: downloadDocument
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: version
+          in: query
+          required: false
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Document file content
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '404':
+          description: Document or version not found
+
+  /documents/{id}/history:
+    get:
+      summary: Get activity and audit history for a document
+      operationId: getDocumentHistory
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: List of audit history events
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/DocumentHistoryEntry'

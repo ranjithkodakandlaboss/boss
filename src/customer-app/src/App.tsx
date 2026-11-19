@@ -50,6 +50,8 @@ import ItemDetail from "./inventory/ItemDetail";
 import LotDetail from "./inventory/LotDetail";
 import DispatchPage from "./dispatch/DispatchPage";
 import DispatchDetailPage from "./dispatch/DispatchDetailPage";
+import DocumentsPage from "./documents/DocumentsPage";
+import DocumentDetailPage from "./documents/DocumentDetailPage";
 
 function Background({ pathname }: { pathname: string }) {
   const screen = findScreen(pathname.split("?")[0]);
@@ -167,6 +169,8 @@ function Guard() {
         <Route path="assets/:id" element={<SheetLayout><AssetDetailPage /></SheetLayout>} />
         <Route path="dispatch" element={<DispatchPage />} />
         <Route path="dispatch/:id" element={<DispatchDetailPage />} />
+        <Route path="documents" element={<DocumentsPage />} />
+        <Route path="documents/:id" element={<DocumentDetailPage />} />
         <Route path="bom" element={<BomPage />} />
         <Route path="inventory/item/:id" element={<SheetLayout><ItemDetail /></SheetLayout>} />
         <Route path="inventory/lot/:id" element={<SheetLayout><LotDetail /></SheetLayout>} />
