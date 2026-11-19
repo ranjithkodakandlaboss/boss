@@ -54,7 +54,7 @@ describe("customer app shell", () => {
   it("keeps the sales workspace tabs from the prototype", async () => {
     renderAt("/sales");
     expect(await screen.findByRole("heading", { name: "Customer POs" })).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Customer Directory" }));
+    await userEvent.click(screen.getByRole("button", { name: /Customer Directory/ }));
     expect(screen.getByRole("heading", { name: "Customer Directory" })).toBeInTheDocument();
   });
 

@@ -7,7 +7,7 @@ const { apiMock, allPagesMock } = vi.hoisted(() => ({
   allPagesMock: vi.fn(),
 }));
 
-vi.mock("../auth/api", () => ({ api: apiMock }));
+vi.mock("../auth/api", () => ({ api: apiMock, safeRandomUUID: () => "test-uuid" }));
 vi.mock("./api", () => ({ allPages: allPagesMock }));
 vi.mock("../auth/CustomerState", () => ({
   useCustomer: () => ({ user: { roles: [{ role: "OWNER" }] } }),
