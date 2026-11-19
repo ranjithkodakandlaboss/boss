@@ -164,19 +164,20 @@ function mapPr(record: PrRecord, sites: { id: string; name: string }[], customer
 function mapQuote(record: QuoteRecord, pr?: ReturnType<typeof mapPr>) {
   const lines = (record.lines ?? []).map((line) => {
     const prLine = pr?.lines?.find((item) => item.id === line.prLineId);
+    const quotedQty = line.quantity ?? prLine?.requiredQty ?? 0;
     return {
       id: line.id,
       quoteId: record.id,
-      prLineId: line.prLineId,
+      prLineId: line.prLineId ?? undefined,
       materialItemId: line.itemId,
       materialCode: prLine?.materialCode,
       materialName: prLine?.materialName || "Material",
-      quotedQty: prLine?.requiredQty || 0,
-      uom: prLine?.uom || "",
-      uomId: prLine?.uomId,
+      quotedQty: money(quotedQty),
+      uom: line.uomSymbol || prLine?.uom || "",
+      uomId: line.uomId ?? prLine?.uomId,
       unitPrice: money(line.unitPrice),
       taxPct: money(line.taxRate),
-      lineTotal: money(line.unitPrice) * money(prLine?.requiredQty),
+      lineTotal: money(line.unitPrice) * money(quotedQty),
       leadTimeDays: line.leadTimeDays,
       isSelected: line.isSelected,
     };
@@ -220,7 +221,7 @@ function mapSpo(record: SpoRecord, pr?: ReturnType<typeof mapPr>) {
     receivedQty: money(line.receivedQty),
     acceptedQty: money(line.acceptedQty),
     rejectedQty: money(line.rejectedQty),
-    uom: "",
+    uom: line.uomSymbol || "",
     rate: money(line.unitPrice),
     value: money(line.lineTotal || money(line.unitPrice) * money(line.orderedQty)),
     status: record.status,
@@ -252,7 +253,7 @@ function mapSpo(record: SpoRecord, pr?: ReturnType<typeof mapPr>) {
 function mapGrn(record: GrnRecord, spo?: ReturnType<typeof mapSpo>) {
   const lines = (record.lines ?? []).map((line) => ({
     id: line.id,
-    spoLineId: line.spoLineId,
+    spoLineId: line.spoLineId ?? undefined,
     materialItemId: line.itemId,
     materialCode: line.itemCode,
     materialName: line.itemName,

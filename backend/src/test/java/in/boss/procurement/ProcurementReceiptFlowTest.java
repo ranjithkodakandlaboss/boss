@@ -267,6 +267,115 @@ class ProcurementReceiptFlowTest extends BaseMasterDataIntegrationTest {
                 Long.class, tenantId)).isEqualTo(1L);
     }
 
+    @Test
+    void tracesCustomerPoMaterialThroughQuotationOrderReceiptAndInventory() throws Exception {
+        UUID cpoId = insert("""
+                INSERT INTO cpos (tenant_id, cpo_number, customer_id, site_id, status, order_date, created_by)
+                VALUES (?, ?, ?, ?, 'open', CURRENT_DATE, ?) RETURNING id::text
+                """, tenantId, "CPO-" + UUID.randomUUID(), customerId, siteId, actorId);
+        PurchaseRequisitionResponse pr = prService.createPr(new CreatePrRequest(
+                "customer_po", null, null, siteId, null, null, null, "normal", null,
+                java.util.List.of(new CreatePrLineRequest(
+                        itemId, new BigDecimal("10"), null, uomId, null, null, null, null, null)), cpoId));
+        prService.submitPr(pr.id());
+        prService.approvePr(pr.id());
+        prId = pr.id();
+        prLineId = pr.lines().get(0).id();
+        JsonNode prJson = readJson("/api/v1/prs/" + prId);
+        assertThat(prJson.path("customerPoId").asText()).isEqualTo(cpoId.toString());
+        assertMaterial(prJson.path("lines").get(0), "quantity", "10");
+
+        JsonNode quotation = objectMapper.readTree(postJson("/api/v1/prs/" + prId + "/supplier-quotations",
+                UUID.randomUUID().toString(), "{\"supplierId\":\"" + supplierId + "\"}")
+                .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString());
+        String quotationId = quotation.path("id").asText();
+        postJson("/api/v1/supplier-quotations/" + quotationId + "/receive", UUID.randomUUID().toString(),
+                "{\"lines\":[{\"prLineId\":\"" + prLineId + "\",\"unitPrice\":12.50}]}")
+                .andExpect(status().isOk());
+        postJson("/api/v1/supplier-quotations/" + quotationId + "/review", UUID.randomUUID().toString(), "{}")
+                .andExpect(status().isOk());
+        postJson("/api/v1/supplier-quotations/" + quotationId + "/select", UUID.randomUUID().toString(), "{}")
+                .andExpect(status().isOk());
+        quotation = readJson("/api/v1/supplier-quotations/" + quotationId);
+        JsonNode quoteLine = quotation.path("lines").get(0);
+        assertThat(quotation.path("prId").asText()).isEqualTo(prId.toString());
+        assertThat(quoteLine.path("prLineId").asText()).isEqualTo(prLineId.toString());
+        assertMaterial(quoteLine, "quantity", "10");
+
+        JsonNode order = objectMapper.readTree(postJson("/api/v1/spos", UUID.randomUUID().toString(), """
+                {"supplierId":"%s","prId":"%s","supplierQuotationId":"%s","lines":[
+                  {"prLineId":"%s","itemId":"%s","orderedQty":8,"unitPrice":12.50,"uomId":"%s"}]}
+                """.formatted(supplierId, prId, quotationId, prLineId, itemId, uomId))
+                .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString());
+        UUID spoId = UUID.fromString(order.path("id").asText());
+        JsonNode orderLine = order.path("lines").get(0);
+        String spoLineId = orderLine.path("id").asText();
+        assertThat(order.path("prId").asText()).isEqualTo(prId.toString());
+        assertThat(order.path("supplierQuotationId").asText()).isEqualTo(quotationId);
+        assertThat(orderLine.path("prLineId").asText()).isEqualTo(prLineId.toString());
+        assertThat(orderLine.path("supplierQuotationLineId").asText()).isEqualTo(quoteLine.path("id").asText());
+        assertMaterial(orderLine, "orderedQty", "8");
+        assertThat(orderLine.path("uomSymbol").asText()).isNotBlank();
+        jdbc.update("UPDATE spos SET expected_delivery = ? WHERE tenant_id = ? AND id = ?",
+                LocalDate.now().plusDays(7), tenantId, spoId);
+        postJson("/api/v1/spos/" + spoId + "/issue", UUID.randomUUID().toString(), "{}")
+                .andExpect(status().isOk());
+
+        JsonNode grn = objectMapper.readTree(postJson("/api/v1/grns", UUID.randomUUID().toString(),
+                grnBody(spoId, spoLineId, "4", "0", "4"))
+                .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString());
+        JsonNode grnLine = grn.path("lines").get(0);
+        assertThat(grn.path("spoId").asText()).isEqualTo(spoId.toString());
+        assertThat(grnLine.path("spoLineId").asText()).isEqualTo(spoLineId);
+        assertMaterial(grnLine, "receivedQty", "4");
+        String lotId = grnLine.path("lotIds").get(0).asText();
+        JsonNode lot = readJson("/api/v1/inventory/lots/" + lotId);
+        assertThat(lot.path("grnLineId").asText()).isEqualTo(grnLine.path("id").asText());
+        assertMaterial(lot, "qty", "4");
+
+        UUID otherTenant = provisionTenant("trace-other");
+        for (String path : java.util.List.of("/api/v1/prs/" + prId, "/api/v1/supplier-quotations/" + quotationId,
+                "/api/v1/spos/" + spoId, "/api/v1/grns/" + grn.path("id").asText(),
+                "/api/v1/inventory/lots/" + lotId)) {
+            setContext(otherTenant, null, UUID.randomUUID());
+            mockMvc.perform(get(path).with(user("owner").roles("OWNER"))).andExpect(status().isNotFound());
+        }
+    }
+
+    @Test
+    void legacyMissingLineReferencesRemainNull() throws Exception {
+        UUID spoId = issuedSpo(new BigDecimal("10"));
+        JsonNode order = readSpo(spoId);
+        String quotationId = order.path("supplierQuotationId").asText();
+        String spoLineId = order.path("lines").get(0).path("id").asText();
+        JsonNode grn = objectMapper.readTree(postJson("/api/v1/grns", UUID.randomUUID().toString(),
+                grnBody(spoId, spoLineId, "4", "0", "4"))
+                .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString());
+        jdbc.update("UPDATE grn_lines SET spo_line_id = NULL WHERE tenant_id = ? AND id = ?",
+                tenantId, UUID.fromString(grn.path("lines").get(0).path("id").asText()));
+        jdbc.update("UPDATE spo_lines SET pr_line_id = NULL, sq_line_id = NULL WHERE tenant_id = ? AND id = ?",
+                tenantId, UUID.fromString(spoLineId));
+        jdbc.update("UPDATE supplier_quotation_lines SET pr_line_id = NULL WHERE tenant_id = ? AND sq_id = ?",
+                tenantId, UUID.fromString(quotationId));
+        assertThat(readJson("/api/v1/supplier-quotations/" + quotationId).path("lines").get(0).path("prLineId").isNull()).isTrue();
+        JsonNode line = readSpo(spoId).path("lines").get(0);
+        assertThat(line.path("prLineId").isNull()).isTrue();
+        assertThat(line.path("supplierQuotationLineId").isNull()).isTrue();
+        assertThat(readJson("/api/v1/grns/" + grn.path("id").asText()).path("lines").get(0).path("spoLineId").isNull()).isTrue();
+    }
+
+    private void assertMaterial(JsonNode line, String quantityField, String quantity) {
+        assertThat(line.path("itemId").asText()).isEqualTo(itemId.toString());
+        assertThat(line.path("uomId").asText()).isEqualTo(uomId.toString());
+        assertThat(line.path(quantityField).decimalValue()).isEqualByComparingTo(quantity);
+    }
+
+    private JsonNode readJson(String path) throws Exception {
+        setContext(tenantId, siteId, actorId);
+        return objectMapper.readTree(mockMvc.perform(get(path).with(user("owner").roles("OWNER")))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
+    }
+
     private UUID issuedSpo(BigDecimal quantity) throws Exception {
         UUID quotationId = insert("""
                 INSERT INTO supplier_quotations

@@ -547,8 +547,8 @@ public class PurchaseRequisitionService {
                        l.quantity, l.ordered_qty, l.uom_id, u.symbol AS uom_symbol,
                        l.est_unit_price, l.store_id, l.required_date, l.notes
                 FROM pr_lines l
-                JOIN items i ON i.id = l.item_id
-                JOIN units_of_measure u ON u.id = l.uom_id
+                JOIN items i ON i.id = l.item_id AND i.tenant_id = l.tenant_id
+                JOIN units_of_measure u ON u.id = l.uom_id AND u.tenant_id = l.tenant_id
                 WHERE l.tenant_id = ? AND l.pr_id = ?
                 ORDER BY l.line_no ASC
                 """,

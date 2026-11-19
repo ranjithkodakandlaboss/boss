@@ -150,7 +150,8 @@ public class SupplierQuotationService {
 
         QuotationHeader header = headers.get(0);
         List<SupplierQuotationLineResponse> lines = jdbc.query("""
-                SELECT ql.id, ql.pr_line_id, ql.item_id, ql.unit_price, ql.delivery_days, ql.tax_rate,
+                SELECT ql.id, ql.pr_line_id, ql.item_id, ql.quantity, ql.uom_id, u.symbol AS uom_symbol,
+                       ql.unit_price, ql.delivery_days, ql.tax_rate,
                        EXISTS (
                          SELECT 1
                          FROM spo_lines sl
@@ -160,6 +161,7 @@ public class SupplierQuotationService {
                            AND so.status <> 'cancelled'
                        ) AS is_selected
                 FROM supplier_quotation_lines ql
+                JOIN units_of_measure u ON u.id = ql.uom_id AND u.tenant_id = ql.tenant_id
                 WHERE ql.tenant_id = ? AND ql.sq_id = ?
                 ORDER BY ql.line_no
                 """, (rs, rowNum) -> new SupplierQuotationLineResponse(
@@ -169,7 +171,10 @@ public class SupplierQuotationService {
                 rs.getBigDecimal("unit_price"),
                 (Integer) rs.getObject("delivery_days"),
                 rs.getBoolean("is_selected"),
-                rs.getBigDecimal("tax_rate")),
+                rs.getBigDecimal("tax_rate"),
+                rs.getBigDecimal("quantity"),
+                rs.getObject("uom_id", UUID.class),
+                rs.getString("uom_symbol")),
                 tenantId, quotationId);
 
         SupplierQuotationDeliveryService.Delivery delivery = deliveryService.latest(header.id());

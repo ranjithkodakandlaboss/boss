@@ -52,7 +52,7 @@ const pendingPr = { ...pr, id: "abababab-abab-4aba-8aba-abababababab", prNumber:
 const requested = { id: requestId, prId, supplierId, supplierName: "Steel House", status: "requested", lines: [] };
 const received = {
   id: quoteId, prId, supplierId, supplierName: "Steel House", status: "received", supplierQuoteRef: "QT-9",
-  lines: [{ id: "ql", prLineId: lineId, itemId, unitPrice: 12, leadTimeDays: 5 }],
+  lines: [{ id: "ql", prLineId: lineId, itemId, quantity: 7, uomId, uomSymbol: "BOX", unitPrice: 12, leadTimeDays: 5 }],
 };
 const spo = {
   id: spoId, spoNumber: "SPO-1", prId, supplierId, supplierName: "Steel House", supplierQuotationId: quoteId, status: "issued",
@@ -159,6 +159,15 @@ it("opens the quotation, supplier order, receipt, inspection, and return screens
     expect((await screen.findAllByText(text)).length, path).toBeGreaterThan(0);
     view.unmount();
   }
+});
+
+it("shows the persisted quotation quantity and unit rather than the current PR values", async () => {
+  show(`/procurement/quote/${quoteId}`, <SupplierQuotationDetail />);
+  const material = await screen.findByText("SHAFT");
+  const row = within(material.closest("tr") as HTMLElement);
+  expect(row.getByText("7")).toBeInTheDocument();
+  expect(row.getByText("BOX")).toBeInTheDocument();
+  expect(row.getByText("₹84")).toBeInTheDocument();
 });
 
 it("opens every procurement list, including a purchase requisition waiting for approval", async () => {

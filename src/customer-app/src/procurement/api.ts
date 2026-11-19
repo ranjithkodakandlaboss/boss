@@ -59,8 +59,11 @@ export type PrRecord = {
 };
 export type QuoteLineRecord = {
   id: string;
-  prLineId: string;
+  prLineId: string | null;
   itemId: string;
+  quantity?: number;
+  uomId?: string;
+  uomSymbol?: string;
   unitPrice: number;
   leadTimeDays?: number;
   isSelected?: boolean;
@@ -107,6 +110,10 @@ export type ComparisonLine = {
 };
 export type SpoLineRecord = {
   id: string;
+  prLineId?: string | null;
+  supplierQuotationLineId?: string | null;
+  uomId?: string;
+  uomSymbol?: string;
   itemId: string;
   itemCode?: string;
   itemName?: string;
@@ -139,8 +146,9 @@ export type SpoRecord = {
 };
 export type GrnLineRecord = {
   id: string;
-  spoLineId?: string;
+  spoLineId?: string | null;
   itemId: string;
+  uomId?: string;
   itemCode?: string;
   itemName?: string;
   receivedQty: number;

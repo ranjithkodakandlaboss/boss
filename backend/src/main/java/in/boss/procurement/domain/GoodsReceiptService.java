@@ -100,7 +100,7 @@ public class GoodsReceiptService {
         }
         GrnResponse header = headers.get(0);
         List<GrnLineResponse> lines = jdbc.query("""
-                SELECT l.id, l.spo_line_id, l.item_id, i.code, i.name, l.received_qty,
+                SELECT l.id, l.spo_line_id, l.item_id, l.uom_id, i.code, i.name, l.received_qty,
                        l.accepted_qty, l.rejected_qty, u.symbol, l.lot_number, l.store_id, st.name AS store_name
                 FROM grn_lines l
                 JOIN items i ON i.id = l.item_id AND i.tenant_id = l.tenant_id
@@ -142,7 +142,8 @@ public class GoodsReceiptService {
                     lotQuantities,
                     rs.getString("lot_number"),
                     rs.getObject("store_id", UUID.class),
-                    rs.getString("store_name"));
+                    rs.getString("store_name"),
+                    rs.getObject("uom_id", UUID.class));
         }, context.tenantId(), grnId);
         return new GrnResponse(header.id(), header.grnNumber(), header.spoId(), header.spoNumber(),
                 header.supplierId(), header.supplierName(), header.siteId(), header.status(),
