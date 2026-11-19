@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { ArrowLeft, PackageOpen } from "lucide-react";
+import { ArrowLeft, Layers, PackageOpen } from "lucide-react";
 import { api } from "../auth/api";
 import { useCustomer } from "../auth/CustomerState";
 import ConfirmDialog from "../components/shared/ConfirmDialog";
@@ -28,6 +28,8 @@ export default function ItemDetail() {
   const [reactivateConfirm, setReactivateConfirm] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  type BomLine = { componentItemId?: string; componentItemCode?: string; componentItemName?: string; qty?: number | string; uomSymbol?: string; scrapFactor?: number | string };
+  const [itemBom, setItemBom] = useState<{ id: string; itemId?: string; version?: number | string; status?: string; lines?: BomLine[] } | null | undefined>(undefined);
 
   function load() {
     setLoading(true);
@@ -37,12 +39,15 @@ export default function ItemDetail() {
       loadLots(`itemId=${id}`),
       loadJobs(),
       loadReservations(),
-    ]).then(([next, stock, itemLots, jobPage, reserved]) => {
+      api<Array<{ id: string; itemId?: string; version?: number | string; status?: string; lines?: BomLine[] }>>("/api/v1/boms").catch(() => []),
+    ]).then(([next, stock, itemLots, jobPage, reserved, boms]) => {
       setItem(next);
       setPositions(stock);
       setLots(itemLots);
       setJobs(jobPage);
       setReservations(reserved.filter((row) => row.itemId === id));
+      const matched = Array.isArray(boms) ? boms.find((b) => b.itemId === id) : undefined;
+      setItemBom(matched ?? null);
     }).catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "Inventory item not found."))
       .finally(() => setLoading(false));
   }
@@ -133,10 +138,42 @@ export default function ItemDetail() {
 
       {item.itemType === "FINISHED_GOOD" && <section className="rounded-xl border p-4" style={{ borderColor: "var(--border)" }}>
         <h2 className="text-sm font-bold">Product specifications</h2>
-        <p className="mt-1 text-xs text-[var(--text-2)]">Product kind: {item.productKind ? item.productKind.toLowerCase() : "Not specified"}. Configuration is fixed at creation; sales and BOM integration is not yet available.</p>
+        <p className="mt-1 text-xs text-[var(--text-2)]">Product kind: {item.productKind ? item.productKind.toLowerCase() : "Not specified"}.</p>
         {(item.specifications ?? []).length === 0 ? <p className="mt-2 text-xs">No specifications configured.</p> : <ul className="mt-2 space-y-1">
           {item.specifications?.map((spec) => <li key={spec.key} className="text-xs"><strong>{spec.label}</strong> ({spec.key}) · {spec.uomSymbol || spec.uomId} · min {spec.minValue ?? "—"} · max {spec.maxValue ?? "—"} · standard {spec.defaultValue ?? "—"}</li>)}
         </ul>}
+      </section>}
+
+      {item.itemType === "FINISHED_GOOD" && <section className="rounded-xl border p-4" style={{ borderColor: "var(--border)" }}>
+        <div className="flex items-center justify-between mb-2">
+          <h2 className="text-sm font-bold flex items-center gap-2"><Layers size={15} className="text-[var(--brand)]" /> Bill of Materials</h2>
+          <Link to="/bom" className="text-xs font-semibold text-[var(--brand)]">{itemBom ? "Open BOM →" : "Configure BOM →"}</Link>
+        </div>
+        {itemBom === undefined && <p className="text-xs text-[var(--text-3)]">Loading…</p>}
+        {itemBom === null && <p className="text-xs text-[var(--text-2)]">No BOM configured for this product. <Link to="/bom" className="font-semibold text-[var(--brand)]">Create one in Bill of Materials.</Link></p>}
+        {itemBom && (<>
+          <div className="grid grid-cols-3 gap-3 mt-1 mb-3">
+            <Fact label="Version" value={String(itemBom.version ?? "1")} />
+            <Fact label="Status" value={itemBom.status ?? "—"} />
+            <Fact label="Components" value={String((itemBom.lines ?? []).length)} />
+          </div>
+          {(itemBom.lines ?? []).length > 0 && (
+            <table className="w-full text-xs">
+              <thead><tr className="border-b" style={{ borderColor: "var(--border)" }}>{["Code", "Material", "Qty / Unit", "UOM", "Scrap %"].map((h) => <th key={h} className="px-2 py-1 text-left font-medium text-[var(--text-3)]">{h}</th>)}</tr></thead>
+              <tbody>
+                {(itemBom.lines ?? []).map((line, i) => (
+                  <tr key={line.componentItemId ?? i} className="border-b last:border-0" style={{ borderColor: "var(--border)" }}>
+                    <td className="px-2 py-1 font-mono">{line.componentItemCode ?? "—"}</td>
+                    <td className="px-2 py-1">{line.componentItemName ?? "—"}</td>
+                    <td className="px-2 py-1 font-mono">{line.qty ?? "—"}</td>
+                    <td className="px-2 py-1">{line.uomSymbol ?? "—"}</td>
+                    <td className="px-2 py-1">{line.scrapFactor != null && Number(line.scrapFactor) > 0 ? `${Number(line.scrapFactor) * 100}%` : "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </>)}
       </section>}
 
       <section className="overflow-hidden rounded-xl border" style={{ borderColor: "var(--border)" }}>

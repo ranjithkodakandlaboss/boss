@@ -206,6 +206,38 @@ export type Cpo = {
 export type ItemOption = { id: string; code: string; name: string; uomId: string; uomSymbol?: string; gstRate?: number };
 export type UomOption = { id: string; symbol: string; name: string };
 
+export type CpoMaterialAvailabilityLine = {
+  itemId: string;
+  itemCode?: string;
+  itemName?: string;
+  uomId?: string;
+  uomSymbol?: string;
+  requiredQty: number;
+  eligibleStockQty: number;
+  reservedQty: number;
+  availableQty: number;
+  shortageQty: number;
+};
+export type CpoMaterialAvailability = {
+  cpoId: string;
+  siteId?: string;
+  basis?: string;
+  limitations?: string[];
+  materials: CpoMaterialAvailabilityLine[];
+};
+export type CpoFeasibilityMaterial = {
+  itemId: string;
+  storeId?: string;
+  requested: number;
+  reserved: number;
+  shortfall: number;
+};
+export type CpoFeasibilityResponse = {
+  cpoId: string;
+  feasible: boolean;
+  materials: CpoFeasibilityMaterial[];
+};
+
 export function createUom(body: { name: string; symbol: string; uomType?: string; isBase?: boolean }) {
   return api<UomOption>("/api/v1/uoms", {
     method: "POST",
@@ -335,6 +367,12 @@ export const salesApi = {
     body: JSON.stringify({ status }),
   }),
   history: (entityType: string, entityId: string) => api<AuditEntry[]>(`/api/v1/sales/history?entityType=${entityType}&entityId=${entityId}`),
+  cpoMaterialAvailability: (id: string) => api<CpoMaterialAvailability>(`/api/v1/cpos/${id}/material-availability`),
+  cpoFeasibility: (id: string) => api<CpoFeasibilityResponse>(`/api/v1/cpos/${id}/feasibility`, {
+    method: "POST",
+    headers: { "Idempotency-Key": key() },
+    body: JSON.stringify({}),
+  }),
 };
 
 export function inr(value?: number) {

@@ -97,7 +97,16 @@ export function ItemForm({ item, onClose, onSaved }: { item?: Item; onClose: () 
   const [uomId, setUomId] = useState(item?.uomId ?? "");
   const [reorderPoint, setReorderPoint] = useState(item?.reorderPoint == null ? "" : String(item.reorderPoint));
   const [productKind, setProductKind] = useState((item as { productKind?: string })?.productKind ?? "");
-  const [specifications, setSpecifications] = useState<SpecificationDraft[]>([]);
+  const [specifications, setSpecifications] = useState<SpecificationDraft[]>(
+    (item?.specifications ?? []).map((s) => ({
+      key: s.key,
+      label: s.label,
+      uomId: s.uomId ?? "",
+      minValue: s.minValue == null ? "" : String(s.minValue),
+      maxValue: s.maxValue == null ? "" : String(s.maxValue),
+      defaultValue: s.defaultValue == null ? "" : String(s.defaultValue),
+    }))
+  );
   const [error, setError] = useState("");
   const [categoryError, setCategoryError] = useState("");
   const [uomError, setUomError] = useState("");
@@ -135,6 +144,10 @@ export function ItemForm({ item, onClose, onSaved }: { item?: Item; onClose: () 
           categoryId: categoryId || null,
           categoryLabel: category ? categoryName(category) : undefined,
           reorderPoint: reorderPoint === "" ? null : Number(reorderPoint),
+          ...(item.itemType === "FINISHED_GOOD" ? {
+            productKind: productKind || null,
+            specifications: specs.map((s) => ({ key: s.key.trim(), label: s.label.trim(), uomId: s.uomId || null, minValue: s.minValue === "" ? null : Number(s.minValue), maxValue: s.maxValue === "" ? null : Number(s.maxValue), defaultValue: s.defaultValue === "" ? null : Number(s.defaultValue) })),
+          } : {}),
         })
         : await mutate<Item>("/api/v1/items", "POST", {
           code: code.trim(),
@@ -196,8 +209,8 @@ export function ItemForm({ item, onClose, onSaved }: { item?: Item; onClose: () 
         </label>
         <div className="text-xs">
           <span className="block text-[11px] font-mono uppercase text-[var(--text-3)] mb-1">Unit of Measure *</span>
-          <CreatableSelect label="unit of measure" ariaLabel="Unit of measure" value={uomId} onChange={setUomId} disabled={!!item} error={uomError} onRetry={loadReferences} creatable={canCreateReference && !item} options={uoms.map((uom) => ({ id: uom.id, label: `${uom.symbol} · ${uom.name}` }))} fields={[{ name: "name", label: "Name", required: true }, { name: "symbol", label: "Symbol", required: true }]} unique={(values) => uoms.some((uom) => uom.symbol.toLowerCase() === values.symbol.toLowerCase()) ? "This value already exists." : null} onCreate={async (values) => {
-            const created = await mutate<Uom>("/api/v1/uoms", "POST", { name: values.name, symbol: values.symbol, uomType: "quantity" });
+          <CreatableSelect label="unit of measure" ariaLabel="Unit of measure" value={uomId} onChange={setUomId} disabled={!!item} error={uomError} onRetry={loadReferences} creatable={canCreateReference && !item} options={uoms.map((uom) => ({ id: uom.id, label: `${uom.symbol} · ${uom.name}` }))} fields={[{ name: "name", label: "Name", required: true }, { name: "symbol", label: "Symbol", required: true }, { name: "uomType", label: "Type (quantity / weight / volume / length / area / time)", options: [{ id: "quantity", label: "Quantity" }, { id: "weight", label: "Weight" }, { id: "volume", label: "Volume" }, { id: "length", label: "Length" }, { id: "area", label: "Area" }, { id: "time", label: "Time" }, { id: "energy", label: "Energy" }, { id: "other", label: "Other" }], required: true }]} unique={(values) => uoms.some((uom) => uom.symbol.toLowerCase() === values.symbol.toLowerCase()) ? "This value already exists." : null} onCreate={async (values) => {
+            const created = await mutate<Uom>("/api/v1/uoms", "POST", { name: values.name, symbol: values.symbol, uomType: values.uomType || "quantity" });
             setUoms((current) => [...current.filter((uom) => uom.id !== created.id), created]);
             return { id: created.id, label: `${created.symbol} · ${created.name}` };
           }} />
@@ -225,7 +238,7 @@ export function ItemForm({ item, onClose, onSaved }: { item?: Item; onClose: () 
           </select>
         </label>
       </div>
-      {!item && itemType === "FINISHED_GOOD" && (
+      {((!item && itemType === "FINISHED_GOOD") || (item && item.itemType === "FINISHED_GOOD")) && (
         <fieldset className="mt-3 rounded-lg border p-3 text-xs" style={{ borderColor: "var(--border)" }}>
           <legend className="px-1 font-semibold">Product kind &amp; specifications</legend>
           <label className="mt-2 block">

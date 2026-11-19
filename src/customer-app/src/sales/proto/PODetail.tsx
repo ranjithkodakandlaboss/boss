@@ -12,7 +12,7 @@ import WorkflowTimeline from './workflow/WorkflowTimeline';
 import RelatedRecordsPanel from './workflow/RelatedRecordsPanel';
 import RecordHistoryPanel from './workflow/RecordHistoryPanel';
 import { useReturnNavigation } from './useReturnNavigation';
-import { assessOrderMaterialRequirements } from './stubs';
+import { salesApi, type CpoMaterialAvailability } from '../api';
 import OrderJourneyCard, { type JourneyStep } from './workflow/OrderJourneyCard';
 
 type DetailTab = 'overview' | 'lines' | 'amendments' | 'jobs' | 'documents' | 'history';
@@ -29,8 +29,10 @@ export default function PODetail() {
   } = useStore();
   const { goBack, originUrl } = useReturnNavigation('/sales?tab=pos');
   const [allocResultMsg, setAllocResultMsg] = useState<{ status: string; message: string; prId?: string; prNumber?: string } | null>(null);
-  const [lineDecisions, setLineDecisions] = useState<Record<string, { availability: string; shortageQty: string }>>({});
   const [availabilityOverride, setAvailabilityOverride] = useState<string | null>(null);
+  const [bomAvailability, setBomAvailability] = useState<CpoMaterialAvailability | null>(null);
+  const [availabilityLoading, setAvailabilityLoading] = useState(false);
+  const [availabilityError, setAvailabilityError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<DetailTab>('overview');
   const [searchParams] = useSearchParams();
 
@@ -68,67 +70,7 @@ export default function PODetail() {
   const linkedInvoices = invoices.filter(i => i.poId === po.id && i.status !== 'void' && i.status !== 'cancelled');
   const linkedPaymentIds = new Set(paymentAllocations.filter(a => linkedInvoices.some(i => i.id === a.invoiceId)).map(a => a.paymentId));
   const linkedPayments = payments.filter(p => linkedPaymentIds.has(p.id) && p.status !== 'reversed');
-  const [checkSiteId, setCheckSiteId] = useState(po.deliverToSiteId ?? sites[0]?.id ?? 'hyd');
-  const effectiveReqInputs = useMemo(() => {
-    if (linkedReqs.length > 0) {
-      return linkedReqs.map(r => {
-        const mat = materials.find(m => m.id === r.materialItemId);
-        return {
-          materialItemId: r.materialItemId,
-          materialCode: mat?.itemCode,
-          materialName: r.materialName,
-          grade: mat?.standardGrade,
-          requiredQty: r.requiredQty,
-          alreadyReservedQty: r.reservedQty || 0,
-          uom: r.uom,
-        };
-      });
-    }
-    return actualLines
-      .map(l => {
-        const mat = materials.find(m =>
-          l.description.toLowerCase().includes(m.name.toLowerCase())
-          || (l.description.toLowerCase().includes('pipe') && m.id === 'mat-msp')
-          || (l.description.toLowerCase().includes('8mm') && m.id === 'mat-ms8')
-          || (l.description.toLowerCase().includes('12mm') && m.id === 'mat-ms12')
-          || (l.description.toLowerCase().includes('304l') && m.id === 'mat-ss3')
-        );
-        return mat ? {
-          materialItemId: mat.id,
-          materialCode: mat.itemCode,
-          materialName: mat.name,
-          grade: mat.standardGrade,
-          requiredQty: l.orderedQty,
-          uom: l.uom || mat.primaryUom,
-        } : null;
-      })
-      .filter((x): x is NonNullable<typeof x> => Boolean(x));
-  }, [linkedReqs, actualLines, materials]);
-
-  const liveAvailability = useMemo(
-    () =>
-      effectiveReqInputs.length > 0
-        ? assessOrderMaterialRequirements({
-            requirements: effectiveReqInputs,
-            assignedSiteId: checkSiteId,
-            lots,
-            storeLocations,
-            sites,
-            supplierPos,
-            supplierPoLines,
-          })
-        : null,
-    [effectiveReqInputs, checkSiteId, lots, storeLocations, sites, supplierPos, supplierPoLines],
-  );
-  const prQuantityDrift = useMemo(() => {
-    if (!liveAvailability || linkedShortagePrs.length === 0) return null;
-    const totalShortageNow = liveAvailability.items.reduce((s, i) => s + i.shortageQty, 0);
-    const totalPrQty = linkedShortagePrs.reduce((s, pr) => s + (pr.lines?.reduce((ls, l) => ls + l.requiredQty, 0) ?? pr.totalQty ?? 0), 0);
-    if (totalShortageNow > totalPrQty) {
-      return `Additional shortage detected (${totalShortageNow} vs ${totalPrQty} raised in PR). Re-run availability check or amend PR.`;
-    }
-    return null;
-  }, [liveAvailability, linkedShortagePrs]);
+  const [checkSiteId, setCheckSiteId] = useState(po.deliverToSiteId ?? sites[0]?.id ?? '');
   const canEdit = ['owner', 'sales'].includes(currentUser.role);
   const canApprove = currentUser.role === 'owner';
   const returnTo = searchParams.get('from') || '/sales?tab=pos';
@@ -425,7 +367,7 @@ export default function PODetail() {
                 {(availabilityOverride || po.availabilityStatus) && <StatusChip status={availabilityOverride || po.availabilityStatus} size="sm" />}
               </h3>
               <p className="text-xs text-[var(--text-3)] mt-0.5">
-                Inventory stock is not connected. Confirm whether each required material is available. A Purchase Requisition is created only for quantities you mark unavailable.
+                Preview BOM-derived material requirements against current inventory. Confirm to reserve available stock and raise a Purchase Requisition for shortages.
               </p>
             </div>
             <div className="flex items-center gap-2">
@@ -454,16 +396,30 @@ export default function PODetail() {
               </AddIfEmpty>
               <button
                 type="button"
+                disabled={availabilityLoading}
                 onClick={async () => {
-                  const sourceLines = actualLines.filter((line) => line.itemId);
-                  const decisions = sourceLines.map((line) => ({
-                    lineId: line.id,
-                    availability: lineDecisions[line.id]?.availability,
-                    shortageQty: Number(lineDecisions[line.id]?.shortageQty),
-                  }));
-                  const res = await assessAndAllocateCustomerPO(po.id, currentUser.name, { siteId: checkSiteId, decisions });
+                  setAvailabilityError(null);
+                  setBomAvailability(null);
+                  setAvailabilityLoading(true);
+                  try {
+                    const result = await salesApi.cpoMaterialAvailability(po.id);
+                    setBomAvailability(result);
+                  } catch (err) {
+                    setAvailabilityError(err instanceof Error ? err.message : 'Could not load material requirements.');
+                  } finally {
+                    setAvailabilityLoading(false);
+                  }
+                }}
+                className="btn-secondary text-xs inline-flex items-center gap-1.5"
+              >
+                <Layers size={13} /> {availabilityLoading ? 'Loading…' : 'Preview Material Requirements'}
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  const res = await assessAndAllocateCustomerPO(po.id, currentUser.name, { siteId: checkSiteId });
                   if ('error' in res) {
-                    showToast({ type: 'error', title: 'Purchase requisition was not created', body: res.error });
+                    showToast({ type: 'error', title: 'Availability check failed', body: res.error });
                   } else {
                     setAvailabilityOverride(res.status);
                     setAllocResultMsg({
@@ -472,15 +428,22 @@ export default function PODetail() {
                       prId: res.createdPr?.id,
                       prNumber: res.createdPr?.prNumber,
                     });
-                    showToast({ type: 'success', title: 'Material check recorded', body: res.message });
+                    showToast({ type: 'success', title: 'Material availability confirmed', body: res.message });
+                    await reload();
                   }
                 }}
                 className="btn-primary text-xs inline-flex items-center gap-1.5"
               >
-                <Factory size={13} /> Confirm material availability
+                <Factory size={13} /> Confirm & Reserve
               </button>
             </div>
           </div>
+
+          {availabilityError && (
+            <div className="p-3 rounded-lg border border-[var(--error)] text-xs text-[var(--error)]">
+              {availabilityError}
+            </div>
+          )}
 
           {allocResultMsg && (
             <div className="p-3 rounded-lg border border-blue-200 bg-blue-50/70 text-xs flex flex-wrap items-center justify-between gap-2">
@@ -497,113 +460,54 @@ export default function PODetail() {
             </div>
           )}
 
-          {actualLines.some((line) => line.itemId) && (
+          {bomAvailability && bomAvailability.materials.length > 0 && (
             <div className="overflow-x-auto border border-[var(--border)] rounded-lg">
+              {bomAvailability.limitations && bomAvailability.limitations.length > 0 && (
+                <div className="px-3 py-2 bg-amber-50/60 border-b border-amber-200 text-xs text-amber-800">
+                  Note: {bomAvailability.limitations.join(' ')}
+                </div>
+              )}
               <table className="eoss-table">
                 <thead>
                   <tr>
-                    <th>Required Material</th>
-                    <th className="text-right">Req. Qty</th>
-                    <th>Availability</th>
-                    <th className="text-right">Unavailable Qty</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {actualLines.filter((line) => line.itemId).map((line) => {
-                    const decision = lineDecisions[line.id] ?? { availability: '', shortageQty: '' };
-                    return (
-                      <tr key={line.id}>
-                        <td>
-                          <div className="font-medium text-xs text-[var(--text)]">{line.itemName || line.description}</div>
-                          <div className="text-[11px] font-mono text-[var(--text-3)]">{line.itemCode || line.drawingNumber}</div>
-                        </td>
-                        <td className="text-right font-mono text-xs">{line.orderedQty} {line.uom}</td>
-                        <td>
-                          <select
-                            aria-label={`Availability for ${line.description}`}
-                            className="eoss-input text-xs py-1"
-                            value={decision.availability}
-                            onChange={(event) => setLineDecisions((current) => ({ ...current, [line.id]: { ...decision, availability: event.target.value } }))}
-                          >
-                            <option value="">Select…</option>
-                            <option value="available">Available</option>
-                            <option value="partial">Partial</option>
-                            <option value="unavailable">Unavailable</option>
-                          </select>
-                        </td>
-                        <td className="text-right">
-                          {decision.availability === 'partial' ? (
-                            <input
-                              aria-label={`Unavailable quantity for ${line.description}`}
-                              className="eoss-input w-24 text-xs text-right"
-                              type="number"
-                              min="0"
-                              step="any"
-                              value={decision.shortageQty}
-                              onChange={(event) => setLineDecisions((current) => ({ ...current, [line.id]: { ...decision, shortageQty: event.target.value } }))}
-                            />
-                          ) : decision.availability === 'unavailable' ? <span className="font-mono text-xs">{line.orderedQty}</span> : '—'}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-
-          {(!availabilityOverride && (!po.availabilityStatus || po.availabilityStatus === 'not_assessed')) && !allocResultMsg && (
-            <div className="p-3 rounded-lg border border-[var(--border)] bg-[var(--surface-2)] text-xs text-[var(--text-2)]">
-              Status: <strong>Not assessed</strong> — mark each line and confirm. A purchase requisition is created only for unavailable quantities.
-            </div>
-          )}
-
-          {liveAvailability && liveAvailability.items.length > 0 && po.availabilityStatus && po.availabilityStatus !== 'not_assessed' && (
-            <div className="overflow-x-auto border border-[var(--border)] rounded-lg">
-              <table className="eoss-table">
-                <thead>
-                  <tr>
-                    <th>Required Material</th>
-                    <th className="text-right">Req. Qty</th>
+                    <th>Material (from BOM)</th>
+                    <th className="text-right">Required</th>
+                    <th className="text-right">On Hand</th>
                     <th className="text-right">Reserved</th>
-                    <th className="text-right">Eligible Stock</th>
-                    <th className="text-right">QC Hold / In Transit</th>
+                    <th className="text-right">Available</th>
                     <th className="text-right">Shortage</th>
-                    <th>Outcome</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {liveAvailability.items.map(item => {
-                    const poReserved = linkedReqs.find(r => r.materialItemId === item.materialItemId)?.reservedQty
-                      ?? item.reservedQty;
-                    return (
-                    <tr key={item.materialItemId}>
+                  {bomAvailability.materials.map(mat => (
+                    <tr key={mat.itemId} className={mat.shortageQty > 0 ? 'bg-red-50/40' : ''}>
                       <td>
-                        <div className="font-medium text-xs text-[var(--text)]">{item.materialName}</div>
-                        <div className="text-[11px] font-mono text-[var(--text-3)]">{item.materialCode ?? 'ITEM'}</div>
+                        <div className="font-medium text-xs text-[var(--text)]">{mat.itemName}</div>
+                        <div className="text-[11px] font-mono text-[var(--text-3)]">{mat.itemCode}</div>
                       </td>
-                      <td className="text-right font-mono text-xs">{item.requiredQty} {item.uom}</td>
-                      <td className="text-right font-mono text-xs">{poReserved}</td>
-                      <td className="text-right font-mono text-xs font-semibold">{item.eligibleAvailableQty}</td>
-                      <td className="text-right font-mono text-xs text-[var(--text-3)]">{item.qcHoldQty} / {item.incomingQty}</td>
-                      <td className="text-right font-mono text-xs font-semibold text-amber-700">{item.shortageQty}</td>
-                      <td>
-                        <StatusChip
-                          status={item.outcome === 'available' ? 'ready' : item.outcome === 'partial' ? 'partial' : 'blocked'}
-                          size="sm"
-                        />
+                      <td className="text-right font-mono text-xs">{mat.requiredQty} {mat.uomSymbol}</td>
+                      <td className="text-right font-mono text-xs">{mat.eligibleStockQty}</td>
+                      <td className="text-right font-mono text-xs">{mat.reservedQty}</td>
+                      <td className="text-right font-mono text-xs font-semibold">{mat.availableQty}</td>
+                      <td className="text-right font-mono text-xs font-semibold" style={{ color: mat.shortageQty > 0 ? 'var(--error)' : 'inherit' }}>
+                        {mat.shortageQty > 0 ? mat.shortageQty : '—'}
                       </td>
                     </tr>
-                    );
-                  })}
+                  ))}
                 </tbody>
               </table>
             </div>
           )}
 
-          {prQuantityDrift && (
-            <div className="p-3 rounded-lg border border-amber-300 bg-amber-50/70 text-xs text-amber-900 font-medium">
-              ⚠ Reconciliation Required: {prQuantityDrift}
+          {bomAvailability && bomAvailability.materials.length === 0 && (
+            <div className="p-3 rounded-lg border border-[var(--border)] bg-[var(--surface-2)] text-xs text-[var(--text-2)]">
+              No material requirements found — ensure the product has an approved BOM.
+            </div>
+          )}
+
+          {(!bomAvailability && !availabilityLoading && (!po.availabilityStatus || po.availabilityStatus === 'not_assessed')) && !allocResultMsg && (
+            <div className="p-3 rounded-lg border border-[var(--border)] bg-[var(--surface-2)] text-xs text-[var(--text-2)]">
+              Status: <strong>Not assessed</strong> — click Preview to see BOM-derived material requirements, then Confirm &amp; Reserve to allocate stock and raise shortfall PRs.
             </div>
           )}
 

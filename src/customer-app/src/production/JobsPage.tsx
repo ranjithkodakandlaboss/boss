@@ -277,8 +277,9 @@ function NewJob({ onClose, onCreated }: { onClose: () => void; onCreated: (job: 
 
   useEffect(() => { loadLines(); }, []);
   useEffect(() => {
-    if (!line) { setTemplates([]); return; }
+    if (!line) { setTemplates([]); setTemplateId(""); return; }
     setQuantity(String(line.remainingQty ?? line.qty ?? ""));
+    setTemplateId("");
     loadTemplates(line.itemId);
   }, [line]);
 

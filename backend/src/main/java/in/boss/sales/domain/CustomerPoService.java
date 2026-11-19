@@ -162,11 +162,13 @@ public class CustomerPoService {
     public FeasibilityResponse checkFeasibility(UUID cpoId) {
         UUID tenantId = requireContext().tenantId();
         String current = lockStatus(tenantId, cpoId);
-        if (!"open".equals(current)) {
-            throw conflict("Feasibility can only be run for an open Customer PO");
+        if (!Set.of("open", "partial", "feasibility_pending").contains(current)) {
+            throw conflict("Feasibility can only be run for an open or pending Customer PO");
         }
 
-        transitionStatus(cpoId, "feasibility_pending", false);
+        if ("open".equals(current) || "partial".equals(current)) {
+            transitionStatus(cpoId, "feasibility_pending", false);
+        }
         FeasibilityResponse feasibility = inventoryService.checkAndReserveForCustomerPo(cpoId);
         if (feasibility.feasible()) {
             transitionStatus(cpoId, "feasibility_approved", false);
@@ -186,6 +188,8 @@ public class CustomerPoService {
                 || ("open".equals(current) && "on_hold".equals(nextStatus))
                 || ("on_hold".equals(current) && "open".equals(nextStatus))
                 || ("open".equals(current) && "feasibility_pending".equals(nextStatus))
+                || ("partial".equals(current) && "feasibility_pending".equals(nextStatus))
+                || ("feasibility_pending".equals(current) && "feasibility_pending".equals(nextStatus))
                 || ("feasibility_pending".equals(current) && "feasibility_approved".equals(nextStatus));
         if (!allowed) {
             throw conflict("Invalid Customer PO status transition: " + current + " -> " + nextStatus);

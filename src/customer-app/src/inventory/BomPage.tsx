@@ -197,7 +197,7 @@ function BomCalculator({ bom }: { bom: Bom }) {
 }
 
 function BomForm({ items, uoms, onClose, onSaved }: { items: Item[]; uoms: Uom[]; onClose: () => void; onSaved: () => void }) {
-  const finished = items.filter((item) => item.itemType === "finished_good" || item.itemType === "sub_assembly" || item.itemType === "finished");
+  const finished = items.filter((item) => item.itemType === "finished_goods" || item.itemType === "semi_finished");
   const parents = finished.length > 0 ? finished : items;
   const [itemId, setItemId] = useState("");
   const [lines, setLines] = useState<BomLine[]>([{ componentItemId: "", qty: "", uomId: uoms[0]?.id ?? "", scrapFactor: 0 }]);
@@ -258,7 +258,7 @@ function BomForm({ items, uoms, onClose, onSaved }: { items: Item[]; uoms: Uom[]
             <div key={index} className="grid gap-2 md:grid-cols-5">
               <select aria-label={`Component ${index + 1}`} className="eoss-input" value={line.componentItemId} onChange={(event) => update(index, { componentItemId: event.target.value })}>
                 <option value="">Component</option>
-                {items.filter((item) => item.id !== itemId).map((item) => <option key={item.id} value={item.id}>{item.code} — {item.name}</option>)}
+                {items.filter((item) => item.id !== itemId && item.itemType !== "finished_goods" && item.itemType !== "service").map((item) => <option key={item.id} value={item.id}>{item.code} — {item.name}</option>)}
               </select>
               <input aria-label={`Quantity ${index + 1}`} className="eoss-input text-left" inputMode="decimal" value={line.qty} onChange={(event) => update(index, { qty: event.target.value })} placeholder="Fixed qty (or default)" />
               <select aria-label={`Unit ${index + 1}`} className="eoss-input" value={line.uomId} onChange={(event) => update(index, { uomId: event.target.value })}>

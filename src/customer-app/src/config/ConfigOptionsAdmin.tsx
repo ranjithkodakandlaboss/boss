@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { Link } from "react-router-dom";
 import { ArrowDown, ArrowUp, LockKeyhole, Pencil, Plus, RotateCcw } from "lucide-react";
 import { ApiError } from "../auth/api";
 import { useCustomer } from "../auth/CustomerState";
@@ -182,10 +181,6 @@ export default function ConfigOptionsAdmin() {
         <p className="mt-1 text-sm text-[var(--text-2)]">
           Manage tenant reference values used by operational workflows. System-managed values stay protected; tenant-managed values can be deactivated when safe.
         </p>
-        <div className="mt-3 flex flex-wrap gap-2">
-          <Link className="btn-ghost inline-flex items-center rounded-lg px-3 py-2 text-sm" to="/products">Product &amp; Material Master</Link>
-          <Link className="btn-ghost inline-flex items-center rounded-lg px-3 py-2 text-sm" to="/bom">Bill of Materials</Link>
-        </div>
       </div>
 
       {categoryError ? (
