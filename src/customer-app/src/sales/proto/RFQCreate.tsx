@@ -44,7 +44,8 @@ function newLine(n: number): RFQLine {
 export default function RFQCreate() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { addRfq, addCustomer, currentUser, customers: CUSTOMERS, catalog, uoms, reload, rfqs } = useStore();
+  const { addRfq, addCustomer, currentUser, customers: ALL_CUSTOMERS, catalog, uoms, reload, rfqs } = useStore();
+  const CUSTOMERS = ALL_CUSTOMERS.filter(c => c.status === 'active');
   const [itemDraft, setItemDraft] = useState({ code: '', name: '', uomId: '' });
   const [itemError, setItemError] = useState('');
   const [savingItem, setSavingItem] = useState(false);

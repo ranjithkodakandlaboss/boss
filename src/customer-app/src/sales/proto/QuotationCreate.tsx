@@ -70,6 +70,8 @@ export default function QuotationCreate() {
   const [notes, setNotes] = useState('');
   const [costingConfig, setCostingConfig] = useState<QuotationCostingConfig>();
   const [costConfigMessage, setCostConfigMessage] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [formError, setFormError] = useState('');
   const [lines, setLines] = useState<QLine[]>(
     rfqLines.length > 0 ? rfqLines.map((l, i) => newLine(i + 1, l)) : [newLine(1)]
   );
@@ -109,7 +111,11 @@ export default function QuotationCreate() {
       : line));
   };
 
+  const activeCustomers = customers.filter(c => c.status === 'active');
+
   const handleSubmit = async () => {
+    if (saving) return;
+    setFormError('');
     const quotation: CustomerQuotation = {
       id: '',
       quotationNumber: '',
@@ -153,8 +159,16 @@ export default function QuotationCreate() {
       specificationValues: l.specificationValues,
     }));
 
-    const saved = isDirect ? await createDirectQuotation(quotation, qLines) : await addQuotation(quotation, qLines);
-    if (saved) navigate(`/sales/quotation/${saved.id}`, { state: { from: rfq ? `/sales/rfq/${rfq.id}` : '/sales?tab=rfqs' } });
+    setSaving(true);
+    try {
+      const saved = isDirect ? await createDirectQuotation(quotation, qLines) : await addQuotation(quotation, qLines);
+      if (saved) navigate(`/sales/quotation/${saved.id}`, { state: { from: rfq ? `/sales/rfq/${rfq.id}` : '/sales?tab=rfqs' } });
+      else setFormError('Quotation could not be saved. Please try again.');
+    } catch (err: unknown) {
+      setFormError(err instanceof Error ? err.message : 'Quotation could not be saved.');
+    } finally {
+      setSaving(false);
+    }
   };
 
   const backTarget = rfqId ? `/sales/rfq/${rfqId}` : '/sales?tab=rfqs';
@@ -200,7 +214,7 @@ export default function QuotationCreate() {
                   >
                     <select value={customerId} onChange={e => setCustomerId(e.target.value)} className="eoss-input">
                       <option value="">Select Customer</option>
-                      {customers.map(c => (
+                      {activeCustomers.map(c => (
                         <option key={c.id} value={c.id}>{c.tradingName || c.legalName || 'Customer'}</option>
                       ))}
                     </select>
@@ -381,18 +395,24 @@ export default function QuotationCreate() {
         </div>
       </div>
 
-      <div className="flex-shrink-0 px-6 py-4 border-t flex items-center justify-between" style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}>
-        <button onClick={() => navigate(backTarget)} className="px-4 py-2 rounded-lg text-sm border" style={{ borderColor: 'var(--border)', color: 'var(--text-2)' }}>
-          Cancel
-        </button>
-        <button
-          onClick={handleSubmit}
-          disabled={lines.some(l => !l.itemId || !l.drawingNumber || !l.productName) || (isDirect && !directCustomer)}
-          className="flex items-center gap-1.5 px-5 py-2 rounded-lg text-sm font-semibold text-white disabled:opacity-40"
-          style={{ background: 'var(--brand-fill)' }}
-        >
-          <Check size={15} /> Save Quotation
-        </button>
+      <div className="flex-shrink-0 px-6 py-4 border-t" style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}>
+        {lines.some(l => l.unitPrice === 0 || l.unitPrice === undefined) && (
+          <p className="text-xs text-amber-600 mb-2">One or more lines have no unit price — the quotation total will be ₹0.</p>
+        )}
+        {formError && <p className="text-sm text-[var(--error)] mb-2">{formError}</p>}
+        <div className="flex items-center justify-between gap-3">
+          <button onClick={() => navigate(backTarget)} className="px-4 py-2 rounded-lg text-sm border" style={{ borderColor: 'var(--border)', color: 'var(--text-2)' }}>
+            Cancel
+          </button>
+          <button
+            onClick={handleSubmit}
+            disabled={saving || lines.some(l => !l.itemId || !l.productName) || (isDirect && !directCustomer)}
+            className="flex items-center gap-1.5 px-5 py-2 rounded-lg text-sm font-semibold text-white disabled:opacity-40"
+            style={{ background: 'var(--brand-fill)' }}
+          >
+            <Check size={15} /> {saving ? 'Saving…' : 'Save Quotation'}
+          </button>
+        </div>
       </div>
     </div>
   );

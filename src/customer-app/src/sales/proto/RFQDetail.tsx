@@ -90,7 +90,7 @@ export default function RFQDetail() {
               </p>
             </div>
           </div>
-          <div className="flex items-center gap-2 flex-shrink-0">
+          <div className="flex items-center gap-2 flex-wrap justify-end">
             {['owner', 'sales'].includes(currentUser.role) && (
               <button onClick={() => navigate(`/sales/rfq/new?copyFrom=${rfq.id}`)} className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-semibold border" style={{ borderColor: 'var(--border)', color: 'var(--text-2)' }}>Copy RFQ</button>
             )}

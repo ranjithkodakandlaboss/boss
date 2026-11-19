@@ -27,9 +27,10 @@ export default function CustomerPOCreate() {
   const initialQuoteParam = searchParams.get('quotationId') ?? '';
 
   const {
-    quotations, quotationLines, customerPos, customers, sites,
+    quotations, quotationLines, customerPos, customers: allCustomers, sites,
     addCustomer, reload, convertQuotationToPO, showToast,
   } = useStore();
+  const customers = allCustomers.filter(c => c.status === 'active');
   const { goBack, originUrl } = useReturnNavigation('/sales?tab=pos');
 
   const available = quotations.filter(q => (q.status === 'submitted' || q.status === 'accepted') && !customerPos.some(po => po.quotationId === q.id));
