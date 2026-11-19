@@ -2,12 +2,12 @@ import { NavLink } from "react-router-dom";
 
 export const STOCK_LINKS = [
   { to: "/inventory", label: "Stock on hand", end: true },
+  { to: "/inventory/opening-stock", label: "Opening stock" },
   { to: "/products", label: "Item master" },
   { to: "/inventory/transfer", label: "Move stock" },
   { to: "/inventory/transfers", label: "Transfers" },
   { to: "/inventory/returns", label: "Returns" },
   { to: "/allocations", label: "Site need" },
-  { to: "/inventory/bom", label: "Bills of materials" },
 ];
 
 export default function StockNav() {

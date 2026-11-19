@@ -122,6 +122,17 @@ public class CustomerIdentityService {
         if (existing != null && existing > 0) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "User with this email is already active in the tenant");
         }
+        boolean firebaseUserExists = false;
+        try {
+            firebaseAuth.getUserByEmail(email);
+            firebaseUserExists = true;
+        } catch (FirebaseAuthException ignored) {
+            // email not in Firebase — safe to invite
+        }
+        if (firebaseUserExists) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "An account with this email already exists. The user should sign in directly.");
+        }
         List<Map<String, Object>> pending = jdbc.queryForList(
                 "SELECT id, email, role, status, expires_at, created_at FROM invite_tokens "
                         + "WHERE tenant_id = ? AND lower(email) = lower(?) AND role = ? AND status = 'pending' "
@@ -237,6 +248,21 @@ public class CustomerIdentityService {
             if (displayName != null && !displayName.isBlank()) request.setDisplayName(displayName.trim());
             return firebaseAuth.createUser(request).getUid();
         } catch (FirebaseAuthException exception) {
+            // EMAIL_ALREADY_EXISTS means a previous partial activation left a Firebase user behind.
+            // The invite token is still pending so the DB record was never committed.
+            // Treat this the same as a completed activation: tell the user to sign in.
+            boolean emailTaken;
+            try {
+                emailTaken = exception.getMessage() != null && exception.getMessage().contains("EMAIL_EXISTS");
+                if (!emailTaken) firebaseAuth.getUserByEmail(email);
+                emailTaken = true;
+            } catch (FirebaseAuthException ignored) {
+                emailTaken = false;
+            }
+            if (emailTaken) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT,
+                        "An account with this email address already exists. Please sign in.");
+            }
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Firebase could not create this user");
         }
     }

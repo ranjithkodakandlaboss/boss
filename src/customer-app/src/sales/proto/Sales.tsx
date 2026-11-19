@@ -15,7 +15,6 @@ import type { CustomerRFQ, CustomerPO } from './types';
 import SortableHeader from '../../components/shared/SortableHeader';
 import { sortRows } from './tableSort';
 import CustomerDirectory from './CustomerDirectory';
-import RecordSheet from '../../components/shared/RecordSheet';
 
 type POTab = 'pos' | 'rfqs' | 'quotations' | 'customers';
 type SalesSortKey = 'number' | 'name' | 'date' | 'requiredBy' | 'value' | 'lines' | 'terms' | 'status' | 'channel' | 'quotation' | 'owner';
@@ -25,8 +24,15 @@ export default function Sales() {
   const navigate = useNavigate();
   const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
-  const background = (location.state as { background?: { pathname: string; search: string } } | null)?.background;
-  const listSearch = background?.pathname === '/sales' ? background.search : location.pathname === '/sales' ? location.search : '';
+  const background = (location.state as { background?: { pathname: string; search: string }; from?: string } | null)?.background;
+  const fromSearch = (location.state as { from?: string } | null)?.from ?? '';
+  // When Sales renders as a background behind a sheet (e.g. /sales/customers/new),
+  // location.pathname is the sheet path, not '/sales'. Recover the tab from navigation state.
+  const listSearch = background?.pathname === '/sales'
+    ? background.search
+    : location.pathname === '/sales'
+      ? location.search
+      : fromSearch.startsWith('/sales?') ? fromSearch.slice('/sales'.length) : '';
   const listParams = new URLSearchParams(listSearch.replace(/^\?/, ''));
   const requestedTab = listParams.get('tab');
   const tab: POTab = requestedTab === 'rfqs' || requestedTab === 'quotations' || requestedTab === 'customers' || requestedTab === 'pos' ? requestedTab : 'pos';
@@ -187,7 +193,7 @@ export default function Sales() {
           { id: 'pos', label: `Customer POs (${filteredPos.length})` },
           { id: 'rfqs', label: `RFQs (${filteredRfqs.length})` },
           { id: 'quotations', label: `Quotations (${filteredQuotations.length})` },
-          { id: 'customers', label: 'Customer Directory' },
+          { id: 'customers', label: `Customer Directory (${customers.filter(c => c.status === 'active').length})` },
         ] as { id: POTab; label: string }[]).map(t => (
           <button
             key={t.id}

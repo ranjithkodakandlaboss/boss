@@ -43,7 +43,10 @@ export function CustomerProvider({ children }: { children: ReactNode }) {
       setTenant(nextTenant);
       setOnboarding(nextOnboarding);
     } catch (error) {
-      if (error instanceof ApiError && (error.status === 401 || error.status === 403)) signOut();
+      if (error instanceof ApiError && (error.status === 401 || error.status === 403)) {
+        signOut();
+        try { sessionStorage.setItem("boss.session.expired", "1"); } catch { /* ignore */ }
+      }
       setUser(null);
       setTenant(null);
       setOnboarding(null);

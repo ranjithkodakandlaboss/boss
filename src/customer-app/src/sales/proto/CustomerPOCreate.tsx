@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, CheckCircle2, FileText, Plus, Trash2 } from 'lucide-react';
 import { useStore } from './runtime';
@@ -7,18 +7,29 @@ import { useReturnNavigation } from './useReturnNavigation';
 import AddIfEmpty from './AddIfEmpty';
 import { newCustomer, saveSite } from './quickMasters';
 import type { CustomerPO } from './types';
+import { salesApi } from '../../sales/api';
+import { allPages } from '../../inventory/api';
 
 const TODAY = new Date().toISOString().slice(0, 10);
 
 interface DirectLine {
   id: string;
+  itemId: string;
+  uomId: string;
+  uomSymbol: string;
   drawingNumber: string;
-  revision: string;
   description: string;
   orderedQty: number;
-  uom: string;
   rate: number;
-  requiredDate: string;
+  gstRate: number;
+}
+
+interface CatalogueItem {
+  id: string;
+  code: string;
+  name: string;
+  baseUomId: string;
+  baseUomSymbol?: string;
 }
 
 export default function CustomerPOCreate() {
@@ -27,12 +38,13 @@ export default function CustomerPOCreate() {
   const initialQuoteParam = searchParams.get('quotationId') ?? '';
 
   const {
-    quotations, quotationLines, customerPos, customers, sites,
+    quotations, quotationLines, customerPos, customers: allCustomers, sites,
     addCustomer, reload, convertQuotationToPO, showToast,
   } = useStore();
+  const customers = allCustomers.filter(c => c.status === 'active');
   const { goBack, originUrl } = useReturnNavigation('/sales?tab=pos');
 
-  const available = quotations.filter(q => (q.status === 'submitted' || q.status === 'accepted') && !customerPos.some(po => po.quotationId === q.id));
+  const available = quotations.filter(q => q.status === 'accepted' && !customerPos.some(po => po.quotationId === q.id));
   const [entryMode, setEntryMode] = useState<'quotation' | 'direct'>(
     initialQuoteParam || available.length > 0 ? 'quotation' : 'direct',
   );
@@ -43,23 +55,52 @@ export default function CustomerPOCreate() {
   const selectedQuoteLines = quotationLines.filter(l => l.quotationId === quotationId);
 
   // Direct Order state
-  const [customerId, setCustomerId] = useState(customers[0]?.id ?? '');
+  const [customerId, setCustomerId] = useState(() => searchParams.get('customer') || '');
   const [directReason, setDirectReason] = useState('');
   const [deliverToSiteId, setDeliverToSiteId] = useState(sites[0]?.id ?? '');
-  const [paymentTerms, setPaymentTerms] = useState('Net 30 days');
-  const [deliveryTerms, setDeliveryTerms] = useState('Ex-Works / By Road');
+  const [paymentTerms, setPaymentTerms] = useState('');
+  const [deliveryTerms, setDeliveryTerms] = useState('');
   const [customerPoRef, setCustomerPoRef] = useState('');
   const [confirmationNote, setConfirmationNote] = useState('');
+  const [creating, setCreating] = useState(false);
+  const [catalogueItems, setCatalogueItems] = useState<CatalogueItem[]>([]);
   const [directLines, setDirectLines] = useState<DirectLine[]>([
-    { id: `dl-${Date.now()}`, drawingNumber: '', revision: '', description: '', orderedQty: 1, uom: '', rate: 0, requiredDate: '' },
+    { id: `dl-${Date.now()}`, itemId: '', uomId: '', uomSymbol: '', drawingNumber: '', description: '', orderedQty: 1, rate: 0, gstRate: 18 },
   ]);
+
+  useEffect(() => {
+    allPages<any>('/api/v1/items?status=active').then(items => {
+      setCatalogueItems(items.filter((i: any) => i.itemType !== 'service').map((i: any) => ({
+        id: i.id, code: i.code, name: i.name,
+        baseUomId: i.baseUomId ?? i.uomId ?? '',
+        baseUomSymbol: i.baseUomSymbol ?? i.uomSymbol ?? '',
+      })));
+    }).catch(() => undefined);
+  }, []);
+
+  // If quotations finish loading after mount and 'direct' was selected by default, switch to quotation mode
+  useEffect(() => {
+    if (!initialQuoteParam && available.length > 0 && entryMode === 'direct') {
+      setEntryMode('quotation');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [available.length]);
+
+  // Escape key closes/cancels the form
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') goBack(); };
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  }, []);
 
   const directCustomer = customers.find(c => c.id === customerId);
   const directTotal = directLines.reduce((s, l) => s + l.orderedQty * l.rate, 0);
 
   const create = async () => {
+    if (creating) return;
     if (entryMode === 'quotation') {
       if (!selected) return;
+      setCreating(true);
       const saved = await convertQuotationToPO(selected.id, {
         id: '', poNumber: '', customerId: selected.customerId, customerName: selected.customerName,
         acceptedDate: TODAY, paymentTerms: selected.paymentTerms ?? 'Net 30', status: 'active',
@@ -68,9 +109,39 @@ export default function CustomerPOCreate() {
         customerPoRef, confirmationNote,
       });
       if (saved) navigate(`/sales/po/${saved.id}`, { state: { from: originUrl } });
+      else setCreating(false);
       return;
     }
-    showToast({ type: 'error', title: 'Quotation required', body: 'A Customer PO is created by accepting a sent quotation. Direct entry is not saved, and accepted prices stay locked.' });
+    // Direct Order
+    if (!customerId || !deliverToSiteId || !directReason.trim() || directLines.some(l => !l.itemId || !l.uomId || !l.description.trim() || l.orderedQty <= 0)) {
+      showToast({ type: 'error', title: 'Missing required fields', body: 'Select a customer, site, enter a reason, and ensure each line has an item, description, and quantity.' });
+      return;
+    }
+    setCreating(true);
+    try {
+      const payTermsDays = paymentTerms ? parseInt(paymentTerms.replace(/\D/g, ''), 10) || 30 : 30;
+      const saved = await salesApi.createDirectCpo({
+        customerId,
+        siteId: deliverToSiteId,
+        directOrderReason: directReason,
+        customerPoRef: customerPoRef || undefined,
+        deliveryTerms: deliveryTerms || undefined,
+        paymentTerms: payTermsDays,
+        lines: directLines.map(l => ({
+          itemId: l.itemId,
+          uomId: l.uomId,
+          drawingNumber: l.drawingNumber || undefined,
+          description: l.description,
+          quantity: l.orderedQty,
+          unitPrice: l.rate,
+          gstRate: l.gstRate,
+        })),
+      });
+      navigate(`/sales/po/${saved.id}`, { state: { from: originUrl } });
+    } catch (err) {
+      showToast({ type: 'error', title: 'Could not create Direct Order', body: err instanceof Error ? err.message : 'Please try again.' });
+      setCreating(false);
+    }
   };
 
   return (
@@ -244,11 +315,11 @@ export default function CustomerPOCreate() {
                   </div>
                   <div>
                     <label className="block text-xs font-medium text-[var(--text-2)] mb-1">Payment Terms</label>
-                    <input className="eoss-input w-full" value={paymentTerms} onChange={e => setPaymentTerms(e.target.value)} />
+                    <input className="eoss-input w-full" placeholder="e.g. Net 30 days" value={paymentTerms} onChange={e => setPaymentTerms(e.target.value)} />
                   </div>
                   <div>
                     <label className="block text-xs font-medium text-[var(--text-2)] mb-1">Delivery Terms</label>
-                    <input className="eoss-input w-full" value={deliveryTerms} onChange={e => setDeliveryTerms(e.target.value)} />
+                    <input className="eoss-input w-full" placeholder="e.g. Ex-Works / By Road" value={deliveryTerms} onChange={e => setDeliveryTerms(e.target.value)} />
                   </div>
                   <div className="md:col-span-2">
                     <label className="block text-xs font-semibold text-[var(--text-2)] mb-1">
@@ -274,13 +345,14 @@ export default function CustomerPOCreate() {
                         ...ls,
                         {
                           id: `dl-${Date.now()}`,
+                          itemId: '',
+                          uomId: '',
+                          uomSymbol: '',
                           drawingNumber: '',
-                          revision: '',
                           description: '',
                           orderedQty: 1,
-                          uom: '',
                           rate: 0,
-                          requiredDate: '2026-05-10',
+                          gstRate: 18,
                         },
                       ])
                     }
@@ -291,56 +363,98 @@ export default function CustomerPOCreate() {
                 </div>
                 <div className="space-y-2.5">
                   {directLines.map((l, idx) => (
-                    <div key={l.id} className="grid grid-cols-2 md:grid-cols-6 gap-2 p-3 rounded-xl border border-[var(--border)] bg-[var(--surface-2)]/40 items-end">
-                      <div>
-                        <label className="block text-[10px] text-[var(--text-3)] mb-0.5">Drawing #</label>
-                        <input
-                          className="eoss-input w-full text-xs font-mono"
-                          value={l.drawingNumber}
-                          onChange={e => setDirectLines(ls => ls.map((x, i) => (i === idx ? { ...x, drawingNumber: e.target.value } : x)))}
-                        />
-                      </div>
-                      <div className="col-span-2">
-                        <label className="block text-[10px] text-[var(--text-3)] mb-0.5">Description *</label>
-                        <input
-                          className="eoss-input w-full text-xs"
-                          value={l.description}
-                          onChange={e => setDirectLines(ls => ls.map((x, i) => (i === idx ? { ...x, description: e.target.value } : x)))}
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] text-[var(--text-3)] mb-0.5">Qty</label>
-                        <input
-                          type="number"
-                          min={1}
-                          className="eoss-input w-full text-xs font-mono"
-                          value={l.orderedQty}
-                          onChange={e => setDirectLines(ls => ls.map((x, i) => (i === idx ? { ...x, orderedQty: Number(e.target.value) || 1 } : x)))}
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] text-[var(--text-3)] mb-0.5">Rate (₹)</label>
-                        <input
-                          type="number"
-                          min={0}
-                          className="eoss-input w-full text-xs font-mono"
-                          value={l.rate}
-                          onChange={e => setDirectLines(ls => ls.map((x, i) => (i === idx ? { ...x, rate: Number(e.target.value) || 0 } : x)))}
-                        />
-                      </div>
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="font-mono text-xs font-semibold text-[var(--text)]">
-                          ₹{(l.orderedQty * l.rate).toLocaleString('en-IN')}
-                        </span>
-                        {directLines.length > 1 && (
-                          <button
-                            type="button"
-                            onClick={() => setDirectLines(ls => ls.filter((_, i) => i !== idx))}
-                            className="p-1 text-red-500 hover:bg-red-50 rounded"
+                    <div key={l.id} className="p-3 rounded-xl border border-[var(--border)] bg-[var(--surface-2)]/40 space-y-2">
+                      {/* Row 1: Item, Drawing #, GST % */}
+                      <div className="grid grid-cols-2 md:grid-cols-5 gap-2 items-end">
+                        <div className="col-span-2">
+                          <label className="block text-[10px] text-[var(--text-3)] mb-0.5">Item *</label>
+                          <select
+                            className="eoss-input w-full text-xs"
+                            value={l.itemId}
+                            onChange={e => {
+                              const item = catalogueItems.find(ci => ci.id === e.target.value);
+                              setDirectLines(ls => ls.map((x, i) => i === idx ? { ...x, itemId: e.target.value, uomId: item?.baseUomId ?? '', uomSymbol: item?.baseUomSymbol ?? '' } : x));
+                            }}
                           >
-                            <Trash2 size={13} />
-                          </button>
-                        )}
+                            <option value="">Select item…</option>
+                            {catalogueItems.map(ci => <option key={ci.id} value={ci.id}>{ci.code} — {ci.name}</option>)}
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-[10px] text-[var(--text-3)] mb-0.5">Drawing # (optional)</label>
+                          <input
+                            className="eoss-input w-full text-xs font-mono"
+                            placeholder="e.g. DRG-001"
+                            value={l.drawingNumber}
+                            onChange={e => setDirectLines(ls => ls.map((x, i) => (i === idx ? { ...x, drawingNumber: e.target.value } : x)))}
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] text-[var(--text-3)] mb-0.5">GST % *</label>
+                          <input
+                            type="number"
+                            min={0}
+                            max={100}
+                            step="0.01"
+                            className="eoss-input w-full text-xs font-mono"
+                            value={l.gstRate}
+                            onChange={e => setDirectLines(ls => ls.map((x, i) => (i === idx ? { ...x, gstRate: Number(e.target.value) || 0 } : x)))}
+                          />
+                        </div>
+                        <div />
+                      </div>
+                      {/* Row 2: Description, Qty, Rate, Total */}
+                      <div className="grid grid-cols-2 md:grid-cols-5 gap-2 items-end">
+                        <div className="col-span-2">
+                          <label className="block text-[10px] text-[var(--text-3)] mb-0.5">Description *</label>
+                          <input
+                            className="eoss-input w-full text-xs"
+                            placeholder="Brief description of the item/work *"
+                            value={l.description}
+                            onChange={e => setDirectLines(ls => ls.map((x, i) => (i === idx ? { ...x, description: e.target.value } : x)))}
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] text-[var(--text-3)] mb-0.5">Qty {l.uomSymbol ? `(${l.uomSymbol})` : ''} *</label>
+                          <input
+                            type="number"
+                            min={0.001}
+                            step="any"
+                            className="eoss-input w-full text-xs font-mono"
+                            value={l.orderedQty}
+                            onChange={e => setDirectLines(ls => ls.map((x, i) => (i === idx ? { ...x, orderedQty: Number(e.target.value) || 1 } : x)))}
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] text-[var(--text-3)] mb-0.5">Rate (₹) *</label>
+                          <input
+                            type="number"
+                            min={0}
+                            className="eoss-input w-full text-xs font-mono"
+                            value={l.rate}
+                            onChange={e => setDirectLines(ls => ls.map((x, i) => (i === idx ? { ...x, rate: Number(e.target.value) || 0 } : x)))}
+                          />
+                        </div>
+                        <div className="flex items-center justify-between gap-2">
+                          <div>
+                            <div className="text-[10px] text-[var(--text-3)]">Total</div>
+                            <span className="font-mono text-xs font-semibold text-[var(--text)]">
+                              ₹{(l.orderedQty * l.rate).toLocaleString('en-IN')}
+                            </span>
+                            {l.gstRate > 0 && (
+                              <div className="text-[10px] text-[var(--text-3)]">+{l.gstRate}% GST</div>
+                            )}
+                          </div>
+                          {directLines.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={() => setDirectLines(ls => ls.filter((_, i) => i !== idx))}
+                              className="p-1 text-red-500 hover:bg-red-50 rounded"
+                            >
+                              <Trash2 size={13} />
+                            </button>
+                          )}
+                        </div>
                       </div>
                     </div>
                   ))}
@@ -361,15 +475,15 @@ export default function CustomerPOCreate() {
         <button
           type="button"
           disabled={
-            entryMode === 'quotation'
+            creating || (entryMode === 'quotation'
               ? !selected
-              : !directCustomer || !directReason.trim() || directLines.some(l => !l.description.trim())
+              : !directCustomer || !deliverToSiteId || !directReason.trim() || directLines.some(l => !l.itemId || !l.uomId || !l.description.trim() || l.orderedQty <= 0))
           }
           onClick={create}
           className="flex items-center gap-2 px-5 py-2 rounded-lg text-sm font-semibold text-white disabled:opacity-40"
           style={{ background: 'var(--brand-fill)' }}
         >
-          <CheckCircle2 size={14} /> {entryMode === 'quotation' ? 'Create Customer PO' : 'Record Direct Customer PO'}
+          <CheckCircle2 size={14} /> {creating ? 'Creating…' : (entryMode === 'quotation' ? 'Create Customer PO' : 'Record Direct Customer PO')}
         </button>
       </div>
     </div>

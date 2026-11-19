@@ -12,7 +12,6 @@ import { allPages, categoryName, mutate, type Category, type Item, type Uom } fr
 import StockNav from "./stockNav";
 
 const TYPES = ["RAW_MATERIAL", "SEMI_FINISHED", "FINISHED_GOOD", "CONSUMABLE", "SPARE_PART", "SERVICE"];
-const TRACKING_MODES = ["None", "Lot", "Heat", "Serial"] as const;
 type SpecificationDraft = { key: string; label: string; uomId: string; minValue: string; maxValue: string; defaultValue: string };
 
 export default function ItemMaster({ embedded = false }: { embedded?: boolean }) {
@@ -195,14 +194,6 @@ export function ItemForm({ item, onClose, onSaved }: { item?: Item; onClose: () 
             return { id: created.id, label: created.name || values.name };
           }} />
         </div>
-        <label className="text-xs">
-          <span className="block text-[11px] font-mono uppercase text-[var(--text-3)] mb-1">Grade / Specification</span>
-          <input className="eoss-input mt-1 w-full" placeholder="e.g. IS 2062 Grade A" disabled title="Not stored yet" />
-        </label>
-        <label className="text-xs">
-          <span className="block text-[11px] font-mono uppercase text-[var(--text-3)] mb-1">Dimensions</span>
-          <input className="eoss-input mt-1 w-full" placeholder="e.g. 2440 × 1220 × 3 mm" disabled title="Not stored yet" />
-        </label>
         <div className="text-xs">
           <span className="block text-[11px] font-mono uppercase text-[var(--text-3)] mb-1">Unit of Measure *</span>
           <CreatableSelect label="unit of measure" ariaLabel="Unit of measure" value={uomId} onChange={setUomId} disabled={!!item} error={uomError} onRetry={loadReferences} creatable={canCreateReference && !item} options={uoms.map((uom) => ({ id: uom.id, label: `${uom.symbol} · ${uom.name}` }))} fields={[{ name: "name", label: "Name", required: true }, { name: "symbol", label: "Symbol", required: true }, { name: "uomType", label: "Type (quantity / weight / volume / length / area / time)", options: [{ id: "quantity", label: "Quantity" }, { id: "weight", label: "Weight" }, { id: "volume", label: "Volume" }, { id: "length", label: "Length" }, { id: "area", label: "Area" }, { id: "time", label: "Time" }, { id: "energy", label: "Energy" }, { id: "other", label: "Other" }], required: true }]} unique={(values) => uoms.some((uom) => uom.symbol.toLowerCase() === values.symbol.toLowerCase()) ? "This value already exists." : null} onCreate={async (values) => {
@@ -214,24 +205,6 @@ export function ItemForm({ item, onClose, onSaved }: { item?: Item; onClose: () 
         <label className="text-xs">
           <span className="block text-[11px] font-mono uppercase text-[var(--text-3)] mb-1">Reorder Level</span>
           <input className="eoss-input mt-1 w-full" type="number" min="0" placeholder="e.g. 100" value={reorderPoint} onChange={(event) => setReorderPoint(event.target.value)} />
-        </label>
-        <label className="text-xs">
-          <span className="block text-[11px] font-mono uppercase text-[var(--text-3)] mb-1">Lead Time (days)</span>
-          <input className="eoss-input mt-1 w-full" type="number" min="0" placeholder="e.g. 14" disabled title="Not stored yet" />
-        </label>
-        <label className="text-xs">
-          <span className="block text-[11px] font-mono uppercase text-[var(--text-3)] mb-1">Site</span>
-          <input className="eoss-input mt-1 w-full" placeholder="e.g. Main Plant" disabled title="Not stored yet" />
-        </label>
-        <label className="text-xs">
-          <span className="block text-[11px] font-mono uppercase text-[var(--text-3)] mb-1">Store</span>
-          <input className="eoss-input mt-1 w-full" placeholder="e.g. Raw Materials Store" disabled title="Not stored yet" />
-        </label>
-        <label className="text-xs">
-          <span className="block text-[11px] font-mono uppercase text-[var(--text-3)] mb-1">Tracking Mode</span>
-          <select className="eoss-input mt-1 w-full" disabled title="Not stored yet">
-            {TRACKING_MODES.map((mode) => <option key={mode}>{mode}</option>)}
-          </select>
         </label>
       </div>
       {!item && itemType === "FINISHED_GOOD" && (

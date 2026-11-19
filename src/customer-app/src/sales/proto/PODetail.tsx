@@ -30,6 +30,7 @@ export default function PODetail() {
   const { goBack, originUrl } = useReturnNavigation('/sales?tab=pos');
   const [allocResultMsg, setAllocResultMsg] = useState<{ status: string; message: string; prId?: string; prNumber?: string } | null>(null);
   const [availabilityOverride, setAvailabilityOverride] = useState<string | null>(null);
+  const [confirmReserve, setConfirmReserve] = useState(false);
   const [bomAvailability, setBomAvailability] = useState<CpoMaterialAvailability | null>(null);
   const [availabilityLoading, setAvailabilityLoading] = useState(false);
   const [availabilityError, setAvailabilityError] = useState<string | null>(null);
@@ -242,6 +243,7 @@ export default function PODetail() {
   ];
 
   return (
+    <>
     <div className="flex flex-col h-full">
       {/* Record Header */}
       <div
@@ -357,192 +359,6 @@ export default function PODetail() {
           />
         </div>
 
-        {/* Material Availability Check & Auto-Procurement Card */}
-        <div className="rounded-xl border p-4 mb-4 space-y-3" style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}>
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <h3 className="font-semibold text-sm text-[var(--text)] flex items-center gap-2">
-                <Layers size={15} className="text-[var(--brand)]" />
-                Material Availability Check & Allocation
-                {(availabilityOverride || po.availabilityStatus) && <StatusChip status={availabilityOverride || po.availabilityStatus} size="sm" />}
-              </h3>
-              <p className="text-xs text-[var(--text-3)] mt-0.5">
-                Preview BOM-derived material requirements against current inventory. Confirm to reserve available stock and raise a Purchase Requisition for shortages.
-              </p>
-            </div>
-            <div className="flex items-center gap-2">
-              <AddIfEmpty
-                empty={sites.length === 0}
-                title="No sites yet"
-                hint="Add the plant or warehouse that fulfils this order."
-                fields={[{ key: 'name', label: 'Site name' }]}
-                submitLabel="Save site"
-                onSubmit={async (values) => {
-                  const saved = await saveSite(values.name || '');
-                  const created = (saved.sites ?? []).find((site) => site.name === (values.name || '').trim());
-                  await reload();
-                  if (created?.id) setCheckSiteId(created.id);
-                }}
-              >
-                <select
-                  className="eoss-input text-xs py-1.5"
-                  value={checkSiteId}
-                  onChange={e => setCheckSiteId(e.target.value)}
-                  aria-label="Fulfilling site for material check"
-                >
-                  <option value="">Select a site…</option>
-                  {sites.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                </select>
-              </AddIfEmpty>
-              <button
-                type="button"
-                disabled={availabilityLoading}
-                onClick={async () => {
-                  setAvailabilityError(null);
-                  setBomAvailability(null);
-                  setAvailabilityLoading(true);
-                  try {
-                    const result = await salesApi.cpoMaterialAvailability(po.id);
-                    setBomAvailability(result);
-                  } catch (err) {
-                    setAvailabilityError(err instanceof Error ? err.message : 'Could not load material requirements.');
-                  } finally {
-                    setAvailabilityLoading(false);
-                  }
-                }}
-                className="btn-secondary text-xs inline-flex items-center gap-1.5"
-              >
-                <Layers size={13} /> {availabilityLoading ? 'Loading…' : 'Preview Material Requirements'}
-              </button>
-              <button
-                type="button"
-                onClick={async () => {
-                  const res = await assessAndAllocateCustomerPO(po.id, currentUser.name, { siteId: checkSiteId });
-                  if ('error' in res) {
-                    showToast({ type: 'error', title: 'Availability check failed', body: res.error });
-                  } else {
-                    setAvailabilityOverride(res.status);
-                    setAllocResultMsg({
-                      status: res.status,
-                      message: res.message,
-                      prId: res.createdPr?.id,
-                      prNumber: res.createdPr?.prNumber,
-                    });
-                    showToast({ type: 'success', title: 'Material availability confirmed', body: res.message });
-                    await reload();
-                  }
-                }}
-                className="btn-primary text-xs inline-flex items-center gap-1.5"
-              >
-                <Factory size={13} /> Confirm & Reserve
-              </button>
-            </div>
-          </div>
-
-          {availabilityError && (
-            <div className="p-3 rounded-lg border border-[var(--error)] text-xs text-[var(--error)]">
-              {availabilityError}
-            </div>
-          )}
-
-          {allocResultMsg && (
-            <div className="p-3 rounded-lg border border-blue-200 bg-blue-50/70 text-xs flex flex-wrap items-center justify-between gap-2">
-              <span className="text-blue-950 font-medium">{allocResultMsg.message}</span>
-              {allocResultMsg.prId && (
-                <Link
-                  to={`/procurement/pr/${allocResultMsg.prId}`}
-                  state={{ from: originUrl }}
-                  className="px-2.5 py-1 rounded bg-blue-700 text-white font-semibold"
-                >
-                  Open Shortage PR {allocResultMsg.prNumber} →
-                </Link>
-              )}
-            </div>
-          )}
-
-          {bomAvailability && bomAvailability.materials.length > 0 && (
-            <div className="overflow-x-auto border border-[var(--border)] rounded-lg">
-              {bomAvailability.limitations && bomAvailability.limitations.length > 0 && (
-                <div className="px-3 py-2 bg-amber-50/60 border-b border-amber-200 text-xs text-amber-800">
-                  Note: {bomAvailability.limitations.join(' ')}
-                </div>
-              )}
-              <table className="eoss-table">
-                <thead>
-                  <tr>
-                    <th>Material (from BOM)</th>
-                    <th className="text-right">Required</th>
-                    <th className="text-right">On Hand</th>
-                    <th className="text-right">Reserved</th>
-                    <th className="text-right">Available</th>
-                    <th className="text-right">Shortage</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {bomAvailability.materials.map(mat => (
-                    <tr key={mat.itemId} className={mat.shortageQty > 0 ? 'bg-red-50/40' : ''}>
-                      <td>
-                        <div className="font-medium text-xs text-[var(--text)]">{mat.itemName}</div>
-                        <div className="text-[11px] font-mono text-[var(--text-3)]">{mat.itemCode}</div>
-                      </td>
-                      <td className="text-right font-mono text-xs">{mat.requiredQty} {mat.uomSymbol}</td>
-                      <td className="text-right font-mono text-xs">{mat.eligibleStockQty}</td>
-                      <td className="text-right font-mono text-xs">{mat.reservedQty}</td>
-                      <td className="text-right font-mono text-xs font-semibold">{mat.availableQty}</td>
-                      <td className="text-right font-mono text-xs font-semibold" style={{ color: mat.shortageQty > 0 ? 'var(--error)' : 'inherit' }}>
-                        {mat.shortageQty > 0 ? mat.shortageQty : '—'}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-
-          {bomAvailability && bomAvailability.materials.length === 0 && (
-            <div className="p-3 rounded-lg border border-[var(--border)] bg-[var(--surface-2)] text-xs text-[var(--text-2)]">
-              No material requirements found — ensure the product has an approved BOM.
-            </div>
-          )}
-
-          {(!bomAvailability && !availabilityLoading && (!po.availabilityStatus || po.availabilityStatus === 'not_assessed')) && !allocResultMsg && (
-            <div className="p-3 rounded-lg border border-[var(--border)] bg-[var(--surface-2)] text-xs text-[var(--text-2)]">
-              Status: <strong>Not assessed</strong> — click Preview to see BOM-derived material requirements, then Confirm &amp; Reserve to allocate stock and raise shortfall PRs.
-            </div>
-          )}
-
-          {(linkedShortagePrs.length > 0 || linkedSpos.length > 0 || linkedGrns.length > 0) && (
-            <div className="pt-2 border-t border-[var(--border)] flex flex-wrap items-center gap-3 text-xs text-[var(--text-2)]">
-              <span className="font-semibold text-[var(--text)]">Shortage Procurement Progress:</span>
-              {linkedShortagePrs.map(pr => (
-                <Link key={pr.id} to={`/procurement/pr/${pr.id}`} className="px-2 py-0.5 rounded bg-[var(--surface-2)] border border-[var(--border)] font-mono text-[var(--brand)] hover:underline">
-                  PR {pr.prNumber} ({pr.status})
-                </Link>
-              ))}
-              {linkedSupplierInvites.length > 0 && (
-                <span className="px-2 py-0.5 rounded bg-[var(--surface-2)] border border-[var(--border)]">
-                  {linkedSupplierInvites.length} Supplier Invite{linkedSupplierInvites.length > 1 ? 's' : ''}
-                </span>
-              )}
-              {linkedSupplierQuotes.length > 0 && (
-                <span className="px-2 py-0.5 rounded bg-[var(--surface-2)] border border-[var(--border)]">
-                  {linkedSupplierQuotes.length} Quote{linkedSupplierQuotes.length > 1 ? 's' : ''}
-                </span>
-              )}
-              {linkedSpos.map(sp => (
-                <Link key={sp.id} to={`/procurement/spo/${sp.id}`} className="px-2 py-0.5 rounded bg-[var(--surface-2)] border border-[var(--border)] font-mono text-[var(--brand)] hover:underline">
-                  SPO {sp.spoNumber || sp.poNumber} ({sp.status})
-                </Link>
-              ))}
-              {linkedGrns.map(g => (
-                <Link key={g.id} to={`/procurement/grn/${g.id}`} className="px-2 py-0.5 rounded bg-[var(--surface-2)] border border-[var(--border)] font-mono text-[var(--brand)] hover:underline">
-                  GRN {g.grnNumber} ({g.status})
-                </Link>
-              ))}
-            </div>
-          )}
-        </div>
-
         {/* Value Summary Bar */}
         <div className="mt-4 flex items-center gap-6 flex-wrap">
           <SummaryBadge label="Total Value" value={`₹${(po.totalValue / 100000).toFixed(2)}L`} emphasis />
@@ -578,7 +394,179 @@ export default function PODetail() {
       {/* Tab Content */}
       <div className="flex-1 overflow-auto">
         {activeTab === 'overview' && (
-          <div className="p-6 grid grid-cols-1 lg:grid-cols-3 gap-5 max-w-7xl">
+          <div className="p-6 space-y-5 max-w-7xl">
+            {/* Material Availability Check & Auto-Procurement Card */}
+            <div className="rounded-xl border p-4 space-y-3" style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <h3 className="font-semibold text-sm text-[var(--text)] flex items-center gap-2">
+                    <Layers size={15} className="text-[var(--brand)]" />
+                    Material Availability Check & Allocation
+                    {(availabilityOverride || po.availabilityStatus) && <StatusChip status={availabilityOverride || po.availabilityStatus} size="sm" />}
+                  </h3>
+                  <p className="text-xs text-[var(--text-3)] mt-0.5">
+                    Preview BOM-derived material requirements against current inventory. Confirm to reserve available stock and raise a Purchase Requisition for shortages.
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <AddIfEmpty
+                    empty={sites.length === 0}
+                    title="No sites yet"
+                    hint="Add the plant or warehouse that fulfils this order."
+                    fields={[{ key: 'name', label: 'Site name' }]}
+                    submitLabel="Save site"
+                    onSubmit={async (values) => {
+                      const saved = await saveSite(values.name || '');
+                      const created = (saved.sites ?? []).find((site) => site.name === (values.name || '').trim());
+                      await reload();
+                      if (created?.id) setCheckSiteId(created.id);
+                    }}
+                  >
+                    <select
+                      className="eoss-input text-xs py-1.5"
+                      value={checkSiteId}
+                      onChange={e => setCheckSiteId(e.target.value)}
+                      aria-label="Fulfilling site for material check"
+                    >
+                      <option value="">Select a site…</option>
+                      {sites.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                    </select>
+                  </AddIfEmpty>
+                  <button
+                    type="button"
+                    disabled={availabilityLoading}
+                    onClick={async () => {
+                      setAvailabilityError(null);
+                      setBomAvailability(null);
+                      setAvailabilityLoading(true);
+                      try {
+                        const result = await salesApi.cpoMaterialAvailability(po.id);
+                        setBomAvailability(result);
+                      } catch (err) {
+                        setAvailabilityError(err instanceof Error ? err.message : 'Could not load material requirements.');
+                      } finally {
+                        setAvailabilityLoading(false);
+                      }
+                    }}
+                    className="btn-secondary text-xs inline-flex items-center gap-1.5"
+                  >
+                    <Layers size={13} /> {availabilityLoading ? 'Loading…' : 'Preview Material Requirements'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setConfirmReserve(true)}
+                    className="btn-primary text-xs inline-flex items-center gap-1.5"
+                  >
+                    <Factory size={13} /> Confirm & Reserve
+                  </button>
+                </div>
+              </div>
+
+              {availabilityError && (
+                <div className="p-3 rounded-lg border border-[var(--error)] text-xs text-[var(--error)]">
+                  {availabilityError}
+                </div>
+              )}
+
+              {allocResultMsg && (
+                <div className="p-3 rounded-lg border border-blue-200 bg-blue-50/70 text-xs flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-blue-950 font-medium">{allocResultMsg.message}</span>
+                  {allocResultMsg.prId && (
+                    <Link
+                      to={`/procurement/pr/${allocResultMsg.prId}`}
+                      state={{ from: originUrl }}
+                      className="px-2.5 py-1 rounded bg-blue-700 text-white font-semibold"
+                    >
+                      Open Shortage PR {allocResultMsg.prNumber} →
+                    </Link>
+                  )}
+                </div>
+              )}
+
+              {bomAvailability && bomAvailability.materials.length > 0 && (
+                <div className="overflow-x-auto border border-[var(--border)] rounded-lg">
+                  {bomAvailability.limitations && bomAvailability.limitations.length > 0 && (
+                    <div className="px-3 py-2 bg-amber-50/60 border-b border-amber-200 text-xs text-amber-800">
+                      Note: {bomAvailability.limitations.join(' ')}
+                    </div>
+                  )}
+                  <table className="eoss-table">
+                    <thead>
+                      <tr>
+                        <th>Material (from BOM)</th>
+                        <th className="text-right">Required</th>
+                        <th className="text-right">On Hand</th>
+                        <th className="text-right">Reserved</th>
+                        <th className="text-right">Available</th>
+                        <th className="text-right">Shortage</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {bomAvailability.materials.map(mat => (
+                        <tr key={mat.itemId} className={mat.shortageQty > 0 ? 'bg-red-50/40' : ''}>
+                          <td>
+                            <div className="font-medium text-xs text-[var(--text)]">{mat.itemName}</div>
+                            <div className="text-[11px] font-mono text-[var(--text-3)]">{mat.itemCode}</div>
+                          </td>
+                          <td className="text-right font-mono text-xs">{mat.requiredQty} {mat.uomSymbol}</td>
+                          <td className="text-right font-mono text-xs">{mat.eligibleStockQty}</td>
+                          <td className="text-right font-mono text-xs">{mat.reservedQty}</td>
+                          <td className="text-right font-mono text-xs font-semibold">{mat.availableQty}</td>
+                          <td className="text-right font-mono text-xs font-semibold" style={{ color: mat.shortageQty > 0 ? 'var(--error)' : 'inherit' }}>
+                            {mat.shortageQty > 0 ? mat.shortageQty : '—'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {bomAvailability && bomAvailability.materials.length === 0 && (
+                <div className="p-3 rounded-lg border border-[var(--border)] bg-[var(--surface-2)] text-xs text-[var(--text-2)]">
+                  No material requirements found — ensure the product has an approved BOM.
+                </div>
+              )}
+
+              {(!bomAvailability && !availabilityLoading && (!po.availabilityStatus || po.availabilityStatus === 'not_assessed')) && !allocResultMsg && (
+                <div className="p-3 rounded-lg border border-[var(--border)] bg-[var(--surface-2)] text-xs text-[var(--text-2)]">
+                  Status: <strong>Not assessed</strong> — click Preview to see BOM-derived material requirements, then Confirm &amp; Reserve to allocate stock and raise shortfall PRs.
+                </div>
+              )}
+
+              {(linkedShortagePrs.length > 0 || linkedSpos.length > 0 || linkedGrns.length > 0) && (
+                <div className="pt-2 border-t border-[var(--border)] flex flex-wrap items-center gap-3 text-xs text-[var(--text-2)]">
+                  <span className="font-semibold text-[var(--text)]">Shortage Procurement Progress:</span>
+                  {linkedShortagePrs.map(pr => (
+                    <Link key={pr.id} to={`/procurement/pr/${pr.id}`} className="px-2 py-0.5 rounded bg-[var(--surface-2)] border border-[var(--border)] font-mono text-[var(--brand)] hover:underline">
+                      PR {pr.prNumber} ({pr.status})
+                    </Link>
+                  ))}
+                  {linkedSupplierInvites.length > 0 && (
+                    <span className="px-2 py-0.5 rounded bg-[var(--surface-2)] border border-[var(--border)]">
+                      {linkedSupplierInvites.length} Supplier Invite{linkedSupplierInvites.length > 1 ? 's' : ''}
+                    </span>
+                  )}
+                  {linkedSupplierQuotes.length > 0 && (
+                    <span className="px-2 py-0.5 rounded bg-[var(--surface-2)] border border-[var(--border)]">
+                      {linkedSupplierQuotes.length} Quote{linkedSupplierQuotes.length > 1 ? 's' : ''}
+                    </span>
+                  )}
+                  {linkedSpos.map(sp => (
+                    <Link key={sp.id} to={`/procurement/spo/${sp.id}`} className="px-2 py-0.5 rounded bg-[var(--surface-2)] border border-[var(--border)] font-mono text-[var(--brand)] hover:underline">
+                      SPO {sp.spoNumber || sp.poNumber} ({sp.status})
+                    </Link>
+                  ))}
+                  {linkedGrns.map(g => (
+                    <Link key={g.id} to={`/procurement/grn/${g.id}`} className="px-2 py-0.5 rounded bg-[var(--surface-2)] border border-[var(--border)] font-mono text-[var(--brand)] hover:underline">
+                      GRN {g.grnNumber} ({g.status})
+                    </Link>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
             {/* Left: PO Info */}
             <div className="lg:col-span-2 space-y-5">
               {/* Order Journey — connected lifecycle view */}
@@ -709,6 +697,7 @@ export default function PODetail() {
                   )}
                 </div>
               </Card>
+            </div>
             </div>
           </div>
         )}
@@ -872,6 +861,41 @@ export default function PODetail() {
         )}
       </div>
     </div>
+
+    {/* Dialogs */}
+    {/* Confirm & Reserve dialog */}
+    {confirmReserve && (
+      <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+        <div className="bg-[var(--surface)] rounded-2xl border p-6 max-w-sm w-full shadow-2xl" style={{ borderColor: 'var(--border)' }}>
+          <h3 className="text-base font-bold text-[var(--text)] mb-2">Confirm & Reserve Materials?</h3>
+          <p className="text-sm text-[var(--text-2)] mb-5">
+            Available stock will be reserved for <strong>{po.poNumber}</strong>. If any material is short, a Purchase Requisition will be automatically created to cover the shortage.
+          </p>
+          <div className="flex gap-3 justify-end">
+            <button onClick={() => setConfirmReserve(false)} className="px-4 py-2 rounded-lg text-sm border" style={{ borderColor: 'var(--border)', color: 'var(--text-2)' }}>Cancel</button>
+            <button
+              onClick={async () => {
+                setConfirmReserve(false);
+                const res = await assessAndAllocateCustomerPO(po.id, currentUser.name, { siteId: checkSiteId });
+                if ('error' in res) {
+                  showToast({ type: 'error', title: 'Availability check failed', body: res.error });
+                } else {
+                  setAvailabilityOverride(res.status);
+                  setAllocResultMsg({ status: res.status, message: res.message, prId: res.createdPr?.id, prNumber: res.createdPr?.prNumber });
+                  showToast({ type: 'success', title: 'Material availability confirmed', body: res.message });
+                  await reload();
+                }
+              }}
+              className="px-4 py-2 rounded-lg text-sm font-semibold text-white"
+              style={{ background: 'var(--brand-fill)' }}
+            >
+              Confirm & Reserve
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+    </>
   );
 }
 

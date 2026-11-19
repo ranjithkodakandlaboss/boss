@@ -211,7 +211,8 @@ public class SupplierQuotationService {
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     tenantId, quotationId, prLine.id(), lineNo++, prLine.itemId(),
-                    prLine.quantity(), prLine.uomId(), requestedLine.unitPrice(),
+                    requestedLine.quotedQty() != null ? requestedLine.quotedQty() : prLine.quantity(),
+                    prLine.uomId(), requestedLine.unitPrice(),
                     requestedLine.leadTimeDays(), requestedLine.taxRate());
         }
         BigDecimal freight = request.freightAmount() == null ? BigDecimal.ZERO : request.freightAmount();

@@ -349,6 +349,11 @@ export const salesApi = {
     window.open(url, "_blank", "noopener");
     URL.revokeObjectURL(url);
   },
+  createDirectCpo: (body: {
+    customerId: string; siteId: string; directOrderReason: string;
+    customerPoRef?: string; deliveryTerms?: string; paymentTerms?: number;
+    lines: Array<{ itemId: string; uomId: string; drawingNumber?: string; description?: string; quantity: number; unitPrice: number; gstRate?: number }>;
+  }) => api<Cpo>(`/api/v1/cpos`, { method: "POST", headers: { "Idempotency-Key": key() }, body: JSON.stringify(body) }),
   cpos: (q = "", customerId = "") => api<Page<Cpo>>(`/api/v1/cpos?size=100${q ? `&q=${encodeURIComponent(q)}` : ""}${customerId ? `&customerId=${customerId}` : ""}`).then(rows),
   cpo: (id: string) => api<Cpo>(`/api/v1/cpos/${id}`),
   updateCpo: (id: string, body: unknown) => api<Cpo>(`/api/v1/cpos/${id}`, {

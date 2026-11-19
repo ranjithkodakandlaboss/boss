@@ -11,6 +11,7 @@ import {
   History,
 } from "lucide-react";
 import { useCustomer } from "../auth/CustomerState";
+import { currentToken } from "../auth/session";
 import StatusChip from "../components/shared/StatusChip";
 import {
   getDispatch,
@@ -381,7 +382,23 @@ export default function DispatchDetailPage() {
                 </button>
                 <button
                   disabled={updating || isQCGateBlocked}
-                  onClick={() => window.open(`/api/v1/dispatches/${dispatch.id}/challan`, "_blank")}
+                  onClick={async () => {
+                    const base = import.meta.env.VITE_CUSTOMER_API_URL ?? "http://127.0.0.1:8080";
+                    const headers: Record<string, string> = {};
+                    const token = currentToken();
+                    if (token) headers["Authorization"] = `Bearer ${token}`;
+                    const resp = await fetch(`${base}/api/v1/dispatches/${dispatch.id}/challan`, { headers });
+                    if (!resp.ok) return;
+                    const blob = await resp.blob();
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement("a");
+                    a.href = url;
+                    a.download = `challan-${dispatch.dispatchNumber ?? dispatch.id}.pdf`;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+                  }}
                   className="w-full py-2 border border-[var(--border)] text-[var(--text)] rounded-lg text-sm disabled:opacity-40 flex items-center justify-center gap-1.5 hover:bg-[var(--surface-2)] transition-colors"
                 >
                   Generate E-Way Bill

@@ -698,6 +698,7 @@ export function ProcurementProvider({ children }: { children?: ReactNode }) {
             unitPrice: Number(line.unitPrice),
             leadTimeDays: Number(line.leadTimeDays || quote.deliveryDays || 0),
             taxRate: line.taxPct == null ? undefined : Number(line.taxPct),
+            quotedQty: line.quotedQty != null ? Number(line.quotedQty) : undefined,
           };
         });
         const saved = await procurementApi.receiveQuotation(created.id, {

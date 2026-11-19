@@ -17,6 +17,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.UUID;
 
+import static in.boss.sales.api.SalesApiDtos.CreateDirectCpoRequest;
 import static in.boss.sales.api.SalesApiDtos.CpoResponse;
 import static in.boss.sales.api.SalesApiDtos.CpoStatusRequest;
 import static in.boss.sales.api.SalesApiDtos.PageResponse;
@@ -36,6 +37,12 @@ public class SalesCpoController {
                               CpoMaterialAvailabilityService materialAvailabilityService) {
         this.customerPoService = customerPoService;
         this.materialAvailabilityService = materialAvailabilityService;
+    }
+
+    @PostMapping
+    @PreAuthorize(BossPermissions.CPO_TRANSITIONS)
+    public CpoResponse createDirect(@Valid @RequestBody CreateDirectCpoRequest request) {
+        return customerPoService.createDirect(request);
     }
 
     @GetMapping

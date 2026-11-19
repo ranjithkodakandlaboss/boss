@@ -2,11 +2,9 @@
 import { useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Search, Building2, Phone, Mail, ChevronRight, Star, Pencil } from 'lucide-react';
-import RecordSheet from '../../components/shared/RecordSheet';
 import { useStore } from './runtime';
 import StatusChip, { getStatusLabel } from '../../components/shared/StatusChip';
 import EmptyState from './workflow/EmptyState';
-import type { Party } from './types';
 import SortableHeader from '../../components/shared/SortableHeader';
 import { sortRows } from './tableSort';
 
@@ -19,7 +17,7 @@ function countLabel(count: number, singular: string, plural: string) {
 export default function CustomerDirectory() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { customers, customerPos, rfqs, quotations, showToast, updateCustomer, addCustomer } = useStore();
+  const { customers, customerPos, rfqs, quotations } = useStore();
   const openCustomer = (id: string) => navigate(`/sales/customers/${id}`, { state: { background: location, from: `${location.pathname}${location.search}` } });
   const openRelated = (tab: 'rfqs' | 'quotations' | 'pos', customerId: string) => {
     navigate(`/sales?tab=${tab}&customer=${encodeURIComponent(customerId)}`);
@@ -28,9 +26,6 @@ export default function CustomerDirectory() {
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('all');
   const [sortKey, setSortKey] = useState<CustomerSortKey>('customer');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
-  const [showAdd, setShowAdd] = useState(false);
-  const [editCustomer, setEditCustomer] = useState<Party | null>(null);
-
   const filtered = customers.filter(c => {
     const q = search.toLowerCase();
     const matchSearch = !q || c.legalName.toLowerCase().includes(q) || c.tradingName.toLowerCase().includes(q) || c.gstin.includes(q) || c.city.toLowerCase().includes(q);
@@ -69,7 +64,7 @@ export default function CustomerDirectory() {
           <option value="inactive">{getStatusLabel('inactive')}</option>
         </select>
       </div>
-      <p className="px-4 py-2 text-xs" style={{ color: 'var(--text-2)' }}>{customers.length} customers</p>
+      <p className="px-4 py-2 text-xs" style={{ color: 'var(--text-2)' }}>{filtered.length} of {customers.length} customers</p>
 
       {/* Table */}
       {filtered.length === 0 ? (
@@ -149,65 +144,6 @@ export default function CustomerDirectory() {
         </div>
       )}
 
-      {showAdd && (
-        <AddCustomerModal
-          onClose={() => setShowAdd(false)}
-          onSave={(form) => {
-            const customer: Party = { id: `cust-${Date.now()}`, partyType: 'Customer', legalName: form.legalName, tradingName: form.tradingName || form.legalName, panNumber: form.pan, gstin: form.gstin, state: form.state, paymentTerms: form.paymentTerms, currency: 'INR', status: 'active', contactPerson: form.contactPerson, phone: form.phone, email: form.email, city: form.city, since: new Date().getFullYear().toString() };
-            addCustomer(customer);
-            setShowAdd(false);
-          }}
-        />
-      )}
-      {editCustomer && (
-        <AddCustomerModal
-          editMode
-          initialValues={{ legalName: editCustomer.legalName, tradingName: editCustomer.tradingName ?? '', gstin: editCustomer.gstin, pan: editCustomer.panNumber, city: editCustomer.city, state: editCustomer.state, phone: editCustomer.phone, email: editCustomer.email, paymentTerms: editCustomer.paymentTerms, contactPerson: editCustomer.contactPerson }}
-          onClose={() => setEditCustomer(null)}
-          onSave={(form) => {
-            updateCustomer(editCustomer.id, { legalName: form.legalName, tradingName: form.tradingName || form.legalName, city: form.city, state: form.state, phone: form.phone, email: form.email, contactPerson: form.contactPerson, paymentTerms: form.paymentTerms, gstin: form.gstin, panNumber: form.pan });
-            setEditCustomer(null);
-          }}
-        />
-      )}
     </div>
-  );
-}
-
-function AddCustomerModal({ onClose, onSave, initialValues, editMode }: { onClose: () => void; onSave: (form: Record<string, string>) => void; initialValues?: Record<string, string>; editMode?: boolean }) {
-  const [form, setForm] = useState({ legalName: '', tradingName: '', gstin: '', pan: '', city: '', state: '', phone: '', email: '', paymentTerms: 'Net 30', contactPerson: '', ...initialValues });
-  const [err, setErr] = useState('');
-  const save = () => {
-    if (!form.legalName || !form.city) { setErr('Legal name and city are required'); return; }
-    onSave(form);
-  };
-  return (
-    <RecordSheet title={editMode ? 'Edit Customer' : 'Add Customer'} onClose={onClose} secondary={{ label: 'Cancel', onClick: onClose }} primary={{ label: editMode ? 'Save Changes' : 'Save Customer', onClick: save }}>
-      <div className="grid grid-cols-2 gap-3">
-        {[
-          { label: 'Legal Name *', key: 'legalName', placeholder: 'As per company registration', span: true },
-          { label: 'Trading Name', key: 'tradingName', placeholder: 'Short name', span: false },
-          { label: 'City *', key: 'city', placeholder: '', span: false },
-          { label: 'State', key: 'state', placeholder: '', span: false },
-          { label: 'GSTIN', key: 'gstin', placeholder: '', span: false },
-          { label: 'PAN', key: 'pan', placeholder: '', span: false },
-          { label: 'Contact Person', key: 'contactPerson', placeholder: '', span: false },
-          { label: 'Phone', key: 'phone', placeholder: '', span: false },
-          { label: 'Email', key: 'email', placeholder: '', span: true },
-        ].map(f => (
-          <div key={f.key} className={f.span ? 'col-span-2' : ''}>
-            <label className="block text-xs font-medium text-[var(--text-2)] mb-1">{f.label}</label>
-            <input className="eoss-input w-full" value={(form as any)[f.key]} onChange={e => setForm(prev => ({ ...prev, [f.key]: e.target.value }))} placeholder={f.placeholder} />
-          </div>
-        ))}
-        <div>
-          <label className="block text-xs font-medium text-[var(--text-2)] mb-1">Payment Terms</label>
-          <select className="eoss-input w-full" value={form.paymentTerms} onChange={e => setForm(f => ({ ...f, paymentTerms: e.target.value }))}>
-            {['Advance', 'Net 15', 'Net 30', 'Net 45', 'Net 60'].map(t => <option key={t}>{t}</option>)}
-          </select>
-        </div>
-      </div>
-      {err && <p className="text-xs text-[var(--danger)] mt-2">{err}</p>}
-    </RecordSheet>
   );
 }

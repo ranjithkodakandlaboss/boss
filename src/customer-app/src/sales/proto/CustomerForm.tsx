@@ -24,7 +24,9 @@ export default function CustomerForm({ customer, title, primaryLabel = 'Save Cha
 }) {
   const [form, setForm] = useState({ ...customer });
   const [error, setError] = useState('');
-  const update = (key: keyof Party, value: string | number) => setForm(prev => ({ ...prev, [key]: value }));
+  const update = (key: keyof Party, value: string | number) => { setForm(prev => ({ ...prev, [key]: value })); setError(''); };
+
+  const canSave = !!(form.legalName?.trim() && form.city?.trim() && form.contactPerson?.trim() && form.email?.trim() && form.gstin?.trim());
 
   const save = (e: React.FormEvent) => {
     e.preventDefault();
@@ -45,7 +47,8 @@ export default function CustomerForm({ customer, title, primaryLabel = 'Save Cha
       const isOwn = customer.legalName?.toLowerCase() === form.legalName.trim().toLowerCase();
       if (existing.length > 0 && !isOwn) return setError('A customer with this legal name already exists.');
     }
-    if (form.phone && !/^[0-9+() -]{8,18}$/.test(form.phone)) return setError('Enter a valid contact number.');
+    if (form.panNumber && !/^[A-Z]{5}[0-9]{4}[A-Z]$/i.test(form.panNumber.trim())) return setError('PAN must be 10 characters in the format AAAAA9999A (e.g. ABCDE1234F).');
+    if (form.phone && !/^[+]?[0-9][0-9 \-()]{6,17}$/.test(form.phone.trim())) return setError('Enter a valid phone number (digits, spaces, +, - or brackets; 7–18 characters).');
     onSave({
       legalName: form.legalName.trim(),
       tradingName: form.tradingName.trim(),
@@ -91,7 +94,7 @@ export default function CustomerForm({ customer, title, primaryLabel = 'Save Cha
               <input type="tel" value={form.phone} onChange={e => update('phone', e.target.value)} className="eoss-input w-full mt-1" />
             </label>
             <label className="text-xs font-medium" style={{ color: 'var(--text-2)' }}>GSTIN *
-              <input required type="text" value={form.gstin} onChange={e => update('gstin', e.target.value)} placeholder="27AABCU9603R1ZX" className="eoss-input w-full mt-1 font-mono" />
+              <input required type="text" value={form.gstin} onChange={e => update('gstin', e.target.value)} placeholder="e.g. 27XXXXX9999X1ZX" className="eoss-input w-full mt-1 font-mono" />
             </label>
             <label className="text-xs font-medium" style={{ color: 'var(--text-2)' }}>PAN
               <input type="text" value={form.panNumber} onChange={e => update('panNumber', e.target.value)} className="eoss-input w-full mt-1 font-mono" />
@@ -128,7 +131,7 @@ export default function CustomerForm({ customer, title, primaryLabel = 'Save Cha
     </div>
     <div className="sticky bottom-0 flex-shrink-0 flex justify-between px-6 py-4 border-t" style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}>
       <button type="button" onClick={onCancel} className="px-4 py-2 rounded-lg border text-sm" style={{ borderColor: 'var(--border)', color: 'var(--text-2)' }}>Cancel</button>
-      <button type="submit" className="flex items-center gap-2 px-5 py-2 rounded-lg text-sm font-semibold text-white" style={{ background: 'var(--brand)' }}><Save size={14} /> {primaryLabel}</button>
+      <button type="submit" disabled={!canSave} className="flex items-center gap-2 px-5 py-2 rounded-lg text-sm font-semibold text-white disabled:opacity-40 disabled:cursor-not-allowed" style={{ background: 'var(--brand)' }}><Save size={14} /> {primaryLabel}</button>
     </div>
   </form>;
 }

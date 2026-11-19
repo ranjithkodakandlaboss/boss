@@ -303,7 +303,7 @@ export default function Procurement() {
           <table className="eoss-table">
             <thead style={{ position: 'sticky', top: 0, zIndex: 5 }}>
               <tr style={{ background: 'var(--surface-2)' }}>
-                {([['PR Number', 'number'], ['Raised By', 'raisedBy'], ['Raised Date', 'date'], ['Required By', 'requiredBy'], ['Department', 'dept'], ['Lines', 'lines'], ['Priority', 'priority'], ['Status', 'status']] as [string, ProcurementSortKey][]).map(([label, key]) => (
+                {([['PR Number', 'number'], ['Raised By', 'raisedBy'], ['Raised Date', 'date'], ['Required By', 'requiredBy'], ['Delivery Site', 'dept'], ['Department', 'dept'], ['Lines', 'lines'], ['Priority', 'priority'], ['Status', 'status']] as [string, ProcurementSortKey][]).map(([label, key]) => (
                   <SortableHeader key={label} label={label} active={sortKey === key} direction={sortDir} onSort={() => handleSort(key)} className="text-left px-4 py-2.5 text-xs font-semibold font-medium" style={{ color: 'var(--text-3)', borderBottom: '1px solid var(--border)' }} />
                 ))}
                 <th />
@@ -321,12 +321,10 @@ export default function Procurement() {
                   <td className="px-4 py-3 font-mono text-xs font-bold" style={{ color: 'var(--brand)' }}>
                     <Link to={`/procurement/pr/${pr.id}`} state={{ from: `${location.pathname}${location.search}` }} onClick={e => e.stopPropagation()} className="hover:underline">{pr.prNumber}</Link>
                   </td>
-                  <td className="px-4 py-3 text-sm" style={{ color: 'var(--text)' }}>
-                    {pr.raisedBy}
-                    <div className="text-[11px] text-[var(--text-3)]">{placeLabel(pr.deliverToSiteName, pr.deliverToStoreName)}</div>
-                  </td>
+                  <td className="px-4 py-3 text-sm" style={{ color: 'var(--text)' }}>{pr.raisedBy}</td>
                   <td className="px-4 py-3 text-xs" style={{ color: 'var(--text-2)' }}>{shownDate(pr.raisedDate)}</td>
                   <td className="px-4 py-3 text-xs" style={{ color: 'var(--text-2)' }}>{shownDate(pr.requiredBy)}</td>
+                  <td className="px-4 py-3 text-xs" style={{ color: 'var(--text-2)' }}>{placeLabel(pr.deliverToSiteName, pr.deliverToStoreName) || '—'}</td>
                   <td className="px-4 py-3 text-xs" style={{ color: 'var(--text-2)' }}>{pr.department || 'Production'}</td>
                   <td className="px-4 py-3 text-sm text-center" style={{ color: 'var(--text-2)' }}>{pr.lineCount}</td>
                   <td className="px-4 py-3"><StatusChip status={pr.priority} /></td>

@@ -1,6 +1,6 @@
 // @ts-nocheck
 import React, { useState, useCallback } from 'react';
-import { useParams, useNavigate, Link } from 'react-router-dom';
+import { useParams, useNavigate, useLocation, Link } from 'react-router-dom';
 import { ArrowLeft, ChevronRight, Edit2, Phone, Mail, Star, Upload } from 'lucide-react';
 import { useStore } from './runtime';
 import StatusChip from '../../components/shared/StatusChip';
@@ -14,7 +14,9 @@ type Tab = 'overview' | 'orders' | 'rfqs' | 'quotations' | 'invoices' | 'payment
 export default function CustomerDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
   const { openRecord } = useReturnNavigation('/sales?tab=customers');
+  const openCreate = (path: string) => navigate(path, { state: { background: location, from: `${location.pathname}${location.search}` } });
   const { customers, customerPos, rfqs, quotations, documents, invoices, payments, addDocument, currentUser, showToast, deactivateCustomer, updateCustomer } = useStore();
   const [tab, setTab] = useState<Tab>('overview');
   const [confirmDeactivate, setConfirmDeactivate] = useState(false);
@@ -52,7 +54,7 @@ export default function CustomerDetail() {
     { key: 'overview', label: 'Overview' },
     { key: 'orders', label: `Customer POs (${orders.length})` },
     { key: 'rfqs', label: `RFQs (${customerRfqs.length})` },
-    { key: 'quotations', label: `Quotations (${quotations.filter(q => q.customerId === id).length})` },
+    { key: 'quotations', label: `Quotations (${quotations.filter(q => q.customerId === id && q.status !== 'superseded').length})` },
     { key: 'invoices', label: `Invoices (${customerInvoiceRecords.length})` },
     { key: 'payments', label: `Payments (${customerPaymentRecords.length})` },
     { key: 'contacts', label: 'Contacts' },
@@ -94,6 +96,7 @@ export default function CustomerDetail() {
         </div>
         <div className="mt-4 flex items-center gap-6 flex-wrap">
           <SBadge label="Customer Since" value={fmtSince(customer.since)} />
+          {customer.gstin && <SBadge label="GSTIN" value={customer.gstin} mono />}
           <SBadge label="Payment Terms" value={customer.paymentTerms} />
           <SBadge label="Currency" value={customer.currency} />
           {customer.creditLimit != null && <SBadge label="Credit Limit" value={`₹${customer.creditLimit.toLocaleString('en-IN')}`} emphasis />}
@@ -179,6 +182,22 @@ export default function CustomerDetail() {
                   <button onClick={() => setTab('documents')} className="w-full text-left px-3 py-2 rounded-lg border text-xs font-medium hover:opacity-80"
                     style={{ borderColor: 'var(--border)', background: 'var(--surface-2)', color: 'var(--text-2)' }}>
                     {customerDocuments.length} Customer Document{customerDocuments.length !== 1 ? 's' : ''} →
+                  </button>
+                </div>
+              </Card>
+              <Card title="Quick Actions">
+                <div className="space-y-2">
+                  <button onClick={() => openCreate(`/sales/rfq/new?customer=${id}`)} className="w-full text-left px-3 py-2 rounded-lg border text-xs font-semibold hover:opacity-80"
+                    style={{ borderColor: 'var(--brand)', color: 'var(--brand)', background: 'var(--surface)' }}>
+                    + Add RFQ
+                  </button>
+                  <button onClick={() => openCreate(`/sales/quotation/new?customer=${id}`)} className="w-full text-left px-3 py-2 rounded-lg border text-xs font-semibold hover:opacity-80"
+                    style={{ borderColor: 'var(--brand)', color: 'var(--brand)', background: 'var(--surface)' }}>
+                    + Add Quotation
+                  </button>
+                  <button onClick={() => openCreate(`/sales/po/new?customer=${id}`)} className="w-full text-left px-3 py-2 rounded-lg border text-xs font-semibold hover:opacity-80"
+                    style={{ borderColor: 'var(--brand)', color: 'var(--brand)', background: 'var(--surface)' }}>
+                    + Add Customer PO
                   </button>
                 </div>
               </Card>
@@ -397,7 +416,7 @@ export default function CustomerDetail() {
           <p className="text-sm text-[var(--text-2)] mb-5">Historical RFQs, quotations and Customer POs stay readable. This can be undone by reactivating the customer.</p>
           <div className="flex gap-3">
             <button onClick={() => setConfirmDeactivate(false)} className="flex-1 py-2.5 border border-[var(--border)] rounded-xl text-sm text-[var(--text-2)]">Cancel</button>
-            <button onClick={() => { setConfirmDeactivate(false); deactivateCustomer(customer.id); }} className="flex-1 py-2.5 rounded-xl text-sm font-medium text-white" style={{ background: 'var(--error, #DC2626)' }}>Deactivate</button>
+            <button onClick={() => { setConfirmDeactivate(false); deactivateCustomer(customer.id).then(() => navigate('/sales?tab=customers')); }} className="flex-1 py-2.5 rounded-xl text-sm font-medium text-white" style={{ background: 'var(--error, #DC2626)' }}>Deactivate</button>
           </div>
         </div>
       </div>
@@ -406,11 +425,11 @@ export default function CustomerDetail() {
   );
 }
 
-function SBadge({ label, value, emphasis }: { label: string; value: string; emphasis?: boolean }) {
+function SBadge({ label, value, emphasis, mono }: { label: string; value: string; emphasis?: boolean; mono?: boolean }) {
   return (
     <div className="flex flex-col gap-0.5">
       <span className="text-[10px] font-medium" style={{ color: 'var(--text-3)' }}>{label}</span>
-      <span className="text-sm font-semibold" style={{ color: emphasis ? 'var(--brand)' : 'var(--text)' }}>{value}</span>
+      <span className={`text-sm font-semibold${mono ? ' font-mono' : ''}`} style={{ color: emphasis ? 'var(--brand)' : 'var(--text)' }}>{value}</span>
     </div>
   );
 }
