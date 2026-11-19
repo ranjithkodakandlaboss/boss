@@ -26,7 +26,7 @@ function send<T>(method: string, path: string, body?: unknown) {
   });
 }
 
-export const listConfigCategories = () => api<ConfigCategory[]>("/api/v1/config/categories");
+export const listConfigCategories = () => api<ConfigCategory[]>("/api/v1/config/options/categories");
 export const listConfigOptions = (category: string) =>
   api<ConfigOption[]>(`/api/v1/config/options/${encodeURIComponent(category)}?includeInactive=true`);
 export const createConfigOption = (category: string, body: { code: string; label: string; sortOrder: number }) =>
