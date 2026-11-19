@@ -23,6 +23,7 @@ export default function ConfigOptionsAdmin() {
   const [categoryCode, setCategoryCode] = useState("");
   const [options, setOptions] = useState<ConfigOption[]>([]);
   const [loadingCategories, setLoadingCategories] = useState(true);
+  const [categoryError, setCategoryError] = useState("");
   const [loadingOptions, setLoadingOptions] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -63,14 +64,20 @@ export default function ConfigOptionsAdmin() {
     }
   }
 
-  useEffect(() => {
+  function loadCategories() {
+    setLoadingCategories(true);
+    setCategoryError("");
     listConfigCategories()
       .then((items) => {
         setCategories(items);
         setCategoryCode((current) => current || items[0]?.code || "");
       })
-      .catch((reason: unknown) => setError(messageFor(reason, "Configuration categories could not be loaded.")))
+      .catch((reason: unknown) => setCategoryError(messageFor(reason, "Configuration categories could not be loaded.")))
       .finally(() => setLoadingCategories(false));
+  }
+
+  useEffect(() => {
+    loadCategories();
   }, []);
 
   useEffect(() => {
@@ -181,6 +188,13 @@ export default function ConfigOptionsAdmin() {
         </div>
       </div>
 
+      {categoryError ? (
+        <div role="alert" className="rounded-lg border border-[var(--error)] px-3 py-2 text-sm text-[var(--error)]">
+          <p>Configuration categories could not be loaded: {categoryError}</p>
+          <button type="button" className="mt-2 font-semibold underline" onClick={loadCategories}>Retry</button>
+        </div>
+      ) : (
+      <>
       {error && <p role="alert" className="rounded-lg border border-[var(--error)] px-3 py-2 text-sm text-[var(--error)]">{error}</p>}
 
       <div className="max-w-xl space-y-4">
@@ -281,6 +295,8 @@ export default function ConfigOptionsAdmin() {
             onCancel={() => setConfirmOption(null)}
           />
         </>
+      )}
+      </>
       )}
     </div>
   );

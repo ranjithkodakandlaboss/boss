@@ -31,7 +31,7 @@ beforeEach(() => {
     if (url.includes("/tenant/info")) return json({ id: "t", name: "North Works", status: "active" });
     if (url.includes("/onboarding")) return json({ industryType: "GENERAL_MANUFACTURING", completed: true, company: { companyName: "North Works", legalName: "North Works Pvt Ltd", sites: [], stores: [] } });
     if (url.includes("/company")) return json({ companyName: "North Works", legalName: "North Works Pvt Ltd", sites: [], stores: [] });
-    if (url.includes("/config/categories")) return json([{ code: "PAYMENT_MODES", name: "Payment modes", scope: "tenant", tenantEditable: true, supportsOrdering: true }]);
+    if (url.includes("/config/options/categories")) return json([{ code: "PAYMENT_MODES", name: "Payment modes", scope: "tenant", tenantEditable: true, supportsOrdering: true }]);
     if (url.includes("/config/options/")) return json([]);
     return json({});
   }));
