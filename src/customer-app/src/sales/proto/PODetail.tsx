@@ -243,6 +243,7 @@ export default function PODetail() {
   ];
 
   return (
+    <>
     <div className="flex flex-col h-full">
       {/* Record Header */}
       <div
@@ -859,6 +860,7 @@ export default function PODetail() {
       </div>
     </div>
 
+    {/* Dialogs */}
     {/* Confirm & Reserve dialog */}
     {confirmReserve && (
       <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
@@ -891,6 +893,7 @@ export default function PODetail() {
         </div>
       </div>
     )}
+    </>
   );
 }
 
