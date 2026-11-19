@@ -1,20 +1,25 @@
 package in.boss.masterdata;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import in.boss.masterdata.api.dto.CreateItemRequest;
 import in.boss.masterdata.api.dto.CreateUomRequest;
 import in.boss.masterdata.api.dto.ItemDto;
+import in.boss.masterdata.api.dto.ItemSpecification;
 import in.boss.masterdata.api.dto.PageResponse;
 import in.boss.masterdata.api.dto.UomDto;
 import in.boss.masterdata.api.dto.UpdateItemRequest;
 import in.boss.masterdata.domain.DuplicateEntityException;
 import in.boss.masterdata.domain.EntityNotFoundException;
 import in.boss.masterdata.domain.ItemService;
+import in.boss.masterdata.domain.LifecycleException;
+import in.boss.masterdata.domain.ValidationException;
 import in.boss.masterdata.domain.UomService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 
 import java.math.BigDecimal;
+import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -27,6 +32,9 @@ class ItemCrudTest extends BaseMasterDataIntegrationTest {
 
     @Autowired
     private UomService uomService;
+
+    @Autowired
+    private ObjectMapper objectMapper;
 
     private UUID tenantId;
     private UUID uomId;
@@ -144,5 +152,64 @@ class ItemCrudTest extends BaseMasterDataIntegrationTest {
         // When explicitly filtering for status=inactive, it is returned
         PageResponse<ItemDto> inactiveList = itemService.listItems(null, null, "inactive", "DEL-001", 0, 10);
         assertThat(inactiveList.getContent()).anyMatch(i -> i.getId().equals(created.getId()));
+    }
+
+    @Test
+    void productSpecificationsArePersistedWithTenantUnitAndCannotBeChanged() throws Exception {
+        ItemDto created = itemService.createItem(CreateItemRequest.builder()
+                .code("TOP").name("Countertop").itemType("FINISHED_GOOD").uomId(uomId)
+                .productKind("MANUFACTURED")
+                .specifications(List.of(ItemSpecification.builder().key("length").label("Length").uomId(uomId)
+                        .minValue(new BigDecimal("1")).maxValue(new BigDecimal("100"))
+                        .defaultValue(new BigDecimal("20")).uomSymbol("forged").build()))
+                .build());
+        ItemDto fetched = itemService.getItem(created.getId());
+        assertThat(fetched.getProductKind()).isEqualTo("MANUFACTURED");
+        assertThat(fetched.getSpecifications()).hasSize(1);
+        assertThat(fetched.getSpecifications().getFirst().getUomSymbol()).startsWith("KG-");
+        assertThat(fetched.getSpecifications().getFirst().getDefaultValue()).isEqualByComparingTo("20");
+        assertThatThrownBy(() -> itemService.updateItem(created.getId(), UpdateItemRequest.builder()
+                .specifications(List.of()).build())).isInstanceOf(LifecycleException.class);
+        UpdateItemRequest clear = objectMapper.readValue("{\"productKind\":null}", UpdateItemRequest.class);
+        assertThatThrownBy(() -> itemService.updateItem(created.getId(), clear))
+                .isInstanceOf(LifecycleException.class);
+        UUID otherTenant = provisionTenant("other-spec");
+        setTenantContext(otherTenant, "OWNER");
+        assertThatThrownBy(() -> itemService.getItem(created.getId())).isInstanceOf(EntityNotFoundException.class);
+    }
+
+    @Test
+    void tradedProductCanBeCreatedWithoutBomOrSpecifications() {
+        ItemDto product = itemService.createItem(CreateItemRequest.builder().code("TRADED")
+                .name("Traded product").itemType("FINISHED_GOOD").uomId(uomId)
+                .productKind("TRADED").build());
+        assertThat(itemService.getItem(product.getId()).getProductKind()).isEqualTo("TRADED");
+        assertThat(itemService.getItem(product.getId()).getSpecifications()).isEmpty();
+    }
+
+    @Test
+    void invalidSpecificationsAndForeignUnitsAreRejected() {
+        UUID otherTenant = provisionTenant("foreign-unit");
+        setTenantContext(otherTenant, "OWNER");
+        UUID foreignUnit = uomService.createUom(CreateUomRequest.builder()
+                .name("Metre").symbol("M").uomType("length").build()).getId();
+        setTenantContext(tenantId, "OWNER");
+        ItemSpecification length = ItemSpecification.builder().key("length").label("Length").uomId(uomId).build();
+        CreateItemRequest request = CreateItemRequest.builder().code("BAD").name("Bad").itemType("FINISHED_GOOD")
+                .uomId(uomId).productKind("TRADED").specifications(List.of(length, length)).build();
+        assertThatThrownBy(() -> itemService.createItem(request)).isInstanceOf(ValidationException.class)
+                .hasMessageContaining("unique");
+        length.setUomId(foreignUnit);
+        request.setSpecifications(List.of(length));
+        assertThatThrownBy(() -> itemService.createItem(request)).isInstanceOf(ValidationException.class)
+                .hasMessageContaining("Invalid specification UOM");
+        length.setUomId(uomId);
+        length.setMinValue(BigDecimal.TEN);
+        length.setDefaultValue(BigDecimal.ONE);
+        assertThatThrownBy(() -> itemService.createItem(request)).isInstanceOf(ValidationException.class)
+                .hasMessageContaining("default");
+        request.setItemType("RAW_MATERIAL");
+        assertThatThrownBy(() -> itemService.createItem(request)).isInstanceOf(ValidationException.class)
+                .hasMessageContaining("finished goods");
     }
 }

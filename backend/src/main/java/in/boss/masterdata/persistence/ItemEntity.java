@@ -1,5 +1,8 @@
 package in.boss.masterdata.persistence;
 
+import in.boss.masterdata.api.dto.ItemSpecification;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
@@ -12,6 +15,7 @@ import lombok.Setter;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
 
 @Entity
@@ -41,6 +45,13 @@ public class ItemEntity {
 
     @Column(name = "item_type", nullable = false)
     private String itemType;
+
+    @Column(name = "product_kind")
+    private String productKind;
+
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "specifications", nullable = false, columnDefinition = "jsonb")
+    private List<ItemSpecification> specifications;
 
     @Column(name = "category_id")
     private UUID categoryId;

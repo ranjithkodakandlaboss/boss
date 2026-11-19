@@ -64,6 +64,18 @@ export type Item = {
   uomSymbol?: string;
   reorderPoint?: number | null;
   status?: string;
+  productKind?: "MANUFACTURED" | "TRADED" | null;
+  specifications?: ItemSpecification[];
+};
+
+export type ItemSpecification = {
+  key: string;
+  label: string;
+  uomId: string;
+  uomSymbol?: string;
+  minValue: number | null;
+  maxValue: number | null;
+  defaultValue: number | null;
 };
 
 export type Uom = { id: string; name: string; symbol: string };
