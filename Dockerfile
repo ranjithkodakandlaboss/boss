@@ -5,7 +5,7 @@ COPY backend/pom.xml .
 COPY backend/src ./src
 RUN --mount=type=cache,target=/root/.m2 \
     apk add --no-cache maven && \
-    mvn -B -ntp package -DskipTests
+    mvn -B -ntp -U package -DskipTests
 
 # Runtime stage
 FROM eclipse-temurin:21-jre-alpine
