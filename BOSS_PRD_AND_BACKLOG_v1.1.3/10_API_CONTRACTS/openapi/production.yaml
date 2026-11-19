@@ -115,6 +115,11 @@ components:
         assetId: { type: string, format: uuid, nullable: true }
         stageConfigOptionId: { type: string, format: uuid, nullable: true }
         inspectionTemplateId: { type: string, format: uuid, nullable: true }
+        requiresInspection: { type: boolean }
+        isOptional: { type: boolean }
+        stageType: { type: string, enum: [production, inspection, rework, hold] }
+        setupTimeMin: { type: integer, minimum: 0 }
+        runTimeMin: { type: integer, minimum: 0 }
 
 paths:
   /jobs:
@@ -210,6 +215,7 @@ paths:
               required: [name]
               properties:
                 name: { type: string }
+                finishedItemId: { type: string, format: uuid, nullable: true, description: "Active tenant finished product; omit for a shared route" }
                 stageName: { type: string, description: "Legacy single-stage input" }
                 stages:
                   type: array
@@ -221,6 +227,30 @@ paths:
               schema: { $ref: '#/components/schemas/RoutingTemplate' }
         '400': { description: Invalid stage or inspection template reference }
         '403': { description: Tenant admin role required }
+
+  /jobs/routing-templates/{routingId}:
+    get:
+      operationId: getRoutingTemplate
+      summary: Inspect a routing template and its ordered stages
+      tags: [Routing Templates]
+      parameters:
+        - name: routingId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/RoutingTemplate' }
+                  - type: object
+                    properties:
+                      stages:
+                        type: array
+                        items: { $ref: '#/components/schemas/RoutingStageInput' }
+        '404': { description: Routing template not found for this tenant }
 
   /jobs/routing-templates/{routingId}/revisions:
     post:
@@ -256,6 +286,7 @@ paths:
         '400': { description: Invalid stage or inspection template reference }
         '403': { description: Tenant admin role required }
         '404': { description: Active routing template not found for this tenant }
+        '409': { description: Legacy inspection types cannot be preserved in a revision }
 
   /jobs/{jobId}:
     get:

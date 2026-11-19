@@ -5,6 +5,8 @@ import in.boss.production.api.ProductionApiDtos.EligibleCpoLine;
 import in.boss.production.api.ProductionApiDtos.PageResponse;
 import in.boss.production.api.ProductionApiDtos.ProductionJobResponse;
 import in.boss.production.api.ProductionApiDtos.RoutingTemplateOption;
+import in.boss.production.api.ProductionApiDtos.RoutingTemplateDetail;
+import in.boss.production.api.ProductionApiDtos.RoutingStageRequest;
 import in.boss.shared.context.BossContext;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -131,8 +133,13 @@ public class ProductionQueryService {
                 : new Object[]{context.tenantId(), itemId};
         return jdbc.query("""
                 SELECT t.id, t.name, t.version, t.finished_item_id,
-                       (SELECT COUNT(*) FROM routing_template_stages s
-                         WHERE s.tenant_id = t.tenant_id AND s.routing_id = t.id) AS stage_count
+                       CASE WHEN EXISTS (SELECT 1 FROM routing_template_stages s
+                                         WHERE s.tenant_id = t.tenant_id AND s.routing_id = t.id)
+                         THEN (SELECT COUNT(*) FROM routing_template_stages s
+                               WHERE s.tenant_id = t.tenant_id AND s.routing_id = t.id)
+                         ELSE (SELECT COUNT(*) FROM routing_operations o
+                               WHERE o.tenant_id = t.tenant_id AND o.routing_id = t.id)
+                       END AS stage_count
                 FROM routing_templates t
                 WHERE t.tenant_id = ? AND t.status = 'active'
                 """ + itemFilter + " ORDER BY t.name", (rs, row) -> new RoutingTemplateOption(
@@ -141,6 +148,38 @@ public class ProductionQueryService {
                 rs.getString("version"),
                 rs.getObject("finished_item_id", UUID.class),
                 rs.getInt("stage_count")), args);
+    }
+
+    public RoutingTemplateDetail routingTemplate(UUID routingId) {
+        UUID tenantId = support.requireContext().tenantId();
+        RoutingTemplateOption template = jdbc.query("""
+                SELECT id, name, version, finished_item_id FROM routing_templates
+                WHERE tenant_id = ? AND id = ?
+                """, rs -> rs.next() ? new RoutingTemplateOption(rs.getObject("id", UUID.class),
+                rs.getString("name"), rs.getString("version"),
+                rs.getObject("finished_item_id", UUID.class), 0) : null, tenantId, routingId);
+        if (template == null) {
+            throw ProductionSupport.notFound("Routing template was not found for this tenant");
+        }
+        List<RoutingStageRequest> stages = jdbc.query("""
+                SELECT name, work_centre, asset_id, stage_config_id, inspection_template_id,
+                       requires_inspection, is_optional, stage_type, setup_time_min, run_time_min
+                FROM routing_template_stages WHERE tenant_id = ? AND routing_id = ? ORDER BY seq_no
+                """, (rs, row) -> new RoutingStageRequest(rs.getString("name"), rs.getString("work_centre"),
+                rs.getObject("asset_id", UUID.class), rs.getObject("stage_config_id", UUID.class),
+                rs.getObject("inspection_template_id", UUID.class), rs.getBoolean("requires_inspection"),
+                rs.getBoolean("is_optional"), rs.getString("stage_type"), rs.getInt("setup_time_min"),
+                rs.getInt("run_time_min")), tenantId, routingId);
+        if (stages.isEmpty()) {
+            stages = jdbc.query("""
+                    SELECT name, work_centre, requires_inspection, is_optional, setup_time_min, run_time_min
+                    FROM routing_operations WHERE tenant_id = ? AND routing_id = ? ORDER BY seq_no
+                    """, (rs, row) -> new RoutingStageRequest(rs.getString("name"), rs.getString("work_centre"),
+                    null, null, null, rs.getBoolean("requires_inspection"), rs.getBoolean("is_optional"),
+                    "production", rs.getInt("setup_time_min"), rs.getInt("run_time_min")), tenantId, routingId);
+        }
+        return new RoutingTemplateDetail(template.id(), template.name(), template.version(),
+                template.finishedItemId(), stages.size(), stages);
     }
 
     public Map<String, Boolean> features() {

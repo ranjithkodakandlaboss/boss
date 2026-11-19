@@ -74,15 +74,24 @@ public class ProductionJobService {
         if (existing != null && existing > 0) {
             throw ProductionSupport.conflict("A workflow with this name already exists");
         }
+        if (request.finishedItemId() != null) {
+            Boolean activeProduct = jdbc.query("""
+                    SELECT is_active AND item_type = 'finished_goods' FROM items
+                    WHERE tenant_id = ? AND id = ? FOR SHARE
+                    """, rs -> rs.next() ? rs.getBoolean(1) : null, context.tenantId(), request.finishedItemId());
+            if (!Boolean.TRUE.equals(activeProduct)) {
+                throw ProductionSupport.badRequest("Select an active finished product belonging to this tenant");
+            }
+        }
         UUID id = UUID.randomUUID();
         jdbc.update("""
-                INSERT INTO routing_templates (id, tenant_id, name, version, is_default, status)
-                VALUES (?, ?, ?, 'v1', false, 'active')
-                """, id, context.tenantId(), name);
+                INSERT INTO routing_templates (id, tenant_id, name, version, is_default, status, finished_item_id)
+                VALUES (?, ?, ?, 'v1', false, 'active', ?)
+                """, id, context.tenantId(), name, request.finishedItemId());
         saveRoutingStages(context.tenantId(), id, requested);
         audit.record("routing_templates", id, "CREATE", null,
                 "{\"name\":\"" + name.replace("\\", "\\\\").replace("\"", "\\\"") + "\"}");
-        return new RoutingTemplateOption(id, name, "v1", null, requested.size());
+        return new RoutingTemplateOption(id, name, "v1", request.finishedItemId(), requested.size());
     }
 
     @PreAuthorize(OWNER_OR_OPS)
@@ -106,6 +115,16 @@ public class ProductionJobService {
                 context.tenantId(), routingId);
         if (current == null || !"active".equals(current.status())) {
             throw ProductionSupport.notFound("Active routing template was not found for this tenant");
+        }
+        Integer unsupportedLegacy = jdbc.queryForObject("""
+                SELECT COUNT(*) FROM routing_operations o
+                WHERE o.tenant_id = ? AND o.routing_id = ?
+                  AND o.inspection_type IS NOT NULL AND o.inspection_type <> 'none'
+                  AND NOT EXISTS (SELECT 1 FROM routing_template_stages s
+                                  WHERE s.tenant_id = o.tenant_id AND s.routing_id = o.routing_id)
+                """, Integer.class, context.tenantId(), routingId);
+        if (unsupportedLegacy != null && unsupportedLegacy > 0) {
+            throw ProductionSupport.conflict("This legacy route has inspection types that cannot be preserved in a revision");
         }
 
         UUID revisedId = UUID.randomUUID();
@@ -424,10 +443,14 @@ public class ProductionJobService {
             jdbc.update("""
                     INSERT INTO routing_template_stages
                       (tenant_id, routing_id, stage_config_id, seq_no, name, stage_type, work_centre,
-                       asset_id, requires_inspection, inspection_template_id)
-                    VALUES (?, ?, ?, ?, ?, 'production', ?, ?, ?, ?)
-                    """, tenantId, routingId, option.id(), seq++, option.label(), stage.workCentre(),
-                    stage.assetId(), stage.inspectionTemplateId() != null, stage.inspectionTemplateId());
+                       asset_id, requires_inspection, inspection_template_id, is_optional, setup_time_min, run_time_min)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, tenantId, routingId, option.id(), seq++, option.label(),
+                    stage.stageType() == null ? "production" : stage.stageType(), stage.workCentre(),
+                    stage.assetId(), Boolean.TRUE.equals(stage.requiresInspection()) || stage.inspectionTemplateId() != null,
+                    stage.inspectionTemplateId(), Boolean.TRUE.equals(stage.isOptional()),
+                    stage.setupTimeMin() == null ? 0 : stage.setupTimeMin(),
+                    stage.runTimeMin() == null ? 0 : stage.runTimeMin());
         }
     }
 
@@ -436,6 +459,12 @@ public class ProductionJobService {
                 || stages.stream().anyMatch(stage -> stage == null || stage.name() == null
                 || stage.name().isBlank())) {
             throw ProductionSupport.badRequest("Every routing template needs stages with names");
+        }
+        if (stages.stream().anyMatch(stage ->
+                (stage.stageType() != null && !List.of("production", "inspection", "rework", "hold").contains(stage.stageType()))
+                        || (stage.setupTimeMin() != null && stage.setupTimeMin() < 0)
+                        || (stage.runTimeMin() != null && stage.runTimeMin() < 0))) {
+            throw ProductionSupport.badRequest("Invalid routing stage type or duration");
         }
     }
 
