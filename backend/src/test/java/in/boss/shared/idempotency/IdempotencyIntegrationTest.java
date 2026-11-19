@@ -440,6 +440,38 @@ class IdempotencyIntegrationTest {
         assertThat(resp.getStatus()).isNotEqualTo(400);
     }
 
+    @Test
+    void multipartRequestIsSupportedAndNotConsumed() throws Exception {
+        setTenantContext();
+        String key = UUID.randomUUID().toString();
+
+        var req = new MockHttpServletRequest("POST", "/api/v1/documents");
+        req.setContentType("multipart/form-data; boundary=----WebKitFormBoundaryXYZ");
+        req.setContent("dummy-multipart-content".getBytes());
+        req.addHeader("Idempotency-Key", key);
+
+        var resp = new MockHttpServletResponse();
+        var chainCalls = new AtomicInteger(0);
+
+        filter.doFilter(req, resp, (rq, rs) -> {
+            chainCalls.incrementAndGet();
+            try {
+                byte[] content = rq.getInputStream().readAllBytes();
+                assertThat(content).isNotEmpty();
+                var httpResp = (jakarta.servlet.http.HttpServletResponse) rs;
+                httpResp.setStatus(201);
+                httpResp.setContentType("application/json");
+                httpResp.getWriter().write("{\"id\":\"doc-1\"}");
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+        });
+
+        assertThat(chainCalls.get()).isEqualTo(1);
+        assertThat(resp.getStatus()).isEqualTo(201);
+        assertThat(resp.getContentAsString()).contains("doc-1");
+    }
+
     // ---- helpers ----
 
     private static MockHttpServletRequest postRequest(String uri, String body) {
