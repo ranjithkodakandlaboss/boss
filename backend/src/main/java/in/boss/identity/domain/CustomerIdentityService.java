@@ -237,6 +237,21 @@ public class CustomerIdentityService {
             if (displayName != null && !displayName.isBlank()) request.setDisplayName(displayName.trim());
             return firebaseAuth.createUser(request).getUid();
         } catch (FirebaseAuthException exception) {
+            // EMAIL_ALREADY_EXISTS means a previous partial activation left a Firebase user behind.
+            // The invite token is still pending so the DB record was never committed.
+            // Treat this the same as a completed activation: tell the user to sign in.
+            boolean emailTaken;
+            try {
+                emailTaken = exception.getMessage() != null && exception.getMessage().contains("EMAIL_EXISTS");
+                if (!emailTaken) firebaseAuth.getUserByEmail(email);
+                emailTaken = true;
+            } catch (FirebaseAuthException ignored) {
+                emailTaken = false;
+            }
+            if (emailTaken) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT,
+                        "An account with this email address already exists. Please sign in.");
+            }
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Firebase could not create this user");
         }
     }

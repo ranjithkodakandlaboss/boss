@@ -26,7 +26,8 @@ export default function ActivatePage() {
       signIn(await firebaseSignIn(user.email, password));
       window.location.assign("/onboarding");
     } catch (caught) {
-      setError(caught instanceof ApiError || caught instanceof Error ? caught.message : "Activation failed");
+      const msg = caught instanceof ApiError || caught instanceof Error ? caught.message : "Activation failed";
+      setError(msg);
     } finally {
       setPending(false);
     }
@@ -41,7 +42,14 @@ export default function ActivatePage() {
         <TextField label="Display name" name="displayName" />
         <TextField label="Password" name="password" type="password" required minLength={6} />
         <p className="text-xs text-[var(--text-3)]">The password is created for the email address on the invitation.</p>
-        {error && <p role="alert" className="text-sm text-[var(--error)]">{error}</p>}
+        {error && (
+          <p role="alert" className="text-sm text-[var(--error)]">
+            {error}
+            {error.toLowerCase().includes("already exists") || error.toLowerCase().includes("already active") ? (
+              <> <Link className="underline" to="/login">Sign in</Link></>
+            ) : null}
+          </p>
+        )}
         <Button type="submit" disabled={pending}>{pending ? "Activating" : "Activate"}</Button>
         <p className="text-xs text-[var(--text-3)]"><Link className="underline" to="/login">Back to sign in</Link></p>
       </form>

@@ -7,6 +7,13 @@ import { TextField } from "../components/shared/Fields";
 
 export default function LoginPage() {
   const navigate = useNavigate();
+  const [expired] = useState(() => {
+    try {
+      const val = sessionStorage.getItem("boss.session.expired");
+      if (val) sessionStorage.removeItem("boss.session.expired");
+      return !!val;
+    } catch { return false; }
+  });
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
 
@@ -31,6 +38,11 @@ export default function LoginPage() {
     <main className="min-h-screen flex items-center justify-center px-4" style={{ background: "var(--bg)" }}>
       <form onSubmit={submit} className="w-full max-w-md rounded-2xl border p-6 space-y-4" style={{ background: "var(--surface)", borderColor: "var(--border)" }}>
         <h1 className="text-2xl font-extrabold">Sign in to BOSS</h1>
+        {expired && (
+          <p role="alert" className="text-sm rounded-lg px-3 py-2" style={{ background: "var(--surface-2)", color: "var(--text-2)", border: "1px solid var(--border)" }}>
+            Your session has expired. Please sign in again.
+          </p>
+        )}
         <p className="text-sm text-[var(--text-2)]">Use the customer administrator account for your workspace.</p>
         <TextField label="Email" name="email" type="email" required />
         <TextField label="Password" name="password" type="password" required />
