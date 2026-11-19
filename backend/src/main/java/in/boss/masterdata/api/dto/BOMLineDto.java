@@ -23,4 +23,5 @@ public class BOMLineDto {
     private String uomSymbol;
     private BigDecimal scrapFactor;
     private Integer level;
+    private String quantityFormula;
 }

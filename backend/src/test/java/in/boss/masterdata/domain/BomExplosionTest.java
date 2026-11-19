@@ -3,6 +3,7 @@ package in.boss.masterdata.domain;
 import in.boss.masterdata.api.dto.BOMExplosionMaterialDto;
 import in.boss.masterdata.api.dto.BOMExplosionResultDto;
 import in.boss.masterdata.domain.impl.BomExplosionServiceImpl;
+import in.boss.masterdata.domain.ValidationException;
 import in.boss.masterdata.persistence.BomHeaderEntity;
 import in.boss.masterdata.persistence.BomHeaderRepository;
 import in.boss.masterdata.persistence.BomLineEntity;
@@ -29,6 +30,7 @@ import java.util.UUID;
 import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.Mockito.when;
 
@@ -120,5 +122,44 @@ class BomExplosionTest {
         // R3: 2 * (3 * 2 * 1.05) = 12.6000
         assertThat(materialMap.get(itemR3).getQty()).isEqualByComparingTo("12.6000");
         assertThat(materialMap.get(itemR3).getLevel()).isEqualTo(2);
+    }
+
+    @Test
+    void explodeBOM_usesSpecificationFormulaAndReturnsRevisionSnapshot() {
+        UUID finished = UUID.randomUUID();
+        UUID material = UUID.randomUUID();
+        UUID uomId = UUID.randomUUID();
+        UUID headerId = UUID.randomUUID();
+        BomHeaderEntity header = BomHeaderEntity.builder()
+                .id(headerId).tenantId(tenantId).finishedItemId(finished).version("v3").status("approved").build();
+        BomLineEntity line = BomLineEntity.builder()
+                .componentItemId(material).quantity(BigDecimal.ONE).uomId(uomId)
+                .quantityFormula("length * width / 1000").scrapPercent(BigDecimal.ZERO).level(1).build();
+        ItemEntity finishedItem = ItemEntity.builder().id(finished).tenantId(tenantId).code("FG").build();
+        ItemEntity materialItem = ItemEntity.builder().id(material).tenantId(tenantId).code("RM").build();
+        UnitOfMeasureEntity uom = UnitOfMeasureEntity.builder().id(uomId).tenantId(tenantId).symbol("M2").build();
+        when(itemRepo.findByIdAndTenantId(finished, tenantId)).thenReturn(Optional.of(finishedItem));
+        when(bomHeaderRepo.findByTenantIdAndFinishedItemIdAndStatus(tenantId, finished, "approved"))
+                .thenReturn(Optional.of(header));
+        when(bomHeaderRepo.findByTenantIdAndFinishedItemIdAndStatus(tenantId, material, "approved"))
+                .thenReturn(Optional.empty());
+        when(bomLineRepo.findByTenantIdAndBomHeaderIdOrderByLevelAscCreatedAtAsc(tenantId, headerId))
+                .thenReturn(List.of(line));
+        when(itemRepo.findAllById(anyCollection())).thenReturn(List.of(materialItem));
+        when(uomRepo.findAllById(anyCollection())).thenReturn(List.of(uom));
+
+        BOMExplosionResultDto result = explosionService.explodeBOM(finished, new BigDecimal("2"),
+                Map.of("length", new BigDecimal("1200"), "width", new BigDecimal("500")));
+
+        assertThat(result.getBomHeaderId()).isEqualTo(headerId);
+        assertThat(result.getBomVersion()).isEqualTo("v3");
+        assertThat(result.getSpecifications()).containsEntry("length", new BigDecimal("1200"));
+        assertThat(result.getBomRevisions()).hasSize(1);
+        assertThat(result.getFlatMaterials()).singleElement()
+                .extracting(BOMExplosionMaterialDto::getQty).isEqualTo(new BigDecimal("1200.0000"));
+
+        assertThatThrownBy(() -> explosionService.explodeBOM(finished, BigDecimal.ONE, Map.of()))
+                .isInstanceOf(ValidationException.class)
+                .hasMessageContaining("length");
     }
 }

@@ -112,7 +112,12 @@ public class QuotationCostingService {
 
         for (int index = 0; index < lines.size(); index++) {
             CreateQuotationLineRequest line = lines.get(index);
-            BigDecimal materialCost = materialCostService.materialCostPerUnit(tenantId, line.itemId(), line.uomId());
+            Map<String, BigDecimal> specificationValues = line.specificationValues() == null
+                    ? Map.of() : line.specificationValues();
+            QuotationMaterialCostService.MaterialCostResult materialResult =
+                    materialCostService.materialCostDetails(
+                            tenantId, line.itemId(), line.uomId(), specificationValues);
+            BigDecimal materialCost = materialResult.amount();
             if (materialCost == null) {
                 available = false;
                 unavailableReasons.add("Line " + (index + 1) + " has no approved BOM or fully valued inventory");
@@ -136,7 +141,8 @@ public class QuotationCostingService {
             netRevenue = netRevenue.add(SalesService.commercialLineTotal(line.qty(), line.unitPrice(), line.discountPct()));
             lineSnapshots.add(new QuotationLineCosting(index + 1, materialCost, labourCost, machineCost,
                     overheadCost, consumablesCost, packagingCost, transportCost,
-                    safeHours(line.labourHours()), safeHours(line.machineHours())));
+                    safeHours(line.labourHours()), safeHours(line.machineHours()), specificationValues,
+                    materialResult.bomSnapshot()));
         }
 
         netRevenue = money(netRevenue.subtract(discountAmount == null ? BigDecimal.ZERO : discountAmount).max(BigDecimal.ZERO));
@@ -158,6 +164,12 @@ public class QuotationCostingService {
 
     public BigDecimal materialCostPerUnit(UUID tenantId, UUID finishedItemId, UUID quoteUomId) {
         return materialCostService.materialCostPerUnit(tenantId, finishedItemId, quoteUomId);
+    }
+
+    public BigDecimal materialCostPerUnit(UUID tenantId, UUID finishedItemId, UUID quoteUomId,
+                                          Map<String, BigDecimal> specifications) {
+        return materialCostService.materialCostDetails(
+                tenantId, finishedItemId, quoteUomId, specifications).amount();
     }
 
     private QuotationCostingConfigResponse loadConfig(UUID tenantId) {

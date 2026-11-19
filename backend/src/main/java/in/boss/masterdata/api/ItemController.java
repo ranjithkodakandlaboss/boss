@@ -1,6 +1,7 @@
 package in.boss.masterdata.api;
 
 import in.boss.masterdata.api.dto.BOMExplosionResultDto;
+import in.boss.masterdata.api.dto.BOMExplosionRequest;
 import in.boss.masterdata.api.dto.BOMHeaderDto;
 import in.boss.masterdata.api.dto.CreateBOMRequest;
 import in.boss.masterdata.api.dto.CreateItemRequest;
@@ -27,6 +28,7 @@ import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.math.BigDecimal;
+import java.util.List;
 import java.util.UUID;
 
 @RestController
@@ -109,5 +111,20 @@ public class ItemController {
             @PathVariable UUID itemId,
             @RequestParam(required = false) BigDecimal quantity) {
         return ResponseEntity.ok(bomExplosionService.explodeBOM(itemId, quantity));
+    }
+
+    @PostMapping("/{itemId}/bom/explode")
+    @PreAuthorize(BossPermissions.ANY_TENANT_USER)
+    public ResponseEntity<BOMExplosionResultDto> calculateBOM(
+            @PathVariable UUID itemId,
+            @Valid @RequestBody BOMExplosionRequest request) {
+        return ResponseEntity.ok(bomExplosionService.explodeBOM(
+                itemId, request.quantity(), request.specifications()));
+    }
+
+    @GetMapping("/{itemId}/bom/specifications")
+    @PreAuthorize(BossPermissions.ANY_TENANT_USER)
+    public ResponseEntity<List<String>> requiredBOMSpecifications(@PathVariable UUID itemId) {
+        return ResponseEntity.ok(bomExplosionService.requiredSpecificationNames(itemId));
     }
 }

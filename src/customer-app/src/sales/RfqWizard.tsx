@@ -9,6 +9,8 @@ import { ItemOption, RfqLine, UomOption, salesApi } from "./api";
 import { useLoad } from "./load";
 import { useCustomer } from "../auth/CustomerState";
 
+type RfqLineDraft = RfqLine & { specificationValuesText: string };
+
 const STEPS = ["Header & Commercial", "Line Items", "Technical & Quality", "Documents & Notes", "Review & Submit"];
 const CHANNELS = ["Email", "Portal", "WhatsApp", "Phone", "In Person", "Post"];
 const TERMS = ["Net 30", "Net 45", "Net 60", "Net 90", "50% Advance + 50% on Delivery", "LC at Sight", "Cash on Delivery"];
@@ -18,12 +20,34 @@ function daysFor(label: string) {
   return match ? Number(match[1]) : 0;
 }
 
-function blank(item?: ItemOption, uom?: UomOption): RfqLine {
-  return { itemId: item?.id || "", uomId: item?.uomId || uom?.id || "", qty: 1, description: item?.name || "", drawingNumber: "", drawingRevision: "", material: "", notes: "" };
+function blank(item?: ItemOption, uom?: UomOption): RfqLineDraft {
+  return { itemId: item?.id || "", uomId: item?.uomId || uom?.id || "", qty: 1, description: item?.name || "", drawingNumber: "", drawingRevision: "", material: "", notes: "", specificationValuesText: "" };
 }
 
 function text(value: unknown) {
   return typeof value === "string" ? value : "";
+}
+
+function formatSpecificationValues(values?: Record<string, number>) {
+  return Object.entries(values ?? {}).map(([name, value]) => `${name}=${value}`).join("\n");
+}
+
+function parseSpecificationValues(textValue: string): Record<string, number> {
+  const values = Object.create(null) as Record<string, number>;
+  for (const [index, rawLine] of textValue.split("\n").entries()) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    const separator = line.indexOf("=");
+    const name = separator < 0 ? "" : line.slice(0, separator).trim();
+    const value = separator < 0 ? Number.NaN : Number(line.slice(separator + 1).trim());
+    if (!/^[a-z][a-z0-9_]*$/.test(name) || !Number.isFinite(value) || value < 0
+      || Object.prototype.hasOwnProperty.call(values, name)) {
+      throw new Error(`Specification line ${index + 1} must be a unique name=non-negative-number pair.`);
+    }
+    values[name] = value;
+    if (Object.keys(values).length > 30) throw new Error("A line can contain at most 30 specification values.");
+  }
+  return values;
 }
 
 export function RfqWizard() {
@@ -43,7 +67,7 @@ export function RfqWizard() {
   const [deliveryTerms, setDeliveryTerms] = useState("");
   const [notes, setNotes] = useState("");
   const [customerRef, setCustomerRef] = useState("");
-  const [lines, setLines] = useState<RfqLine[]>([blank()]);
+  const [lines, setLines] = useState<RfqLineDraft[]>([blank()]);
   const [standards, setStandards] = useState("");
   const [inspection, setInspection] = useState("");
   const [surface, setSurface] = useState("");
@@ -67,7 +91,9 @@ export function RfqWizard() {
     setDeliveryTerms(rfq.deliveryTerms || "");
     setNotes(rfq.notes || "");
     setCustomerRef(rfq.customerRef || "");
-    setLines(rfq.lines.length ? rfq.lines : [blank()]);
+    setLines(rfq.lines.length
+      ? rfq.lines.map((line) => ({ ...line, specificationValuesText: formatSpecificationValues(line.specificationValues) }))
+      : [blank()]);
     setStandards(text(technical.standards));
     setInspection(text(technical.inspectionLevel));
     setSurface(text(technical.surfaceFinish));
@@ -82,7 +108,7 @@ export function RfqWizard() {
   if (existing.error) return <ErrorState body={existing.error} />;
 
   const customer = (customers.data ?? []).find((row) => row.id === (customerId || existing.data?.customerId));
-  function patchLine(index: number, patch: Partial<RfqLine>) {
+  function patchLine(index: number, patch: Partial<RfqLineDraft>) {
     setLines(lines.map((line, lineIndex) => lineIndex === index ? { ...line, ...patch } : line));
   }
 
@@ -114,7 +140,15 @@ export function RfqWizard() {
         deliveryTerms,
         notes,
         technicalRequirements,
-        lines: lines.map((line) => ({ ...line, qty: Number(line.qty), targetPrice: line.targetPrice ? Number(line.targetPrice) : null })),
+        lines: lines.map((line) => {
+          const { specificationValuesText, ...values } = line;
+          return {
+            ...values,
+            qty: Number(line.qty),
+            targetPrice: line.targetPrice ? Number(line.targetPrice) : null,
+            specificationValues: parseSpecificationValues(specificationValuesText),
+          };
+        }),
       }, id);
       navigate(`/sales/rfq/${saved.id}`);
     } catch (caught) {
@@ -157,6 +191,10 @@ export function RfqWizard() {
           <SelectField label="UOM *" value={line.uomId} onChange={(event) => patchLine(index, { uomId: event.target.value })}>{(uoms.data ?? []).map((uom) => <option key={uom.id} value={uom.id}>{uom.symbol}</option>)}</SelectField>
           <TextField label="Target price" type="number" min="0" value={line.targetPrice ?? ""} onChange={(event) => patchLine(index, { targetPrice: event.target.value === "" ? undefined : Number(event.target.value) })} />
           <TextField label="Line notes" value={line.notes || ""} onChange={(event) => patchLine(index, { notes: event.target.value })} />
+          <label className="md:col-span-4 text-xs font-medium text-[var(--text-2)]">
+            Numeric specifications (one name=value pair per line)
+            <textarea aria-label={`Specifications ${index + 1}`} className="eoss-input mt-1 min-h-20 w-full" value={line.specificationValuesText} onChange={(event) => patchLine(index, { specificationValuesText: event.target.value })} placeholder={"length=1200\nwidth=600\nthickness=20"} />
+          </label>
           {lines.length > 1 && <Button variant="ghost" onClick={() => setLines(lines.filter((_, lineIndex) => lineIndex !== index))}>Remove line</Button>}
         </div>)}
         <Button variant="ghost" onClick={() => setLines([...lines, blank(items.data?.[0], uoms.data?.[0])])}>Add line</Button>

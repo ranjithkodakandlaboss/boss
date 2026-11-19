@@ -237,6 +237,8 @@ function lineRequests(lines: Array<Record<string, unknown>>, catalog: CatalogIte
       discountPct: line.discountPct == null ? null : Number(line.discountPct),
       labourHours: (line.labourHours ?? {}) as Record<string, number>,
       machineHours: (line.machineHours ?? {}) as Record<string, number>,
+      rfqLineId: typeof line.rfqLineId === "string" ? line.rfqLineId : undefined,
+      specificationValues: (line.specificationValues ?? {}) as Record<string, number>,
     };
   });
 }
@@ -263,6 +265,7 @@ function mapRfq(rfq: Rfq, quoted: boolean): CustomerRFQ {
       id: line.id || `${rfq.id}-${index + 1}`,
       rfqId: rfq.id,
       lineNumber: line.seq || index + 1,
+      rfqLineId: line.id,
       productId: line.itemId,
       productName: line.itemName || line.description || "",
       description: line.description || line.itemName || "",
@@ -278,6 +281,7 @@ function mapRfq(rfq: Rfq, quoted: boolean): CustomerRFQ {
       requiredBy: line.requiredBy || "",
       targetPrice: line.targetPrice == null ? undefined : Number(line.targetPrice),
       notes: line.notes || "",
+      specificationValues: line.specificationValues ?? {},
     })) as CustomerRFQ["lines"],
     documents: [],
     clarifications: [],
@@ -306,6 +310,8 @@ function mapQuote(quote: Quotation): CustomerQuotation {
     description: line.description || "",
     labourHours: quote.costing?.lines[index]?.labourHours ?? {},
     machineHours: quote.costing?.lines[index]?.machineHours ?? {},
+    specificationValues: line.specificationValues ?? quote.costing?.lines[index]?.specificationValues ?? {},
+    rfqLineId: line.rfqLineId,
   }));
   const totals = quoteMoney(lines, money(quote.discountAmount));
   return {
@@ -899,6 +905,8 @@ function quoteBody(quotation: CustomerQuotation, lines: CustomerQuotationLine[],
       requiredBy: line.requiredBy,
       labourHours: line.labourHours,
       machineHours: line.machineHours,
+      rfqLineId: line.rfqLineId,
+      specificationValues: line.specificationValues,
     })),
   };
 }

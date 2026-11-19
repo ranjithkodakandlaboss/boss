@@ -217,6 +217,53 @@ class SalesApiIntegrationTest extends BaseMasterDataIntegrationTest {
     }
 
     @Test
+    void specificationDrivenBomIsSnapshottedOnQuotationAndDoesNotChangeAfterBomRevision() {
+        jdbc.update("""
+                UPDATE bom_lines
+                   SET quantity_formula = 'length * width'
+                 WHERE tenant_id = ? AND bom_header_id = (
+                   SELECT id FROM bom_headers WHERE tenant_id = ? AND finished_item_id = ? AND status = 'approved'
+                 )
+                """, tenantId, tenantId, finishedItemId);
+        var rfq = salesService.createRfq(new CreateRfqRequest(
+                customerId, null, null, null,
+                List.of(new RfqLineRequest(finishedItemId, new BigDecimal("3"), uomId, null,
+                        "DRW-SPEC", "A", null, "Countertop", null, null, null,
+                        java.util.Map.of("length", new BigDecimal("2"), "width", new BigDecimal("3"))))));
+
+        assertThat(rfq.lines().get(0).specificationValues())
+                .containsEntry("length", new BigDecimal("2"))
+                .containsEntry("width", new BigDecimal("3"));
+        var rfqLine = rfq.lines().get(0);
+        var quotation = salesService.createQuotation(new CreateQuotationRequest(
+                customerId, rfq.id(), null,
+                List.of(new CreateQuotationLineRequest(finishedItemId, new BigDecimal("3"), uomId,
+                        new BigDecimal("20"), 2, null, null, "DRW-SPEC", "A", "Countertop", null,
+                        java.util.Map.of(), java.util.Map.of(), rfqLine.id(), rfqLine.specificationValues()))));
+
+        var snapshot = quotation.costing().lines().get(0).bomSnapshot();
+        assertThat(quotation.costing().materialCost()).isEqualByComparingTo("45.00");
+        assertThat(snapshot.getBomHeaderId()).isNotNull();
+        assertThat(snapshot.getBomVersion()).isNotBlank();
+        assertThat(snapshot.getSpecifications()).containsEntry("length", new BigDecimal("2"));
+        assertThat(snapshot.getFlatMaterials()).singleElement()
+                .extracting(material -> material.getQty()).isEqualTo(new BigDecimal("6.0000"));
+
+        jdbc.update("""
+                UPDATE bom_lines
+                   SET quantity_formula = 'length * width * 2'
+                 WHERE tenant_id = ? AND bom_header_id = (
+                   SELECT id FROM bom_headers WHERE tenant_id = ? AND finished_item_id = ? AND status = 'approved'
+                 )
+                """, tenantId, tenantId, finishedItemId);
+        var historical = salesService.getQuotation(quotation.id());
+        assertThat(historical.costing().materialCost()).isEqualByComparingTo("45.00");
+        assertThat(historical.costing().lines().get(0).bomSnapshot().getFlatMaterials()).singleElement()
+                .extracting(material -> material.getQty()).isEqualTo(new BigDecimal("6.0000"));
+        assertThat(historical.lines().get(0).specificationValues()).containsEntry("width", new BigDecimal("3"));
+    }
+
+    @Test
     void quotationCostingUsesWeightedAverageSnapshotsAndRequiresReasonedApproval() {
         jdbc.update("DELETE FROM material_lots WHERE tenant_id = ? AND item_id = ?", tenantId, materialItemId);
         assertThat(quotationCostingService.materialCostPerUnit(tenantId, finishedItemId, uomId)).isNull();

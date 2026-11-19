@@ -28,6 +28,8 @@ interface QLine {
   gstRate?: number;
   labourHours: Record<string, number>;
   machineHours: Record<string, number>;
+  rfqLineId?: string;
+  specificationValues: Record<string, number>;
 }
 
 function newLine(n: number, rfqLine?: any): QLine {
@@ -43,6 +45,8 @@ function newLine(n: number, rfqLine?: any): QLine {
     requiredDate: rfqLine?.requiredBy ?? '',
     labourHours: {},
     machineHours: {},
+    rfqLineId: rfqLine?.rfqLineId ?? rfqLine?.id,
+    specificationValues: rfqLine?.specificationValues ?? {},
   };
 }
 
@@ -175,6 +179,8 @@ export default function QuotationCreate() {
       requiredDate: l.requiredDate,
       labourHours: l.labourHours,
       machineHours: l.machineHours,
+      rfqLineId: l.rfqLineId,
+      specificationValues: l.specificationValues,
     }));
 
     const saved = isDirect ? await createDirectQuotation(quotation, qLines) : await addQuotation(quotation, qLines);

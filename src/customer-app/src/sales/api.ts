@@ -33,6 +33,7 @@ export type RfqLine = {
   targetPrice?: number;
   notes?: string;
   requiredBy?: string;
+  specificationValues?: Record<string, number>;
 };
 export type Rfq = {
   id: string;
@@ -54,6 +55,7 @@ export type Rfq = {
 };
 export type QuoteLine = {
   id?: string;
+  rfqLineId?: string;
   itemId: string;
   itemCode?: string;
   itemName?: string;
@@ -71,6 +73,7 @@ export type QuoteLine = {
   requiredBy?: string;
   labourHours?: Record<string, number>;
   machineHours?: Record<string, number>;
+  specificationValues?: Record<string, number>;
 };
 export type CostRate = { name: string; ratePerHour: number };
 export type QuotationCostingConfig = {
@@ -114,6 +117,15 @@ export type QuotationCostingSnapshot = {
     transportCost: number;
     labourHours: Record<string, number>;
     machineHours: Record<string, number>;
+    specificationValues: Record<string, number>;
+    bomSnapshot?: {
+      bomHeaderId?: string;
+      bomVersion?: string;
+      quantity?: number;
+      specifications?: Record<string, number>;
+      bomRevisions?: Array<{ itemId: string; bomHeaderId: string; version: string }>;
+      flatMaterials?: Array<{ itemId: string; itemCode?: string; itemName?: string; qty: number; uomId: string; uomSymbol?: string; level: number }>;
+    };
   }>;
 };
 export type RevisionLink = { id: string; revision: number; status: string };

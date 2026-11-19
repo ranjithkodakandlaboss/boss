@@ -1,5 +1,6 @@
 package in.boss.masterdata;
 
+import in.boss.BossApplication;
 import in.boss.shared.context.BossContext;
 import in.boss.shared.context.BossContextHolder;
 import org.junit.jupiter.api.AfterEach;
@@ -14,7 +15,7 @@ import org.testcontainers.containers.PostgreSQLContainer;
 import java.util.Set;
 import java.util.UUID;
 
-@SpringBootTest
+@SpringBootTest(classes = BossApplication.class)
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 public abstract class BaseMasterDataIntegrationTest {
 
