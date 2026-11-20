@@ -72,8 +72,7 @@ export default function SupplierPODetail() {
 
   const handleIssuePO = async () => {
     const res = await confirmAndIssueSPO(po.id, currentUser.name, {
-      paymentTerms: draftTerms || po.paymentTerms,
-      committedDate: draftDate || po.committedDate,
+      committedDate: draftDate || po.committedDate || undefined,
       notes: draftNotes,
     });
     if (res.error) {
@@ -430,6 +429,7 @@ export default function SupplierPODetail() {
               <Field label="Raised Date" value={formatDisplayDate(po.raisedDate)} />
               <Field label="Committed Date" value={formatDisplayDate(po.committedDate)} />
               <Field label="Payment Terms" value={po.paymentTerms} />
+              <Field label="PO Instructions / Notes" value={po.notes || '—'} />
               <Field label="Total Value" value={`₹${po.totalValue.toLocaleString('en-IN')}`} />
               {pr && <Field label="Originating PR" value={pr.prNumber} mono link={`/procurement/pr/${pr.id}`} navigate={navigate} />}
               {selectedQuotation && <Field label="Selected Quotation" value={selectedQuotation.quoteNumber} mono link={`/procurement/quote/${selectedQuotation.id}`} navigate={navigate} />}

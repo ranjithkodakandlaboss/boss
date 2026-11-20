@@ -8,6 +8,7 @@ import in.boss.masterdata.domain.SupplierService;
 import in.boss.procurement.api.ProcurementApiDtos.AmendSpoRequest;
 import in.boss.procurement.api.ProcurementApiDtos.CreateSpoLineRequest;
 import in.boss.procurement.api.ProcurementApiDtos.DeclineSpoRequest;
+import in.boss.procurement.api.ProcurementApiDtos.IssueSpoRequest;
 import in.boss.procurement.api.ProcurementApiDtos.SpoAmendmentResponse;
 import in.boss.procurement.api.ProcurementApiDtos.CreateSpoRequest;
 import in.boss.procurement.api.ProcurementApiDtos.PageResponse;
@@ -172,7 +173,8 @@ public class SpoService {
         List<SpoHeader> headers = jdbc.query("""
                 SELECT o.id, o.spo_number, o.pr_id, o.sq_id, o.supplier_id,
                        s.name AS supplier_name, o.status, o.created_at, o.revision, o.decline_reason,
-                       o.payment_terms, o.payment_terms_text, o.freight_amount, o.tax_amount
+                       o.payment_terms, o.payment_terms_text, o.freight_amount, o.tax_amount,
+                       o.expected_delivery, o.notes
                 FROM spos o
                 JOIN suppliers s ON s.id = o.supplier_id AND s.tenant_id = o.tenant_id
                 WHERE o.tenant_id = ? AND o.id = ?
@@ -210,12 +212,13 @@ public class SpoService {
                 header.id(), header.spoNumber(), header.prId(), header.quotationId(),
                 header.supplierId(), header.supplierName(), header.status(), lines,
                 total, header.createdAt(), header.revision(), header.declineReason(),
-                header.paymentTerms(), header.paymentTermsText(), freight, tax);
+                header.paymentTerms(), header.paymentTermsText(), freight, tax,
+                header.committedDate(), header.notes());
     }
 
     @Transactional
-    public SpoResponse issueSpo(UUID spoId) {
-        return transition(spoId, "draft", "issued", "ISSUED");
+    public SpoResponse issueSpo(UUID spoId, IssueSpoRequest request) {
+        return transition(spoId, "draft", "issued", "ISSUED", request);
     }
 
     @Transactional
@@ -371,6 +374,11 @@ public class SpoService {
     }
 
     private SpoResponse transition(UUID spoId, String expectedStatus, String newStatus, String action) {
+        return transition(spoId, expectedStatus, newStatus, action, null);
+    }
+
+    private SpoResponse transition(
+            UUID spoId, String expectedStatus, String newStatus, String action, IssueSpoRequest issueRequest) {
         BossContext context = requireContext();
         UUID tenantId = context.tenantId();
         SpoHeader existing = lockSpo(tenantId, spoId);
@@ -384,7 +392,23 @@ public class SpoService {
                 throw conflict("SPO cannot be issued because its purchase requisition is " + prStatus);
             }
         }
-        updateStatus(tenantId, spoId, expectedStatus, newStatus);
+        if (issueRequest == null) {
+            updateStatus(tenantId, spoId, expectedStatus, newStatus);
+        } else {
+            int updated = jdbc.update("""
+                    UPDATE spos
+                    SET status = ?,
+                        expected_delivery = COALESCE(?, expected_delivery),
+                        notes = COALESCE(?, notes),
+                        updated_at = NOW()
+                    WHERE tenant_id = ? AND id = ? AND status = ?
+                    """, newStatus, issueRequest.committedDate(),
+                    issueRequest.notes() == null ? null : issueRequest.notes().trim(),
+                    tenantId, spoId, expectedStatus);
+            if (updated != 1) {
+                throw conflict("SPO status changed concurrently; reload and retry");
+            }
+        }
         SpoResponse response = getSpo(spoId);
         auditService.record("spos", spoId, action,
                 toJson(new StatusSnapshot(expectedStatus)), toJson(response));
@@ -493,7 +517,8 @@ public class SpoService {
         List<SpoHeader> headers = jdbc.query("""
                 SELECT o.id, o.spo_number, o.pr_id, o.sq_id, o.supplier_id,
                        s.name AS supplier_name, o.status, o.created_at, o.revision, o.decline_reason,
-                       o.payment_terms, o.payment_terms_text, o.freight_amount, o.tax_amount
+                       o.payment_terms, o.payment_terms_text, o.freight_amount, o.tax_amount,
+                       o.expected_delivery, o.notes
                 FROM spos o
                 JOIN suppliers s ON s.id = o.supplier_id AND s.tenant_id = o.tenant_id
                 WHERE o.tenant_id = ? AND o.id = ?
@@ -639,14 +664,16 @@ public class SpoService {
                 (Integer) rs.getObject("payment_terms"),
                 rs.getString("payment_terms_text"),
                 rs.getBigDecimal("freight_amount"),
-                rs.getBigDecimal("tax_amount"));
+                rs.getBigDecimal("tax_amount"),
+                rs.getObject("expected_delivery", LocalDate.class),
+                rs.getString("notes"));
     }
 
     private record SpoHeader(
             UUID id, String spoNumber, UUID prId, UUID quotationId, UUID supplierId,
             String supplierName, String status, java.time.Instant createdAt,
             int revision, String declineReason, Integer paymentTerms, String paymentTermsText,
-            BigDecimal freightAmount, BigDecimal taxAmount) {}
+            BigDecimal freightAmount, BigDecimal taxAmount, LocalDate committedDate, String notes) {}
 
     private record StatusSnapshot(String status) {}
 }

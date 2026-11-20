@@ -138,6 +138,12 @@ public class ProductionJobController {
         return jobs.releaseHold(jobId);
     }
 
+    @PostMapping("/{jobId}/complete")
+    @PreAuthorize(BossPermissions.PRODUCTION_COMPLETE)
+    public ProductionJobResponse finish(@PathVariable UUID jobId) {
+        return stages.finish(jobId);
+    }
+
     @PostMapping("/{jobId}/cancel")
     @PreAuthorize(BossPermissions.OWNER_OR_OPS)
     public ProductionJobResponse cancel(@PathVariable UUID jobId, @Valid @RequestBody ReasonRequest request) {

@@ -152,6 +152,7 @@ public class SupplierQuotationService {
         List<SupplierQuotationLineResponse> lines = jdbc.query("""
                 SELECT ql.id, ql.pr_line_id, ql.item_id, ql.quantity, ql.uom_id, u.symbol AS uom_symbol,
                        ql.unit_price, ql.delivery_days, ql.tax_rate,
+                       ql.grade,
                        EXISTS (
                          SELECT 1
                          FROM spo_lines sl
@@ -174,7 +175,8 @@ public class SupplierQuotationService {
                 rs.getBigDecimal("tax_rate"),
                 rs.getBigDecimal("quantity"),
                 rs.getObject("uom_id", UUID.class),
-                rs.getString("uom_symbol")),
+                rs.getString("uom_symbol"),
+                rs.getString("grade")),
                 tenantId, quotationId);
 
         SupplierQuotationDeliveryService.Delivery delivery = deliveryService.latest(header.id());
@@ -207,13 +209,13 @@ public class SupplierQuotationService {
             jdbc.update("""
                     INSERT INTO supplier_quotation_lines
                       (tenant_id, sq_id, pr_line_id, line_no, item_id, quantity, uom_id,
-                       unit_price, delivery_days, tax_rate)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                       unit_price, delivery_days, tax_rate, grade)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     tenantId, quotationId, prLine.id(), lineNo++, prLine.itemId(),
                     requestedLine.quotedQty() != null ? requestedLine.quotedQty() : prLine.quantity(),
                     prLine.uomId(), requestedLine.unitPrice(),
-                    requestedLine.leadTimeDays(), requestedLine.taxRate());
+                    requestedLine.leadTimeDays(), requestedLine.taxRate(), blank(requestedLine.grade()));
         }
         BigDecimal freight = request.freightAmount() == null ? BigDecimal.ZERO : request.freightAmount();
         BigDecimal discount = request.discountAmount() == null ? BigDecimal.ZERO : request.discountAmount();
@@ -273,7 +275,7 @@ public class SupplierQuotationService {
                 SELECT pl.id AS pr_line_id, pl.item_id, i.code AS item_code, i.name AS item_name,
                        pl.quantity, pl.uom_id, u.symbol AS uom_symbol,
                        q.id AS quotation_id, q.supplier_id, s.name AS supplier_name,
-                       q.status, q.valid_until, ql.unit_price, ql.delivery_days,
+                       q.status, q.valid_until, ql.unit_price, ql.delivery_days, ql.grade,
                        ql.id AS quotation_line_id,
                        CASE WHEN ql.id IS NULL THEN FALSE ELSE EXISTS (
                          SELECT 1
@@ -317,7 +319,8 @@ public class SupplierQuotationService {
                         rs.getBigDecimal("unit_price"),
                         (Integer) rs.getObject("delivery_days"),
                         rs.getObject("valid_until", LocalDate.class),
-                        rs.getBoolean("is_selected")));
+                        rs.getBoolean("is_selected"),
+                        rs.getString("grade")));
             }
         }, tenantId, prId);
 

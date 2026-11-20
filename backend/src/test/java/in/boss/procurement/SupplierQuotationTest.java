@@ -105,7 +105,7 @@ class SupplierQuotationTest extends BaseMasterDataIntegrationTest {
 
         postJson("/api/v1/supplier-quotations/" + quotationId + "/receive",
                 "{\"validUntil\":\"2030-01-01\",\"lines\":[{\"prLineId\":\"" + prLineId
-                        + "\",\"unitPrice\":12.50,\"leadTimeDays\":4}]}",
+                        + "\",\"unitPrice\":12.50,\"leadTimeDays\":4,\"grade\":\"IS 513 CRCA\"}]}",
                 UUID.randomUUID().toString()).andExpect(status().isOk());
         postEmpty("/api/v1/supplier-quotations/" + quotationId + "/review",
                 UUID.randomUUID().toString()).andExpect(status().isOk());
@@ -124,6 +124,7 @@ class SupplierQuotationTest extends BaseMasterDataIntegrationTest {
         assertThat(selected.path("status").asText()).isEqualTo("selected");
         assertThat(selected.path("lines").get(0).path("unitPrice").decimalValue())
                 .isEqualByComparingTo("12.50");
+        assertThat(selected.path("lines").get(0).path("grade").asText()).isEqualTo("IS 513 CRCA");
         assertThat(auditCount("supplier_quotations", quotationId)).isEqualTo(5);
 
         setContext(tenantId, siteId, actorId);
@@ -141,6 +142,7 @@ class SupplierQuotationTest extends BaseMasterDataIntegrationTest {
                 .path("lines").get(0).path("offers");
         assertThat(offers).hasSize(2);
         assertThat(offers.toString()).contains(quotationId.toString(), secondQuotationId.toString());
+        assertThat(offers.toString()).contains("IS 513 CRCA");
 
         setContext(tenantId, siteId, actorId);
         MvcResult listed = mockMvc.perform(get("/api/v1/prs/" + prId + "/supplier-quotations")

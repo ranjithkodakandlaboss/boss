@@ -15,6 +15,7 @@ export type JobStage = {
   workCentre?: string;
   assetId?: string;
   assetCode?: string;
+  blockerReason?: string;
   actualStartAt?: string;
   actualEndAt?: string;
 };
@@ -46,11 +47,14 @@ export type MaterialMovement = {
 
 export type Inspection = {
   id: string;
-  stageId: string;
+  stageId?: string;
   inspectionNumber?: string;
   inspectionType?: string;
   status?: string;
   result?: string;
+  quantityInspected?: number;
+  quantityAccepted?: number;
+  quantityRejected?: number;
   ncrId?: string;
   ncrStatus?: string;
   concessionStatus?: string;
@@ -117,6 +121,7 @@ export type ProductionJob = {
   routingTemplateName?: string;
   routingTemplateVersion?: string;
   status: string;
+  holdReason?: string;
   priority?: string;
   siteId?: string;
   siteName?: string;
@@ -144,6 +149,7 @@ export type EligibleLine = {
   cpoId: string;
   cpoNumber: string;
   cpoLineId: string;
+  lineNo: number;
   customerId?: string;
   customerName?: string;
   itemId: string;
@@ -184,6 +190,7 @@ const READINESS_LABELS: Record<string, string> = {
   awaiting_procurement: "Awaiting Procurement",
   awaiting_grn: "Awaiting goods receipt",
   quality_hold: "Quality Hold",
+  issued: "Issued",
   reserved: "Reserved",
 };
 
@@ -277,6 +284,10 @@ export function completeStage(jobId: string, stageId: string, note: string) {
 
 export function skipStage(jobId: string, stageId: string, reason: string) {
   return post<ProductionJob>(`/api/v1/jobs/${jobId}/stages/${stageId}/skip`, { reason });
+}
+
+export function completeJob(jobId: string) {
+  return post<ProductionJob>(`/api/v1/jobs/${jobId}/complete`, {});
 }
 
 export function issueMaterial(jobId: string, requirementId: string, lotId: string, qty: number, note: string) {

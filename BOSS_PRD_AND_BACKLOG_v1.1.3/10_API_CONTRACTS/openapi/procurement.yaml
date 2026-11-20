@@ -82,6 +82,7 @@ components:
         isSelected:
           type: boolean
           description: True when this quotation line has been included in an SPO.
+        grade: { type: string, nullable: true, maxLength: 200 }
 
     SupplierQuotationComparison:
       type: object
@@ -115,6 +116,7 @@ components:
                     leadTimeDays: { type: integer, nullable: true }
                     validUntil: { type: string, format: date, nullable: true }
                     isSelected: { type: boolean }
+                    grade: { type: string, nullable: true }
 
     SPO:
       type: object
@@ -127,6 +129,8 @@ components:
         supplierId: { type: string, format: uuid }
         supplierName: { type: string }
         status: { type: string, enum: [draft, issued, acknowledged, partially_received, fully_received, cancelled] }
+        committedDate: { type: string, format: date, nullable: true }
+        notes: { type: string, nullable: true }
         lines:
           type: array
           items: { $ref: '#/components/schemas/SPOLine' }
@@ -272,6 +276,7 @@ paths:
                       prLineId: { type: string, format: uuid }
                       unitPrice: { type: number, minimum: 0 }
                       leadTimeDays: { type: integer, minimum: 0, nullable: true }
+                      grade: { type: string, nullable: true, maxLength: 200 }
       responses:
         '200':
           content:
@@ -534,6 +539,15 @@ paths:
           in: header
           required: true
           schema: { type: string }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                committedDate: { type: string, format: date, nullable: true }
+                notes: { type: string, maxLength: 2000, nullable: true }
       responses:
         '200':
           content:

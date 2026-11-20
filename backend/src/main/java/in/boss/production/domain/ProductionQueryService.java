@@ -85,7 +85,8 @@ public class ProductionQueryService {
             args.add(context.siteId());
         }
         return jdbc.query("""
-                SELECT c.id AS cpo_id, c.cpo_number, l.id AS line_id, c.customer_id, cu.name AS customer_name,
+                SELECT c.id AS cpo_id, c.cpo_number, l.id AS line_id, l.line_no,
+                       c.customer_id, cu.name AS customer_name,
                        l.item_id, i.code AS item_code, i.name AS item_name, l.quantity, l.unit_price,
                        c.site_id, s.name AS site_name, c.required_by_date, c.status,
                        l.quantity - COALESCE((
@@ -99,6 +100,17 @@ public class ProductionQueryService {
                 JOIN physical_sites s ON s.id = c.site_id AND s.tenant_id = c.tenant_id
                 WHERE c.tenant_id = ?
                   AND c.status IN ('open', 'partial', 'feasibility_approved')
+                  AND i.is_active = TRUE
+                  AND i.item_type IN ('finished_goods', 'finished_good')
+                  AND EXISTS (
+                    SELECT 1 FROM routing_templates t
+                    WHERE t.tenant_id = c.tenant_id AND t.status = 'active'
+                      AND (t.finished_item_id IS NULL OR t.finished_item_id = i.id)
+                      AND (EXISTS (SELECT 1 FROM routing_template_stages ts
+                                   WHERE ts.tenant_id = t.tenant_id AND ts.routing_id = t.id)
+                        OR EXISTS (SELECT 1 FROM routing_operations ro
+                                   WHERE ro.tenant_id = t.tenant_id AND ro.routing_id = t.id))
+                  )
                   AND l.quantity > COALESCE((
                     SELECT SUM(j.quantity) FROM production_jobs j
                     WHERE j.tenant_id = c.tenant_id AND j.cpo_line_id = l.id AND j.status <> 'cancelled'), 0)
@@ -108,6 +120,7 @@ public class ProductionQueryService {
                 rs.getObject("cpo_id", UUID.class),
                 rs.getString("cpo_number"),
                 rs.getObject("line_id", UUID.class),
+                rs.getInt("line_no"),
                 rs.getObject("customer_id", UUID.class),
                 rs.getString("customer_name"),
                 rs.getObject("item_id", UUID.class),
@@ -142,6 +155,10 @@ public class ProductionQueryService {
                        END AS stage_count
                 FROM routing_templates t
                 WHERE t.tenant_id = ? AND t.status = 'active'
+                  AND (EXISTS (SELECT 1 FROM routing_template_stages s
+                               WHERE s.tenant_id = t.tenant_id AND s.routing_id = t.id)
+                    OR EXISTS (SELECT 1 FROM routing_operations o
+                               WHERE o.tenant_id = t.tenant_id AND o.routing_id = t.id))
                 """ + itemFilter + " ORDER BY t.name", (rs, row) -> new RoutingTemplateOption(
                 rs.getObject("id", UUID.class),
                 rs.getString("name"),
@@ -289,7 +306,7 @@ public class ProductionQueryService {
     private String selectSql() {
         return """
                 SELECT j.tenant_id, j.id, j.job_number, j.cpo_id, j.cpo_line_id, j.finished_item_id,
-                       j.routing_id, j.routing_version, j.site_id, j.quantity, j.status, j.priority,
+                       j.routing_id, j.routing_version, j.site_id, j.quantity, j.status, j.hold_reason, j.priority,
                        j.planned_start, j.planned_end, j.actual_start, j.actual_end, j.selling_price,
                        j.created_at, c.cpo_number, c.customer_id, cu.name AS customer_name,
                        i.code AS item_code, i.name AS item_name, u.symbol AS uom_symbol,

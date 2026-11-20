@@ -136,7 +136,7 @@ public class CpoLookup {
         Header header = headers.get(0);
         CustomerDto customer = customerService.getCustomer(header.customerId());
         List<CpoLineResponse> lines = jdbc.query("""
-                SELECT l.id, l.quotation_line_id, l.item_id, l.quantity, l.unit_price, l.gst_rate,
+                SELECT l.id, l.quotation_line_id, l.item_id, l.quantity, l.produced_qty, l.unit_price, l.gst_rate,
                        l.discount_pct, l.availability, l.shortage_qty, u.symbol,
                        COALESCE(l.drawing_number, ql.drawing_number) AS drawing_number,
                        ql.drawing_revision,
@@ -169,6 +169,7 @@ public class CpoLookup {
                 item.getCode(),
                 item.getName(),
                 qty,
+                rs.getBigDecimal("produced_qty"),
                 rs.getString("symbol"),
                 price,
                 rs.getBigDecimal("gst_rate"),

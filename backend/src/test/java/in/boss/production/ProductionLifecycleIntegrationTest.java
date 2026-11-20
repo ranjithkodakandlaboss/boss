@@ -22,6 +22,9 @@ import in.boss.production.domain.JobMaterialService;
 import in.boss.production.domain.JobStageService;
 import in.boss.production.domain.ProductionJobService;
 import in.boss.production.domain.ProductionQueryService;
+import in.boss.quality.api.QualityDtos.CreateInspectionRequest;
+import in.boss.quality.api.QualityDtos.RecordResultRequest;
+import in.boss.quality.domain.QualityService;
 import in.boss.shared.context.BossContext;
 import in.boss.shared.context.BossContextHolder;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -68,6 +71,7 @@ class ProductionLifecycleIntegrationTest extends BaseMasterDataIntegrationTest {
     @Autowired private JobMaterialService materials;
     @Autowired private JobCostingService costing;
     @Autowired private JobInspectionService inspections;
+    @Autowired private QualityService quality;
     @Autowired private InventoryService inventory;
     @Autowired private MockMvc mockMvc;
     @Autowired private ObjectMapper objectMapper;
@@ -159,6 +163,10 @@ class ProductionLifecycleIntegrationTest extends BaseMasterDataIntegrationTest {
                 INSERT INTO stores (tenant_id, site_id, name, code, store_type)
                 VALUES (?, ?, 'Raw', ?, 'raw_material') RETURNING id
                 """, tenantId, siteId, "ST-" + UUID.randomUUID().toString().substring(0, 4));
+        insert("""
+                INSERT INTO stores (tenant_id, site_id, name, code, store_type)
+                VALUES (?, ?, 'Finished Goods', ?, 'finished_goods') RETURNING id
+                """, tenantId, siteId, "FG-" + UUID.randomUUID().toString().substring(0, 4));
         lotId = inventory.createLot(new CreateLotRequest(
                 materialItemId, storeId, new BigDecimal("20"), new BigDecimal("2.50"),
                 "BATCH", null, "available", null)).id();
@@ -199,10 +207,11 @@ class ProductionLifecycleIntegrationTest extends BaseMasterDataIntegrationTest {
         assertThat(inventory.getLot(lotId).qty()).isEqualByComparingTo("0");
         var returned = materials.returnMaterial(job.id(), new ReturnMaterialRequest(issued.id(), new BigDecimal("4"), "unused"));
         assertThat(inventory.getLot(lotId).qty()).isEqualByComparingTo("4");
+        materials.issue(job.id(), new IssueMaterialRequest(requirementId, lotId, new BigDecimal("4"), "replace returned material"));
         assertThat(jdbc.queryForObject("""
                 SELECT COUNT(*) FROM stock_movements
                 WHERE tenant_id = ? AND reference_type = 'JOB' AND reference_id = ? AND movement_type = 'issue'
-                """, Integer.class, tenantId, job.id())).isEqualTo(1);
+                """, Integer.class, tenantId, job.id())).isEqualTo(2);
         assertThat(jdbc.queryForObject("""
                 SELECT COUNT(*) FROM stock_movements
                 WHERE tenant_id = ? AND reference_type = 'production_job' AND reference_id = ? AND movement_type = 'return'
@@ -210,7 +219,7 @@ class ProductionLifecycleIntegrationTest extends BaseMasterDataIntegrationTest {
         assertThat(jdbc.queryForObject("""
                 SELECT COUNT(*) FROM job_material_issues
                 WHERE tenant_id = ? AND job_id = ? AND issue_type = 'issue'
-                """, Integer.class, tenantId, job.id())).isEqualTo(1);
+                """, Integer.class, tenantId, job.id())).isEqualTo(2);
         assertThat(jdbc.queryForObject("""
                 SELECT COUNT(*) FROM job_material_issues
                 WHERE tenant_id = ? AND job_id = ? AND issue_type = 'return'
@@ -232,14 +241,44 @@ class ProductionLifecycleIntegrationTest extends BaseMasterDataIntegrationTest {
         assertThatThrownBy(() -> stages.skip(job.id(), job.stages().get(2).id(), new ReasonRequest("not needed")))
                 .isInstanceOf(AccessDeniedException.class);
         asRole("OWNER");
+        assertThatThrownBy(() -> stages.skip(job.id(), job.stages().get(2).id(), new ReasonRequest("not needed")))
+                .isInstanceOf(ResponseStatusException.class).hasMessageContaining("final inspection");
+        var finalInspection = quality.createInspection(new CreateInspectionRequest(
+                "final", "production_job", job.id(), finishedItemId, null, BigDecimal.TEN,
+                null, null, null, "Final production check"));
+        quality.recordResult(finalInspection.id(), new RecordResultRequest(
+                "pass", BigDecimal.TEN, BigDecimal.ZERO, null, "Accepted"));
+        assertThat(query.get(job.id()).inspections())
+                .anySatisfy(inspection -> {
+                    assertThat(inspection.stageId()).isNull();
+                    assertThat(inspection.inspectionType()).isEqualTo("final");
+                });
         ProductionJobResponse completed = stages.skip(job.id(), job.stages().get(2).id(), new ReasonRequest("not needed"));
         assertThat(completed.status()).isEqualTo("completed");
+        assertThat(jdbc.queryForObject("""
+                SELECT ml.quantity FROM material_lots ml
+                JOIN stores s ON s.id = ml.store_id AND s.tenant_id = ml.tenant_id
+                WHERE ml.tenant_id = ? AND ml.item_id = ? AND ml.batch_number = ?
+                  AND s.store_type = 'finished_goods'
+                """, BigDecimal.class, tenantId, finishedItemId, "Production " + job.jobNumber()))
+                .isEqualByComparingTo("10.000");
+        assertThat(jdbc.queryForObject("""
+                SELECT COUNT(*) FROM stock_movements
+                WHERE tenant_id = ? AND reference_type = 'production_job'
+                  AND reference_id = ? AND movement_type = 'receipt' AND quantity = 10
+                """, Integer.class, tenantId, job.id())).isEqualTo(1);
+        assertThat(jdbc.queryForObject(
+                "SELECT produced_qty FROM cpo_lines WHERE tenant_id = ? AND id = ?",
+                BigDecimal.class, tenantId, lineId)).isEqualByComparingTo("10.000");
+        assertThat(jdbc.queryForObject(
+                "SELECT delivered_qty FROM cpo_lines WHERE tenant_id = ? AND id = ?",
+                BigDecimal.class, tenantId, lineId)).isEqualByComparingTo("0.000");
         var cost = costing.get(job.id());
-        assertThat(cost.actualCost().materialCost()).isEqualByComparingTo("40.00");
-        assertThat(cost.actualCost().totalCost()).isEqualByComparingTo("50.00");
+        assertThat(cost.actualCost().materialCost()).isEqualByComparingTo("50.00");
+        assertThat(cost.actualCost().totalCost()).isEqualByComparingTo("60.00");
         assertThat(cost.variance()).isNull();
-        assertThat(cost.actualProfit()).isEqualByComparingTo("950.00");
-        assertThat(cost.actualCost().marginPct()).isEqualByComparingTo("95.0000");
+        assertThat(cost.actualProfit()).isEqualByComparingTo("940.00");
+        assertThat(cost.actualCost().marginPct()).isEqualByComparingTo("94.0000");
         assertThat(cost.actualCost().sellingPrice()).isEqualByComparingTo("1000.00");
         assertThat(cost.actualCost().materialStatus()).isEqualTo("complete");
         assertThat(cost.actualCost().labourStatus()).isEqualTo("complete");
@@ -266,14 +305,14 @@ class ProductionLifecycleIntegrationTest extends BaseMasterDataIntegrationTest {
                 nextCpoId, nextLineId, routingId, LocalDate.now(), LocalDate.now().plusDays(10), "high"));
         var history = costing.get(nextJob.id()).historicalReference();
         assertThat(history.completedOrderCount()).isEqualTo(1);
-        assertThat(history.totalActualCost()).isEqualByComparingTo("50.00");
-        assertThat(history.weightedAverageUnitCost()).isEqualByComparingTo("5.0000");
+        assertThat(history.totalActualCost()).isEqualByComparingTo("60.00");
+        assertThat(history.weightedAverageUnitCost()).isEqualByComparingTo("6.0000");
         assertThat(history.basis()).contains("same item and routing").contains("specifications are not captured");
         assertThat(query.businessMetrics().completedJobs()).isEqualTo(1);
         assertThat(query.businessMetrics().estimatedCost()).isNull();
         assertThat(query.businessMetrics().actualCost()).isNull();
         assertThat(query.businessMetrics().costVariance()).isNull();
-        assertThat(query.businessMetrics().materialConsumedQty()).isEqualByComparingTo("16");
+        assertThat(query.businessMetrics().materialConsumedQty()).isEqualByComparingTo("20");
         assertThat(query.list(cpoId, "completed", 0, 20).totalElements()).isEqualTo(1);
         assertThat(query.features()).containsEntry("production.job.create", true);
     }
@@ -513,6 +552,96 @@ class ProductionLifecycleIntegrationTest extends BaseMasterDataIntegrationTest {
     }
 
     @Test
+    void multipleJobsCanConsumeTheRemainingCustomerPoLineQuantity() {
+        ProductionJobResponse first = jobs.create(new CreateJobRequest(
+                cpoId, lineId, routingId, null, null, null, new BigDecimal("2")));
+
+        assertThat(query.eligibleLines()).filteredOn(line -> line.cpoLineId().equals(lineId))
+                .singleElement().satisfies(line ->
+                        assertThat(line.remainingQty()).isEqualByComparingTo("8"));
+
+        ProductionJobResponse second = jobs.create(new CreateJobRequest(
+                cpoId, lineId, routingId, null, null, null, new BigDecimal("3")));
+        ProductionJobResponse last = jobs.create(new CreateJobRequest(
+                cpoId, lineId, routingId, null, null, null, new BigDecimal("5")));
+
+        assertThat(first.id()).isNotEqualTo(second.id()).isNotEqualTo(last.id());
+        assertThat(query.eligibleLines()).extracting(line -> line.cpoLineId()).doesNotContain(lineId);
+        assertThatThrownBy(() -> jobs.create(new CreateJobRequest(
+                cpoId, lineId, routingId, null, null, null, BigDecimal.ONE)))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("already exists");
+    }
+
+    @Test
+    void eligibleCustomerPoLinesRequireACompatibleProductionRoute() {
+        UUID unsupportedMaterialLine = insert("""
+                INSERT INTO cpo_lines (tenant_id, cpo_id, line_no, item_id, quantity, uom_id, unit_price)
+                VALUES (?, ?, 2, ?, 1, (SELECT base_uom_id FROM items WHERE id = ?), 10) RETURNING id
+                """, tenantId, cpoId, materialItemId, materialItemId);
+        UUID unsupportedFinishedItem = insert("""
+                INSERT INTO items (tenant_id, code, name, item_type, base_uom_id)
+                VALUES (?, ?, 'Unrouted frame', 'finished_goods',
+                        (SELECT base_uom_id FROM items WHERE id = ?)) RETURNING id
+                """, tenantId, "FG-" + UUID.randomUUID().toString().substring(0, 6), finishedItemId);
+        UUID unsupportedFinishedLine = insert("""
+                INSERT INTO cpo_lines (tenant_id, cpo_id, line_no, item_id, quantity, uom_id, unit_price)
+                VALUES (?, ?, 3, ?, 1, (SELECT base_uom_id FROM items WHERE id = ?), 10) RETURNING id
+                """, tenantId, cpoId, unsupportedFinishedItem, unsupportedFinishedItem);
+
+        assertThat(query.eligibleLines()).extracting(line -> line.cpoLineId())
+                .contains(lineId).doesNotContain(unsupportedMaterialLine, unsupportedFinishedLine);
+    }
+
+    @Test
+    void jobCanIssueMaterialReservedForItsOwnCustomerPo() {
+        jdbc.update("""
+                INSERT INTO stock_reservation_records
+                  (tenant_id, lot_id, item_id, reserved_qty, reference_type, reference_id, cpo_line_id, status)
+                VALUES (?, ?, ?, 18, 'cpo', ?, ?, 'active')
+                """, tenantId, lotId, materialItemId, cpoId, lineId);
+        jdbc.update("UPDATE material_lots SET reserved_qty = 18, status = 'reserved' WHERE id = ?", lotId);
+        ProductionJobResponse job = jobs.create(new CreateJobRequest(
+                cpoId, lineId, routingId, null, null, null, new BigDecimal("2")));
+
+        materials.issue(job.id(), new IssueMaterialRequest(
+                job.materials().get(0).id(), lotId, new BigDecimal("4"), "PO-reserved material"));
+
+        assertThat(inventory.getLot(lotId).qty()).isEqualByComparingTo("16");
+        assertThat(inventory.getLot(lotId).reservedQty()).isEqualByComparingTo("14");
+        assertThat(jdbc.queryForObject("""
+                SELECT reserved_qty FROM stock_reservation_records
+                WHERE tenant_id = ? AND reference_type = 'cpo' AND reference_id = ?
+                  AND lot_id = ? AND status = 'active'
+                """, BigDecimal.class, tenantId, cpoId, lotId)).isEqualByComparingTo("14");
+        assertThat(jdbc.queryForObject("""
+                SELECT COUNT(*) FROM stock_reservation_records
+                WHERE tenant_id = ? AND reference_type = 'production_job' AND reference_id = ?
+                  AND status = 'consumed'
+                """, Integer.class, tenantId, job.id())).isEqualTo(1);
+    }
+
+    @Test
+    void stagesRequireNetMaterialIssueBeforeStartAndCompletion() {
+        ProductionJobResponse job = jobs.create(new CreateJobRequest(cpoId, lineId, routingId, null, null, null));
+        IssueMaterialRequest half = new IssueMaterialRequest(
+                job.materials().get(0).id(), lotId, new BigDecimal("10"), null);
+        var firstIssue = materials.issue(job.id(), half);
+
+        assertThat(query.get(job.id()).status()).isEqualTo("planned");
+        assertThatThrownBy(() -> stages.start(job.id(), job.stages().get(0).id(), null))
+                .isInstanceOf(ResponseStatusException.class).hasMessageContaining("material");
+
+        var secondIssue = materials.issue(job.id(), half);
+        stages.start(job.id(), job.stages().get(0).id(), null);
+        materials.returnMaterial(job.id(), new ReturnMaterialRequest(secondIssue.id(), BigDecimal.ONE, "short issue"));
+
+        assertThatThrownBy(() -> stages.complete(job.id(), job.stages().get(0).id(), null))
+                .isInstanceOf(ResponseStatusException.class).hasMessageContaining("material");
+        assertThat(firstIssue.id()).isNotEqualTo(secondIssue.id());
+    }
+
+    @Test
     void failedInspectionBlocksTheStageUntilAnOwnerConcession() {
         ProductionJobResponse job = jobs.create(new CreateJobRequest(cpoId, lineId, routingId, null, null, null));
         requirementId = job.materials().get(0).id();
@@ -694,7 +823,7 @@ class ProductionLifecycleIntegrationTest extends BaseMasterDataIntegrationTest {
         assertThat(costing.get(job.id()).jobId()).isEqualTo(job.id());
         assertThatThrownBy(() -> stages.start(job.id(), stageId, null))
                 .isInstanceOf(ResponseStatusException.class)
-                .hasMessageContaining("cannot execute a stage");
+                .hasMessageContaining("materials must be issued");
 
         scope(null);
         assertThat(costing.get(job.id()).jobId()).isEqualTo(job.id());

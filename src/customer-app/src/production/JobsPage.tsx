@@ -117,7 +117,7 @@ export default function JobsPage() {
     hold: jobs.filter((job) => match(job, "hold")).length,
     complete: jobs.filter((job) => match(job, "complete")).length,
   };
-  const readinessOptions = ["pending", "not_assessed", "available", "partial", "shortage", "awaiting_procurement", "awaiting_grn", "quality_hold", "reserved"];
+  const readinessOptions = ["pending", "not_assessed", "available", "partial", "shortage", "awaiting_procurement", "awaiting_grn", "quality_hold", "issued", "reserved"];
   const scoped = jobs.filter((job) => match(job, "all", "all") && (siteFilter === "all" || job.siteId === siteFilter));
   const riskCounts = {
     late: scoped.filter(isLate).length,
@@ -261,13 +261,16 @@ function NewJob({ onClose, onCreated }: { onClose: () => void; onCreated: (job: 
   const [plannedEnd, setPlannedEnd] = useState("");
   const [priority, setPriority] = useState("normal");
   const [quantity, setQuantity] = useState("");
+  const [linesLoading, setLinesLoading] = useState(true);
   const [error, setError] = useState("");
   const [templateError, setTemplateError] = useState("");
   const line = lines.find((row) => row.cpoLineId === lineId);
 
   function loadLines() {
+    setLinesLoading(true);
     setError("");
-    eligibleLines().then(setLines).catch((cause) => setError(cause instanceof ApiError ? cause.message : "Eligible orders could not be loaded"));
+    eligibleLines().then(setLines).catch((cause) => setError(cause instanceof ApiError ? cause.message : "Eligible orders could not be loaded"))
+      .finally(() => setLinesLoading(false));
   }
 
   function loadTemplates(itemId: string) {
@@ -305,7 +308,8 @@ function NewJob({ onClose, onCreated }: { onClose: () => void; onCreated: (job: 
   return (
     <RecordSheet title="New job" subtitle="Opens from an eligible Customer PO" onClose={onClose} secondary={{ label: "Cancel", onClick: onClose }} primary={{ label: "Create job", onClick: () => void save(), disabled: !line || !templateId }}>
       <div className="space-y-3">
-        <label className="block text-xs font-medium">Customer PO *<select className="eoss-input w-full mt-1" aria-label="Customer PO" value={lineId} onChange={(event) => setLineId(event.target.value)}><option value="">Select an eligible order line…</option>{lines.map((row) => <option key={row.cpoLineId} value={row.cpoLineId}>{row.cpoNumber} — {row.customerName} — {row.itemName}</option>)}</select></label>
+        <label className="block text-xs font-medium">Customer PO *<select className="eoss-input w-full mt-1" aria-label="Customer PO" value={lineId} onChange={(event) => setLineId(event.target.value)} disabled={linesLoading}><option value="">{linesLoading ? "Loading eligible order lines…" : "Select an eligible order line…"}</option>{lines.map((row) => <option key={row.cpoLineId} value={row.cpoLineId}>{row.cpoNumber} — Line {row.lineNo} — {row.customerName} — {row.itemCode ? `${row.itemCode} ` : ""}{row.itemName} — {row.remainingQty ?? row.qty} remaining</option>)}</select></label>
+        {!linesLoading && !error && lines.length === 0 && <p className="text-xs" style={{ color: "var(--text-3)" }}>No eligible order lines. Only active finished goods with remaining quantity and an active production workflow can be selected.</p>}
         {error && <p role="alert" className="text-xs" style={{ color: "var(--error)" }}>{error} <button type="button" className="font-semibold underline" onClick={loadLines}>Retry</button></p>}
         {line && (
           <div className="rounded-xl border p-3 text-xs space-y-1" style={{ background: "var(--surface-2)", borderColor: "var(--border)" }}>
@@ -317,10 +321,10 @@ function NewJob({ onClose, onCreated }: { onClose: () => void; onCreated: (job: 
           </div>
         )}
         <div className="block text-xs font-medium">Production workflow *
-          <CreatableSelect label="workflow" ariaLabel="Production workflow" value={templateId} onChange={setTemplateId} error={templateError} onRetry={() => line && loadTemplates(line.itemId)} creatable={canCreateTemplate && !!line} options={templates.map((template) => ({ id: template.id, label: `${template.name} (${template.stageCount} stages)` }))} fields={[{ name: "name", label: "Workflow name", required: true }, { name: "stageName", label: "Stages in order, separated by commas", required: true }]} unique={(values) => templates.some((template) => template.name.toLowerCase() === values.name.toLowerCase()) ? "This value already exists." : null} onCreate={async (values) => {
+          <CreatableSelect label="workflow" ariaLabel="Production workflow" value={templateId} onChange={setTemplateId} error={templateError} onRetry={() => line && loadTemplates(line.itemId)} creatable={canCreateTemplate && !!line} options={templates.map((template) => ({ id: template.id, label: `${template.name} · ${template.version || "unversioned"} · ${template.stageCount} stages` }))} fields={[{ name: "name", label: "Workflow name", required: true }, { name: "stageName", label: "Stages in order, separated by commas", required: true }]} unique={(values) => templates.some((template) => template.name.toLowerCase() === values.name.toLowerCase()) ? "This value already exists." : null} onCreate={async (values) => {
             const created = await createRoutingTemplate(values.name, values.stageName);
             setTemplates((current) => [...current.filter((template) => template.id !== created.id), created]);
-            return { id: created.id, label: `${created.name} (${created.stageCount} stages)` };
+            return { id: created.id, label: `${created.name} · ${created.version || "unversioned"} · ${created.stageCount} stages` };
           }} />
           <p className="text-[11px] mt-1" style={{ color: "var(--text-3)" }}>The selected stage sequence is copied to the job and will not change if the template changes later.</p>
         </div>

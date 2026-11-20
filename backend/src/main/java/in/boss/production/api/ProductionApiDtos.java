@@ -86,7 +86,8 @@ public final class ProductionApiDtos {
             Instant actualEndAt,
             UUID completedBy,
             UUID assetId,
-            String assetCode
+            String assetCode,
+            String blockerReason
     ) {}
 
     public record MaterialRequirementResponse(
@@ -121,6 +122,9 @@ public final class ProductionApiDtos {
             String inspectionType,
             String status,
             String result,
+            BigDecimal quantityInspected,
+            BigDecimal quantityAccepted,
+            BigDecimal quantityRejected,
             UUID ncrId,
             String ncrStatus,
             String concessionStatus
@@ -187,6 +191,7 @@ public final class ProductionApiDtos {
             String routingTemplateName,
             String routingTemplateVersion,
             String status,
+            String holdReason,
             String priority,
             UUID siteId,
             String siteName,
@@ -214,6 +219,7 @@ public final class ProductionApiDtos {
             UUID cpoId,
             String cpoNumber,
             UUID cpoLineId,
+            int lineNo,
             UUID customerId,
             String customerName,
             UUID itemId,

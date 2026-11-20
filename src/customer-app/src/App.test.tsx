@@ -68,6 +68,18 @@ describe("customer app shell", () => {
     expect(await screen.findByRole("heading", { name: "Customer Directory" })).toBeInTheDocument();
   });
 
+  it("opens supplier quotation entry forms in a side sheet", async () => {
+    const inviteView = renderAt("/procurement/supplier-rfq/new?mode=invite");
+    const inviteDialog = await screen.findByRole("dialog");
+    expect(within(inviteDialog).getByRole("heading", { name: "Invite Suppliers for Quotation" })).toBeInTheDocument();
+    inviteView.unmount();
+
+    const quoteView = renderAt("/procurement/supplier-rfq/new?mode=quote");
+    const quoteDialog = await screen.findByRole("dialog");
+    expect(within(quoteDialog).getByRole("heading", { name: "Record Supplier Quotation" })).toBeInTheDocument();
+    quoteView.unmount();
+  });
+
   it("opens master-data configuration under Admin & Settings", async () => {
     renderAt("/admin?tab=master-data");
     expect(await screen.findByRole("heading", { name: "Master Data & Business Configuration" })).toBeInTheDocument();

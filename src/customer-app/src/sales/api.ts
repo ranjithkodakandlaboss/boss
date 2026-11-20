@@ -191,6 +191,7 @@ export type CpoLine = {
   itemCode?: string;
   itemName?: string;
   qty: number;
+  producedQty?: number;
   uomSymbol?: string;
   unitPrice: number;
   gstRate?: number;

@@ -27,6 +27,7 @@ import static in.boss.procurement.api.ProcurementApiDtos.AmendSpoRequest;
 import static in.boss.procurement.api.ProcurementApiDtos.AmendmentFileResponse;
 import static in.boss.procurement.api.ProcurementApiDtos.CreateSpoRequest;
 import static in.boss.procurement.api.ProcurementApiDtos.DeclineSpoRequest;
+import static in.boss.procurement.api.ProcurementApiDtos.IssueSpoRequest;
 import static in.boss.procurement.api.ProcurementApiDtos.PageResponse;
 import static in.boss.procurement.api.ProcurementApiDtos.SpoAmendmentResponse;
 import static in.boss.procurement.api.ProcurementApiDtos.SpoResponse;
@@ -65,8 +66,10 @@ public class SpoController {
     }
 
     @PostMapping("/{spoId}/issue")
-    public SpoResponse issue(@PathVariable UUID spoId) {
-        return spoService.issueSpo(spoId);
+    public SpoResponse issue(
+            @PathVariable UUID spoId,
+            @Valid @RequestBody(required = false) IssueSpoRequest request) {
+        return spoService.issueSpo(spoId, request);
     }
 
     @PostMapping("/{spoId}/acknowledge")

@@ -33,6 +33,7 @@ const grnId = "55555555-5555-4555-8555-555555555555";
 const grnLineId = "56565656-5656-4565-8565-565656565656";
 const lotId = "57575757-5757-4575-8575-575757575757";
 const inspectionId = "58585858-5858-4585-8585-585858585858";
+let requestDeliveryStatus = "sent";
 
 const suppliers = [
   { id: supplierId, code: "STEEL", name: "Steel House", legalName: "Steel House Pvt Ltd", status: "active", address: { city: "Pune", state: "MH", category: "Steel" }, paymentTerms: 30, contacts: [{ name: "Asha", email: "asha@steel.test", phone: "999", isPrimary: true }] },
@@ -52,12 +53,14 @@ const pendingPr = { ...pr, id: "abababab-abab-4aba-8aba-abababababab", prNumber:
 const requested = { id: requestId, prId, supplierId, supplierName: "Steel House", status: "requested", lines: [] };
 const received = {
   id: quoteId, prId, supplierId, supplierName: "Steel House", status: "received", supplierQuoteRef: "QT-9",
-  lines: [{ id: "ql", prLineId: lineId, itemId, quantity: 7, uomId, uomSymbol: "BOX", unitPrice: 12, leadTimeDays: 5 }],
+  lines: [{ id: "ql", prLineId: lineId, itemId, quantity: 7, uomId, uomSymbol: "BOX", unitPrice: 12, leadTimeDays: 5, grade: "IS 513 CRCA" }],
 };
 const spo = {
   id: spoId, spoNumber: "SPO-1", prId, supplierId, supplierName: "Steel House", supplierQuotationId: quoteId, status: "issued",
   lines: [{ id: spoLineId, itemId, itemCode: "SHAFT", itemName: "Shaft", orderedQty: 4, receivedQty: 0, unitPrice: 12 }],
 };
+let spoRecord = { ...spo, status: "issued" };
+let issuedSpoRequest: Record<string, unknown> | undefined;
 const grn = {
   id: grnId, grnNumber: "GRN-1", spoId, spoNumber: "SPO-1", supplierId, supplierName: "Steel House", siteId, status: "draft", receivedDate: "2026-11-17",
   lines: [{ id: grnLineId, spoLineId, itemId, itemCode: "SHAFT", itemName: "Shaft", receivedQty: 4, acceptedQty: 0, rejectedQty: 0, uomSymbol: "EA", lotIds: [lotId], lotNumbers: ["LOT-1"], lotStatuses: ["quarantine"], lotQuantities: [4] }],
@@ -78,12 +81,21 @@ function installFetch() {
     if (url.includes("/items") || url.includes("/uoms")) return Promise.resolve(json(JSON.parse(page([{ id: itemId, code: "SHAFT", name: "Shaft", uomId, symbol: "EA", uomSymbol: "EA" }]))));
     if (url.includes("/company")) return Promise.resolve(json({ companyName: "North Works", sites: [{ id: siteId, name: "Plant", code: "PUNE" }], stores: [{ id: storeId, siteId, name: "Raw Store", code: "RAW", siteCode: "PUNE", storeType: "raw_material" }] }));
     if (url.includes("/supplier-quotations") && init?.method === "POST" && url.includes("/receive")) return Promise.resolve(json({ ...received, status: "received" }));
-    if (url.includes(`/prs/${prId}/supplier-quotations`) && init?.method === "POST") return Promise.resolve(json(requested, 201));
+    if (url.includes(`/prs/${prId}/supplier-quotations`) && init?.method === "POST") return Promise.resolve(json({
+      ...requested,
+      deliveryStatus: requestDeliveryStatus,
+      deliveryError: requestDeliveryStatus === "failed" ? "Mail provider is not configured" : undefined,
+    }, 201));
     if (url.includes("/supplier-quotations")) return Promise.resolve(json(JSON.parse(page([requested, received]))));
     if (url.includes("/amendments")) return Promise.resolve(json([]));
     if (url.includes("/inspections")) return Promise.resolve(json([{ id: inspectionId, inspectionNumber: "IN-1", grnId, lotId, itemId, quantityInspected: 4, status: "pending" }]));
     if (url.includes("/grns")) return Promise.resolve(json(JSON.parse(page([grn]))));
-    if (url.includes("/spos")) return Promise.resolve(json(JSON.parse(page([spo]))));
+    if (url.includes(`/spos/${spoId}/issue`) && init?.method === "POST") {
+      issuedSpoRequest = init.body ? JSON.parse(String(init.body)) as Record<string, unknown> : {};
+      spoRecord = { ...spoRecord, ...issuedSpoRequest, status: "issued" };
+      return Promise.resolve(json(spoRecord));
+    }
+    if (url.includes("/spos")) return Promise.resolve(json(JSON.parse(page([spoRecord]))));
     if (url.includes("/prs")) return Promise.resolve(json(JSON.parse(page([pr, pendingPr]))));
     if (url.includes("/supplier-performance")) return Promise.resolve(json({ supplierId, totalReceipts: 0 }));
     return Promise.resolve(json({}));
@@ -92,6 +104,9 @@ function installFetch() {
 
 beforeEach(() => {
   signIn("test-session");
+  requestDeliveryStatus = "sent";
+  spoRecord = { ...spo, status: "draft" };
+  issuedSpoRequest = undefined;
   installFetch();
   return () => signOut();
 });
@@ -116,7 +131,21 @@ it("keeps an unanswered invitation on the record-quote form instead of an empty 
   expect(screen.queryByRole("button", { name: "View Quote" })).not.toBeInTheDocument();
 });
 
-it("sends a quotation request and records the supplier price", async () => {
+it("warns when a quotation request is created but delivery fails", async () => {
+  requestDeliveryStatus = "failed";
+  const view = show(`/procurement/supplier-rfq/new?mode=invite&pr=${prId}`, <SupplierRFQCreate />);
+  const supplier = await screen.findByText("Steel House");
+  expect(screen.getByText(/Supplier Portal Link \(not configured\)/)).toBeDisabled();
+  expect(screen.getByText(/WhatsApp Business Message \(not configured\)/)).toBeDisabled();
+  await userEvent.click(within(supplier.closest("label") as HTMLElement).getByRole("checkbox"));
+  await userEvent.click(screen.getByRole("button", { name: /Review Recipients/ }));
+  await userEvent.click(screen.getByRole("button", { name: /Confirm & Send Quotation Requests/ }));
+  expect(await screen.findByText("Quotation request created, but not sent")).toBeInTheDocument();
+  expect(screen.queryByText("Quotation requests sent")).not.toBeInTheDocument();
+  view.unmount();
+});
+
+it("sends a quotation request and records the supplier price and grade", async () => {
   const view = show(`/procurement/supplier-rfq/new?mode=invite&pr=${prId}`, <SupplierRFQCreate />);
   const supplier = await screen.findByText("Steel House");
   await userEvent.click(within(supplier.closest("label") as HTMLElement).getByRole("checkbox"));
@@ -131,13 +160,16 @@ it("sends a quotation request and records the supplier price", async () => {
   expect(await screen.findByRole("heading", { name: "Record Supplier Quotation" })).toBeInTheDocument();
   const price = screen.getAllByRole("spinbutton").find((input) => input.getAttribute("value") === "0" && input.className.includes("w-28"));
   expect(price).toBeTruthy();
+  const quoteRow = screen.getByRole("row", { name: /SHAFT/ });
+  const grade = within(quoteRow).getAllByRole("textbox")[0];
+  await userEvent.type(grade, "IS 513 CRCA");
   await userEvent.clear(price as HTMLElement);
   await userEvent.type(price as HTMLElement, "12");
   await userEvent.selectOptions(screen.getByDisplayValue("Select supplier…").closest("select") as HTMLElement, supplierId);
   await userEvent.click(screen.getByRole("button", { name: "Save Supplier Quotation" }));
   expect(await screen.findByText("Supplier quotation recorded")).toBeInTheDocument();
   const receive = vi.mocked(fetch).mock.calls.find((call) => String(call[0]).includes("/receive"));
-  expect(JSON.parse(String(receive?.[1]?.body)).lines[0]).toMatchObject({ prLineId: lineId, unitPrice: 12 });
+  expect(JSON.parse(String(receive?.[1]?.body)).lines[0]).toMatchObject({ prLineId: lineId, unitPrice: 12, grade: "IS 513 CRCA" });
 });
 
 it("opens the quotation, supplier order, receipt, inspection, and return screens", async () => {
@@ -161,12 +193,31 @@ it("opens the quotation, supplier order, receipt, inspection, and return screens
   }
 });
 
+it("persists the committed date and notes when issuing a supplier PO", async () => {
+  show(`/procurement/spo/${spoId}`, <SupplierPODetail />);
+  const dateLabel = await screen.findByText("Committed Delivery Date");
+  const dateInput = dateLabel.parentElement?.querySelector("input");
+  expect(dateInput).toBeTruthy();
+  await userEvent.type(dateInput as HTMLInputElement, "2026-11-30");
+  await userEvent.type(screen.getByPlaceholderText("MTC required on delivery"), "MTC required on delivery");
+  await userEvent.click(screen.getByRole("button", { name: "Issue Supplier PO" }));
+
+  expect(await screen.findByText("PO Confirmed & Issued")).toBeInTheDocument();
+  expect(issuedSpoRequest).toMatchObject({
+    committedDate: "2026-11-30",
+    notes: "MTC required on delivery",
+  });
+  expect(screen.getByText("30 Nov 2026")).toBeInTheDocument();
+  expect(screen.getByText("MTC required on delivery")).toBeInTheDocument();
+});
+
 it("shows the persisted quotation quantity and unit rather than the current PR values", async () => {
   show(`/procurement/quote/${quoteId}`, <SupplierQuotationDetail />);
   const material = await screen.findByText("SHAFT");
   const row = within(material.closest("tr") as HTMLElement);
   expect(row.getByText("7")).toBeInTheDocument();
   expect(row.getByText("BOX")).toBeInTheDocument();
+  expect(row.getByText("IS 513 CRCA")).toBeInTheDocument();
   expect(row.getByText("₹84")).toBeInTheDocument();
 });
 

@@ -124,7 +124,8 @@ public final class ProcurementApiDtos {
             @NotNull @DecimalMin("0.00") BigDecimal unitPrice,
             @Min(0) Integer leadTimeDays,
             @DecimalMin("0.00") BigDecimal taxRate,
-            @DecimalMin("0.001") BigDecimal quotedQty) {}
+            @DecimalMin("0.001") BigDecimal quotedQty,
+            @jakarta.validation.constraints.Size(max = 200) String grade) {}
 
     public record ReceiveSupplierQuotationRequest(
             LocalDate validUntil,
@@ -149,7 +150,8 @@ public final class ProcurementApiDtos {
             BigDecimal taxRate,
             BigDecimal quantity,
             UUID uomId,
-            String uomSymbol) {}
+            String uomSymbol,
+            String grade) {}
 
     public record SupplierQuotationResponse(
             UUID id,
@@ -178,7 +180,8 @@ public final class ProcurementApiDtos {
             BigDecimal unitPrice,
             Integer leadTimeDays,
             LocalDate validUntil,
-            boolean isSelected) {}
+            boolean isSelected,
+            String grade) {}
 
     public record SupplierQuotationComparisonLine(
             UUID prLineId,
@@ -207,6 +210,10 @@ public final class ProcurementApiDtos {
             @NotNull UUID prId,
             @NotNull UUID supplierQuotationId,
             @NotEmpty List<@Valid CreateSpoLineRequest> lines) {}
+
+    public record IssueSpoRequest(
+            LocalDate committedDate,
+            @Size(max = 2000) String notes) {}
 
     public record SpoLineResponse(
             UUID id,
@@ -242,7 +249,9 @@ public final class ProcurementApiDtos {
             Integer paymentTerms,
             String paymentTermsText,
             BigDecimal freightAmount,
-            BigDecimal taxAmount) {}
+            BigDecimal taxAmount,
+            LocalDate committedDate,
+            String notes) {}
 
     public record DeclineSpoRequest(
             @NotBlank @Size(max = 1000) String reason) {}

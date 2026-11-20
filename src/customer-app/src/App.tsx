@@ -160,7 +160,7 @@ function Guard() {
           <Route path="procurement/pr/new" element={<PrCreatePage />} />
           <Route path="procurement/pr/:id/edit" element={<PrCreatePage />} />
           <Route path="procurement/pr/:id" element={<SheetLayout><PrRecordPage /></SheetLayout>} />
-          <Route path="procurement/supplier-rfq/new" element={<SupplierRfqPage />} />
+          <Route path="procurement/supplier-rfq/new" element={<SheetLayout><SupplierRfqPage /></SheetLayout>} />
           <Route path="procurement/quote/:id" element={<SheetLayout><SupplierQuotePage /></SheetLayout>} />
           <Route path="procurement/spo/:id/amend" element={<SupplierPoAmendPage />} />
           <Route path="procurement/spo/:id" element={<SheetLayout><SupplierPoPage /></SheetLayout>} />

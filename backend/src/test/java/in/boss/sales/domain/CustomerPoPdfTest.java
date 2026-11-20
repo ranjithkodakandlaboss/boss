@@ -47,7 +47,7 @@ class CustomerPoPdfTest {
 
     private static CpoLineResponse line(String name, String rate) {
         return new CpoLineResponse(UUID.randomUUID(), null, UUID.randomUUID(), "SKU", name,
-                BigDecimal.ONE, "NOS", new BigDecimal("1000"), new BigDecimal(rate), null, new BigDecimal("1000"),
+                BigDecimal.ONE, BigDecimal.ZERO, "NOS", new BigDecimal("1000"), new BigDecimal(rate), null, new BigDecimal("1000"),
                 null, null, null, null, null);
     }
 }

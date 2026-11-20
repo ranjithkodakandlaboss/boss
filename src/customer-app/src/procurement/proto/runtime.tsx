@@ -179,6 +179,7 @@ function mapQuote(record: QuoteRecord, pr?: ReturnType<typeof mapPr>) {
       taxPct: money(line.taxRate),
       lineTotal: money(line.unitPrice) * money(quotedQty),
       leadTimeDays: line.leadTimeDays,
+      grade: line.grade || undefined,
       isSelected: line.isSelected,
     };
   });
@@ -236,7 +237,8 @@ function mapSpo(record: SpoRecord, pr?: ReturnType<typeof mapPr>) {
     prId: record.prId,
     supplierQuotationId: record.supplierQuotationId,
     raisedDate: (record.createdAt || "").slice(0, 10),
-    committedDate: lines.find((line) => line.expectedDeliveryDate)?.expectedDeliveryDate || "",
+    committedDate: record.committedDate || lines.find((line) => line.expectedDeliveryDate)?.expectedDeliveryDate || "",
+    notes: record.notes || "",
     status: record.status === "declined" ? "supplier_declined" : record.status,
     apiStatus: record.status,
     revision: record.revision ?? 1,
@@ -687,7 +689,17 @@ export function ProcurementProvider({ children }: { children?: ReactNode }) {
         for (const supplierId of input.supplierIds) {
           created.push(await procurementApi.createQuotation(input.prId, supplierId));
         }
-        showToast({ type: "success", title: "Quotation requests sent", body: `${created.length} supplier${created.length === 1 ? "" : "s"} can now quote.` });
+        const notSent = created.filter((quotation) => quotation.deliveryStatus !== "sent");
+        if (notSent.length > 0) {
+          const reason = notSent.find((quotation) => quotation.deliveryError)?.deliveryError;
+          showToast({
+            type: "warning",
+            title: "Quotation request created, but not sent",
+            body: `${notSent.length} of ${created.length} quotation request${created.length === 1 ? "" : "s"} could not be delivered.${reason ? ` ${reason}` : ""}`,
+          });
+        } else {
+          showToast({ type: "success", title: "Quotation requests sent", body: `${created.length} supplier${created.length === 1 ? "" : "s"} can now quote.` });
+        }
         return created;
       }),
       addSupplierQuotation: async (quote: any) => guard(async () => {
@@ -703,6 +715,7 @@ export function ProcurementProvider({ children }: { children?: ReactNode }) {
             leadTimeDays: Number(line.leadTimeDays || quote.deliveryDays || 0),
             taxRate: line.taxPct == null ? undefined : Number(line.taxPct),
             quotedQty: line.quotedQty != null ? Number(line.quotedQty) : undefined,
+            grade: line.grade || undefined,
           };
         });
         const saved = await procurementApi.receiveQuotation(created.id, {
@@ -797,9 +810,9 @@ export function ProcurementProvider({ children }: { children?: ReactNode }) {
           showToast({ type: "info", title: "Supplier PO cancelled" });
         }
       }),
-      confirmAndIssueSPO: async (id: string) => {
+      confirmAndIssueSPO: async (id: string, _issuedBy: string, issue: { committedDate?: string; notes?: string }) => {
         try {
-          await procurementApi.issueSpo(id);
+          await procurementApi.issueSpo(id, issue);
           await reload();
           return { nonSelectedInvitations: [] };
         } catch (error) {
