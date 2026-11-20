@@ -36,6 +36,7 @@ export default function ItemDetail() {
 
   function load() {
     setLoading(true);
+    let active = true;
     Promise.all([
       api<Item>(`/api/v1/items/${id}`),
       loadPositions(`?itemId=${id}`),
@@ -44,6 +45,7 @@ export default function ItemDetail() {
       loadReservations(),
       api<BomRecord[]>("/api/v1/boms").catch(() => [] as BomRecord[]),
     ]).then(([next, stock, itemLots, jobPage, reserved, boms]) => {
+      if (!active) return;
       setItem(next);
       setPositions(stock);
       setLots(itemLots);
@@ -53,8 +55,9 @@ export default function ItemDetail() {
       const matched = bomsArray.find((b) => b.itemId === id);
       setItemBom(matched ?? null);
       setWhereUsedBoms(bomsArray.filter((b) => (b.lines ?? []).some((line) => line.componentItemId === id)));
-    }).catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "Inventory item not found."))
-      .finally(() => setLoading(false));
+    }).catch((reason: unknown) => { if (active) setError(reason instanceof Error ? reason.message : "Inventory item not found."); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
   }
 
   useEffect(() => {
@@ -63,11 +66,12 @@ export default function ItemDetail() {
       setError("Select an item to view its stock, lots and sources.");
       return;
     }
-    load();
+    return load();
   }, [id]);
 
   if (loading) return <LoadingState label="Loading inventory item" />;
   if (error || !item) return <ErrorState body={error || "Inventory item not found."} />;
+  if (editing) return <ItemForm item={item} embedded onClose={() => setEditing(false)} onSaved={() => { setEditing(false); load(); }} />;
 
   const onHand = positions.reduce((sum, row) => sum + Number(row.totalQty), 0);
   const available = positions.reduce((sum, row) => sum + Number(row.availableQty), 0);
@@ -246,8 +250,6 @@ export default function ItemDetail() {
           </tbody>
         </table>
       </section>
-
-      {editing && <ItemForm item={item} onClose={() => setEditing(false)} onSaved={() => { setEditing(false); load(); }} />}
 
       <ConfirmDialog
         open={deactivateConfirm}

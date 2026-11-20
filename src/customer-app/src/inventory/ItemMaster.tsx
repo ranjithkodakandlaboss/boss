@@ -86,7 +86,7 @@ export default function ItemMaster({ embedded = false }: { embedded?: boolean })
   );
 }
 
-export function ItemForm({ item, onClose, onSaved }: { item?: Item; onClose: () => void; onSaved: (item: Item) => void }) {
+export function ItemForm({ item, onClose, onSaved, embedded = false }: { item?: Item; onClose: () => void; onSaved: (item: Item) => void; embedded?: boolean }) {
   const { user } = useCustomer();
   const canCreateReference = roleAllowed(user?.roles, ["OWNER", "OPS_MANAGER"]);
   const [uoms, setUoms] = useState<Uom[]>([]);
@@ -121,7 +121,7 @@ export function ItemForm({ item, onClose, onSaved }: { item?: Item; onClose: () 
       setUoms(list);
       setUomId((current) => current || list[0]?.id || "");
     }).catch((reason: unknown) => setUomError(reason instanceof Error ? reason.message : "Units of measure could not be loaded."));
-    api<Category[] | { content?: Category[] }>("/api/v1/config/options/ITEM_CATEGORY").then((cats) => {
+    api<Category[] | { content?: Category[] }>("/api/v1/item-categories").then((cats) => {
       const list = Array.isArray(cats) ? cats : cats.content ?? [];
       setCategories(list.filter((category) => category.id));
     }).catch((reason: unknown) => setCategoryError(reason instanceof Error ? reason.message : "Categories could not be loaded."));
@@ -165,14 +165,9 @@ export function ItemForm({ item, onClose, onSaved }: { item?: Item; onClose: () 
     }
   }
 
-  return (
-    <RecordSheet
-      title={item ? "Edit item" : "Add item"}
-      onClose={onClose}
-      primary={{ label: saving ? "Saving…" : item ? "Save changes" : "Create item", onClick: () => void save(), disabled: saving }}
-      secondary={{ label: "Cancel", onClick: onClose }}
-    >
-      <div className="grid gap-4 sm:grid-cols-2">
+  const formBody = (
+    <>
+    <div className="grid gap-4 sm:grid-cols-2">
         <label className="flex flex-col gap-1 text-sm font-medium text-[var(--text)]">
           Item code *
           <input aria-label="Item code" className="eoss-input w-full font-normal" placeholder="e.g. RM-001" value={code} disabled={!!item} onChange={(event) => setCode(event.target.value)} />
@@ -240,6 +235,32 @@ export function ItemForm({ item, onClose, onSaved }: { item?: Item; onClose: () 
         </fieldset>
       )}
       {error && <p role="alert" className="mt-3 text-xs text-[var(--error)]">{error}</p>}
+    </>
+  );
+
+  if (embedded) {
+    return (
+      <div className="flex flex-col h-full">
+        <header className="flex items-center justify-between px-5 py-4 border-b" style={{ borderColor: "var(--border)" }}>
+          <h2 className="text-sm font-semibold">{item ? "Edit item" : "Add item"}</h2>
+        </header>
+        <div className="flex-1 overflow-auto px-5 py-4 space-y-4">{formBody}</div>
+        <footer className="flex items-center justify-end gap-2 px-5 py-3 border-t" style={{ borderColor: "var(--border)" }}>
+          <button type="button" className="rounded-lg border px-4 py-2 text-sm" style={{ borderColor: "var(--border)" }} onClick={onClose}>Cancel</button>
+          <button type="button" disabled={saving} className="rounded-lg px-4 py-2 text-sm font-semibold text-white disabled:opacity-40" style={{ background: "var(--brand-fill)" }} onClick={() => void save()}>{saving ? "Saving…" : item ? "Save changes" : "Create item"}</button>
+        </footer>
+      </div>
+    );
+  }
+
+  return (
+    <RecordSheet
+      title={item ? "Edit item" : "Add item"}
+      onClose={onClose}
+      primary={{ label: saving ? "Saving…" : item ? "Save changes" : "Create item", onClick: () => void save(), disabled: saving }}
+      secondary={{ label: "Cancel", onClick: onClose }}
+    >
+      {formBody}
     </RecordSheet>
   );
 }
