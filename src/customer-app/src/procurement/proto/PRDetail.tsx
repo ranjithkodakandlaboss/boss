@@ -207,33 +207,6 @@ export default function PRDetail() {
             {(pr.apiStatus === 'draft' || pr.status === 'draft') && (
               <button type="button" onClick={() => updatePurchaseReq(pr.id, { status: 'submitted' })} className="px-3 py-1.5 rounded-lg text-xs font-semibold text-white" style={{ background: "var(--brand-fill)" }}>Submit</button>
             )}
-            {pr.status === 'pending' && canApprove && (
-              <>
-                <button
-                  type="button"
-                  onClick={() => setConfirming('reject')}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-semibold"
-                  style={{ borderColor: 'var(--error,#DC2626)', color: 'var(--error,#DC2626)' }}>
-                  <XCircle size={13} /> Reject
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setConfirming('approve')}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-white"
-                  style={{ background: 'var(--success,#16A34A)' }}>
-                  <CheckCircle2 size={13} /> Approve
-                </button>
-              </>
-            )}
-            {!linkedSpo && !['cancelled', 'rejected'].includes(pr.status) && (
-              <Link
-                to={`/procurement/supplier-rfq/new?prId=${pr.id}`}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-white"
-                style={{ background: 'var(--brand-fill)' }}
-              >
-                <Plus size={13} /> Add Supplier Quote
-              </Link>
-            )}
             {linkedSpo && (
               <Link
                 to={`/procurement/spo/${linkedSpo.id}`}
@@ -407,7 +380,7 @@ export default function PRDetail() {
                             Retry email
                           </button>
                         )}
-                        {!isPrBlocked && ['sent', 'awaiting_quotation'].includes(inv.status) && (
+                        {!isPrBlocked && !linkedSpo && ['sent', 'awaiting_quotation'].includes(inv.status) && (
                           <>
                             <button
                               type="button"
@@ -453,7 +426,7 @@ export default function PRDetail() {
               <table className="eoss-table">
                 <thead>
                   <tr>
-                    <th>#</th><th>Code</th><th>Material Description</th><th>Grade</th><th>Qty</th><th>UOM</th><th>Est. Rate</th><th>Est. Value</th><th>Req. By</th><th>Notes</th>
+                    <th>#</th><th>Code</th><th>Material Description</th><th>Grade</th><th>Qty</th><th>UOM</th><th>Est. Rate</th><th>Est. Value</th><th>Notes</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -467,7 +440,6 @@ export default function PRDetail() {
                       <td>{l.uom}</td>
                       <td className="font-mono text-right">{l.estimatedPrice ? fmtMoney(l.estimatedPrice) : '—'}</td>
                       <td className="font-mono text-right">{l.estimatedPrice && l.requiredQty ? fmtMoney(l.estimatedPrice * l.requiredQty) : '—'}</td>
-                      <td className="text-xs text-[var(--text-2)]">{l.requiredDate ? fmt(l.requiredDate) : '—'}</td>
                       <td className="text-xs text-[var(--text-2)]">{l.notes || l.justification || '—'}</td>
                     </tr>
                   ))}

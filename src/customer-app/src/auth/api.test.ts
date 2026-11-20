@@ -1,6 +1,6 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { api, firebaseSignIn } from "./api";
-import { currentRefreshToken, currentTokenExpiresAt, signIn, signOut } from "./session";
+import { api, authorizedFetch, firebaseSignIn } from "./api";
+import { currentRefreshToken, currentToken, currentTokenExpiresAt, signIn, signOut } from "./session";
 
 afterEach(() => {
   signOut();
@@ -85,4 +85,42 @@ it("refreshes and retries when the API rejects a locally unexpired token", async
     "Bearer rejected-id-token",
     "Bearer refreshed-id-token",
   ]);
+});
+
+it("signs out when Firebase token refresh fails mid-session", async () => {
+  vi.stubEnv("VITE_FIREBASE_API_KEY", "test-api-key");
+  signIn("expired-token");
+  sessionStorage.setItem("boss.customer.refreshToken", "expired-refresh-token");
+  sessionStorage.setItem("boss.customer.tokenExpiresAt", "0");
+
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+    if (String(input).includes("securetoken.googleapis.com")) {
+      return new Response(JSON.stringify({ error: { message: "TOKEN_EXPIRED" } }), { status: 400 });
+    }
+    return new Response("{}", { status: 401 });
+  }));
+
+  const response = await authorizedFetch("http://localhost/api/v1/test");
+  // After a failed refresh, the session is cleared.
+  expect(currentToken()).toBeNull();
+  expect(response.status).toBe(401);
+});
+
+it("signs out when backend returns 401 even after a successful token refresh", async () => {
+  vi.stubEnv("VITE_FIREBASE_API_KEY", "test-api-key");
+  signIn("old-token");
+  sessionStorage.setItem("boss.customer.refreshToken", "valid-refresh-token");
+  sessionStorage.setItem("boss.customer.tokenExpiresAt", "0");
+
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+    if (String(input).includes("securetoken.googleapis.com")) {
+      return new Response(JSON.stringify({ id_token: "new-token", refresh_token: "rotated", expires_in: "3600" }), { status: 200 });
+    }
+    // Even the new token is rejected — account was deactivated server-side.
+    return new Response(JSON.stringify({ detail: "Account suspended" }), { status: 401 });
+  }));
+
+  const response = await authorizedFetch("http://localhost/api/v1/test");
+  expect(currentToken()).toBeNull();
+  expect(response.status).toBe(401);
 });

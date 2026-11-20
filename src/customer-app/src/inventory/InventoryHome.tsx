@@ -142,6 +142,7 @@ export default function InventoryHome() {
     { key: "inTransit", label: "In Transit", align: "right", value: (row) => row.inTransitQty ?? 0, render: (row) => quantity(row.inTransitQty ?? 0, row.uomSymbol) },
     { key: "availableQty", label: "Available", align: "right", value: (row) => row.availableQty, render: (row) => <span className="font-semibold">{quantity(row.availableQty, row.uomSymbol)}</span> },
     { key: "reorderPoint", label: "Reorder Pt", align: "right", value: (row) => row.reorderPoint ?? -1, render: (row) => row.reorderPoint == null ? "—" : quantity(row.reorderPoint, row.uomSymbol) },
+    { key: "valuationAmt", label: "Stock Value", align: "right", value: (row) => (row as StockRow).valuationAmt ?? 0, render: (row) => (row as StockRow).valuationAmt ? `₹${Number((row as StockRow).valuationAmt).toLocaleString("en-IN", { maximumFractionDigits: 0 })}` : "—" },
     { key: "status", label: "Status", value: (row) => row.status, render: (row) => <span className="rounded-full px-2 py-1 text-xs font-medium" style={chipStyle(row.status)}>{row.status}</span> },
   ];
 
@@ -252,16 +253,22 @@ function AdjustStockSheet({ row, onClose, onDone }: { row: StockRow; onClose: ()
       const lot = lots[0];
       if (!lot && direction === "reduce") { setErr("No available lot found to reduce."); setSaving(false); return; }
       if (!lot && direction === "add") {
-        // For positive adjustments with no existing lot, we still need a lot — post as a new lot via /api/v1/inventory/lots
-        // For now, tell the user to use Opening Stock if no lot exists
-        setErr("No available lot exists for this item+store. Use Opening Stock to add new stock."); setSaving(false); return;
+        // No existing lot — create a new one via the add-stock endpoint.
+        await mutate("/api/v1/inventory/lots", "POST", {
+          itemId: row.itemId,
+          storeId: row.storeId,
+          qty: q,
+          unitCost: null,
+          batchRef: null,
+        });
+      } else {
+        await mutate(`/api/v1/inventory/lots/${lot.id}/movements`, "POST", {
+          movementType: direction === "add" ? "adjustment_add" : "adjustment_reduce",
+          qty: q,
+          referenceType: "manual_adjustment",
+          note: reason.trim(),
+        });
       }
-      await mutate(`/api/v1/inventory/lots/${lot.id}/movements`, "POST", {
-        movementType: direction === "add" ? "adjustment_add" : "adjustment_reduce",
-        qty: q,
-        referenceType: "manual_adjustment",
-        note: reason.trim(),
-      });
       onDone();
     } catch (e: unknown) {
       setErr(e instanceof Error ? e.message : "Adjustment failed.");

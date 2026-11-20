@@ -2,6 +2,7 @@ import {
   currentRefreshToken,
   currentToken,
   currentTokenExpiresAt,
+  signOut,
   storeRefreshedToken,
 } from "./session";
 
@@ -80,6 +81,14 @@ export async function getAccessToken(forceRefresh = false): Promise<string | nul
   return refreshInProgress.promise;
 }
 
+function triggerSessionExpiry() {
+  signOut();
+  try { sessionStorage.setItem("boss.session.expired", "1"); } catch { /* ignore */ }
+  if (typeof window !== "undefined" && !window.location.pathname.startsWith("/login") && !window.location.pathname.startsWith("/activate")) {
+    window.location.href = "/";
+  }
+}
+
 export async function authorizedFetch(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
   const headers = new Headers(init.headers);
   const token = await getAccessToken();
@@ -89,9 +98,22 @@ export async function authorizedFetch(input: RequestInfo | URL, init: RequestIni
   const response = await fetch(input, request);
   if (response.status !== 401 || !currentRefreshToken()) return response;
 
-  const refreshedToken = await getAccessToken(true);
+  let refreshedToken: string | null = null;
+  try {
+    refreshedToken = await getAccessToken(true);
+  } catch {
+    // Firebase refresh token is expired or the account was disabled — log out immediately.
+    triggerSessionExpiry();
+    return response;
+  }
+
   if (refreshedToken) headers.set("Authorization", `Bearer ${refreshedToken}`);
-  return fetch(input, request);
+  const retryResponse = await fetch(input, { ...init, headers });
+  if (retryResponse.status === 401) {
+    // The refreshed token was also rejected — the session is irrecoverable.
+    triggerSessionExpiry();
+  }
+  return retryResponse;
 }
 
 export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {

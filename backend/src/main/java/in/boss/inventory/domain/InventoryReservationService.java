@@ -82,6 +82,10 @@ public class InventoryReservationService {
         if (!ctx.canAccessSite(job.siteId())) {
             throw new InventoryValidationException("Production job not found for this tenant");
         }
+        if (job.status() != null && TERMINAL_JOB_STATUSES.contains(job.status().toLowerCase(java.util.Locale.ROOT))) {
+            throw new InventoryValidationException(
+                    "Stock cannot be reserved for a production job in status '" + job.status() + "'");
+        }
         if (reservationRepository.hasActiveReservations(ctx.tenantId(), jobId)) {
             throw new ReservationConflictException(
                     "This production job already has active material reservations");
@@ -184,14 +188,20 @@ public class InventoryReservationService {
         return new ReservationResponse(jobId, "FAILED", lines);
     }
 
+    private static final java.util.Set<String> TERMINAL_JOB_STATUSES = java.util.Set.of("completed", "closed", "cancelled");
+
     private UUID requireLockedJob(BossContext ctx, UUID jobId) {
-        UUID siteId = reservationRepository.lockProductionJob(ctx.tenantId(), jobId)
+        InventoryReservationRepository.JobLock lock = reservationRepository.lockProductionJob(ctx.tenantId(), jobId)
                 .orElseThrow(() -> new InventoryValidationException(
                         "Production job not found for this tenant"));
-        if (!ctx.canAccessSite(siteId)) {
+        if (!ctx.canAccessSite(lock.siteId())) {
             throw new InventoryValidationException("Production job not found for this tenant");
         }
-        return siteId;
+        if (lock.status() != null && TERMINAL_JOB_STATUSES.contains(lock.status().toLowerCase(java.util.Locale.ROOT))) {
+            throw new InventoryValidationException(
+                    "Stock cannot be reserved for a production job in status '" + lock.status() + "'");
+        }
+        return lock.siteId();
     }
 
     private static BigDecimal quantity(BigDecimal value) {
