@@ -53,6 +53,31 @@ public class JobPlanService {
         return new PlanPreviewResponse(result);
     }
 
+    /** Preview from a routing template directly — used before a job exists (creation modal). */
+    public PlanPreviewResponse previewForTemplate(UUID routingTemplateId, LocalDate deliveryDate) {
+        BossContext context = support.requireContext();
+
+        List<StageDuration> stageDurations = jdbc.query("""
+                SELECT id, seq_no, name AS stage_name,
+                       estimated_duration_min
+                FROM routing_template_stages
+                WHERE tenant_id = ? AND routing_id = ?
+                ORDER BY seq_no
+                """, (rs, row) -> new StageDuration(
+                        rs.getObject("id", UUID.class),
+                        rs.getString("stage_name"),
+                        rs.getInt("seq_no"),
+                        rs.getInt("estimated_duration_min")),
+                context.tenantId(), routingTemplateId);
+
+        if (stageDurations.isEmpty()) {
+            throw ProductionSupport.badRequest("Routing template has no stages");
+        }
+
+        List<PlanPreviewStage> result = backwardSchedule(stageDurations, deliveryDate);
+        return new PlanPreviewResponse(result);
+    }
+
     // ── Save plan ─────────────────────────────────────────────────────────────
 
     @PreAuthorize(PRODUCTION_WRITE)

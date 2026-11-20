@@ -134,6 +134,13 @@ public class ProductionJobController {
         return query.get(jobId);
     }
 
+    @GetMapping("/routing-plan-preview")
+    public PlanPreviewResponse routingPlanPreview(
+            @RequestParam UUID routingTemplateId,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate deliveryDate) {
+        return plan.previewForTemplate(routingTemplateId, deliveryDate);
+    }
+
     @GetMapping("/{jobId}/plan-preview")
     public PlanPreviewResponse planPreview(
             @PathVariable UUID jobId,
