@@ -24,6 +24,7 @@ export default function ItemMaster({ embedded = false }: { embedded?: boolean })
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [open, setOpen] = useState(false);
+  const [editItem, setEditItem] = useState<Item | null>(null);
 
   function reload() {
     setLoading(true);
@@ -53,7 +54,7 @@ export default function ItemMaster({ embedded = false }: { embedded?: boolean })
     { key: "type", label: "Type", value: (row) => row.itemType ?? "", render: (row) => (row.itemType ?? "").replaceAll("_", " ").toLowerCase() },
     { key: "uom", label: "UOM", value: (row) => row.uomSymbol ?? "", render: (row) => row.uomSymbol || "—" },
     { key: "status", label: "Status", value: (row) => row.status ?? "", render: (row) => row.status === "inactive" ? "Inactive" : "Active" },
-    { key: "edit", label: "", value: () => "", render: (row) => canWrite ? <button type="button" className="text-xs font-semibold text-[var(--brand)]" onClick={(event) => { event.stopPropagation(); navigate(`/inventory/item/${row.id}?edit=1`); }}>Edit</button> : null },
+    { key: "edit", label: "", value: () => "", render: (row) => canWrite ? <button type="button" className="text-xs font-semibold text-[var(--brand)]" onClick={(event) => { event.stopPropagation(); setEditItem(row); }}>Edit</button> : null },
   ];
 
   return (
@@ -80,6 +81,7 @@ export default function ItemMaster({ embedded = false }: { embedded?: boolean })
       </div>
       <p className="px-5 py-3 text-xs text-[var(--text-3)]">Item identity, code, category, UOM and lifecycle only. Use Stock on Hand for site, lot and quantity. Use Site Need for demand and shortages.</p>
       {open && <ItemForm onClose={() => setOpen(false)} onSaved={() => { setOpen(false); reload(); }} />}
+      {editItem && <ItemForm item={editItem} onClose={() => setEditItem(null)} onSaved={() => { setEditItem(null); reload(); }} />}
     </div>
   );
 }
@@ -143,6 +145,7 @@ export function ItemForm({ item, onClose, onSaved }: { item?: Item; onClose: () 
           categoryId: categoryId || null,
           categoryLabel: category ? categoryName(category) : undefined,
           reorderPoint: reorderPoint === "" ? null : Number(reorderPoint),
+          ...(item.itemType === "FINISHED_GOOD" ? { productKind: productKind || null, specifications: specs.map((s) => ({ key: s.key.trim(), label: s.label.trim(), uomId: s.uomId || null, minValue: s.minValue === "" ? null : Number(s.minValue), maxValue: s.maxValue === "" ? null : Number(s.maxValue), defaultValue: s.defaultValue === "" ? null : Number(s.defaultValue) })) } : {}),
         })
         : await mutate<Item>("/api/v1/items", "POST", {
           code: code.trim(),
@@ -169,50 +172,50 @@ export function ItemForm({ item, onClose, onSaved }: { item?: Item; onClose: () 
       primary={{ label: saving ? "Saving…" : item ? "Save changes" : "Create item", onClick: () => void save(), disabled: saving }}
       secondary={{ label: "Cancel", onClick: onClose }}
     >
-      <div className="grid gap-3 sm:grid-cols-2">
-        <label className="text-xs">
-          <span className="block text-[11px] font-mono uppercase text-[var(--text-3)] mb-1">Item Code *</span>
-          <input aria-label="Item code" className="eoss-input mt-1 w-full" placeholder="e.g. RM-001" value={code} disabled={!!item} onChange={(event) => setCode(event.target.value)} />
+      <div className="grid gap-4 sm:grid-cols-2">
+        <label className="flex flex-col gap-1 text-sm font-medium text-[var(--text)]">
+          Item code *
+          <input aria-label="Item code" className="eoss-input w-full font-normal" placeholder="e.g. RM-001" value={code} disabled={!!item} onChange={(event) => setCode(event.target.value)} />
         </label>
-        <label className="text-xs">
-          <span className="block text-[11px] font-mono uppercase text-[var(--text-3)] mb-1">Item Name *</span>
-          <input aria-label="Item name *" className="eoss-input mt-1 w-full" placeholder="e.g. Hot Rolled Steel Sheet" value={name} onChange={(event) => setName(event.target.value)} />
+        <label className="flex flex-col gap-1 text-sm font-medium text-[var(--text)]">
+          Item name *
+          <input aria-label="Item name *" className="eoss-input w-full font-normal" placeholder="e.g. Hot Rolled Steel Sheet" value={name} onChange={(event) => setName(event.target.value)} />
         </label>
         {!item && (
-          <label className="text-xs">
-            <span className="block text-[11px] font-mono uppercase text-[var(--text-3)] mb-1">Type</span>
-            <select aria-label="Item type" className="eoss-input mt-1 w-full" value={itemType} onChange={(event) => setItemType(event.target.value)}>
+          <label className="flex flex-col gap-1 text-sm font-medium text-[var(--text)]">
+            Type
+            <select aria-label="Item type" className="eoss-input w-full font-normal" value={itemType} onChange={(event) => setItemType(event.target.value)}>
               {TYPES.map((type) => <option key={type} value={type}>{type.replaceAll("_", " ")}</option>)}
             </select>
           </label>
         )}
-        <div className="text-xs">
-          <span className="block text-[11px] font-mono uppercase text-[var(--text-3)] mb-1">Category</span>
+        <div className="flex flex-col gap-1 text-sm font-medium text-[var(--text)]">
+          Category
           <CreatableSelect label="category" ariaLabel="Category" value={categoryId} onChange={setCategoryId} placeholder="No category" error={categoryError} onRetry={loadReferences} creatable={canCreateReference} options={categories.map((category) => ({ id: category.id, label: categoryName(category) || "Unnamed category" }))} fields={[{ name: "code", label: "Code", required: true }, { name: "name", label: "Name", required: true }]} unique={(values) => categories.some((category) => (category.code ?? "").toLowerCase() === values.code.toLowerCase()) ? "This value already exists." : null} onCreate={async (values) => {
             const created = await mutate<Category>("/api/v1/item-categories", "POST", { code: values.code, name: values.name });
             setCategories((current) => [...current.filter((category) => category.id !== created.id), { ...created, label: created.name }]);
             return { id: created.id, label: created.name || values.name };
           }} />
         </div>
-        <div className="text-xs">
-          <span className="block text-[11px] font-mono uppercase text-[var(--text-3)] mb-1">Unit of Measure *</span>
+        <div className="flex flex-col gap-1 text-sm font-medium text-[var(--text)]">
+          Unit of measure *
           <CreatableSelect label="unit of measure" ariaLabel="Unit of measure" value={uomId} onChange={setUomId} disabled={!!item} error={uomError} onRetry={loadReferences} creatable={canCreateReference && !item} options={uoms.map((uom) => ({ id: uom.id, label: `${uom.symbol} · ${uom.name}` }))} fields={[{ name: "name", label: "Name", required: true }, { name: "symbol", label: "Symbol", required: true }, { name: "uomType", label: "Type (quantity / weight / volume / length / area / time)", options: [{ id: "quantity", label: "Quantity" }, { id: "weight", label: "Weight" }, { id: "volume", label: "Volume" }, { id: "length", label: "Length" }, { id: "area", label: "Area" }, { id: "time", label: "Time" }, { id: "energy", label: "Energy" }, { id: "other", label: "Other" }], required: true }]} unique={(values) => uoms.some((uom) => uom.symbol.toLowerCase() === values.symbol.toLowerCase()) ? "This value already exists." : null} onCreate={async (values) => {
             const created = await mutate<Uom>("/api/v1/uoms", "POST", { name: values.name, symbol: values.symbol, uomType: values.uomType || "quantity" });
             setUoms((current) => [...current.filter((uom) => uom.id !== created.id), created]);
             return { id: created.id, label: `${created.symbol} · ${created.name}` };
           }} />
         </div>
-        <label className="text-xs">
-          <span className="block text-[11px] font-mono uppercase text-[var(--text-3)] mb-1">Reorder Level</span>
-          <input className="eoss-input mt-1 w-full" type="number" min="0" placeholder="e.g. 100" value={reorderPoint} onChange={(event) => setReorderPoint(event.target.value)} />
+        <label className="flex flex-col gap-1 text-sm font-medium text-[var(--text)]">
+          Reorder level
+          <input className="eoss-input w-full font-normal" type="number" min="0" placeholder="e.g. 100" value={reorderPoint} onChange={(event) => setReorderPoint(event.target.value)} />
         </label>
       </div>
-      {!item && itemType === "FINISHED_GOOD" && (
-        <fieldset className="mt-3 rounded-lg border p-3 text-xs" style={{ borderColor: "var(--border)" }}>
-          <legend className="px-1 font-semibold">Product kind &amp; specifications</legend>
-          <label className="mt-2 block">
-            <span className="block text-[11px] font-mono uppercase text-[var(--text-3)] mb-1">Product kind</span>
-            <select aria-label="Product kind" className="eoss-input w-full" value={productKind} onChange={(e) => setProductKind(e.target.value)}>
+      {((!item && itemType === "FINISHED_GOOD") || (item && item.itemType === "FINISHED_GOOD")) && (
+        <fieldset className="mt-4 rounded-lg border p-4 text-sm" style={{ borderColor: "var(--border)" }}>
+          <legend className="px-1 text-sm font-semibold">Product kind &amp; specifications</legend>
+          <label className="mt-2 flex flex-col gap-1 font-medium text-[var(--text)]">
+            Product kind
+            <select aria-label="Product kind" className="eoss-input w-full font-normal" value={productKind} onChange={(e) => setProductKind(e.target.value)}>
               <option value="">Not specified</option>
               <option value="MANUFACTURED">Manufactured</option>
               <option value="TRADED">Traded</option>
@@ -232,7 +235,7 @@ export function ItemForm({ item, onClose, onSaved }: { item?: Item; onClose: () 
                 <button type="button" className="text-[var(--error)] font-bold" onClick={() => setSpecifications((prev) => prev.filter((_, j) => j !== i))}>✕</button>
               </div>
             ))}
-            <button type="button" className="text-xs font-semibold text-[var(--brand)]" onClick={() => setSpecifications((prev) => [...prev, { key: "", label: "", uomId: "", minValue: "", maxValue: "", defaultValue: "" }])}>Add specification</button>
+            <button type="button" className="text-xs font-semibold text-[var(--brand)]" onClick={() => setSpecifications((prev) => [...prev, { key: "", label: "", uomId: "", minValue: "", maxValue: "", defaultValue: "" }])}>+ Add specification</button>
           </div>
         </fieldset>
       )}
