@@ -4,6 +4,7 @@ import { ApiError } from "../auth/api";
 import { useCustomer } from "../auth/CustomerState";
 import Button from "../components/shared/Button";
 import ConfirmDialog from "../components/shared/ConfirmDialog";
+import RecordSheet from "../components/shared/RecordSheet";
 import {
   createConfigOption,
   listConfigCategories,
@@ -29,6 +30,7 @@ export default function ConfigOptionsAdmin() {
   const [code, setCode] = useState("");
   const [label, setLabel] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [showForm, setShowForm] = useState(false);
   const [confirmOption, setConfirmOption] = useState<ConfigOption | null>(null);
   const requestGeneration = useRef(0);
 
@@ -87,6 +89,8 @@ export default function ConfigOptionsAdmin() {
     setCode("");
     setLabel("");
     setEditingId(null);
+    setShowForm(false);
+    setError("");
   }
 
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -117,6 +121,16 @@ export default function ConfigOptionsAdmin() {
     setEditingId(option.id);
     setCode(option.code);
     setLabel(option.label);
+    setError("");
+    setShowForm(true);
+  }
+
+  function openAdd() {
+    setEditingId(null);
+    setCode("");
+    setLabel("");
+    setError("");
+    setShowForm(true);
   }
 
   async function changeActive(option: ConfigOption) {
@@ -172,10 +186,20 @@ export default function ConfigOptionsAdmin() {
     }
   }
 
+  function scopeLabel(cat: ConfigCategory, opts: ConfigOption[]) {
+    if (cat.scope === "system") return "System-managed";
+    if (!cat.tenantEditable) return "Read only";
+    const hasSystemRows = opts.some((o) => o.isSystem);
+    const allSystemRows = opts.length > 0 && opts.every((o) => o.isSystem);
+    if (allSystemRows) return "System rows protected · You can add values";
+    if (hasSystemRows) return "Hybrid · System rows protected";
+    return "Tenant-configurable";
+  }
+
   if (loadingCategories) return <p role="status" className="px-6 py-5 text-sm text-[var(--text-2)]">Loading configuration categories…</p>;
 
   return (
-    <div className="space-y-5 px-6 pb-8">
+    <div className="space-y-5 px-6 pt-5 pb-8">
       <div>
         <h2 className="text-sm font-bold text-[var(--text)]">Master Data &amp; Business Configuration</h2>
         <p className="mt-1 text-sm text-[var(--text-2)]">
@@ -190,7 +214,7 @@ export default function ConfigOptionsAdmin() {
         </div>
       ) : (
       <>
-      {error && <p role="alert" className="rounded-lg border border-[var(--error)] px-3 py-2 text-sm text-[var(--error)]">{error}</p>}
+      {error && !showForm && <p role="alert" className="rounded-lg border border-[var(--error)] px-3 py-2 text-sm text-[var(--error)]">{error}</p>}
 
       <div className="max-w-xl space-y-4">
         <label className="block text-sm font-medium text-[var(--text)]">
@@ -214,9 +238,16 @@ export default function ConfigOptionsAdmin() {
           <div className="flex items-center justify-between gap-3">
             <div>
               <h3 className="font-semibold text-[var(--text)]">{category.name}</h3>
-              <p className="text-xs text-[var(--text-2)]">{category.scope === "system" ? "System-controlled" : "Tenant-configurable"}</p>
+              <p className="text-xs text-[var(--text-2)]">{scopeLabel(category, orderedOptions)}</p>
             </div>
-            {loadingOptions && <span role="status" className="text-xs text-[var(--text-2)]">Loading values…</span>}
+            <div className="flex items-center gap-2">
+              {loadingOptions && <span role="status" className="text-xs text-[var(--text-2)]">Loading values…</span>}
+              {canManage && category.tenantEditable && (
+                <Button type="button" disabled={saving || confirmOption !== null} onClick={openAdd}>
+                  <Plus size={14} /> Add value
+                </Button>
+              )}
+            </div>
           </div>
 
           <div className="overflow-x-auto rounded-xl border" style={{ borderColor: "var(--border)", background: "var(--surface)" }}>
@@ -253,38 +284,44 @@ export default function ConfigOptionsAdmin() {
                   </tr>
                 ))}
                 {!loadingOptions && orderedOptions.length === 0 && (
-                  <tr><td className="px-4 py-6 text-center text-sm text-[var(--text-2)]" colSpan={4}>No values have been configured.</td></tr>
+                  <tr><td className="px-4 py-6 text-center text-sm text-[var(--text-2)]" colSpan={4}>
+                    {category.scope === "system"
+                      ? "Values for this category are managed by the system and cannot be edited here."
+                      : "No values have been configured."}
+                  </td></tr>
                 )}
               </tbody>
             </table>
           </div>
 
-          {canManage && category.tenantEditable && (
-            <form className="max-w-xl space-y-3 rounded-xl border p-4" style={{ borderColor: "var(--border)", background: "var(--surface)" }} onSubmit={(event) => void submit(event)}>
-              <h4 className="text-sm font-semibold text-[var(--text)]">{editingId ? "Edit value" : "Add value"}</h4>
-              {!editingId && (
-                <label className="block text-sm text-[var(--text)]">
-                  Code
-                  <input required value={code} onChange={(event) => setCode(event.target.value)} className="eoss-input mt-1 min-h-[40px] w-full" maxLength={100} />
+          {showForm && canManage && category.tenantEditable && (
+            <RecordSheet
+              title={editingId ? `Edit "${code}"` : `Add value to ${category.name}`}
+              onClose={resetForm}
+              primary={{ label: saving ? "Saving…" : editingId ? "Save changes" : "Add value", disabled: saving || !label.trim() || (!editingId && !code.trim()), onClick: () => { void submit({ preventDefault: () => {} } as FormEvent<HTMLFormElement>); } }}
+              secondary={{ label: "Cancel", onClick: resetForm }}
+            >
+              <form onSubmit={(event) => void submit(event)} className="space-y-4">
+                {error && <p role="alert" className="rounded-lg border border-[var(--error)] px-3 py-2 text-sm text-[var(--error)]">{error}</p>}
+                {!editingId && (
+                  <label className="flex flex-col gap-1 text-sm font-medium text-[var(--text)]">
+                    Code
+                    <input required value={code} onChange={(event) => setCode(event.target.value)} className="eoss-input min-h-[40px] w-full" maxLength={100} />
+                  </label>
+                )}
+                {editingId && <p className="text-xs text-[var(--text-2)]">Code: {code} (codes are fixed to preserve existing references)</p>}
+                <label className="flex flex-col gap-1 text-sm font-medium text-[var(--text)]">
+                  Display value
+                  <input required value={label} onChange={(event) => setLabel(event.target.value)} className="eoss-input min-h-[40px] w-full" maxLength={200} />
                 </label>
-              )}
-              {editingId && <p className="text-xs text-[var(--text-2)]">Code: {code} (codes are fixed to preserve existing references)</p>}
-              <label className="block text-sm text-[var(--text)]">
-                Display value
-                <input required value={label} onChange={(event) => setLabel(event.target.value)} className="eoss-input mt-1 min-h-[40px] w-full" maxLength={200} />
-              </label>
-              <div className="flex gap-2">
-                <Button type="submit" disabled={saving || !label.trim() || (!editingId && !code.trim())}>
-                  <Plus size={14} /> {saving ? "Saving…" : editingId ? "Save changes" : "Add value"}
-                </Button>
-                {editingId && <Button variant="ghost" type="button" onClick={resetForm}>Cancel</Button>}
-              </div>
-            </form>
+              </form>
+            </RecordSheet>
           )}
+
           <ConfirmDialog
             open={confirmOption !== null}
             title="Deactivate configuration value?"
-            body={confirmOption ? `Deactivate “${confirmOption.label}”? Existing records will remain unchanged, but the value will no longer be available for new selections.` : ""}
+            body={confirmOption ? `Deactivate "${confirmOption.label}"? Existing records will remain unchanged, but the value will no longer be available for new selections.` : ""}
             confirmLabel="Deactivate value"
             onConfirm={() => void confirmDeactivate()}
             onCancel={() => setConfirmOption(null)}

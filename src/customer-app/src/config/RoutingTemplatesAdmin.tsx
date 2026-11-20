@@ -179,7 +179,7 @@ export default function RoutingTemplatesAdmin() {
   const sheetTitle = mode === "create" ? "Create route" : mode === "revise" ? `Revise ${detail?.name ?? "route"}` : (detail?.name ?? "Route");
 
   return (
-    <div className="space-y-5 px-6 pb-8">
+    <div className="space-y-5 px-6 pt-5 pb-8">
       <div>
         <h2 className="text-sm font-bold text-[var(--text)]">Manufacturing Routes</h2>
         <p className="mt-1 text-sm text-[var(--text-2)]">Configure ordered production stages for a product or a generic route. Editing creates a revision; existing routes cannot be deleted or deactivated here.</p>
