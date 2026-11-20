@@ -12,6 +12,7 @@ import in.boss.inventory.api.InventoryApiDtos.MaterialLotResponse;
 import in.boss.inventory.api.InventoryApiDtos.ReservationRequest;
 import in.boss.inventory.api.InventoryApiDtos.ReservationResponse;
 import in.boss.inventory.api.InventoryApiDtos.ReturnMaterialRequest;
+import in.boss.inventory.api.InventoryApiDtos.LotReservationResponse;
 import in.boss.inventory.api.InventoryApiDtos.StockMovementResponse;
 
 import java.time.LocalDate;
@@ -60,6 +61,8 @@ public interface InventoryService {
             UUID itemId, UUID storeId, String status, int page, int size);
 
     MaterialLotResponse getLot(UUID lotId);
+
+    List<LotReservationResponse> getLotReservations(UUID lotId);
 
     InventoryPage<StockMovementResponse> getLotMovements(
             UUID lotId, LocalDate from, LocalDate to, int page, int size);

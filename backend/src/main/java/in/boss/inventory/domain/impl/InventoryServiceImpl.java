@@ -10,6 +10,7 @@ import in.boss.inventory.api.InventoryApiDtos.InventoryPage;
 import in.boss.inventory.api.InventoryApiDtos.JobReservationResponse;
 import in.boss.inventory.api.InventoryApiDtos.InventoryPositionResponse;
 import in.boss.inventory.api.InventoryApiDtos.IssueMaterialRequest;
+import in.boss.inventory.api.InventoryApiDtos.LotReservationResponse;
 import in.boss.inventory.api.InventoryApiDtos.MaterialLotResponse;
 import in.boss.inventory.api.InventoryApiDtos.ReservationRequest;
 import in.boss.inventory.api.InventoryApiDtos.ReservationResponse;
@@ -262,6 +263,18 @@ public class InventoryServiceImpl implements InventoryService {
 
     @Override
     @Transactional(readOnly = true)
+    public List<LotReservationResponse> getLotReservations(UUID lotId) {
+        BossContext ctx = requireContext();
+        requireVisibleLot(ctx, lotId, false);
+        return reservationRepository.activeLotReservations(ctx.tenantId(), lotId).stream()
+                .map(row -> new LotReservationResponse(
+                        row.id(), row.referenceType(), row.referenceId(),
+                        row.reservedQty(), row.documentNumber()))
+                .toList();
+    }
+
+    @Override
+    @Transactional(readOnly = true)
     public List<JobReservationResponse> listActiveJobReservations() {
         BossContext ctx = requireContext();
         UUID siteId = ctx.isSiteScoped() ? ctx.siteId() : null;
@@ -401,7 +414,7 @@ public class InventoryServiceImpl implements InventoryService {
                 lot.grnLineId(),
                 lot.quantity(),
                 lot.reservedQty(),
-                lot.quantity().subtract(lot.reservedQty()),
+                LotStatus.QUARANTINE.equals(lot.status()) ? BigDecimal.ZERO : lot.quantity().subtract(lot.reservedQty()),
                 lot.unitCost(),
                 lot.uomId(),
                 lot.uomSymbol(),
