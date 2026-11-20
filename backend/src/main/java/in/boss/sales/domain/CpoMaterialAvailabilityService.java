@@ -92,6 +92,11 @@ public class CpoMaterialAvailabilityService {
             if (remaining.signum() <= 0) {
                 continue;
             }
+            var lineItem = itemRepository.findByIdAndTenantId(line.itemId(), tenantId)
+                    .orElseThrow(() -> conflict("Item on Customer PO line not found"));
+            if ("service".equals(lineItem.getItemType())) {
+                continue; // service lines have no inventory requirement
+            }
             if (!line.uomId().equals(bomValidator.itemBaseUom(tenantId, line.itemId()))) {
                 throw conflict("Customer PO line UOM differs from the product base UOM");
             }
@@ -101,7 +106,7 @@ public class CpoMaterialAvailabilityService {
                 // No BOM — traded/stocked finished goods: check stock against the SKU itself.
                 var item = itemRepository.findByIdAndTenantId(line.itemId(), tenantId)
                         .orElseThrow(() -> conflict("Item on Customer PO line not found"));
-                if (!"finished_goods".equals(item.getItemType())) {
+                if (!"finished_goods".equals(item.getItemType()) && !"traded".equals(item.getItemType())) {
                     throw conflict("A Customer PO product has no approved BOM with material requirements");
                 }
                 List<Object[]> uomRow = jdbc.query("""

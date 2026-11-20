@@ -138,19 +138,19 @@ public class FeasibilityCheckService {
             if (remaining.signum() <= 0) {
                 continue;
             }
+            var lineItem = itemRepository.findByIdAndTenantId(line.itemId(), context.tenantId())
+                    .orElseThrow(() -> new InventoryValidationException("Item on Customer PO line not found"));
+            if ("service".equals(lineItem.getItemType())) {
+                continue; // service lines have no inventory requirement
+            }
             var result = bomExplosionService.explodeBOM(line.itemId(), remaining);
             var materials = result.getFlatMaterials();
             if (materials == null || materials.isEmpty()) {
-                // No approved BOM — treat as a traded/stocked finished good:
-                // reserve the finished-good SKU itself from inventory.
-                var item = itemRepository.findByIdAndTenantId(line.itemId(), context.tenantId())
-                        .orElseThrow(() -> new InventoryValidationException(
-                                "Item on Customer PO line not found"));
-                if (!"finished_goods".equals(item.getItemType())) {
+                // No approved BOM — traded/stocked finished goods: reserve the SKU itself.
+                if (!"finished_goods".equals(lineItem.getItemType()) && !"traded".equals(lineItem.getItemType())) {
                     throw new InventoryValidationException(
                             "A Customer PO line has no approved BOM with material requirements");
                 }
-                // Traded or not-yet-manufactured: reserve the finished-good item itself.
                 totals.merge(line.itemId(), remaining, BigDecimal::add);
                 continue;
             }

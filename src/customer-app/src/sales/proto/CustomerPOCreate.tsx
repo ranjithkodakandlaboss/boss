@@ -75,7 +75,7 @@ export default function CustomerPOCreate() {
 
   useEffect(() => {
     allPages<OrderItem>('/api/v1/items?status=active').then(items => {
-      setCatalogueItems(items.filter(i => ['finished_good', 'finished_goods', 'semi_finished'].includes((i.itemType ?? '').toLowerCase())).map(i => ({
+      setCatalogueItems(items.filter(i => ['finished_good', 'finished_goods', 'semi_finished', 'traded', 'service'].includes((i.itemType ?? '').toLowerCase())).map(i => ({
         id: i.id, code: i.code, name: i.name,
         baseUomId: i.baseUomId ?? i.uomId ?? '',
         baseUomSymbol: i.baseUomSymbol ?? i.uomSymbol ?? '',
@@ -187,7 +187,7 @@ export default function CustomerPOCreate() {
       </div>
 
       <div className="flex-1 overflow-auto p-6">
-        <div className="max-w-3xl mx-auto space-y-5">
+        <div className="space-y-5">
           {entryMode === 'quotation' ? (
             <>
               <div className="eoss-card p-5 space-y-4">

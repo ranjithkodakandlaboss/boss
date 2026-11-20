@@ -277,9 +277,9 @@ public class CustomerPoService {
             String itemType = jdbc.query("""
                     SELECT item_type FROM items WHERE tenant_id = ? AND id = ? AND is_active
                     """, rs -> rs.next() ? rs.getString("item_type") : null, tenantId, line.itemId());
-            if (itemType == null || !Set.of("finished_goods", "semi_finished").contains(itemType)) {
+            if (itemType == null || !Set.of("finished_goods", "semi_finished", "traded", "service").contains(itemType)) {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                        "Direct Customer PO lines must use an active finished or semi-finished item: " + line.itemId());
+                        "Direct Customer PO lines must use an active finished, traded, service, or semi-finished item: " + line.itemId());
             }
         }
         UUID cpoId = UUID.randomUUID();
