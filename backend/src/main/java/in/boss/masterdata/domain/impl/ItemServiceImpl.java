@@ -104,7 +104,7 @@ public class ItemServiceImpl implements ItemService {
 
         ItemCategoryEntity category = null;
         if (request.getCategoryId() != null) {
-            category = requireActiveCategory(tenantId, request.getCategoryId());
+            category = requireActiveCategoryReadOnly(tenantId, request.getCategoryId());
         }
 
         UUID hsnCodeId = null;
@@ -119,8 +119,10 @@ public class ItemServiceImpl implements ItemService {
         }
 
         String dbItemType = toDbItemType(request.getItemType());
+        List<ItemSpecification> inputSpecs = request.getSpecifications() == null ? List.of() : request.getSpecifications();
+        Map<UUID, UnitOfMeasureEntity> specUomCache = batchLoadSpecUoms(tenantId, inputSpecs);
         List<ItemSpecification> specifications = validateProductConfiguration(
-                tenantId, dbItemType, request.getProductKind(), request.getSpecifications());
+                tenantId, dbItemType, request.getProductKind(), inputSpecs, specUomCache);
         Instant now = Instant.now();
 
         ItemEntity entity = ItemEntity.builder()
@@ -254,6 +256,27 @@ public class ItemServiceImpl implements ItemService {
             throw new ValidationException("Category is inactive: " + categoryId);
         }
         return category;
+    }
+
+    private ItemCategoryEntity requireActiveCategoryReadOnly(UUID tenantId, UUID categoryId) {
+        ItemCategoryEntity category = categoryRepository.findByIdAndTenantId(categoryId, tenantId)
+                .orElseThrow(() -> new ValidationException("Invalid category ID: " + categoryId));
+        if (!category.isActive()) {
+            throw new ValidationException("Category is inactive: " + categoryId);
+        }
+        return category;
+    }
+
+    private Map<UUID, UnitOfMeasureEntity> batchLoadSpecUoms(UUID tenantId, List<ItemSpecification> specs) {
+        if (specs == null || specs.isEmpty()) return Map.of();
+        List<UUID> ids = specs.stream()
+                .map(ItemSpecification::getUomId)
+                .filter(Objects::nonNull)
+                .distinct()
+                .collect(Collectors.toList());
+        if (ids.isEmpty()) return Map.of();
+        return uomRepository.findByTenantIdAndIdIn(tenantId, ids).stream()
+                .collect(Collectors.toMap(UnitOfMeasureEntity::getId, u -> u));
     }
 
     @Override
@@ -391,6 +414,12 @@ public class ItemServiceImpl implements ItemService {
 
     private List<ItemSpecification> validateProductConfiguration(UUID tenantId, String itemType, String productKind,
                                                                   List<ItemSpecification> input) {
+        return validateProductConfiguration(tenantId, itemType, productKind, input, Map.of());
+    }
+
+    private List<ItemSpecification> validateProductConfiguration(UUID tenantId, String itemType, String productKind,
+                                                                  List<ItemSpecification> input,
+                                                                  Map<UUID, UnitOfMeasureEntity> uomCache) {
         List<ItemSpecification> specifications = input == null ? List.of() : input;
         if (productKind != null && !List.of("MANUFACTURED", "TRADED").contains(productKind)) {
             throw new ValidationException("Product kind must be MANUFACTURED or TRADED");
@@ -414,8 +443,10 @@ public class ItemServiceImpl implements ItemService {
             if (spec.getUomId() == null) {
                 throw new ValidationException("A unit of measure is required for each specification");
             }
-            UnitOfMeasureEntity unit = uomRepository.findByIdAndTenantId(spec.getUomId(), tenantId)
-                    .orElseThrow(() -> new ValidationException("Invalid specification UOM ID: " + spec.getUomId()));
+            UnitOfMeasureEntity unit = uomCache.containsKey(spec.getUomId())
+                    ? uomCache.get(spec.getUomId())
+                    : uomRepository.findByIdAndTenantId(spec.getUomId(), tenantId)
+                            .orElseThrow(() -> new ValidationException("Invalid specification UOM ID: " + spec.getUomId()));
             for (BigDecimal value : new BigDecimal[]{spec.getMinValue(), spec.getMaxValue(), spec.getDefaultValue()}) {
                 if (value != null && (value.precision() - Math.min(value.scale(), 0) > 18 || Math.max(value.scale(), 0) > 6)) {
                     throw new ValidationException("Specification values support at most 18 digits and 6 decimal places");

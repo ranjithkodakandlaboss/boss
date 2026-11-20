@@ -3,6 +3,7 @@ import { api, safeRandomUUID } from "../auth/api";
 import { useCustomer } from "../auth/CustomerState";
 import ErrorState from "../components/shared/ErrorState";
 import LoadingState from "../components/shared/LoadingState";
+import RecordSheet from "../components/shared/RecordSheet";
 import { allPages, type Item, type Uom } from "./api";
 import StockNav from "./stockNav";
 
@@ -118,6 +119,22 @@ type Explosion = {
   flatMaterials?: Array<{ itemId: string; itemCode?: string; itemName?: string; qty: number; uomSymbol?: string }>;
 };
 
+type FlatMaterial = { itemId: string; itemCode?: string; itemName?: string; qty: number; uomSymbol?: string };
+
+function consolidateMaterials(materials: FlatMaterial[]): FlatMaterial[] {
+  const map = new Map<string, FlatMaterial>();
+  for (const m of materials) {
+    const key = `${m.itemId}::${m.uomSymbol ?? ""}`;
+    const existing = map.get(key);
+    if (existing) {
+      existing.qty += m.qty;
+    } else {
+      map.set(key, { ...m });
+    }
+  }
+  return Array.from(map.values());
+}
+
 function BomCalculator({ bom }: { bom: Bom }) {
   const [quantity, setQuantity] = useState("1");
   const [specifications, setSpecifications] = useState<Record<string, string>>({});
@@ -146,7 +163,10 @@ function BomCalculator({ bom }: { bom: Bom }) {
     try {
       const values = Object.fromEntries(names.map((name) => {
         const value = Number(specifications[name]);
-        if (!Number.isFinite(value) || value < 0) throw new Error(`Enter a non-negative number for ${name}.`);
+        if (!Number.isFinite(value) || value < 0) {
+          setCalculating(false);
+          throw new Error(`Enter a non-negative number for ${name}.`);
+        }
         return [name, value];
       }));
       const result = await api<Explosion>(`/api/v1/items/${bom.itemId}/bom/explode`, {
@@ -176,17 +196,17 @@ function BomCalculator({ bom }: { bom: Bom }) {
           </label>
         ))}
       </div>
-      <button type="button" className="mt-3 rounded-lg px-3 py-1.5 text-xs font-semibold text-white" style={{ background: "var(--brand-fill)" }} disabled={calculating || loadingNames || Boolean(error) || !Number.isFinite(Number(quantity)) || Number(quantity) <= 0} onClick={() => void calculate()}>{calculating ? "Calculating…" : "Calculate"}</button>
+      <button type="button" className="mt-3 rounded-lg px-3 py-1.5 text-xs font-semibold text-white" style={{ background: "var(--brand-fill)" }} disabled={calculating || loadingNames || !Number.isFinite(Number(quantity)) || Number(quantity) <= 0} onClick={() => void calculate()}>{calculating ? "Calculating…" : "Calculate"}</button>
       {error && <p role="alert" className="mt-2 text-sm text-[var(--error)]">{error}</p>}
       {explosion && (
         <div className="mt-3">
-          <p className="text-xs text-[var(--text-2)]">Calculated from BOM version {explosion.bomVersion ?? "—"}. The response includes the BOM revisions and specification values used.</p>
+          <p className="text-xs text-[var(--text-2)]">Calculated from BOM version {explosion.bomVersion ?? "—"}. Materials with the same item and UOM are consolidated.</p>
           <table className="mt-2 w-full text-left text-sm">
             <thead><tr className="text-xs text-[var(--text-3)]"><th>Material</th><th>Required quantity</th><th>UOM</th></tr></thead>
-            <tbody>{(explosion.flatMaterials ?? []).map((material, index) => (
-              <tr key={`${material.itemId}-${index}`} className="border-t border-[var(--border)]">
+            <tbody>{consolidateMaterials(explosion.flatMaterials ?? []).map((material) => (
+              <tr key={`${material.itemId}-${material.uomSymbol}`} className="border-t border-[var(--border)]">
                 <td className="py-1">{material.itemCode} {material.itemName}</td>
-                <td>{material.qty}</td>
+                <td>{Math.round(material.qty * 1000) / 1000}</td>
                 <td>{material.uomSymbol}</td>
               </tr>
             ))}</tbody>
@@ -197,18 +217,24 @@ function BomCalculator({ bom }: { bom: Bom }) {
   );
 }
 
-function isBomParent(itemType?: string) {
-  const t = (itemType ?? "").toLowerCase();
-  return t === "finished_goods" || t === "finished_good" || t === "semi_finished";
+function isBomParent(item: Item) {
+  const t = (item.itemType ?? "").toLowerCase();
+  const isFinishedOrSemi = t === "finished_goods" || t === "finished_good" || t === "semi_finished";
+  if (!isFinishedOrSemi) return false;
+  // Exclude traded finished goods — only manufactured items can have a BOM
+  const kind = (item as { productKind?: string }).productKind;
+  if (kind === "TRADED") return false;
+  return true;
 }
 
 function isBomComponent(itemType?: string) {
   const t = (itemType ?? "").toLowerCase();
-  return t !== "finished_goods" && t !== "finished_good" && t !== "service";
+  // Exclude finished goods, services and spare parts from being BOM components
+  return t !== "finished_goods" && t !== "finished_good" && t !== "service" && t !== "spare_part" && t !== "other";
 }
 
 function BomForm({ items, uoms, onClose, onSaved }: { items: Item[]; uoms: Uom[]; onClose: () => void; onSaved: () => void }) {
-  const parents = items.filter((item) => isBomParent(item.itemType));
+  const parents = items.filter((item) => isBomParent(item));
   const [itemId, setItemId] = useState("");
   const [lines, setLines] = useState<BomLine[]>([{ componentItemId: "", qty: "", uomId: uoms[0]?.id ?? "", scrapFactor: 0 }]);
   const [error, setError] = useState("");
@@ -216,6 +242,12 @@ function BomForm({ items, uoms, onClose, onSaved }: { items: Item[]; uoms: Uom[]
 
   function update(index: number, patch: Partial<BomLine>) {
     setLines((current) => current.map((line, i) => i === index ? { ...line, ...patch } : line));
+  }
+
+  function pickComponent(index: number, componentItemId: string) {
+    const item = items.find((item) => item.id === componentItemId);
+    const defaultUomId = item?.uomId ?? uoms[0]?.id ?? "";
+    update(index, { componentItemId, uomId: defaultUomId });
   }
 
   async function submit(event: FormEvent) {
@@ -254,40 +286,42 @@ function BomForm({ items, uoms, onClose, onSaved }: { items: Item[]; uoms: Uom[]
   }
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4">
-      <form onSubmit={(event) => void submit(event)} className="max-h-[90vh] w-full max-w-2xl overflow-auto rounded-xl bg-[var(--surface)] p-5">
-        <h2 className="text-lg font-bold">Create bill of materials</h2>
-        <p className="mb-3 text-xs text-[var(--text-2)]">The saved BOM is approved and can be selected when a production job is created.</p>
-        {error && <p className="mb-2 text-sm text-[var(--error)]">{error}</p>}
-        <label className="block text-xs font-semibold">Finished item *
-          <select aria-label="Finished item" className="eoss-input mt-1 w-full" value={itemId} onChange={(event) => setItemId(event.target.value)}>
-            <option value="">Select finished item</option>
-            {parents.map((item) => <option key={item.id} value={item.id}>{item.code} — {item.name}</option>)}
-          </select>
-          {parents.length === 0 && <p className="mt-1 text-xs text-[var(--error)]">No finished goods or semi-finished items found. Add items with type "Finished Goods" or "Semi-Finished" in the Items catalogue first.</p>}
-        </label>
-        <div className="mt-4 space-y-2">
-          {lines.map((line, index) => (
-            <div key={index} className="grid gap-2 md:grid-cols-5">
-              <select aria-label={`Component ${index + 1}`} className="eoss-input" value={line.componentItemId} onChange={(event) => update(index, { componentItemId: event.target.value })}>
-                <option value="">Component</option>
-                {items.filter((item) => item.id !== itemId && isBomComponent(item.itemType)).map((item) => <option key={item.id} value={item.id}>{item.code} — {item.name}</option>)}
-              </select>
-              <input aria-label={`Quantity ${index + 1}`} className="eoss-input text-left" inputMode="decimal" value={line.qty} onChange={(event) => update(index, { qty: event.target.value })} placeholder="Fixed qty *" />
-              <select aria-label={`Unit ${index + 1}`} className="eoss-input" value={line.uomId} onChange={(event) => update(index, { uomId: event.target.value })}>
-                {uoms.map((uom) => <option key={uom.id} value={uom.id}>{uom.symbol}</option>)}
-              </select>
-              <input aria-label={`Scrap ${index + 1}`} className="eoss-input text-left" inputMode="decimal" value={line.scrapFactor} onChange={(event) => update(index, { scrapFactor: event.target.value })} placeholder="Scrap %" />
-              <input aria-label={`Formula ${index + 1}`} className="eoss-input text-left" value={line.quantityFormula ?? ""} onChange={(event) => update(index, { quantityFormula: event.target.value })} placeholder="Optional: length * width" />
-            </div>
-          ))}
-        </div>
-        <button type="button" className="mt-2 text-xs font-semibold" onClick={() => setLines((current) => [...current, { componentItemId: "", qty: "", uomId: uoms[0]?.id ?? "", scrapFactor: 0 }])}>Add component</button>
-        <div className="mt-4 flex justify-end gap-2">
-          <button type="button" onClick={onClose}>Cancel</button>
-          <button type="submit" disabled={saving} className="rounded-lg px-3 py-1.5 text-xs font-semibold text-white" style={{ background: "var(--brand-fill)" }}>{saving ? "Saving…" : "Save and approve"}</button>
-        </div>
-      </form>
-    </div>
+    <RecordSheet
+      title="Create bill of materials"
+      subtitle="The saved BOM is approved and can be selected when a production job is created."
+      onClose={onClose}
+      primary={{ label: saving ? "Saving…" : "Save and approve", onClick: () => void submit({ preventDefault: () => {} } as FormEvent), disabled: saving }}
+      secondary={{ label: "Cancel", onClick: onClose }}
+      width="lg"
+    >
+      {error && <p role="alert" className="mb-3 text-sm text-[var(--error)]">{error}</p>}
+      <label className="flex flex-col gap-1 text-sm font-medium text-[var(--text)]">
+        Finished item *
+        <select aria-label="Finished item" className="eoss-input w-full font-normal" value={itemId} onChange={(event) => setItemId(event.target.value)}>
+          <option value="">Select finished item</option>
+          {parents.map((item) => <option key={item.id} value={item.id}>{item.code} — {item.name}</option>)}
+        </select>
+        {parents.length === 0 && <p className="mt-1 text-xs text-[var(--error)]">No manufactured finished goods or semi-finished items found. Add items in the Items catalogue first.</p>}
+      </label>
+      <div className="mt-4 space-y-2">
+        <p className="text-xs font-medium text-[var(--text-2)]">Components</p>
+        {lines.map((line, index) => (
+          <div key={index} className="grid gap-2 sm:grid-cols-[2fr_1fr_1fr_1fr_2fr_auto]">
+            <select aria-label={`Component ${index + 1}`} className="eoss-input" value={line.componentItemId} onChange={(event) => pickComponent(index, event.target.value)}>
+              <option value="">Select component</option>
+              {items.filter((item) => item.id !== itemId && isBomComponent(item.itemType)).map((item) => <option key={item.id} value={item.id}>{item.code} — {item.name}</option>)}
+            </select>
+            <input aria-label={`Quantity ${index + 1}`} className="eoss-input" inputMode="decimal" value={line.qty} onChange={(event) => update(index, { qty: event.target.value })} placeholder="Fixed qty" />
+            <select aria-label={`Unit ${index + 1}`} className="eoss-input" value={line.uomId} onChange={(event) => update(index, { uomId: event.target.value })}>
+              {uoms.map((uom) => <option key={uom.id} value={uom.id}>{uom.symbol}</option>)}
+            </select>
+            <input aria-label={`Scrap % ${index + 1}`} className="eoss-input" inputMode="decimal" value={line.scrapFactor} onChange={(event) => update(index, { scrapFactor: event.target.value })} placeholder="Scrap %" />
+            <input aria-label={`Formula ${index + 1}`} className="eoss-input" value={line.quantityFormula ?? ""} onChange={(event) => update(index, { quantityFormula: event.target.value })} placeholder="Optional formula: length * width" />
+            <button type="button" className="text-[var(--error)] font-bold px-1" onClick={() => setLines((current) => current.filter((_, i) => i !== index))}>✕</button>
+          </div>
+        ))}
+        <button type="button" className="text-xs font-semibold text-[var(--brand)]" onClick={() => setLines((current) => [...current, { componentItemId: "", qty: "", uomId: uoms[0]?.id ?? "", scrapFactor: 0 }])}>+ Add component</button>
+      </div>
+    </RecordSheet>
   );
 }
