@@ -122,6 +122,32 @@ async function parseApiResponse<T>(response: Response): Promise<T> {
   return body as T;
 }
 
+/**
+ * Validates that the given Firebase ID token is associated with an active BOSS account.
+ * Throws ApiError(401) if the token is valid Firebase-wise but has no BOSS tenant membership.
+ * Must be called BEFORE storing the session client-side.
+ */
+export async function validateBossAccount(idToken: string): Promise<void> {
+  const response = await fetch(`${base}/api/v1/auth/me`, {
+    headers: {
+      "Authorization": `Bearer ${idToken}`,
+      "Content-Type": "application/json",
+    },
+  });
+  if (response.status === 401) {
+    throw new ApiError(401, "This account is not registered with BOSS. Please use your invitation link to activate your account.");
+  }
+  if (response.status === 403) {
+    const text = await response.text().catch(() => "");
+    let detail = "Your account has been suspended or deactivated.";
+    try { detail = JSON.parse(text).detail || detail; } catch { /* ignore */ }
+    throw new ApiError(403, detail);
+  }
+  if (!response.ok) {
+    throw new ApiError(response.status, "Sign-in failed. Please try again.");
+  }
+}
+
 export async function firebaseSignIn(email: string, password: string): Promise<{ idToken: string; refreshToken: string; expiresIn: string }> {
   const apiKey = import.meta.env.VITE_FIREBASE_API_KEY;
   if (!apiKey) throw new Error("Customer sign-in is not configured. Set VITE_FIREBASE_API_KEY.");

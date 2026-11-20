@@ -18,7 +18,6 @@ interface PRLineForm {
   uom: string;
   requiredQty: number;
   targetRate: number;
-  requiredBy: string;
   notes: string;
 }
 
@@ -81,7 +80,6 @@ export default function PRCreate() {
       uom: searchParams.get('uom') || 'kg',
       requiredQty: Number(searchParams.get('qty') || 0),
       targetRate: 0,
-      requiredBy: prefillName ? '2026-11-18' : '',
       notes: prefillName ? 'Raised from stock shortage' : '',
     },
   ]);
@@ -111,7 +109,6 @@ export default function PRCreate() {
         uom: l.uom || 'kg',
         requiredQty: l.requiredQty || 0,
         targetRate: l.estimatedPrice ?? 0,
-        requiredBy: l.requiredDate || editingPr.requiredBy || '',
         notes: l.notes || l.justification || '',
       })));
     }
@@ -136,7 +133,6 @@ export default function PRCreate() {
       uom: 'kg',
       requiredQty: 0,
       targetRate: 0,
-      requiredBy: header.requiredBy,
       notes: '',
     }]);
 
@@ -187,7 +183,7 @@ export default function PRCreate() {
       grade: l.grade.trim() || undefined,
       requiredQty: l.requiredQty,
       uom: l.uom,
-      requiredDate: l.requiredBy || header.requiredBy,
+      requiredDate: header.requiredBy,
       estimatedPrice: l.targetRate || undefined,
       notes: l.notes.trim() || undefined,
       justification: l.notes.trim() || undefined,
@@ -225,7 +221,7 @@ export default function PRCreate() {
       department: header.department,
       raisedDate: TODAY,
       requiredBy: header.requiredBy,
-      status: ['owner', 'buyer'].includes(currentUser.role) ? 'approved' : 'pending',
+      status: 'submitted',
       lineCount: canonicalLines.length,
       totalQty: canonicalLines.reduce((s, l) => s + l.requiredQty, 0),
       priority: header.priority,
@@ -420,10 +416,6 @@ export default function PRCreate() {
                       <label className="block text-xs text-[var(--text-3)] mb-1">Est. Rate (₹)</label>
                       <input type="number" min={0} className="eoss-input w-full" value={line.targetRate || ''} onChange={e => setLine(line.id, { targetRate: Number(e.target.value) })} />
                     </div>
-                    <div>
-                      <label className="block text-xs text-[var(--text-3)] mb-1">Required By</label>
-                      <input type="date" className="eoss-input w-full" value={line.requiredBy} onChange={e => setLine(line.id, { requiredBy: e.target.value })} />
-                    </div>
                     <div className="md:col-span-3">
                       <label className="block text-xs text-[var(--text-3)] mb-1">Line Notes</label>
                       <input className="eoss-input w-full" value={line.notes} onChange={e => setLine(line.id, { notes: e.target.value })} />
@@ -485,11 +477,6 @@ export default function PRCreate() {
                 </table>
               </div>
 
-              {!isEditing && ['owner', 'buyer'].includes(currentUser.role) && (
-                <div className="rounded-lg p-3 text-xs" style={{ background: 'var(--success-bg,#F0FDF4)', color: 'var(--success,#16A34A)' }}>
-                  As {currentUser.role}, this PR will be <strong>auto-approved</strong> on submission.
-                </div>
-              )}
             </div>
           )}
         </div>

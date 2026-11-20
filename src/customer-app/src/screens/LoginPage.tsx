@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { ApiError, firebaseSignIn } from "../auth/api";
+import { ApiError, firebaseSignIn, validateBossAccount } from "../auth/api";
 import { signIn } from "../auth/session";
 import Button from "../components/shared/Button";
 import { TextField } from "../components/shared/Fields";
@@ -24,6 +24,10 @@ export default function LoginPage() {
     setError("");
     try {
       const session = await firebaseSignIn(String(data.get("email") ?? ""), String(data.get("password") ?? ""));
+      // Validate tenant membership with the backend BEFORE storing the session.
+      // Firebase authentication alone is not sufficient — the user must have an
+      // active BOSS account associated with this workspace.
+      await validateBossAccount(session.idToken);
       signIn(session.idToken, session.refreshToken, session.expiresIn);
       navigate("/");
       window.location.reload();

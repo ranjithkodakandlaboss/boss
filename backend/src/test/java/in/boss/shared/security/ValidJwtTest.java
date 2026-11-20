@@ -70,23 +70,25 @@ class ValidJwtTest {
     }
 
     @Test
-    void validToken_unknownUser_chainCalledWithoutContext() throws Exception {
-        // tenantContextResolver returns null when user not found in app_users
+    void validFirebaseToken_notInBoss_returns401WithoutCallingChain() throws Exception {
+        // A valid Firebase token for a UID that has no BOSS tenant association must be
+        // explicitly denied. Firebase authentication alone is insufficient.
         FirebaseToken mockToken = mock(FirebaseToken.class);
-        when(mockToken.getUid()).thenReturn("firebase-uid-unknown");
-        when(firebaseAuth.verifyIdToken("good-token-2")).thenReturn(mockToken);
-        when(tenantContextResolver.resolve("firebase-uid-unknown")).thenReturn(null);
+        when(mockToken.getUid()).thenReturn("firebase-uid-no-boss-account");
+        when(firebaseAuth.verifyIdToken("orphan-firebase-token")).thenReturn(mockToken);
+        when(tenantContextResolver.resolve("firebase-uid-no-boss-account")).thenReturn(null);
+        when(tenantContextResolver.isInactive("firebase-uid-no-boss-account")).thenReturn(false);
 
         var request = new MockHttpServletRequest();
-        request.addHeader("Authorization", "Bearer good-token-2");
+        request.addHeader("Authorization", "Bearer orphan-firebase-token");
         var response = new MockHttpServletResponse();
         AtomicBoolean chainCalled = new AtomicBoolean(false);
 
         filter.doFilter(request, response, (rq, rs) -> chainCalled.set(true));
 
-        // Chain is still called; authorization enforcement is Spring Security's responsibility
-        assertThat(chainCalled.get()).isTrue();
-        assertThat(response.getStatus()).isNotEqualTo(401);
+        assertThat(chainCalled.get()).isFalse();
+        assertThat(response.getStatus()).isEqualTo(401);
+        assertThat(response.getContentAsString()).contains("No BOSS account is associated with this identity");
     }
 
     @Test
