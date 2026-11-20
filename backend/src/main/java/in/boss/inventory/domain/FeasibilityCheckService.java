@@ -90,9 +90,7 @@ public class FeasibilityCheckService {
 
         Map<UUID, BigDecimal> required = explodeRequirements(context, cpoId);
         List<ReservationPlan> plans = planner.planSiteRequirements(context, cpo.siteId(), required);
-        boolean anyShortfall = plans.stream().anyMatch(plan -> plan.shortfall().signum() > 0);
-        boolean anyReservable = plans.stream().anyMatch(plan -> plan.reserved().signum() > 0);
-        if (anyShortfall && !anyReservable) {
+        if (plans.stream().anyMatch(plan -> plan.shortfall().signum() > 0)) {
             metrics.reservation("failed");
             return new FeasibilityResponse(cpoId, false, plans.stream()
                     .map(plan -> new ReservationLineResponse(plan.itemId(), null, plan.requested(),
@@ -123,7 +121,7 @@ public class FeasibilityCheckService {
         }
         changed.forEach(key -> replenishmentService.checkAfterStockChange(
                 context.tenantId(), key.itemId(), key.storeId()));
-        metrics.reservation(anyShortfall ? "partially_reserved" : "fully_reserved");
+        metrics.reservation("fully_reserved");
         return new FeasibilityResponse(cpoId, true, lines);
     }
 
@@ -147,7 +145,9 @@ public class FeasibilityCheckService {
             var materials = result.getFlatMaterials();
             if (materials == null || materials.isEmpty()) {
                 // No approved BOM — traded/stocked finished goods: reserve the SKU itself.
-                if (!"finished_goods".equals(lineItem.getItemType()) && !"traded".equals(lineItem.getItemType())) {
+                boolean isTraded = "traded".equals(lineItem.getItemType())
+                        || "TRADED".equalsIgnoreCase(lineItem.getProductKind());
+                if (!isTraded) {
                     throw new InventoryValidationException(
                             "A Customer PO line has no approved BOM with material requirements");
                 }

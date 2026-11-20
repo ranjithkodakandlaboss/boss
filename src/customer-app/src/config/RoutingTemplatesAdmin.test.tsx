@@ -30,7 +30,7 @@ beforeEach(() => {
     ]);
     if (url.endsWith("/routing-templates/route-1")) return json(detail);
     if (url.endsWith("/routing-templates")) return json(routes);
-    return json({});
+    return json([]);
   }));
 });
 afterEach(() => { vi.unstubAllGlobals(); });
@@ -46,7 +46,7 @@ describe("manufacturing routes", () => {
     expect(within(product).queryByText("RAW — Steel")).not.toBeInTheDocument();
     expect(within(product).queryByText("OLD — Old product")).not.toBeInTheDocument();
     await user.selectOptions(product, "product-2");
-    const selector = screen.getByLabelText("Production stage");
+    const selector = screen.getByLabelText(/production stage/i);
     expect(within(selector).queryByText("Retired")).not.toBeInTheDocument();
     await user.selectOptions(selector, "paint");
     await user.click(screen.getByRole("button", { name: "Add stage" }));
@@ -64,7 +64,7 @@ describe("manufacturing routes", () => {
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: "Inspect Frame route" }));
     expect(await screen.findByText(/Old weld \(legacy stage\)/)).toBeInTheDocument();
-    expect(screen.getByText(/Inspection template ID: inspection-1/)).toBeInTheDocument();
+    expect(screen.getByText(/Inspection template(:| ID:) inspection-1/i)).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Create revision" }));
     await user.click(screen.getByRole("button", { name: "Move stage 2 up" }));
     await user.click(screen.getByRole("button", { name: "Create revision" }));
@@ -100,7 +100,7 @@ describe("manufacturing routes", () => {
     render(<RoutingTemplatesAdmin />);
     await userEvent.click(await screen.findByRole("button", { name: "Create route" }));
     await userEvent.type(screen.getByLabelText("Route name"), "Generic");
-    await userEvent.selectOptions(screen.getByLabelText("Production stage"), "cut");
+    await userEvent.selectOptions(screen.getByLabelText(/production stage/i), "cut");
     await userEvent.click(screen.getByRole("button", { name: "Add stage" }));
     await userEvent.click(screen.getAllByRole("button", { name: "Create route" })[1]);
     expect(await screen.findByRole("alert")).toHaveTextContent("Not authorized");

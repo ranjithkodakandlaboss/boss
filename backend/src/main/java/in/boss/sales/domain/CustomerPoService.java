@@ -224,9 +224,7 @@ public class CustomerPoService {
         }
         FeasibilityResponse feasibility = inventoryService.checkAndReserveForCustomerPo(cpoId);
         if (feasibility.feasible()) {
-            boolean hasShortfall = feasibility.materials().stream()
-                    .anyMatch(m -> m.shortfall() != null && m.shortfall().signum() > 0);
-            transitionStatus(cpoId, hasShortfall ? "partial" : "feasibility_approved", false);
+            transitionStatus(cpoId, "feasibility_approved", false);
         }
         return feasibility;
     }
@@ -245,8 +243,7 @@ public class CustomerPoService {
                 || ("open".equals(current) && "feasibility_pending".equals(nextStatus))
                 || ("partial".equals(current) && "feasibility_pending".equals(nextStatus))
                 || ("feasibility_pending".equals(current) && "feasibility_pending".equals(nextStatus))
-                || ("feasibility_pending".equals(current) && "feasibility_approved".equals(nextStatus))
-                || ("feasibility_pending".equals(current) && "partial".equals(nextStatus));
+                || ("feasibility_pending".equals(current) && "feasibility_approved".equals(nextStatus));
         if (!allowed) {
             throw conflict("Invalid Customer PO status transition: " + current + " -> " + nextStatus);
         }

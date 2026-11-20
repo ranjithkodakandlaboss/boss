@@ -204,6 +204,20 @@ class InventoryLotsApiTest extends InventoryIntegrationTest {
                 .andExpect(jsonPath("$").isEmpty());
     }
 
+    @Test
+    void getLotReservations_returnsReservationsForLot() throws Exception {
+        asKeeper();
+        var lot = inventoryService.createLot(new CreateLotRequest(
+                seed.itemId(), seed.storeId(), new BigDecimal("10"), new BigDecimal("2.50"),
+                "BATCH", null, "available", null));
+        asKeeper();
+        mockMvc.perform(get("/api/v1/inventory/lots/" + lot.id() + "/reservations")
+                        .with(user("keeper").roles("STORE_KEEPER")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$").isArray())
+                .andExpect(jsonPath("$").isEmpty());
+    }
+
     private void asKeeper() {
         setTenantContext(seed.tenantId(), "STORE_KEEPER");
     }

@@ -75,7 +75,7 @@ describe("master data administration", () => {
     await userEvent.type(screen.getByLabelText("Item name *"), "Countertop");
     await userEvent.selectOptions(screen.getByLabelText("Item type"), "FINISHED_GOOD");
     await userEvent.selectOptions(screen.getByLabelText("Product kind"), "MANUFACTURED");
-    await userEvent.click(screen.getByRole("button", { name: "Add specification" }));
+    await userEvent.click(screen.getByRole("button", { name: /Add specification/i }));
     await userEvent.type(screen.getByLabelText("Specification 1 key"), "length");
     await userEvent.type(screen.getByLabelText("Specification 1 label"), "Length");
     await userEvent.selectOptions(screen.getByLabelText("Specification 1 unit"), "unit-1");

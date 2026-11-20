@@ -4,6 +4,7 @@ import in.boss.inventory.persistence.InventoryReservationRepository;
 import in.boss.inventory.persistence.InventoryReservationRepository.CustomerPoLine;
 import in.boss.masterdata.api.dto.BOMExplosionMaterialDto;
 import in.boss.masterdata.domain.BomExplosionService;
+import in.boss.masterdata.persistence.ItemEntity;
 import in.boss.masterdata.persistence.ItemRepository;
 import in.boss.sales.api.SalesApiDtos.CpoMaterialAvailability;
 import in.boss.sales.api.SalesApiDtos.CpoMaterialAvailabilityLine;
@@ -103,25 +104,7 @@ public class CpoMaterialAvailabilityService {
             List<BOMExplosionMaterialDto> materials =
                     explosion.explodeBOMExact(line.itemId(), remaining).getFlatMaterials();
             if (materials == null || materials.isEmpty()) {
-                // No BOM — traded/stocked finished goods: check stock against the SKU itself.
-                var item = itemRepository.findByIdAndTenantId(line.itemId(), tenantId)
-                        .orElseThrow(() -> conflict("Item on Customer PO line not found"));
-                if (!"finished_goods".equals(item.getItemType()) && !"traded".equals(item.getItemType())) {
-                    throw conflict("A Customer PO product has no approved BOM with material requirements");
-                }
-                List<Object[]> uomRow = jdbc.query("""
-                        SELECT u.id, u.symbol FROM items i
-                         JOIN units_of_measure u ON u.id = i.base_uom_id AND u.tenant_id = i.tenant_id
-                        WHERE i.tenant_id = ? AND i.id = ?
-                        """, (rs, r) -> new Object[]{rs.getObject("id", UUID.class), rs.getString("symbol")},
-                        tenantId, line.itemId());
-                UUID uomId = uomRow.isEmpty() ? null : (UUID) uomRow.get(0)[0];
-                String uomSymbol = uomRow.isEmpty() ? "" : (String) uomRow.get(0)[1];
-                if (uomId == null) throw conflict("A BOM item or its base UOM is unavailable for this tenant");
-                Material prev = totals.get(line.itemId());
-                totals.put(line.itemId(), new Material(line.itemId(), item.getCode(), item.getName(),
-                        uomId, uomSymbol,
-                        remaining.add(prev == null ? BigDecimal.ZERO : prev.required())));
+                addTradedItemRequirement(tenantId, line.itemId(), remaining, lineItem, totals);
                 continue;
             }
             bomValidator.validate(tenantId, line.itemId(), validated);
@@ -133,6 +116,28 @@ public class CpoMaterialAvailabilityService {
             throw conflict("The Customer PO has no remaining material requirements");
         }
         return totals;
+    }
+
+    private void addTradedItemRequirement(UUID tenantId, UUID itemId, BigDecimal remaining,
+                                          ItemEntity item, Map<UUID, Material> totals) {
+        boolean isTraded = "traded".equals(item.getItemType())
+                || "TRADED".equalsIgnoreCase(item.getProductKind());
+        if (!isTraded) {
+            throw conflict("A Customer PO product has no approved BOM with material requirements");
+        }
+        List<Object[]> uomRow = jdbc.query("""
+                SELECT u.id, u.symbol FROM items i
+                 JOIN units_of_measure u ON u.id = i.base_uom_id AND u.tenant_id = i.tenant_id
+                WHERE i.tenant_id = ? AND i.id = ?
+                """, (rs, r) -> new Object[]{rs.getObject("id", UUID.class), rs.getString("symbol")},
+                tenantId, itemId);
+        UUID uomId = uomRow.isEmpty() ? null : (UUID) uomRow.get(0)[0];
+        String uomSymbol = uomRow.isEmpty() ? "" : (String) uomRow.get(0)[1];
+        if (uomId == null) throw conflict("A BOM item or its base UOM is unavailable for this tenant");
+        Material prev = totals.get(itemId);
+        totals.put(itemId, new Material(itemId, item.getCode(), item.getName(),
+                uomId, uomSymbol,
+                remaining.add(prev == null ? BigDecimal.ZERO : prev.required())));
     }
 
     private void addMaterial(Map<UUID, Material> totals, BOMExplosionMaterialDto material) {
