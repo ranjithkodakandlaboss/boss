@@ -1,9 +1,12 @@
 // @ts-nocheck
 import { useStore } from "./runtime";
 
-export default function SiteStoreField({ siteId, storeId, onChange, label = "Receiving site", storeLabel = "Receiving store" }) {
+export default function SiteStoreField({ siteId, storeId, onChange, label = "Receiving site", storeLabel = "Receiving store", storeTypes = null }) {
   const { sites, storeLocations } = useStore();
-  const stores = storeLocations.filter((location) => !siteId || location.siteId === siteId);
+  const stores = storeLocations.filter((location) =>
+    (!siteId || location.siteId === siteId) &&
+    (!storeTypes || storeTypes.includes(location.locationType))
+  );
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
       <label className="block text-xs font-medium text-[var(--text-2)]">
@@ -13,7 +16,10 @@ export default function SiteStoreField({ siteId, storeId, onChange, label = "Rec
           value={siteId}
           onChange={(event) => {
             const site = sites.find((item) => item.id === event.target.value);
-            const nextStores = storeLocations.filter((location) => location.siteId === event.target.value);
+            const nextStores = storeLocations.filter((location) =>
+              location.siteId === event.target.value &&
+              (!storeTypes || storeTypes.includes(location.locationType))
+            );
             const store = nextStores[0];
             onChange({
               siteId: site?.id ?? "",

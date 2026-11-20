@@ -1,11 +1,14 @@
 // @ts-nocheck
 import React, { useState, useMemo, useEffect } from 'react';
 import { useNavigate, useSearchParams, Link } from 'react-router-dom';
-import { ArrowLeft, Plus, Trash2, CheckCircle2, AlertTriangle, Split } from 'lucide-react';
+import { Plus, Trash2, CheckCircle2, AlertTriangle, Split } from 'lucide-react';
 import { useStore } from './runtime';
 import SiteStoreField from './SiteStoreField';
 import StatusChip from '../../components/shared/StatusChip';
+import RecordSheet from '../../components/shared/RecordSheet';
 import { DEFAULT_SITE_ID } from './recordLists';
+
+const GRN_STORE_TYPES = ['raw_material', 'quarantine'];
 
 interface LotDraft {
   id: string;
@@ -288,27 +291,19 @@ export default function GRNCreate() {
     navigate(`/procurement/grn/${res.grn.id}`);
   };
 
-  return (
-    <div className="flex flex-col h-full">
-      <div className="flex-shrink-0 flex items-center gap-3 px-6 py-4 border-b" style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}>
-        <button
-          type="button"
-          onClick={() => navigate(spo ? `/procurement/spo/${spo.id}` : '/procurement?tab=grn')}
-          className="p-1.5 rounded-lg hover:bg-[var(--surface-2)]"
-        >
-          <ArrowLeft size={18} className="text-[var(--text-2)]" />
-        </button>
-        <div className="flex-1">
-          <h1 className="text-lg font-bold text-[var(--text)]">Record Goods Receipt Note (GRN)</h1>
-          <p className="text-xs text-[var(--text-2)]">
-            {spo ? `Receiving against ${spo.poNumber} · ${spo.supplierName}` : 'Receive Supplier PO line items and allocate incoming lots'}
-          </p>
-        </div>
-        {spo && <StatusChip status={spo.status} size="sm" />}
-      </div>
+  const handleClose = () => navigate(spo ? `/procurement/spo/${spo.id}` : '/procurement?tab=grn');
 
-      <form onSubmit={handleSubmit} className="flex-1 overflow-auto p-6">
-        <div className="max-w-4xl mx-auto space-y-5">
+  return (
+    <RecordSheet
+      title="Record Goods Receipt Note (GRN)"
+      subtitle={spo ? `Receiving against ${spo.poNumber} · ${spo.supplierName}` : 'Receive Supplier PO line items and allocate incoming lots'}
+      onClose={handleClose}
+      width="lg"
+      pinnedFooter
+      primary={{ label: submitting ? 'Saving…' : 'Save GRN & Record Lots', onClick: () => { document.getElementById('grn-form')?.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true })); }, disabled: !validation.valid || submitting }}
+      secondary={{ label: 'Cancel', onClick: handleClose }}
+    >
+      <form id="grn-form" onSubmit={handleSubmit} className="space-y-5">
           {/* SPO Header & Prepopulated Context */}
           <div className="rounded-xl border p-5 space-y-4 bg-[var(--surface)] border-[var(--border)]">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -363,8 +358,9 @@ export default function GRNCreate() {
                 <SiteStoreField
                   siteId={siteId}
                   storeId={storeLocationId}
-                  label="Receiving site *"
-                  storeLabel="Receiving / quarantine store *"
+                  label="Receiving site"
+                  storeLabel="Receiving / quarantine store"
+                  storeTypes={GRN_STORE_TYPES}
                   onChange={next => {
                     setSiteId(next.siteId);
                     setStoreLocationId(next.storeId);
@@ -547,26 +543,7 @@ export default function GRNCreate() {
               <Link to="/procurement?tab=spo" className="text-[var(--brand)] underline">Return to Supplier POs</Link>
             </div>
           )}
-        </div>
-
-        <div className="max-w-4xl mx-auto flex items-center justify-between pt-5 mt-5 border-t border-[var(--border)]">
-          <button
-            type="button"
-            onClick={() => navigate(spo ? `/procurement/spo/${spo.id}` : '/procurement?tab=grn')}
-            className="btn-ghost text-sm"
-          >
-            Cancel
-          </button>
-          <button
-            type="submit"
-            disabled={!validation.valid || submitting}
-            className="px-5 py-2.5 rounded-xl text-sm font-semibold text-white disabled:opacity-40 inline-flex items-center gap-1.5"
-            style={{ background: 'var(--success)' }}
-          >
-            <Plus size={15} /> {submitting ? 'Saving…' : 'Save GRN & Record Lots'}
-          </button>
-        </div>
       </form>
-    </div>
+    </RecordSheet>
   );
 }
