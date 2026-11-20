@@ -64,6 +64,16 @@ public class InventoryRepository {
         return count != null && count > 0;
     }
 
+    public Optional<StoreLocation> storeLocation(UUID tenantId, UUID storeId) {
+        List<StoreLocation> rows = jdbc.query(
+                "SELECT site_id, store_type FROM stores WHERE tenant_id = ? AND id = ?",
+                (rs, rowNum) -> new StoreLocation(
+                        rs.getObject("site_id", UUID.class),
+                        rs.getString("store_type")),
+                tenantId, storeId);
+        return rows.stream().findFirst();
+    }
+
     public Optional<UUID> storeSiteId(UUID tenantId, UUID storeId) {
         List<UUID> rows = jdbc.query(
                 "SELECT site_id FROM stores WHERE tenant_id = ? AND id = ?",
@@ -379,4 +389,6 @@ public class InventoryRepository {
     }
 
     private record Filter(String sql, List<Object> args) {}
+
+    public record StoreLocation(UUID siteId, String storeType) {}
 }

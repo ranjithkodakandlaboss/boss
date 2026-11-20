@@ -50,6 +50,7 @@ public final class LotStatusMachine {
         return switch (from) {
             case LotStatus.AVAILABLE -> fromAvailable(to, quantity, reservedQty);
             case LotStatus.QUARANTINE -> fromQuarantine(to, quantity);
+            case LotStatus.REJECTED -> fromRejected(to, quantity);
             case LotStatus.RESERVED -> fromReserved(to, quantity, reservedQty);
             default -> false;
         };
@@ -70,6 +71,10 @@ public final class LotStatusMachine {
             case LotStatus.CONSUMED, LotStatus.DISPOSED -> quantity.signum() == 0;
             default -> false;
         };
+    }
+
+    private static boolean fromRejected(String to, BigDecimal quantity) {
+        return LotStatus.DISPOSED.equals(to) && quantity.signum() == 0;
     }
 
     private static boolean fromReserved(String to, BigDecimal quantity, BigDecimal reservedQty) {

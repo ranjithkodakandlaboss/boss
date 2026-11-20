@@ -3,6 +3,11 @@ package in.boss.dispatch.domain;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import in.boss.dispatch.api.DispatchDtos.*;
+import in.boss.inventory.domain.LotStatus;
+import in.boss.inventory.domain.LotStatusMachine;
+import in.boss.inventory.domain.MovementType;
+import in.boss.inventory.persistence.InventoryRepository;
+import in.boss.inventory.persistence.LotRow;
 import in.boss.quality.domain.QualityService;
 import in.boss.shared.audit.AuditService;
 import in.boss.shared.context.BossContext;
@@ -35,6 +40,7 @@ public class DispatchService {
     );
 
     private final JdbcTemplate jdbc;
+    private final InventoryRepository inventoryRepository;
     private final QualityService qualityService;
     private final AuditService auditService;
     private final OutboxPublisher outbox;
@@ -42,11 +48,13 @@ public class DispatchService {
 
     public DispatchService(
             JdbcTemplate jdbc,
+            InventoryRepository inventoryRepository,
             QualityService qualityService,
             AuditService auditService,
             OutboxPublisher outbox,
             ObjectMapper objectMapper) {
         this.jdbc = jdbc;
+        this.inventoryRepository = inventoryRepository;
         this.qualityService = qualityService;
         this.auditService = auditService;
         this.outbox = outbox;
@@ -76,26 +84,38 @@ public class DispatchService {
         if (req.dispatchDate() == null) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Dispatch date is required");
         }
+        if (req.cpoId() == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Customer PO is required");
+        }
+        if (req.lines() == null || req.lines().isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "At least one PO line is required");
+        }
 
         // Validate customer belongs to tenant
         validateCustomer(tenantId, req.customerId());
         validateDispatchMethodOption(tenantId, req.dispatchMethodOptionId());
-        if (req.cpoId() != null) {
-            String status = jdbc.query("""
-                    SELECT status FROM cpos WHERE tenant_id = ? AND id = ? FOR UPDATE
-                    """, rs -> rs.next() ? rs.getString("status") : null, tenantId, req.cpoId());
-            if (status == null) {
+        {
+            var order = jdbc.query("""
+                    SELECT status, customer_id FROM cpos WHERE tenant_id = ? AND id = ? FOR UPDATE
+                    """, rs -> rs.next()
+                            ? new OrderRow(rs.getString("status"), rs.getObject("customer_id", UUID.class))
+                            : null, tenantId, req.cpoId());
+            if (order == null) {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Customer PO was not found for this tenant");
             }
-            requireDispatchableOrder(status);
+            requireDispatchableOrder(order.status());
+            if (!req.customerId().equals(order.customerId())) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "Customer PO does not belong to the selected customer");
+            }
         }
 
         // Validate site if provided, or fallback to default site
         UUID siteId = resolveSiteId(tenantId, req.sourceSiteId());
 
-        // Quality Gate Check if Job is linked
-        UUID jobId = req.jobId();
+        UUID jobId = resolveJobId(req);
         UUID clearanceCertId = checkQualityGate(tenantId, jobId);
+        validateCreateLines(tenantId, req, siteId, jobId);
 
         // Generate Dispatch Number (DSP-YYYY-XXX)
         String dispatchNumber = generateDispatchNumber(tenantId);
@@ -404,6 +424,19 @@ public class DispatchService {
         UUID linkedNcrId = null;
         String linkedNcrNumber = null;
 
+        if (qualityReleaseId != null) {
+            try {
+                var cert = jdbc.queryForMap("""
+                        SELECT cc.status, u.display_name AS issued_by_name
+                          FROM clearance_certificates cc
+                          LEFT JOIN app_users u ON u.id = cc.issued_by
+                         WHERE cc.tenant_id = ? AND cc.id = ?
+                        """, tenantId, qualityReleaseId);
+                qualityReleaseStatus = (String) cert.get("status");
+                qualityReleaseBy = (String) cert.get("issued_by_name");
+            } catch (EmptyResultDataAccessException ignored) {}
+        }
+
         if (base.jobId() != null) {
             // Find latest inspection for this job
             try {
@@ -418,10 +451,7 @@ public class DispatchService {
                 qualityInspectionNumber = (String) insp.get("inspection_number");
                 qualityInspectionResult = (String) insp.get("result");
 
-                if ("passed".equals(qualityInspectionResult)) {
-                    qualityReleaseStatus = "released";
-                    qualityReleaseBy = (String) insp.get("inspector_name");
-                } else if ("fail".equals(qualityInspectionResult)) {
+                if ("fail".equals(qualityInspectionResult)) {
                     failedInspectionId = qualityInspectionId;
                     failedInspectionNumber = qualityInspectionNumber;
                 }
@@ -565,13 +595,18 @@ public class DispatchService {
                     ORDER BY c.id FOR UPDATE
                     """, (rs, row) -> rs.getString("status"), tenantId, dispatchId, dispatchId);
             orderStatuses.forEach(DispatchService::requireDispatchableOrder);
-            if (current.jobId() != null) {
-                var eligibility = qualityService.computeEligibility(tenantId, current.jobId());
-                if (!eligibility.eligible()) {
-                    throw new ResponseStatusException(HttpStatus.CONFLICT,
-                            "Cannot dispatch: Quality inspection gate active. " + eligibility.reason());
-                }
+            if (current.jobId() == null || current.qualityReleaseId() == null
+                    || !"issued".equals(current.qualityReleaseStatus())) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT,
+                        "Cannot dispatch without an issued quality clearance certificate");
             }
+            var eligibility = qualityService.computeEligibility(tenantId, current.jobId());
+            if (!eligibility.eligible()
+                    || !current.qualityReleaseId().equals(eligibility.clearanceCertificateId())) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT,
+                        "Cannot dispatch: Quality inspection gate active. " + eligibility.reason());
+            }
+            consumeFinishedGoods(current, tenantId);
         }
 
         DispatchStatusMachine.apply(jdbc, tenantId, dispatchId, nextStatus, current.lines());
@@ -741,13 +776,192 @@ public class DispatchService {
     }
 
     private UUID checkQualityGate(UUID tenantId, UUID jobId) {
-        if (jobId == null) return null;
+        if (jobId == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "A production job is required for dispatch");
+        }
         var eligibility = qualityService.computeEligibility(tenantId, jobId);
         if (!eligibility.eligible()) {
             throw new ResponseStatusException(HttpStatus.CONFLICT,
                     "Not eligible for dispatch: " + eligibility.reason());
         }
+        if (eligibility.clearanceCertificateId() == null
+                || !"issued".equals(eligibility.clearanceCertificateStatus())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Customer clearance certificate has not been issued for this job");
+        }
         return eligibility.clearanceCertificateId();
+    }
+
+    private UUID resolveJobId(CreateDispatchRequest req) {
+        Set<UUID> lineJobs = new HashSet<>();
+        for (var line : req.lines()) {
+            if (line.jobId() != null) lineJobs.add(line.jobId());
+        }
+        UUID jobId = req.jobId() != null ? req.jobId()
+                : lineJobs.size() == 1 ? lineJobs.iterator().next() : null;
+        if (jobId == null || lineJobs.stream().anyMatch(lineJob -> !jobId.equals(lineJob))) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "All dispatch lines must belong to one selected production job");
+        }
+        return jobId;
+    }
+
+    private void validateCreateLines(UUID tenantId, CreateDispatchRequest req, UUID siteId, UUID jobId) {
+        if (req.sourceStoreId() == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "A finished-goods store is required");
+        }
+        Map<UUID, BigDecimal> quantitiesByCpoLine = new HashMap<>();
+        Map<UUID, BigDecimal> quantitiesByLot = new HashMap<>();
+        Map<UUID, UUID> itemsByLot = new HashMap<>();
+        for (var line : req.lines()) {
+            if (line.cpoLineId() == null) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "A Customer PO line is required");
+            }
+            if (line.lotId() == null) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "A finished-goods lot is required");
+            }
+            if (line.quantity() == null || line.quantity().signum() <= 0) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "Dispatch quantity must be greater than zero");
+            }
+            if (line.jobId() == null || !jobId.equals(line.jobId())) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "Every dispatch line must belong to the selected production job");
+            }
+            UUID itemId = resolveItemId(tenantId, line.itemId(), jobId);
+            if (itemId == null) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "A finished-goods item is required for each dispatch line");
+            }
+            quantitiesByCpoLine.merge(line.cpoLineId(), line.quantity(), BigDecimal::add);
+            quantitiesByLot.merge(line.lotId(), line.quantity(), BigDecimal::add);
+            UUID previousItemId = itemsByLot.putIfAbsent(line.lotId(), itemId);
+            if (previousItemId != null && !previousItemId.equals(itemId)) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "A finished-goods lot cannot contain more than one item");
+            }
+            validateJobPoLine(tenantId, req.cpoId(), line.cpoLineId(), jobId, itemId);
+        }
+        quantitiesByCpoLine.forEach((lineId, quantity) ->
+                validateCpoLineLimit(tenantId, req.cpoId(), lineId, quantity));
+        quantitiesByLot.forEach((lotId, quantity) -> validateFinishedGoodsLot(
+                tenantId, siteId, req.sourceStoreId(), lotId, itemsByLot.get(lotId), quantity));
+    }
+
+    private void validateJobPoLine(UUID tenantId, UUID cpoId, UUID cpoLineId, UUID jobId, UUID itemId) {
+        Boolean matches = jdbc.queryForObject("""
+                SELECT EXISTS (
+                    SELECT 1 FROM production_jobs j
+                    JOIN cpo_lines cl ON cl.tenant_id = j.tenant_id AND cl.id = j.cpo_line_id
+                    WHERE j.tenant_id = ? AND j.id = ? AND j.cpo_id = ?
+                      AND j.cpo_line_id = ? AND cl.cpo_id = ? AND cl.item_id = ?
+                )
+                """, Boolean.class, tenantId, jobId, cpoId, cpoLineId, cpoId, itemId);
+        if (!Boolean.TRUE.equals(matches)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "The selected PO line, item, and production job do not match");
+        }
+    }
+
+    private void validateFinishedGoodsLot(
+            UUID tenantId, UUID siteId, UUID storeId, UUID lotId, UUID itemId, BigDecimal quantity) {
+        LotRow lot = inventoryRepository.findLot(tenantId, lotId, true)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
+                        "Finished-goods lot was not found for this tenant"));
+        if (!LotStatus.AVAILABLE.equals(lot.status())
+                || !itemId.equals(lot.itemId())
+                || !storeId.equals(lot.storeId())
+                || !siteId.equals(lot.siteId())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Select an available finished-goods lot for the selected item, site, and store");
+        }
+        Boolean finishedGoods = jdbc.queryForObject("""
+                SELECT i.item_type = 'finished_goods' AND s.store_type = 'finished_goods'
+                  FROM items i
+                  JOIN stores s ON s.tenant_id = i.tenant_id
+                 WHERE i.tenant_id = ? AND i.id = ? AND s.id = ?
+                """, Boolean.class, tenantId, itemId, storeId);
+        if (!Boolean.TRUE.equals(finishedGoods)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Dispatch requires a finished-goods item and finished-goods store");
+        }
+        BigDecimal pendingQty = jdbc.queryForObject("""
+                SELECT COALESCE(SUM(dl.quantity), 0)
+                  FROM dispatch_lines dl
+                  JOIN dispatches d ON d.tenant_id = dl.tenant_id AND d.id = dl.dispatch_id
+                 WHERE dl.tenant_id = ? AND dl.lot_id = ?
+                   AND d.status IN ('draft', 'pending', 'pending_docs', 'packed')
+                """, BigDecimal.class, tenantId, lotId);
+        BigDecimal available = lot.quantity().subtract(lot.reservedQty())
+                .subtract(pendingQty == null ? BigDecimal.ZERO : pendingQty);
+        if (quantity.compareTo(available) > 0) {
+            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "Dispatch quantity exceeds eligible finished-goods stock. Available: " + available);
+        }
+    }
+
+    private void consumeFinishedGoods(DispatchDetail dispatch, UUID tenantId) {
+        if (dispatch.lines() == null || dispatch.lines().isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "A dispatch needs at least one PO line before it can be marked dispatched");
+        }
+        Map<UUID, BigDecimal> quantitiesByLot = new TreeMap<>(Comparator.comparing(UUID::toString));
+        Map<UUID, UUID> itemsByLot = new HashMap<>();
+        for (var line : dispatch.lines()) {
+            if (line.lotId() == null || line.itemId() == null || line.quantity() == null) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT,
+                        "Every dispatch line must identify a finished-goods lot and quantity");
+            }
+            quantitiesByLot.merge(line.lotId(), line.quantity(), BigDecimal::add);
+            UUID previousItemId = itemsByLot.putIfAbsent(line.lotId(), line.itemId());
+            if (previousItemId != null && !previousItemId.equals(line.itemId())) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT,
+                        "A finished-goods lot cannot contain more than one item");
+            }
+        }
+        for (var allocation : quantitiesByLot.entrySet()) {
+            UUID lotId = allocation.getKey();
+            LotRow lot = inventoryRepository.findLot(tenantId, lotId, true)
+                    .orElseThrow(() -> new ResponseStatusException(HttpStatus.CONFLICT,
+                            "Finished-goods lot is no longer available"));
+            BigDecimal quantity = allocation.getValue();
+            if (!LotStatus.AVAILABLE.equals(lot.status())
+                    || !lot.itemId().equals(itemsByLot.get(lotId))
+                    || !lot.storeId().equals(dispatch.sourceStoreId())
+                    || !lot.siteId().equals(dispatch.sourceSiteId())) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT,
+                        "Finished-goods lot is no longer eligible for dispatch");
+            }
+            BigDecimal newQuantity = lot.quantity().subtract(quantity);
+            if (quantity.signum() <= 0 || newQuantity.compareTo(lot.reservedQty()) < 0) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT,
+                        "Dispatch quantity exceeds the available finished-goods lot balance");
+            }
+            BigDecimal pendingOthers = jdbc.queryForObject("""
+                    SELECT COALESCE(SUM(dl.quantity), 0)
+                      FROM dispatch_lines dl
+                      JOIN dispatches d ON d.tenant_id = dl.tenant_id AND d.id = dl.dispatch_id
+                     WHERE dl.tenant_id = ? AND dl.lot_id = ? AND d.id <> ?
+                       AND d.status IN ('draft', 'pending', 'pending_docs', 'packed')
+                    """, BigDecimal.class, tenantId, lotId, dispatch.id());
+            if (newQuantity.subtract(lot.reservedQty())
+                    .compareTo(pendingOthers == null ? BigDecimal.ZERO : pendingOthers) < 0) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT,
+                        "Another pending dispatch is already allocated to this finished-goods lot");
+            }
+            String nextStatus = LotStatusMachine.statusAfterMovement(
+                    lot.status(), MovementType.ISSUE, newQuantity, lot.reservedQty());
+            inventoryRepository.updateLot(tenantId, lot.id(), newQuantity, nextStatus);
+            UUID movementId = UUID.randomUUID();
+            inventoryRepository.insertMovement(movementId, tenantId, MovementType.ISSUE.dbValue(),
+                    lot.itemId(), lot.id(), lot.storeId(), null, quantity, lot.unitCost(),
+                    "DISPATCH", dispatch.id(), requireContext().userId(),
+                    "Dispatched " + dispatch.dispatchNumber());
+        }
     }
 
     private String generateDispatchNumber(UUID tenantId) {
@@ -777,10 +991,6 @@ public class DispatchService {
             UUID lineItemId = resolveItemId(tenantId, lineReq.itemId(), lineJobId);
             UUID lineUomId = resolveUomId(tenantId, lineReq.uomId(), lineItemId);
 
-            if (lineReq.cpoLineId() != null) {
-                validateCpoLineLimit(tenantId, lineReq.cpoLineId(), lineReq.quantity());
-            }
-
             jdbc.update("""
                     INSERT INTO dispatch_lines (
                       id, tenant_id, dispatch_id, cpo_line_id, item_id, lot_id,
@@ -791,7 +1001,7 @@ public class DispatchService {
                     )
                     """,
                     tenantId, dispatchId, lineReq.cpoLineId(), lineItemId, lineReq.lotId(),
-                    lineReq.quantity() != null ? lineReq.quantity() : BigDecimal.ONE,
+                    lineReq.quantity(),
                     lineUomId, lineReq.packingSpecId(), lineNo++, lineJobId,
                     lineReq.clearanceCertId() != null ? lineReq.clearanceCertId() : defaultCertId
             );
@@ -829,27 +1039,70 @@ public class DispatchService {
         return lineUomId;
     }
 
-    private void validateCpoLineLimit(UUID tenantId, UUID cpoLineId, BigDecimal reqQty) {
+    private void validateCpoLineLimit(UUID tenantId, UUID cpoId, UUID cpoLineId, BigDecimal reqQty) {
         var cpoLineData = jdbc.queryForMap(
                 """
-                SELECT l.quantity, l.delivered_qty, c.status
+                SELECT l.quantity, l.delivered_qty, c.status, l.cpo_id,
+                       COALESCE((
+                           SELECT SUM(dl.quantity)
+                             FROM dispatch_lines dl
+                             JOIN dispatches d ON d.tenant_id = dl.tenant_id AND d.id = dl.dispatch_id
+                            WHERE dl.tenant_id = l.tenant_id AND dl.cpo_line_id = l.id
+                              AND d.status IN ('draft', 'pending', 'pending_docs', 'packed')
+                       ), 0) AS pending_qty
                   FROM cpo_lines l JOIN cpos c ON c.tenant_id = l.tenant_id AND c.id = l.cpo_id
-                 WHERE l.tenant_id = ? AND l.id = ? FOR UPDATE OF c
+                 WHERE l.tenant_id = ? AND l.id = ? FOR UPDATE OF c, l
                 """,
                 tenantId, cpoLineId);
         requireDispatchableOrder((String) cpoLineData.get("status"));
+        if (!cpoId.equals(cpoLineData.get("cpo_id"))) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Customer PO line does not belong to the selected Customer PO");
+        }
         BigDecimal orderedQty = (BigDecimal) cpoLineData.get("quantity");
         BigDecimal alreadyDelivered = (BigDecimal) cpoLineData.get("delivered_qty");
-        BigDecimal remaining = orderedQty.subtract(alreadyDelivered != null ? alreadyDelivered : BigDecimal.ZERO);
+        BigDecimal pendingQty = (BigDecimal) cpoLineData.get("pending_qty");
+        BigDecimal remaining = orderedQty
+                .subtract(alreadyDelivered != null ? alreadyDelivered : BigDecimal.ZERO)
+                .subtract(pendingQty != null ? pendingQty : BigDecimal.ZERO);
         if (reqQty != null && reqQty.compareTo(remaining) > 0) {
             throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
                     "Dispatch quantity " + reqQty + " exceeds eligible outstanding quantity " + remaining);
         }
     }
 
+    public PoLineAvailability getPoLineAvailability(UUID cpoLineId) {
+        UUID tenantId = requireContext().tenantId();
+        Map<String, Object> row;
+        try {
+            row = jdbc.queryForMap("""
+                    SELECT l.quantity, l.delivered_qty,
+                           COALESCE((
+                               SELECT SUM(dl.quantity)
+                                 FROM dispatch_lines dl
+                                 JOIN dispatches d ON d.tenant_id = dl.tenant_id AND d.id = dl.dispatch_id
+                                WHERE dl.tenant_id = l.tenant_id AND dl.cpo_line_id = l.id
+                                  AND d.status IN ('draft', 'pending', 'pending_docs', 'packed')
+                           ), 0) AS pending_qty
+                      FROM cpo_lines l
+                     WHERE l.tenant_id = ? AND l.id = ?
+                    """, tenantId, cpoLineId);
+        } catch (EmptyResultDataAccessException e) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Customer PO line not found");
+        }
+        BigDecimal ordered = (BigDecimal) row.get("quantity");
+        BigDecimal delivered = (BigDecimal) row.get("delivered_qty");
+        BigDecimal pending = (BigDecimal) row.get("pending_qty");
+        BigDecimal safeDelivered = delivered != null ? delivered : BigDecimal.ZERO;
+        BigDecimal safePending = pending != null ? pending : BigDecimal.ZERO;
+        BigDecimal remaining = ordered.subtract(safeDelivered).subtract(safePending).max(BigDecimal.ZERO);
+        return new PoLineAvailability(cpoLineId, ordered, safeDelivered, safePending, remaining);
+    }
+
     private static void requireDispatchableOrder(String status) {
-        if ("cancelled".equals(status)) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "A cancelled Customer PO cannot be dispatched");
+        if (!Set.of("open", "partial", "feasibility_approved").contains(status)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Customer PO status " + status + " cannot be dispatched");
         }
     }
 
@@ -890,4 +1143,6 @@ public class DispatchService {
         java.sql.Date d = rs.getDate(col);
         return d != null ? d.toLocalDate() : null;
     }
+
+    private record OrderRow(String status, UUID customerId) {}
 }

@@ -106,12 +106,17 @@ public class InventoryServiceImpl implements InventoryService {
     private MaterialLotResponse createLot(
             CreateLotRequest request, String preferredLotNumber, UUID productionJobId) {
         BossContext ctx = requireContext();
+        InventoryRepository.StoreLocation store = requireStore(ctx, request.storeId());
         String status = LotStatus.canonical(request.status());
-        LotStatus.assertCreatable(status);
+        status = switch (store.storeType()) {
+            case "quarantine" -> LotStatus.QUARANTINE;
+            case "rejected" -> LotStatus.REJECTED;
+            default -> status;
+        };
+        LotStatus.assertCreatable(status, store.storeType());
         BigDecimal qty = quantity(request.qty());
         BigDecimal unitCost = unitCost(request.unitCost());
         requireItem(ctx.tenantId(), request.itemId());
-        requireStore(ctx, request.storeId());
         requireGrnLine(ctx.tenantId(), request.grnLineId(), request.itemId(), request.storeId());
 
         UUID lotId = UUID.randomUUID();
@@ -356,14 +361,14 @@ public class InventoryServiceImpl implements InventoryService {
         }
     }
 
-    private UUID requireStore(BossContext ctx, UUID storeId) {
-        UUID siteId = repository.storeSiteId(ctx.tenantId(), storeId)
+    private InventoryRepository.StoreLocation requireStore(BossContext ctx, UUID storeId) {
+        InventoryRepository.StoreLocation store = repository.storeLocation(ctx.tenantId(), storeId)
                 .orElseThrow(() -> new InventoryValidationException(
                         "Store not found for this tenant: " + storeId));
-        if (!ctx.canAccessSite(siteId)) {
+        if (!ctx.canAccessSite(store.siteId())) {
             throw new InventoryValidationException("Store is outside the caller's site");
         }
-        return siteId;
+        return store;
     }
 
     private static UUID effectiveSite(BossContext ctx, UUID requestedSiteId) {
@@ -418,7 +423,9 @@ public class InventoryServiceImpl implements InventoryService {
                 lot.grnLineId(),
                 lot.quantity(),
                 lot.reservedQty(),
-                LotStatus.QUARANTINE.equals(lot.status()) ? BigDecimal.ZERO : lot.quantity().subtract(lot.reservedQty()),
+                LotStatus.QUARANTINE.equals(lot.status()) || LotStatus.REJECTED.equals(lot.status())
+                        ? BigDecimal.ZERO
+                        : lot.quantity().subtract(lot.reservedQty()),
                 lot.unitCost(),
                 lot.uomId(),
                 lot.uomSymbol(),

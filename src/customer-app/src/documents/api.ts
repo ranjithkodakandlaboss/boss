@@ -1,4 +1,4 @@
-import { api, safeRandomUUID } from "../auth/api";
+import { api, authorizedFetch, safeRandomUUID } from "../auth/api";
 import type { DocumentHistoryEntry, VaultDocument } from "./types";
 
 export const MAX_DOCUMENT_UPLOAD_BYTES = 10 * 1024 * 1024;
@@ -81,15 +81,12 @@ export function downloadDocumentUrl(id: string, version?: number): string {
 }
 
 export async function downloadDocument(id: string, fileName?: string, version?: number): Promise<void> {
-  const { currentToken } = await import('../auth/session');
   const base = import.meta.env.VITE_CUSTOMER_API_URL ?? "http://127.0.0.1:8080";
   const qs = version ? `?version=${version}` : '';
   const headers: Record<string, string> = {};
-  const token = currentToken();
-  if (token) headers['Authorization'] = `Bearer ${token}`;
   const tenantId = sessionStorage.getItem('boss.tenant');
   if (tenantId) headers['X-Tenant-ID'] = tenantId;
-  const response = await fetch(`${base}/api/v1/documents/${id}/download${qs}`, { headers });
+  const response = await authorizedFetch(`${base}/api/v1/documents/${id}/download${qs}`, { headers });
   if (!response.ok) throw new Error(`Download failed: ${response.statusText}`);
   const blob = await response.blob();
   const url = URL.createObjectURL(blob);

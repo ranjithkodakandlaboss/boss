@@ -144,6 +144,14 @@ public final class DispatchDtos {
             LocalDate invoiceDate
     ) {}
 
+    public record PoLineAvailability(
+            UUID cpoLineId,
+            BigDecimal orderedQty,
+            BigDecimal deliveredQty,
+            BigDecimal pendingQty,
+            BigDecimal remainingQty
+    ) {}
+
     public record CreateDispatchRequest(
             UUID customerId,
             String customerName,

@@ -402,6 +402,72 @@ class QualityModuleIntegrationTest extends BaseMasterDataIntegrationTest {
     }
 
     @Test
+    void reworkStatusStartsOneLinkedReinspectionAndKeepsDispositionConsistent() {
+        setRole("OWNER");
+        ChecklistTemplateDto template = qualityService.createTemplate(new CreateChecklistTemplateRequest(
+                "Rework Check", null, "job", "in_process",
+                List.of(new ChecklistItemInput(null, 1, "Length", "numeric", true,
+                        "mm", new BigDecimal("9.5"), new BigDecimal("10.5")))));
+        InspectionDetail inspection = qualityService.createInspection(new CreateInspectionRequest(
+                "in_process", "job_stage", stageId, itemId, lotId, BigDecimal.TEN,
+                template.id(), null, LocalDate.now(), null));
+        NcrDetail ncr = qualityService.createNcr(new CreateNcrRequest(
+                inspection.id(), itemId, null, null, null, "Length out of tolerance",
+                "major", BigDecimal.ONE, null));
+
+        NcrDetail rework = qualityService.updateNcr(ncr.id(),
+                new UpdateNcrRequest("rework", null, null, null));
+        assertThat(rework.status()).isEqualTo("rework");
+        assertThat(rework.disposition()).isEqualTo("rework");
+        assertThat(rework.jobId()).isEqualTo(jobId);
+        assertThat(rework.jobNumber()).isEqualTo("JOB-001");
+        assertThat(rework.stageId()).isEqualTo(stageId);
+        assertThat(rework.stageName()).isEqualTo("Assembly");
+        assertThat(rework.lotId()).isEqualTo(lotId);
+
+        NcrDetail started = qualityService.startNcrReinspection(ncr.id());
+        assertThat(started.reworkInspectionId()).isNotNull();
+        assertThat(started.reworkInspectionNumber()).startsWith("INSP-");
+        InspectionDetail reinspection = qualityService.getInspection(started.reworkInspectionId());
+        assertThat(reinspection.status()).isEqualTo("pending");
+        assertThat(reinspection.referenceId()).isEqualTo(stageId);
+        assertThat(reinspection.checklistResponses()).singleElement().satisfies(response -> {
+            assertThat(response.unit()).isEqualTo("mm");
+            assertThat(response.specMin()).isEqualByComparingTo("9.5");
+        });
+        assertThat(qualityService.startNcrReinspection(ncr.id()).reworkInspectionId())
+                .isEqualTo(started.reworkInspectionId());
+
+        assertThatThrownBy(() -> qualityService.updateNcr(ncr.id(),
+                new UpdateNcrRequest("scrapped", "rework", null, null)))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("scrap disposition");
+
+        qualityService.recordResult(reinspection.id(), new RecordResultRequest(
+                "pass", BigDecimal.TEN, BigDecimal.ZERO,
+                List.of(new ChecklistResponseInput(
+                        reinspection.checklistResponses().get(0).checklistItemId(), "10", null, null)),
+                null));
+        assertThat(qualityService.getNcr(ncr.id()).status()).isEqualTo("resolved");
+    }
+
+    @Test
+    void failedIncomingInspectionCreatesCorrectlyLabelledNcr() {
+        setRole("OWNER");
+        UUID grnId = createTestGrn();
+        InspectionDetail inspection = qualityService.createInspection(new CreateInspectionRequest(
+                "incoming", "grn", grnId, itemId, null, BigDecimal.TEN,
+                null, null, LocalDate.now(), null));
+        qualityService.recordResult(inspection.id(),
+                new RecordResultRequest("fail", BigDecimal.ZERO, BigDecimal.TEN, null, null));
+
+        NcrSummary ncr = qualityService.listNcrs(null, null).stream()
+                .filter(row -> inspection.id().equals(row.inspectionId()))
+                .findFirst().orElseThrow();
+        assertThat(ncr.defectDescription()).isEqualTo("Incoming inspection failed");
+    }
+
+    @Test
     void ncrRequiresValidInspection() {
         setRole("OWNER");
         UUID fakeInspectionId = UUID.randomUUID();
@@ -501,6 +567,7 @@ class QualityModuleIntegrationTest extends BaseMasterDataIntegrationTest {
                 .filter(i -> jobId.equals(i.referenceId())).findFirst().orElseThrow();
         qualityService.recordResult(insp.id(),
                 new RecordResultRequest("pass", BigDecimal.TEN, BigDecimal.ZERO, null, null));
+        qualityService.createClearanceCertificate(new CreateClearanceCertificateRequest(jobId, null, null, null));
 
         DispatchEligibilityResponse eligibility = qualityService.checkDispatchEligibility(jobId);
         assertThat(eligibility.eligible()).isTrue();
@@ -521,6 +588,7 @@ class QualityModuleIntegrationTest extends BaseMasterDataIntegrationTest {
                 .map(id -> qualityService.getNcr(id)).orElseThrow();
         qualityService.createConcession(ncr.id(),
                 new CreateConcessionRequest("Customer approved use-as-is"));
+        qualityService.createClearanceCertificate(new CreateClearanceCertificateRequest(jobId, null, null, null));
 
         DispatchEligibilityResponse eligibility = qualityService.checkDispatchEligibility(jobId);
         assertThat(eligibility.eligible()).isTrue();
@@ -722,6 +790,76 @@ class QualityModuleIntegrationTest extends BaseMasterDataIntegrationTest {
     }
 
     @Test
+    void numericChecklistMeasurementsCannotPassOutsideTemplateLimits() {
+        setRole("OWNER");
+        ChecklistTemplateDto template = qualityService.createTemplate(new CreateChecklistTemplateRequest(
+                "Dimensional Check", null, "job", "in_process",
+                List.of(new ChecklistItemInput(null, 1, "Length", "numeric", true,
+                        "mm", new BigDecimal("9.5"), new BigDecimal("10.5")))));
+        UUID inspId = qualityService.createInspection(new CreateInspectionRequest(
+                "in_process", "job_stage", stageId, itemId, null,
+                BigDecimal.TEN, template.id(), null, LocalDate.now(), null)).id();
+        UUID measurementId = template.items().get(0).id();
+        ChecklistResponseDto snapshot = qualityService.getInspection(inspId).checklistResponses().get(0);
+        assertThat(snapshot.unit()).isEqualTo("mm");
+        assertThat(snapshot.specMin()).isEqualByComparingTo("9.5");
+        assertThat(snapshot.specMax()).isEqualByComparingTo("10.5");
+
+        assertThatThrownBy(() -> qualityService.recordResult(inspId, new RecordResultRequest(
+                "pass", BigDecimal.TEN, BigDecimal.ZERO,
+                List.of(new ChecklistResponseInput(measurementId, "11", null, null)), null)))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("outside");
+
+        InspectionDetail failed = qualityService.recordResult(inspId, new RecordResultRequest(
+                "fail", BigDecimal.ZERO, BigDecimal.TEN,
+                List.of(new ChecklistResponseInput(measurementId, "11", null, null)), null));
+        assertThat(failed.checklistResponses().get(0).responsePass()).isFalse();
+    }
+
+    @Test
+    void inspectionReferenceOptionsIncludeJobsStagesAndGrns() {
+        setRole("OWNER");
+        assertThat(qualityService.listInspectionReferences("production_job"))
+                .anySatisfy(option -> {
+                    assertThat(option.id()).isEqualTo(jobId);
+                    assertThat(option.itemId()).isEqualTo(itemId);
+                });
+        assertThat(qualityService.listInspectionReferences("job_stage"))
+                .anySatisfy(option -> {
+                    assertThat(option.id()).isEqualTo(stageId);
+                    assertThat(option.itemId()).isEqualTo(itemId);
+                });
+
+        UUID supplierId = insert("""
+                INSERT INTO suppliers (tenant_id, code, name)
+                VALUES (?, 'SUP-001', 'Test Supplier') RETURNING id
+                """, tenantId);
+        UUID siteId = jdbc.queryForObject(
+                "SELECT id FROM physical_sites WHERE tenant_id = ? LIMIT 1", UUID.class, tenantId);
+        UUID uomId = jdbc.queryForObject(
+                "SELECT id FROM units_of_measure WHERE tenant_id = ? LIMIT 1", UUID.class, tenantId);
+        UUID storeId = jdbc.queryForObject(
+                "SELECT id FROM stores WHERE tenant_id = ? LIMIT 1", UUID.class, tenantId);
+        UUID grnId = insert("""
+                INSERT INTO grns (tenant_id, grn_number, supplier_id, site_id, status,
+                                  received_date, received_by)
+                VALUES (?, 'GRN-001', ?, ?, 'accepted', CURRENT_DATE, ?) RETURNING id
+                """, tenantId, supplierId, siteId, UUID.randomUUID());
+        jdbc.update("""
+                INSERT INTO grn_lines (tenant_id, grn_id, line_no, item_id, received_qty,
+                                       uom_id, store_id)
+                VALUES (?, ?, 1, ?, 5, ?, ?)
+                """, tenantId, grnId, itemId, uomId, storeId);
+
+        assertThat(qualityService.listInspectionReferences("grn"))
+                .anySatisfy(option -> {
+                    assertThat(option.id()).isEqualTo(grnId);
+                    assertThat(option.itemId()).isEqualTo(itemId);
+                });
+    }
+
+    @Test
     void historicalResponsesUnchangedAfterTemplateEdit() {
         setRole("OWNER");
         ChecklistTemplateDto template = qualityService.createTemplate(new CreateChecklistTemplateRequest(
@@ -795,7 +933,7 @@ class QualityModuleIntegrationTest extends BaseMasterDataIntegrationTest {
     }
 
     @Test
-    void missingCertDoesNotBlockWhenNotRequired() {
+    void dispatchBlockedWhenClearanceCertificateIsMissing() {
         setRole("OWNER");
         // Final inspection passes, no cert required
         UUID inspId = qualityService.createInspection(new CreateInspectionRequest(
@@ -805,7 +943,8 @@ class QualityModuleIntegrationTest extends BaseMasterDataIntegrationTest {
                 new RecordResultRequest("pass", BigDecimal.TEN, BigDecimal.ZERO, null, null));
 
         DispatchEligibilityResponse eligibility = qualityService.checkDispatchEligibility(jobId);
-        assertThat(eligibility.eligible()).isTrue();
+        assertThat(eligibility.eligible()).isFalse();
+        assertThat(eligibility.blockers()).anyMatch(b -> b.contains("clearance certificate"));
         assertThat(eligibility.clearanceCertificateStatus()).isEqualTo("not_required");
     }
 
@@ -817,6 +956,30 @@ class QualityModuleIntegrationTest extends BaseMasterDataIntegrationTest {
                 .findFirst()
                 .map(s -> qualityService.getNcr(s.id()))
                 .orElseThrow(() -> new IllegalStateException("No NCR for inspection " + inspectionId));
+    }
+
+    private UUID createTestGrn() {
+        UUID siteId = jdbc.queryForObject(
+                "SELECT id FROM physical_sites WHERE tenant_id = ? LIMIT 1", UUID.class, tenantId);
+        UUID uomId = jdbc.queryForObject(
+                "SELECT id FROM units_of_measure WHERE tenant_id = ? LIMIT 1", UUID.class, tenantId);
+        UUID storeId = jdbc.queryForObject(
+                "SELECT id FROM stores WHERE tenant_id = ? LIMIT 1", UUID.class, tenantId);
+        UUID supplierId = insert("""
+                INSERT INTO suppliers (tenant_id, code, name)
+                VALUES (?, 'SUP-GRN', 'GRN Test Supplier') RETURNING id
+                """, tenantId);
+        UUID grnId = insert("""
+                INSERT INTO grns (tenant_id, grn_number, supplier_id, site_id, status,
+                                  received_date, received_by)
+                VALUES (?, 'GRN-TEST', ?, ?, 'accepted', CURRENT_DATE, ?) RETURNING id
+                """, tenantId, supplierId, siteId, BossContextHolder.get().userId());
+        jdbc.update("""
+                INSERT INTO grn_lines (tenant_id, grn_id, line_no, item_id, received_qty,
+                                       uom_id, store_id)
+                VALUES (?, ?, 1, ?, 10, ?, ?)
+                """, tenantId, grnId, itemId, uomId, storeId);
+        return grnId;
     }
 
     private UUID insert(String sql, Object... args) {

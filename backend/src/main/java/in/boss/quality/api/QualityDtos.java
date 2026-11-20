@@ -12,6 +12,16 @@ public final class QualityDtos {
 
     // ---- Inspection ----
 
+    public record InspectionReferenceOption(
+            UUID id,
+            String label,
+            UUID itemId,
+            String itemCode,
+            String itemName,
+            BigDecimal quantity,
+            String status
+    ) {}
+
     public record InspectionSummary(
             UUID id,
             String inspectionNumber,
@@ -75,6 +85,9 @@ public final class QualityDtos {
             String itemDescription,
             String responseType,
             boolean isMandatory,
+            String unit,
+            BigDecimal specMin,
+            BigDecimal specMax,
             String responseValue,
             Boolean responsePass,
             String observation,
@@ -132,11 +145,16 @@ public final class QualityDtos {
             UUID id,
             String ncrNumber,
             UUID inspectionId,
+            String inspectionNumber,
             UUID itemId,
             String itemCode,
             String itemName,
             UUID lotId,
             UUID jobId,
+            String jobNumber,
+            UUID stageId,
+            String stageName,
+            String lotNumber,
             UUID defectCategoryId,
             String defectCategoryLabel,
             String defectDescription,
@@ -155,12 +173,19 @@ public final class QualityDtos {
             String ncrNumber,
             UUID inspectionId,
             String inspectionNumber,
+            String inspectionType,
+            String inspectionResult,
+            String referenceType,
+            UUID referenceId,
             UUID itemId,
             String itemCode,
             String itemName,
             UUID lotId,
+            String lotNumber,
             UUID jobId,
             String jobNumber,
+            UUID stageId,
+            String stageName,
             UUID defectCategoryId,
             String defectCategoryLabel,
             String defectDescription,
@@ -176,6 +201,8 @@ public final class QualityDtos {
             String resolvedByName,
             Instant resolvedAt,
             List<ConcessionDto> concessions,
+            UUID reworkInspectionId,
+            String reworkInspectionNumber,
             Instant createdAt,
             Instant updatedAt
     ) {}

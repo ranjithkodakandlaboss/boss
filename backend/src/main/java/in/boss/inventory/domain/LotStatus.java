@@ -1,15 +1,16 @@
 package in.boss.inventory.domain;
 
 /**
- * Lot statuses persisted by V016.
+ * Lot statuses persisted by V016 and extended in V124.
  *
  * The API name for stored {@code consumed} is {@code depleted}. {@code disposed} is stored
- * and returned unchanged. Creation allows only {@code available} and {@code quarantine}.
+ * and returned unchanged. Rejected lots can only be created in rejected stores.
  */
 public final class LotStatus {
 
     public static final String AVAILABLE = "available";
     public static final String QUARANTINE = "quarantine";
+    public static final String REJECTED = "rejected";
     public static final String RESERVED = "reserved";
     public static final String CONSUMED = "consumed";
     public static final String DISPOSED = "disposed";
@@ -42,9 +43,15 @@ public final class LotStatus {
         }
     }
 
+    public static void assertCreatable(String persisted, String storeType) {
+        if (REJECTED.equals(persisted) && "rejected".equals(storeType)) return;
+        assertCreatable(persisted);
+    }
+
     public static boolean isPersisted(String status) {
         return AVAILABLE.equals(status)
                 || QUARANTINE.equals(status)
+                || REJECTED.equals(status)
                 || RESERVED.equals(status)
                 || CONSUMED.equals(status)
                 || DISPOSED.equals(status);

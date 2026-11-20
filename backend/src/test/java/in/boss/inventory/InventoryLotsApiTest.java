@@ -93,6 +93,45 @@ class InventoryLotsApiTest extends InventoryIntegrationTest {
     }
 
     @Test
+    void openingStockInQuarantineAndRejectedStoresIsNotAvailable() throws Exception {
+        UUID quarantineStoreId = insert("""
+                INSERT INTO stores (tenant_id, site_id, name, code, store_type)
+                VALUES (?, ?, 'Quarantine Store', ?, 'quarantine') RETURNING id
+                """, seed.tenantId(), seed.siteId(), "QUAR-" + UUID.randomUUID().toString().substring(0, 8));
+        UUID rejectedStoreId = insert("""
+                INSERT INTO stores (tenant_id, site_id, name, code, store_type)
+                VALUES (?, ?, 'Rejected Store', ?, 'rejected') RETURNING id
+                """, seed.tenantId(), seed.siteId(), "REJ-" + UUID.randomUUID().toString().substring(0, 8));
+
+        asKeeper();
+        mockMvc.perform(post("/api/v1/inventory/lots")
+                        .with(user("keeper").roles("STORE_KEEPER"))
+                        .header("Idempotency-Key", UUID.randomUUID().toString())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new CreateLotRequest(
+                                seed.itemId(), quarantineStoreId, new BigDecimal("5"), BigDecimal.ONE,
+                                null, null, "available", null))))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.status").value("quarantine"))
+                .andExpect(jsonPath("$.availableQty").value(0));
+
+        asKeeper();
+        mockMvc.perform(post("/api/v1/inventory/lots")
+                        .with(user("keeper").roles("STORE_KEEPER"))
+                        .header("Idempotency-Key", UUID.randomUUID().toString())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new CreateLotRequest(
+                                seed.itemId(), rejectedStoreId, new BigDecimal("5"), BigDecimal.ONE,
+                                null, null, "available", null))))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.status").value("rejected"))
+                .andExpect(jsonPath("$.availableQty").value(0));
+
+        asKeeper();
+        assertThat(inventoryService.getPosition(null, seed.itemId(), null, false, 0, 20).content()).isEmpty();
+    }
+
+    @Test
     void postMovement_requiresIdempotencyKey_andAppendsOnce() throws Exception {
         asKeeper();
         var lot = inventoryService.createLot(new CreateLotRequest(

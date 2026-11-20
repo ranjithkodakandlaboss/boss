@@ -92,6 +92,42 @@ class CustomerCrudTest extends BaseMasterDataIntegrationTest {
     }
 
     @Test
+    void duplicateGstin_isRejectedWithinTenantButAllowedAcrossTenants() {
+        String gstin = "27AABCU9603R1ZM";
+        customerService.createCustomer(CreateCustomerRequest.builder()
+                .code("GST-CUST-1")
+                .name("GST Customer One")
+                .gstin(gstin)
+                .build());
+
+        assertThatThrownBy(() -> customerService.createCustomer(CreateCustomerRequest.builder()
+                .code("GST-CUST-2")
+                .name("GST Customer Two")
+                .gstin(gstin.toLowerCase())
+                .build()))
+                .isInstanceOf(DuplicateEntityException.class)
+                .hasMessageContaining("GSTIN already exists");
+
+        CustomerDto customerWithoutGstin = customerService.createCustomer(CreateCustomerRequest.builder()
+                .code("GST-CUST-3")
+                .name("GST Customer Three")
+                .build());
+        assertThatThrownBy(() -> customerService.updateCustomer(
+                customerWithoutGstin.getId(),
+                UpdateCustomerRequest.builder().gstin(gstin).build()))
+                .isInstanceOf(DuplicateEntityException.class)
+                .hasMessageContaining("GSTIN already exists");
+
+        UUID otherTenant = provisionTenant("cust-gstin-other");
+        setTenantContext(otherTenant, "OWNER");
+        assertThat(customerService.createCustomer(CreateCustomerRequest.builder()
+                .code("GST-CUST-1")
+                .name("Other Tenant Customer")
+                .gstin(gstin)
+                .build()).getGstin()).isEqualTo(gstin);
+    }
+
+    @Test
     void updateAndSoftDeleteCustomer() {
         String code = "UPD-CUST-" + UUID.randomUUID().toString().substring(0, 4);
         CustomerDto created = customerService.createCustomer(CreateCustomerRequest.builder()

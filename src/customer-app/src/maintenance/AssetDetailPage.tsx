@@ -6,7 +6,7 @@ import { ApiError } from "../auth/api";
 import Modal from "../components/shared/Modal";
 import StatusChip from "../components/shared/StatusChip";
 import {
-  MANAGE_ROLES, assetActivity, closeEvent, eventActivity, computeDue, displayDate, displayDateTime, getAsset, getEvent, listEvents, listReadings,
+  MANAGE_ROLES, addAffectedJobs, assetActivity, closeEvent, eventActivity, computeDue, displayDate, displayDateTime, getAsset, getEvent, listEvents, listReadings,
   logReading, markRepaired, startEvent,
   type ActivityEntry, type Asset, type MaintenanceEvent, type MeterReading,
 } from "./api";
@@ -203,12 +203,15 @@ export function MaintenanceEventDetailPage() {
   const { id = "" } = useParams();
   const navigate = useNavigate();
   const canManage = useCanManage();
+  const { lookup } = useMaintenanceOptions();
   const [event, setEvent] = useState<MaintenanceEvent | null>(null);
   const [error, setError] = useState("");
   const [actionError, setActionError] = useState("");
   const [form, setForm] = useState({ rootCause: "", workDone: "", resolutionNotes: "", partsUsed: "", completionDate: "" });
   const [activity, setActivity] = useState<ActivityEntry[]>([]);
   const [activityError, setActivityError] = useState("");
+  const [addingAffectedJob, setAddingAffectedJob] = useState(false);
+  const [affectedJobToAdd, setAffectedJobToAdd] = useState("");
 
   const load = useCallback(() => {
     setError("");
@@ -226,6 +229,16 @@ export function MaintenanceEventDetailPage() {
     try { setEvent(await fn()); eventActivity(id).then(setActivity).catch(() => undefined); } catch (e) { setActionError(e instanceof ApiError ? e.message : "Action failed."); }
   }
 
+  async function saveAffectedJob() {
+    setActionError("");
+    if (!affectedJobToAdd) { setActionError("Select an open job to add."); return; }
+    try {
+      setEvent(await addAffectedJobs(id, [affectedJobToAdd]));
+      setAffectedJobToAdd("");
+      setAddingAffectedJob(false);
+    } catch (e) { setActionError(e instanceof ApiError ? e.message : "Could not update affected jobs."); }
+  }
+
   return (
     <div className="p-4 md:p-6 space-y-4">
       <button type="button" className="text-xs underline text-[var(--text-3)]" onClick={() => navigate("/assets?tab=events")}>← Maintenance Events</button>
@@ -240,6 +253,30 @@ export function MaintenanceEventDetailPage() {
         <Info label="Description" value={event.symptom} /><Info label="Corrective action" value={event.correctiveAction} /><Info label="Notes" value={event.notes} />
         {event.status === "closed" && <><Info label="Root cause" value={event.rootCause} /><Info label="Work done" value={event.workDone} /><Info label="Resolution" value={event.resolutionNotes} /><Info label="Parts used" value={event.partsUsed} /></>}
       </div>
+      {canManage && event.eventType === "Breakdown" && event.status !== "closed" && (
+        <section className="space-y-2" aria-label="Affected jobs">
+          {!addingAffectedJob ? (
+            <button type="button" className="px-3 py-1.5 text-xs rounded-lg border border-[var(--border)]"
+              onClick={() => setAddingAffectedJob(true)}>Add affected job</button>
+          ) : (
+            <div className="flex flex-wrap items-end gap-2">
+              <Field label="Add affected job">
+                <select aria-label="Add affected job" className="eoss-input min-w-48" value={affectedJobToAdd} onChange={(e) => setAffectedJobToAdd(e.target.value)}>
+                  <option value="">Select an open job…</option>
+                  {lookup.jobs
+                    .filter((job) => ["planned", "released", "in_progress", "on_hold"].includes(job.status))
+                    .filter((job) => !event.affectedJobs.some((affected) => affected.id === job.id))
+                    .map((job) => <option key={job.id} value={job.id}>{job.jobNumber}</option>)}
+                </select>
+              </Field>
+              <button type="button" className="px-3 py-1.5 text-xs rounded-lg font-semibold text-white" style={{ background: "var(--brand-fill)" }}
+                onClick={() => void saveAffectedJob()}>Save affected jobs</button>
+              <button type="button" className="px-3 py-1.5 text-xs rounded-lg border border-[var(--border)]"
+                onClick={() => { setAffectedJobToAdd(""); setAddingAffectedJob(false); }}>Cancel</button>
+            </div>
+          )}
+        </section>
+      )}
       {event.affectedStages.length > 0 && (
         <section className="space-y-2" aria-label="Production impact">
           <h2 className="font-semibold text-sm">Affected production stages</h2>
@@ -269,10 +306,13 @@ export function MaintenanceEventDetailPage() {
         </section>
       )}
       {actionError && <p role="alert" className="text-xs" style={{ color: "var(--error)" }}>{actionError}</p>}
-      {canManage && event.status !== "closed" && (
+      {canManage && ["open", "scheduled"].includes(event.status) && (
+        <button type="button" className="px-3 py-1.5 text-xs rounded-lg border border-[var(--border)]"
+          onClick={() => void act(() => startEvent(id))}>Start work</button>
+      )}
+      {canManage && event.status === "in_progress" && (
         <div className="border border-[var(--border)] rounded-xl p-4 space-y-3 max-w-xl">
           <h2 className="font-semibold text-sm">Resolve &amp; Close</h2>
-          {event.status !== "in_progress" && <button type="button" className="px-3 py-1.5 text-xs rounded-lg border border-[var(--border)]" onClick={() => act(() => startEvent(id))}>Start work</button>}
           <Field label="Completion time"><input aria-label="Completion time" type="datetime-local" className="eoss-input w-full" value={form.completionDate} onChange={(e) => setForm({ ...form, completionDate: e.target.value })} /></Field>
           <Field label="Root cause"><input aria-label="Root cause" className="eoss-input w-full" value={form.rootCause} onChange={(e) => setForm({ ...form, rootCause: e.target.value })} /></Field>
           <Field label="Work done *"><textarea aria-label="Work done" className="eoss-input w-full" rows={2} value={form.workDone} onChange={(e) => setForm({ ...form, workDone: e.target.value })} /></Field>

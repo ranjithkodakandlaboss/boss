@@ -59,8 +59,14 @@ function Background({ pathname }: { pathname: string }) {
   if (basePath === "/sales") {
     return <SalesHome backgroundSearch={search} />;
   }
+  if (basePath === "/assets") {
+    return <AssetsPage backgroundTab={search.includes("tab=events") ? "events" : "assets"} />;
+  }
   if (basePath === "/procurement" || basePath.startsWith("/procurement")) {
     return <ProcurementHome />;
+  }
+  if (/^\/jobs\/[^/]+$/.test(basePath)) {
+    return <JobWorkspacePage />;
   }
   const screen = findScreen(basePath);
   if (!screen) return null;
@@ -183,7 +189,7 @@ function Guard() {
         <Route path="inventory/item/:id" element={<SheetLayout><ItemDetail /></SheetLayout>} />
         <Route path="inventory/lot/:id" element={<SheetLayout><LotDetail /></SheetLayout>} />
         <Route path="jobs" element={<JobsPage />} />
-        <Route path="jobs/:id/stage/:stageId" element={<StageUpdatePage />} />
+        <Route path="jobs/:id/stage/:stageId" element={<SheetLayout><StageUpdatePage /></SheetLayout>} />
         <Route path="jobs/:id" element={<JobWorkspacePage />} />
         <Route path="sales/customers" element={<Navigate to="/sales?tab=customers" replace />} />
         <Route path="settings" element={<Navigate to="/admin" replace />} />

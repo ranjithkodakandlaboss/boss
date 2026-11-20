@@ -37,6 +37,13 @@ public class QualityController {
         return service.getInspection(inspectionId);
     }
 
+    @GetMapping("/inspection-references")
+    @PreAuthorize(BossPermissions.QUALITY_ACCESS)
+    public List<InspectionReferenceOption> listInspectionReferences(
+            @RequestParam String referenceType) {
+        return service.listInspectionReferences(referenceType);
+    }
+
     @PostMapping("/inspections")
     @ResponseStatus(HttpStatus.CREATED)
     @PreAuthorize(BossPermissions.QUALITY_WRITE)
@@ -79,6 +86,12 @@ public class QualityController {
     @PreAuthorize(BossPermissions.QUALITY_WRITE)
     public NcrDetail updateNcr(@PathVariable UUID ncrId, @RequestBody UpdateNcrRequest request) {
         return service.updateNcr(ncrId, request);
+    }
+
+    @PostMapping("/ncrs/{ncrId}/reinspection")
+    @PreAuthorize(BossPermissions.QUALITY_WRITE)
+    public NcrDetail startNcrReinspection(@PathVariable UUID ncrId) {
+        return service.startNcrReinspection(ncrId);
     }
 
     @PostMapping("/ncrs/{ncrId}/concession")

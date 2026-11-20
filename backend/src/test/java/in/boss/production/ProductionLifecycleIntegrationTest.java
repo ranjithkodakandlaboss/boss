@@ -173,6 +173,19 @@ class ProductionLifecycleIntegrationTest extends BaseMasterDataIntegrationTest {
     }
 
     @Test
+    void pendingStageMustBeStartedBeforeCompletion() {
+        ProductionJobResponse job = jobs.create(new CreateJobRequest(
+                cpoId, lineId, routingId, LocalDate.now(), LocalDate.now().plusDays(10), "normal"));
+        requirementId = job.materials().get(0).id();
+        materials.issue(job.id(), new IssueMaterialRequest(requirementId, lotId, new BigDecimal("20"), "kit"));
+
+        assertThatThrownBy(() -> stages.complete(job.id(), job.stages().get(0).id(), null))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("Cannot move stage from pending to completed");
+        assertThat(query.get(job.id()).stages().get(0).status()).isEqualTo("pending");
+    }
+
+    @Test
     void customerPoBecomesACostedJobWithoutChangingTheSellingPrice() {
         assertThat(query.eligibleLines()).extracting(line -> line.cpoLineId()).contains(lineId);
         assertThat(query.routingTemplates(finishedItemId)).extracting(template -> template.id()).contains(routingId);
@@ -228,6 +241,7 @@ class ProductionLifecycleIntegrationTest extends BaseMasterDataIntegrationTest {
         var started = stages.start(job.id(), job.stages().get(0).id(), null);
         assertThat(started.status()).isEqualTo("in_progress");
         stages.complete(job.id(), job.stages().get(0).id(), null);
+        stages.start(job.id(), job.stages().get(1).id(), null);
         assertThatThrownBy(() -> stages.complete(job.id(), job.stages().get(1).id(), null))
                 .isInstanceOf(ResponseStatusException.class)
                 .hasMessageContaining("inspection");
@@ -648,6 +662,7 @@ class ProductionLifecycleIntegrationTest extends BaseMasterDataIntegrationTest {
         materials.issue(job.id(), new IssueMaterialRequest(requirementId, lotId, new BigDecimal("20"), null));
         stages.start(job.id(), job.stages().get(0).id(), null);
         stages.complete(job.id(), job.stages().get(0).id(), null);
+        stages.start(job.id(), job.stages().get(1).id(), null);
         inspections.open(job.id(), job.stages().get(1).id());
         UUID inspectionId = query.get(job.id()).inspections().get(0).id();
         inspections.record(job.id(), inspectionId, new InspectionResultRequest("fail", BigDecimal.ZERO, BigDecimal.TEN, "crack"));

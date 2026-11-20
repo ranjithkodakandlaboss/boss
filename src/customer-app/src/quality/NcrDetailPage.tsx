@@ -2,9 +2,10 @@ import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft } from "lucide-react";
 import { useCustomer } from "../auth/CustomerState";
+import RecordSheet from "../components/shared/RecordSheet";
 import StatusChip from "../components/shared/StatusChip";
 import {
-  getNcr, updateNcr, createConcession,
+  getNcr, updateNcr, createConcession, startNcrReinspection,
   severityLabel, displayDate,
   type NcrDetail,
 } from "./api";
@@ -34,6 +35,7 @@ export default function NcrDetailPage() {
   const [showConcession, setShowConcession] = useState(false);
   const [justification, setJustification] = useState("");
   const [concessionError, setConcessionError] = useState("");
+  const [reinspectionError, setReinspectionError] = useState("");
 
   function load() {
     if (!id) return;
@@ -88,11 +90,24 @@ export default function NcrDetailPage() {
     }
   }
 
+  async function handleStartReinspection() {
+    if (!ncr) return;
+    setSaving(true);
+    setReinspectionError("");
+    try {
+      setNcr(await startNcrReinspection(ncr.id));
+    } catch (e: unknown) {
+      setReinspectionError((e as Error).message ?? "Failed to start reinspection");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   if (loading) return <p className="p-6 text-sm text-[var(--text-3)]">Loading…</p>;
   if (error) return <p className="p-6 text-sm text-red-600">{error}</p>;
   if (!ncr) return null;
 
-  const isClosed = ncr.status === "closed" || ncr.status === "concession_granted";
+  const isClosed = ["resolved", "closed", "scrapped"].includes(ncr.status);
 
   return (
     <div className="p-4 md:p-6 max-w-3xl mx-auto">
@@ -145,7 +160,35 @@ export default function NcrDetailPage() {
         </Field>
         <Field label="Item" value={ncr.itemCode ? `${ncr.itemCode} — ${ncr.itemName}` : "—"} />
         <Field label="Quantity" value={ncr.quantity ?? "—"} />
-        {ncr.jobNumber && <Field label="Job" value={ncr.jobNumber} />}
+        {ncr.jobNumber && (
+          <Field label="Job">
+            <button type="button" className="text-[var(--brand)] underline" onClick={() => ncr.jobId && navigate(`/jobs/${ncr.jobId}`)}>
+              {ncr.jobNumber}
+            </button>
+          </Field>
+        )}
+        {ncr.stageName && (
+          <Field label="Stage">
+            <button
+              type="button"
+              className="text-[var(--brand)] underline"
+              onClick={() => ncr.jobId && ncr.stageId && navigate(`/jobs/${ncr.jobId}/stage/${ncr.stageId}`)}
+            >
+              {ncr.stageName}
+            </button>
+          </Field>
+        )}
+        {ncr.lotId && (
+          <Field label="Lot">
+            <button
+              type="button"
+              className="text-[var(--brand)] underline"
+              onClick={() => navigate(`/inventory/lot/${ncr.lotId}`)}
+            >
+              {ncr.lotNumber ?? `Lot ${ncr.lotId.slice(0, 8)}`}
+            </button>
+          </Field>
+        )}
         {ncr.inspectionNumber && (
           <Field label="Inspection">
             <button
@@ -157,12 +200,42 @@ export default function NcrDetailPage() {
             </button>
           </Field>
         )}
+        {ncr.inspectionType && <Field label="Inspection type" value={ncr.inspectionType.replace(/_/g, " ")} />}
+        {ncr.inspectionResult && <Field label="Inspection result"><StatusChip status={ncr.inspectionResult} /></Field>}
         <Field label="Raised by" value={ncr.raisedByName ?? "—"} />
         <Field label="Raised" value={displayDate(ncr.createdAt)} />
         {ncr.disposition && <Field label="Disposition" value={ncr.disposition} />}
         {ncr.rootCause && <Field label="Root Cause" value={ncr.rootCause} span />}
         {ncr.resolution && <Field label="Resolution" value={ncr.resolution} span />}
       </div>
+
+      {ncr.status === "rework" && (
+        <section className="mb-6 rounded-xl border p-4" style={{ borderColor: "var(--border)", background: "var(--surface)" }}>
+          <h2 className="text-sm font-semibold">Rework and reinspection</h2>
+          {ncr.reworkInspectionId ? (
+            <p className="mt-2 text-sm">
+              Reinspection{" "}
+              <button
+                type="button"
+                className="text-[var(--brand)] underline"
+                onClick={() => navigate(`/quality/inspection/${ncr.reworkInspectionId}`)}
+              >
+                {ncr.reworkInspectionNumber}
+              </button>
+            </p>
+          ) : (
+            <button
+              type="button"
+              onClick={() => void handleStartReinspection()}
+              disabled={saving}
+              className="mt-2 rounded-lg bg-[var(--brand-fill)] px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-50"
+            >
+              {saving ? "Starting…" : "Start Reinspection"}
+            </button>
+          )}
+          {reinspectionError && <p role="alert" className="mt-2 text-xs text-red-600">{reinspectionError}</p>}
+        </section>
+      )}
 
       {/* Concessions */}
       {ncr.concessions && ncr.concessions.length > 0 && (
@@ -185,27 +258,39 @@ export default function NcrDetailPage() {
         </section>
       )}
 
-      {/* Update NCR dialog */}
+      {/* Update NCR drawer */}
       {showUpdate && (
-        <div className="fixed inset-0 z-[70] bg-black/40 flex items-center justify-center p-4">
-          <div
-            className="bg-[var(--bg)] rounded-xl shadow-2xl w-full max-w-md p-6"
-            role="dialog"
-            aria-modal="true"
-          >
-            <h2 className="text-base font-semibold mb-4">Update NCR</h2>
-            <form onSubmit={handleUpdate} className="space-y-3">
+        <RecordSheet
+          title="Update NCR"
+          subtitle={ncr.ncrNumber}
+          width="lg"
+          onClose={() => setShowUpdate(false)}
+          secondary={{ label: "Cancel", onClick: () => setShowUpdate(false) }}
+          primary={{
+            label: saving ? "Saving…" : "Save",
+            onClick: () => document.querySelector<HTMLFormElement>("#ncr-update-form")?.requestSubmit(),
+            disabled: saving,
+          }}
+        >
+            <form id="ncr-update-form" onSubmit={handleUpdate} className="space-y-3">
               <label className="block text-sm">
                 <span className="text-[var(--text-2)] font-medium">Status</span>
                 <select
                   className="mt-1 w-full rounded-lg border px-3 py-2 text-sm bg-[var(--surface)]"
                   style={{ borderColor: "var(--border)" }}
                   value={updStatus}
-                  onChange={(e) => setUpdStatus(e.target.value)}
+                  onChange={(e) => {
+                    const status = e.target.value;
+                    setUpdStatus(status);
+                    if (status === "rework") setUpdDisposition("rework");
+                    else if (status === "scrapped") setUpdDisposition("scrap");
+                    else if (updDisposition === "rework" || updDisposition === "scrap") setUpdDisposition("");
+                  }}
                 >
                   <option value="open">Open</option>
-                  <option value="concession_requested">Concession Requested</option>
+                  <option value="under_review">Under Review</option>
                   <option value="rework">Rework</option>
+                  <option value="resolved">Resolved</option>
                   <option value="scrapped">Scrapped</option>
                   <option value="closed">Closed</option>
                 </select>
@@ -246,26 +331,8 @@ export default function NcrDetailPage() {
                 />
               </label>
               {updateError && <p className="text-xs text-red-600">{updateError}</p>}
-              <div className="flex justify-end gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setShowUpdate(false)}
-                  className="rounded-lg border px-4 py-2 text-sm font-medium"
-                  style={{ borderColor: "var(--border)" }}
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={saving}
-                  className="rounded-lg bg-[var(--brand-fill)] px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
-                >
-                  {saving ? "Saving…" : "Save"}
-                </button>
-              </div>
             </form>
-          </div>
-        </div>
+        </RecordSheet>
       )}
 
       {/* Concession dialog */}
