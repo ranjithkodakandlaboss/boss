@@ -62,8 +62,6 @@ public interface InventoryService {
 
     MaterialLotResponse getLot(UUID lotId);
 
-    List<LotReservationResponse> getLotReservations(UUID lotId);
-
     InventoryPage<StockMovementResponse> getLotMovements(
             UUID lotId, LocalDate from, LocalDate to, int page, int size);
 

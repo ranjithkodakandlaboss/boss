@@ -104,7 +104,7 @@ public class ItemServiceImpl implements ItemService {
 
         ItemCategoryEntity category = null;
         if (request.getCategoryId() != null) {
-            category = requireActiveCategoryReadOnly(tenantId, request.getCategoryId());
+            category = requireActiveCategory(tenantId, request.getCategoryId());
         }
 
         UUID hsnCodeId = null;
@@ -258,14 +258,6 @@ public class ItemServiceImpl implements ItemService {
         return category;
     }
 
-    private ItemCategoryEntity requireActiveCategoryReadOnly(UUID tenantId, UUID categoryId) {
-        ItemCategoryEntity category = categoryRepository.findByIdAndTenantId(categoryId, tenantId)
-                .orElseThrow(() -> new ValidationException("Invalid category ID: " + categoryId));
-        if (!category.isActive()) {
-            throw new ValidationException("Category is inactive: " + categoryId);
-        }
-        return category;
-    }
 
     private Map<UUID, UnitOfMeasureEntity> batchLoadSpecUoms(UUID tenantId, List<ItemSpecification> specs) {
         if (specs == null || specs.isEmpty()) return Map.of();

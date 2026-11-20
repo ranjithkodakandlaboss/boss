@@ -120,6 +120,6 @@ describe("BOM specification calculator", () => {
     const createBtn = await screen.findByRole("button", { name: "Create BOM" });
     fireEvent.click(createBtn);
 
-    expect(await screen.findByText(/No finished goods or semi-finished items found/)).toBeInTheDocument();
+    expect(await screen.findByText(/No (manufactured )?finished goods or semi-finished items found/)).toBeInTheDocument();
   });
 });

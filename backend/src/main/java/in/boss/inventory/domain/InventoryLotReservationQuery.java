@@ -1,6 +1,7 @@
 package in.boss.inventory.domain;
 
 import in.boss.inventory.api.InventoryApiDtos.JobLotReservationResponse;
+import in.boss.inventory.api.InventoryApiDtos.LotReservationResponse;
 import in.boss.inventory.persistence.InventoryReservationRepository;
 import in.boss.shared.context.BossContext;
 import in.boss.shared.context.BossContextHolder;
@@ -15,6 +16,18 @@ public class InventoryLotReservationQuery {
 
     public InventoryLotReservationQuery(InventoryReservationRepository reservationRepository) {
         this.reservationRepository = reservationRepository;
+    }
+
+    public List<LotReservationResponse> listLotReservations(UUID lotId) {
+        BossContext context = BossContextHolder.get();
+        if (context == null || context.tenantId() == null) {
+            throw new IllegalStateException("Tenant context is required");
+        }
+        return reservationRepository.activeLotReservations(context.tenantId(), lotId).stream()
+                .map(row -> new LotReservationResponse(
+                        row.id(), row.referenceType(), row.referenceId(),
+                        row.reservedQty(), row.documentNumber()))
+                .toList();
     }
 
     public List<JobLotReservationResponse> listJobLotReservations(UUID jobId) {

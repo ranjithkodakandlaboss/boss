@@ -80,7 +80,7 @@ describe("inventory prototype screens", () => {
     vi.mocked(api).mockImplementation(async (path) => {
       const url = String(path);
       if (url.includes("/api/v1/uoms")) return [{ id: "uom-1", name: "Kilogram", symbol: "KG" }];
-      if (url.includes("ITEM_CATEGORY")) throw new Error("Categories could not be loaded.");
+      if (url.includes("ITEM_CATEGORY") || url.includes("item-categories")) throw new Error("Categories could not be loaded.");
       return {};
     });
     render(<ItemForm onClose={() => undefined} onSaved={() => undefined} />);
@@ -103,7 +103,7 @@ describe("inventory prototype screens", () => {
         return created;
       }
       if (url.includes("/api/v1/uoms")) return [{ id: "uom-1", name: "Kilogram", symbol: "KG" }];
-      if (url.includes("ITEM_CATEGORY")) return categories;
+      if (url.includes("ITEM_CATEGORY") || url.includes("item-categories")) return categories;
       return {};
     });
     render(<ItemForm onClose={() => undefined} onSaved={() => undefined} />);

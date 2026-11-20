@@ -113,7 +113,7 @@ public class InventoryController {
     @GetMapping("/lots/{lotId}/reservations")
     @PreAuthorize(BossPermissions.INVENTORY_READ)
     public List<LotReservationResponse> getLotReservations(@PathVariable UUID lotId) {
-        return inventoryService.getLotReservations(lotId);
+        return lotReservationQuery.listLotReservations(lotId);
     }
 
     @PostMapping("/lots/{lotId}/movements")
