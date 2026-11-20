@@ -113,6 +113,10 @@ class SalesApiIntegrationTest extends BaseMasterDataIntegrationTest {
         tenantId = provisionTenant("sales-test");
         setTenantContext(tenantId, "OWNER");
         UUID userId = BossContextHolder.get().userId();
+        jdbc.update("""
+                INSERT INTO app_users (id, tenant_id, firebase_uid, email, display_name)
+                VALUES (?, ?, ?, ?, 'Sales Owner')
+                """, userId, tenantId, "uid-" + userId, "owner-" + userId + "@example.test");
         UUID legalEntityId = insert("""
                 INSERT INTO legal_entities (tenant_id, name, legal_name)
                 VALUES (?, 'Sales Test Entity', 'Sales Test Entity Ltd') RETURNING id
@@ -365,10 +369,35 @@ class SalesApiIntegrationTest extends BaseMasterDataIntegrationTest {
     void dispatchDraftCannotChangeDeliveredQuantityOnCancelledOrder() {
         var quote = sentQuotation(new BigDecimal("20.00"));
         var order = customerPoService.accept(quote.id(), new AcceptQuotationRequest(null, null)).cpo();
-        var line = new CreateDispatchLineRequest(order.lines().getFirst().id(), null, finishedItemId,
-                BigDecimal.ONE, uomId, null, null, null);
-        var request = new CreateDispatchRequest(customerId, null, order.id(), null, siteId, null,
-                null, null, null, null, null, null, LocalDate.now(), null, null,
+        UUID cpoLineId = order.lines().getFirst().id();
+        UUID fgStoreId = insert("""
+                INSERT INTO stores (tenant_id, site_id, name, code, store_type)
+                VALUES (?, ?, 'FG Store', ?, 'finished_goods') RETURNING id
+                """, tenantId, siteId, "FG-STORE-" + UUID.randomUUID().toString().substring(0, 8));
+        UUID lotId = insert("""
+                INSERT INTO material_lots (tenant_id, item_id, store_id, lot_number, quantity, reserved_qty, status)
+                VALUES (?, ?, ?, 'LOT-FG-01', 10, 0, 'available') RETURNING id
+                """, tenantId, finishedItemId, fgStoreId);
+        UUID jobId = insert("""
+                INSERT INTO production_jobs (tenant_id, job_number, cpo_id, cpo_line_id, finished_item_id, site_id, quantity, uom_id, status, created_by)
+                VALUES (?, 'JOB-2026-SALES', ?, ?, ?, ?, 10, ?, 'completed', ?) RETURNING id
+                """, tenantId, order.id(), cpoLineId, finishedItemId, siteId, uomId, BossContextHolder.get().userId());
+        jdbc.update("""
+                INSERT INTO quality_inspections (
+                  tenant_id, inspection_number, inspection_type, reference_type, reference_id,
+                  item_id, quantity_inspected, quantity_accepted, result, status, inspection_date, inspector_id
+                ) VALUES (?, 'INSP-2026-PASS', 'final', 'production_job', ?, ?, 10, 10,
+                          'pass', 'completed', CURRENT_DATE, ?)
+                """, tenantId, jobId, finishedItemId, BossContextHolder.get().userId());
+        jdbc.update("""
+                INSERT INTO clearance_certificates
+                  (tenant_id, cert_number, job_id, customer_id, status, issued_at, issued_by)
+                VALUES (?, ?, ?, ?, 'issued', NOW(), ?)
+                """, tenantId, "CERT-" + UUID.randomUUID(), jobId, customerId, BossContextHolder.get().userId());
+        var line = new CreateDispatchLineRequest(cpoLineId, jobId, finishedItemId,
+                BigDecimal.ONE, uomId, lotId, null, null);
+        var request = new CreateDispatchRequest(customerId, null, order.id(), jobId, siteId, null,
+                fgStoreId, "FG Store", null, null, null, null, LocalDate.now(), null, null,
                 null, null, List.of(line), null, null);
         var dispatch = dispatchService.createDispatch(request);
         customerPoService.updateStatus(order.id(), "cancelled");

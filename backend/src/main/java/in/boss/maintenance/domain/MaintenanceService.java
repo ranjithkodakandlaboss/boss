@@ -444,13 +444,7 @@ public class MaintenanceService {
         boolean noWork = (r.workDone() == null || r.workDone().isBlank())
                 && (r.resolutionNotes() == null || r.resolutionNotes().isBlank());
         if (noWork) throw bad("Work done or resolution notes are required to close the event");
-        Instant completion = r.completionDate() == null ? Instant.now() : r.completionDate();
-        if (completion.isAfter(Instant.now().plus(Duration.ofMinutes(5)))) {
-            throw bad("Completion cannot be in the future");
-        }
-        if (e.downtimeStart() != null && completion.isBefore(e.downtimeStart())) {
-            throw bad("Completion cannot be earlier than downtime start");
-        }
+        Instant completion = resolveCompletion(e, r.completionDate());
         BigDecimal downtime = downtimeHours(e, completion);
         jdbc.update("""
                 UPDATE maintenance_events SET status = 'closed', completion_date = ?, downtime_end = COALESCE(downtime_end, ?),
@@ -460,9 +454,29 @@ public class MaintenanceService {
                 """, ts(completion), "Breakdown".equals(e.eventType()) ? ts(completion) : null, downtime,
                 r.rootCause(), r.workDone(), r.resolutionNotes(), r.correctiveAction(), r.partsUsed(),
                 ctx.userId(), ctx.tenantId(), id);
+        updateAssetAfterClose(ctx, e, id, completion);
+        String after = allowUnstarted && !"in_progress".equals(e.status())
+                ? "{\"status\":\"closed\",\"startSkipped\":true}" : "{\"status\":\"closed\"}";
+        audit.record("maintenance_event", id, "CLOSE", "{\"status\":\"" + e.status() + "\"}", after);
+        recordMachineJobActivity(e, "MACHINE_UNBLOCK");
+        return loadEvent(id);
+    }
+
+    private Instant resolveCompletion(EventResponse e, Instant requested) {
+        Instant completion = requested == null ? Instant.now() : requested;
+        if (completion.isAfter(Instant.now().plus(Duration.ofMinutes(5)))) {
+            throw bad("Completion cannot be in the future");
+        }
+        if (e.downtimeStart() != null && completion.isBefore(e.downtimeStart())) {
+            throw bad("Completion cannot be earlier than downtime start");
+        }
+        return completion;
+    }
+
+    private void updateAssetAfterClose(BossContext ctx, EventResponse e, UUID eventId, Instant completion) {
         AssetResponse asset = loadAsset(e.assetId());
         LocalDate completed = completion.atZone(ZoneOffset.UTC).toLocalDate();
-        String restoredStatus = restoredStatus(ctx.tenantId(), e.assetId(), id, asset.status());
+        String restoredStatus = restoredStatus(ctx.tenantId(), e.assetId(), eventId, asset.status());
         if ("Preventive".equals(e.eventType())) {
             LocalDate next = nextServiceDate(asset, completed);
             jdbc.update("""
@@ -475,11 +489,6 @@ public class MaintenanceService {
             jdbc.update("UPDATE assets SET status = ?, updated_at = NOW() WHERE tenant_id = ? AND id = ?",
                     restoredStatus, ctx.tenantId(), e.assetId());
         }
-        String after = allowUnstarted && !"in_progress".equals(e.status())
-                ? "{\"status\":\"closed\",\"startSkipped\":true}" : "{\"status\":\"closed\"}";
-        audit.record("maintenance_event", id, "CLOSE", "{\"status\":\"" + e.status() + "\"}", after);
-        recordMachineJobActivity(e, "MACHINE_UNBLOCK");
-        return loadEvent(id);
     }
 
     private void recordMachineJobActivity(EventResponse event, String action) {
