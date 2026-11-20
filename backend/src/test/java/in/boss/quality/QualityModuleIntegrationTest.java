@@ -561,6 +561,14 @@ class QualityModuleIntegrationTest extends BaseMasterDataIntegrationTest {
     void stageGatePassesAfterInspectionPass() {
         setRole("OWNER");
 
+        insert("""
+                INSERT INTO job_stages (tenant_id, job_id, seq_no, name, stage_config_option_id, status,
+                        requires_inspection, is_optional)
+                VALUES (?, ?, 2, 'Pack', ?, 'pending', FALSE, FALSE) RETURNING id
+                """, tenantId, jobId,
+                jdbc.queryForObject("SELECT stage_config_option_id FROM job_stages WHERE id = ?",
+                        UUID.class, stageId));
+
         // Create and pass inspection for this stage
         UUID inspId = qualityService.createInspection(new CreateInspectionRequest(
                 "in_process", "job_stage", stageId, itemId, null,
@@ -577,6 +585,14 @@ class QualityModuleIntegrationTest extends BaseMasterDataIntegrationTest {
     @Test
     void stageGatePassesWithApprovedConcession() {
         setRole("OWNER");
+
+        insert("""
+                INSERT INTO job_stages (tenant_id, job_id, seq_no, name, stage_config_option_id, status,
+                        requires_inspection, is_optional)
+                VALUES (?, ?, 2, 'Pack', ?, 'pending', FALSE, FALSE) RETURNING id
+                """, tenantId, jobId,
+                jdbc.queryForObject("SELECT stage_config_option_id FROM job_stages WHERE id = ?",
+                        UUID.class, stageId));
 
         UUID inspId = qualityService.createInspection(new CreateInspectionRequest(
                 "in_process", "job_stage", stageId, itemId, null,
