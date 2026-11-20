@@ -239,7 +239,7 @@ export default function JobsPage() {
         </>
       )}
       {cancelTarget && <CancelJob job={cancelTarget} onClose={() => setCancelTarget(null)} onDone={() => { setCancelTarget(null); void load(); }} />}
-      {showNew && <NewJob onClose={() => setShowNew(false)} onCreated={(job) => navigate(`/jobs/${job.id}`)} />}
+      {showNew && <NewJob onClose={() => setShowNew(false)} onCreated={(job) => navigate(`/jobs/${job.id}?tab=Plan`)} />}
     </div>
   );
 }

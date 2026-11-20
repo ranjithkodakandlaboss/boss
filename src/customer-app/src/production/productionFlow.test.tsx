@@ -76,6 +76,7 @@ beforeEach(() => {
       expect(JSON.parse(String(init.body)).cpoLineId).toBe(lineId);
       return Promise.resolve(json({ ...job, id: jobId }, 201));
     }
+    if (url.includes(`/jobs/${jobId}/plan`) && init?.method === "POST") return Promise.resolve(json(job));
     if (url.includes(`/jobs/${jobId}`)) return Promise.resolve(json(job));
     if (url.includes("/api/v1/jobs")) return Promise.resolve(json({ content: [job], totalElements: 1 }));
     return Promise.resolve(json({}));

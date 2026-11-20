@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { ArrowLeft, ExternalLink } from "lucide-react";
 import { useCustomer } from "../auth/CustomerState";
@@ -9,9 +9,9 @@ import StatusChip from "../components/shared/StatusChip";
 import { createLot, lotFields } from "../inventory/inlineCreate";
 import { createInspection as createQualityInspection, recordResult as recordQualityInspectionResult } from "../quality/api";
 import {
-  addCost, cancelJob, completeJob, concede, displayDate, featureFlags, getJob, getJobCosting, issueMaterial, money, openInspection, readinessLabel,
-  recordInspection, releaseHold, returnMaterial, skipStage, usableLots,
-  type JobCosting, type LotOption, type ProductionJob,
+  addCost, cancelJob, completeJob, concede, displayDate, featureFlags, getJob, getJobCosting, issueMaterial, money, openInspection, previewPlan, readinessLabel,
+  recordInspection, releaseHold, returnMaterial, savePlan, skipStage, usableLots,
+  type JobCosting, type LotOption, type ProductionJob, type StagePlanEntry,
 } from "./api";
 
 const TABS = ["Overview", "Stages", "Plan", "Materials", "Quality", "NCR / Rework", "Updates", "Blockers", "History"];
@@ -52,7 +52,8 @@ export default function JobWorkspacePage() {
   const canEditCost = roles.some((role) => ["OWNER", "OPS_MANAGER", "ACCOUNTS_STAFF"].includes(role));
   const [job, setJob] = useState<ProductionJob | null>(null);
   const [flags, setFlags] = useState<Record<string, boolean>>({});
-  const [tab, setTab] = useState("Overview");
+  const initialTab = searchParams.get("tab") ?? "Overview";
+  const [tab, setTab] = useState(TABS.includes(initialTab) ? initialTab : "Overview");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [cancelOpen, setCancelOpen] = useState(false);
@@ -69,7 +70,10 @@ export default function JobWorkspacePage() {
   }
 
   useEffect(() => { void load(); }, [id]);
-  useEffect(() => { if (searchParams.get("update") === "1" && job) setTab("Stages"); }, [searchParams, job]);
+  useEffect(() => {
+    if (searchParams.get("update") === "1" && job) setTab("Stages");
+    else if (searchParams.get("tab") === "Plan" && job) setTab("Plan");
+  }, [searchParams, job]);
 
   if (error && !job) return <p role="alert" className="p-8 text-sm">{error}</p>;
   if (!job) return <p role="status" className="p-8 text-sm">Loading job</p>;
@@ -108,7 +112,7 @@ export default function JobWorkspacePage() {
       </div>
       {tab === "Overview" && <Overview job={job} />}
       {tab === "Stages" && <Stages job={job} canWrite={canWrite && flags["production.stage.transition"] !== false} onSkip={(stageId, reason) => act(() => skipStage(job.id, stageId, reason), "Stage skipped")} />}
-      {tab === "Plan" && <PlanTab job={job} />}
+      {tab === "Plan" && <PlanTab job={job} canWrite={canWrite} onSaved={() => { setNotice("Production plan saved"); void load(); }} />}
       {tab === "Materials" && <Materials job={job} canIssue={canWrite && flags["production.material.issue"] !== false} canReturn={canWrite && flags["production.material.return"] !== false} onIssue={(requirementId, lotId, qty, note) => act(() => issueMaterial(job.id, requirementId, lotId, qty, note), "Material issued")} onReturn={(issueId, qty, note) => act(() => returnMaterial(job.id, issueId, qty, note), "Material returned")} />}
       {tab === "Quality" && <Quality
         job={job}
@@ -322,47 +326,177 @@ function Stages({ job, canWrite, onSkip }: { job: ProductionJob; canWrite: boole
   );
 }
 
-function PlanTab({ job }: { job: ProductionJob }) {
+type PlanRow = { stageId: string; stageName: string; workCentre?: string; estimatedDurationMin?: number; plannedStart: string; plannedEnd: string };
+
+function buildPlanRows(job: ProductionJob, deliveryDate: string): PlanRow[] {
   const stages = job.stages ?? [];
-  const hasPlanning = stages.some((s) => s.plannedStart || s.estimatedDurationMin);
-  if (!hasPlanning) {
+  if (stages.length === 0) return [];
+  const rows: PlanRow[] = stages.map((s) => ({
+    stageId: s.id,
+    stageName: s.stageName,
+    workCentre: s.workCentre,
+    estimatedDurationMin: s.estimatedDurationMin,
+    plannedStart: s.plannedStart ?? "",
+    plannedEnd: s.plannedEnd ?? "",
+  }));
+  // Backward schedule: work from delivery date, 8h = 1 working day
+  let cursor = new Date(deliveryDate);
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const durationDays = Math.max(1, Math.ceil((rows[i].estimatedDurationMin ?? 480) / 480));
+    const end = new Date(cursor);
+    cursor = new Date(cursor);
+    cursor.setDate(cursor.getDate() - durationDays);
+    rows[i].plannedEnd = end.toISOString().split("T")[0];
+    rows[i].plannedStart = cursor.toISOString().split("T")[0];
+  }
+  return rows;
+}
+
+function PlanTab({ job, canWrite, onSaved }: { job: ProductionJob; canWrite: boolean; onSaved: () => void }) {
+  const stages = job.stages ?? [];
+  const hasPlanning = stages.some((s) => s.plannedStart);
+  const [editing, setEditing] = useState(!hasPlanning);
+  const [deliveryDate, setDeliveryDate] = useState(job.plannedEnd?.split("T")[0] ?? "");
+  const [rows, setRows] = useState<PlanRow[]>(() =>
+    hasPlanning
+      ? stages.map((s) => ({ stageId: s.id, stageName: s.stageName, workCentre: s.workCentre, estimatedDurationMin: s.estimatedDurationMin, plannedStart: s.plannedStart ?? "", plannedEnd: s.plannedEnd ?? "" }))
+      : []
+  );
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState("");
+  const generatedRef = useRef(false);
+
+  // Auto-generate schedule when redirected from job creation (no plan yet)
+  useEffect(() => {
+    if (!hasPlanning && deliveryDate && !generatedRef.current && stages.length > 0) {
+      generatedRef.current = true;
+      setRows(buildPlanRows(job, deliveryDate));
+    }
+  }, [hasPlanning, deliveryDate, stages.length]);
+
+  function generate() {
+    if (!deliveryDate) { setErr("Enter a delivery date first"); return; }
+    setErr("");
+    setRows(buildPlanRows(job, deliveryDate));
+  }
+
+  function updateRow(idx: number, field: "plannedStart" | "plannedEnd", value: string) {
+    setRows((prev) => prev.map((r, i) => i === idx ? { ...r, [field]: value } : r));
+  }
+
+  async function save() {
+    if (rows.some((r) => !r.plannedStart || !r.plannedEnd)) { setErr("All stages need a planned start and end date"); return; }
+    setSaving(true);
+    setErr("");
+    try {
+      await savePlan(job.id, rows);
+      setEditing(false);
+      onSaved();
+    } catch (cause) {
+      setErr(cause instanceof Error ? cause.message : "Plan could not be saved");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  // ── View mode ────────────────────────────────────────────────────────────────
+  if (!editing) {
     return (
-      <div className="rounded-xl border p-6 text-center text-sm" style={{ borderColor: "var(--border)", color: "var(--text-3)" }}>
-        <p>No production plan recorded for this job.</p>
-        <p className="mt-1 text-xs">Planning data is captured when creating a job with backward scheduling.</p>
+      <div className="space-y-3">
+        <div className="flex items-center justify-between">
+          <p className="text-xs" style={{ color: "var(--text-3)" }}>Stage-by-stage schedule · dates are working-day estimates</p>
+          {canWrite && <button type="button" onClick={() => setEditing(true)} className="px-3 py-1.5 rounded-lg border text-xs font-semibold" style={{ borderColor: "var(--border)" }}>Edit Plan</button>}
+        </div>
+        <div className="rounded-xl border overflow-x-auto" style={{ borderColor: "var(--border)" }}>
+          <table className="w-full text-xs">
+            <thead style={{ background: "var(--surface-2)" }}>
+              <tr>{["Stage", "Work Centre", "Planned Start", "Planned End", "Est. Duration", "Actual Start", "Actual End", "Variance", "Status"].map((h) => (
+                <th key={h} className="text-left px-3 py-2 font-semibold whitespace-nowrap" style={{ color: "var(--text-3)" }}>{h}</th>
+              ))}</tr>
+            </thead>
+            <tbody>
+              {stages.map((stage) => {
+                const v = stageVariance(stage);
+                return (
+                  <tr key={stage.id} className="border-t" style={{ borderColor: "var(--border)" }}>
+                    <td className="px-3 py-2 font-medium whitespace-nowrap">{stage.seqNo}. {stage.stageName}</td>
+                    <td className="px-3 py-2" style={{ color: "var(--text-3)" }}>{stage.workCentre || "—"}</td>
+                    <td className="px-3 py-2 whitespace-nowrap">{displayDate(stage.plannedStart) || "—"}</td>
+                    <td className="px-3 py-2 whitespace-nowrap">{displayDate(stage.plannedEnd) || "—"}</td>
+                    <td className="px-3 py-2 whitespace-nowrap">{stage.estimatedDurationMin != null ? `${(stage.estimatedDurationMin / 60).toFixed(1)}h` : "—"}</td>
+                    <td className="px-3 py-2 whitespace-nowrap">{displayDate(stage.actualStartAt) || "—"}</td>
+                    <td className="px-3 py-2 whitespace-nowrap">{displayDate(stage.actualEndAt) || "—"}</td>
+                    <td className={`px-3 py-2 font-mono ${varianceClass(v)}`}>{v != null ? `${v > 0 ? "+" : ""}${v}%` : "—"}</td>
+                    <td className="px-3 py-2"><StatusChip status={stage.status} size="sm" /></td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       </div>
     );
   }
+
+  // ── Edit / Create mode ────────────────────────────────────────────────────────
   return (
-    <div className="space-y-3">
-      <div className="rounded-xl border overflow-hidden" style={{ borderColor: "var(--border)" }}>
-        <table className="w-full text-xs">
-          <thead style={{ background: "var(--surface-2)" }}>
-            <tr>
-              {["Stage", "Work Centre", "Planned Start", "Planned End", "Est. Duration", "Actual Start", "Actual End", "Variance", "Status"].map((h) => (
-                <th key={h} className="text-left px-3 py-2 font-semibold" style={{ color: "var(--text-3)" }}>{h}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {stages.map((stage) => {
-              const v = stageVariance(stage);
-              return (
-                <tr key={stage.id} className="border-t" style={{ borderColor: "var(--border)" }}>
-                  <td className="px-3 py-2 font-medium">{stage.seqNo}. {stage.stageName}</td>
-                  <td className="px-3 py-2" style={{ color: "var(--text-3)" }}>{stage.workCentre || "—"}</td>
-                  <td className="px-3 py-2">{displayDate(stage.plannedStart) !== "—" ? displayDate(stage.plannedStart) : "—"}</td>
-                  <td className="px-3 py-2">{displayDate(stage.plannedEnd) !== "—" ? displayDate(stage.plannedEnd) : "—"}</td>
-                  <td className="px-3 py-2">{stage.estimatedDurationMin != null ? `${(stage.estimatedDurationMin / 60).toFixed(1)}h` : "—"}</td>
-                  <td className="px-3 py-2">{displayDate(stage.actualStartAt) !== "—" ? displayDate(stage.actualStartAt) : "—"}</td>
-                  <td className="px-3 py-2">{displayDate(stage.actualEndAt) !== "—" ? displayDate(stage.actualEndAt) : "—"}</td>
-                  <td className={`px-3 py-2 font-mono ${varianceClass(v)}`}>{v != null ? `${v > 0 ? "+" : ""}${v}%` : "—"}</td>
-                  <td className="px-3 py-2"><StatusChip status={stage.status} size="sm" /></td>
+    <div className="space-y-4 max-w-3xl">
+      {/* Prompt banner for new plan */}
+      {!hasPlanning && (
+        <div className="rounded-xl border-2 p-4" style={{ borderColor: "var(--brand)", background: "var(--surface-2)" }}>
+          <p className="text-sm font-semibold mb-1">Set up the production plan</p>
+          <p className="text-xs" style={{ color: "var(--text-3)" }}>Enter the delivery date and generate a backward-scheduled stage plan. You can adjust individual dates before saving.</p>
+        </div>
+      )}
+
+      {/* Delivery date + generate */}
+      <div className="flex items-end gap-3">
+        <label className="text-xs font-semibold flex-1 max-w-xs">
+          Delivery date
+          <input type="date" className="eoss-input w-full mt-1" value={deliveryDate} onChange={(e) => setDeliveryDate(e.target.value)} />
+        </label>
+        <button type="button" onClick={generate} className="px-3 py-2 rounded-lg text-xs font-semibold text-white" style={{ background: "var(--brand-fill)" }}>
+          Generate schedule
+        </button>
+      </div>
+
+      {/* Stage rows */}
+      {rows.length > 0 && (
+        <div className="rounded-xl border overflow-hidden" style={{ borderColor: "var(--border)" }}>
+          <table className="w-full text-xs">
+            <thead style={{ background: "var(--surface-2)" }}>
+              <tr>
+                {["Stage", "Work Centre", "Est. Duration", "Planned Start", "Planned End"].map((h) => (
+                  <th key={h} className="text-left px-3 py-2 font-semibold" style={{ color: "var(--text-3)" }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row, idx) => (
+                <tr key={row.stageId} className="border-t" style={{ borderColor: "var(--border)" }}>
+                  <td className="px-3 py-2 font-medium">{idx + 1}. {row.stageName}</td>
+                  <td className="px-3 py-2" style={{ color: "var(--text-3)" }}>{row.workCentre || "—"}</td>
+                  <td className="px-3 py-2">{row.estimatedDurationMin != null ? `${(row.estimatedDurationMin / 60).toFixed(1)}h` : "—"}</td>
+                  <td className="px-2 py-1.5"><input type="date" className="eoss-input w-full" value={row.plannedStart} onChange={(e) => updateRow(idx, "plannedStart", e.target.value)} /></td>
+                  <td className="px-2 py-1.5"><input type="date" className="eoss-input w-full" value={row.plannedEnd} onChange={(e) => updateRow(idx, "plannedEnd", e.target.value)} /></td>
                 </tr>
-              );
-            })}
-          </tbody>
-        </table>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {rows.length === 0 && (
+        <p className="text-xs py-4 text-center" style={{ color: "var(--text-3)" }}>Enter a delivery date and click Generate schedule to build the plan.</p>
+      )}
+
+      {err && <p className="text-xs" style={{ color: "var(--error)" }}>{err}</p>}
+
+      <div className="flex gap-3 pt-1">
+        {hasPlanning && <button type="button" onClick={() => setEditing(false)} className="px-4 py-2 rounded-lg border text-xs" style={{ borderColor: "var(--border)" }}>Cancel</button>}
+        <button type="button" onClick={() => void save()} disabled={saving || rows.length === 0} className="px-5 py-2 rounded-lg text-xs font-semibold text-white disabled:opacity-50" style={{ background: "var(--brand-fill)" }}>
+          {saving ? "Saving…" : "Save Plan"}
+        </button>
       </div>
     </div>
   );

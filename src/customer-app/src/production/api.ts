@@ -352,6 +352,10 @@ export function listSites(): Promise<{ id: string; name: string }[]> {
     .catch(() => []);
 }
 
+export function savePlan(jobId: string, stages: Array<{ stageId: string; plannedStart: string; plannedEnd: string }>) {
+  return post<ProductionJob>(`/api/v1/jobs/${jobId}/plan`, { stages });
+}
+
 export function cancelJob(id: string, reason: string) {
   return post<ProductionJob>(`/api/v1/jobs/${id}/cancel`, { reason });
 }
