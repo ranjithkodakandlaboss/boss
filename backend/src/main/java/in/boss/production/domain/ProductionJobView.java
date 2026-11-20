@@ -162,7 +162,14 @@ class ProductionJobView {
 
     private List<MaterialRequirementResponse> materials(UUID tenantId, UUID jobId) {
         return jdbc.query("""
-                SELECT r.id, r.item_id, i.code, i.name, r.required_qty, r.issued_qty, r.returned_qty, u.symbol
+                SELECT r.id, r.item_id, i.code, i.name, i.std_cost,
+                       r.required_qty, r.issued_qty, r.returned_qty, u.symbol,
+                       CASE WHEN r.issued_qty - r.returned_qty > 0
+                            THEN (SELECT SUM(m.quantity * m.unit_cost) / NULLIF(SUM(m.quantity), 0)
+                                  FROM job_material_issues m
+                                  WHERE m.tenant_id = r.tenant_id AND m.requirement_id = r.id
+                                    AND m.issue_type = 'issue' AND m.unit_cost IS NOT NULL)
+                            ELSE NULL END AS actual_unit_cost
                 FROM job_material_requirements r
                 JOIN items i ON i.id = r.item_id AND i.tenant_id = r.tenant_id
                 JOIN units_of_measure u ON u.id = r.uom_id
@@ -172,9 +179,17 @@ class ProductionJobView {
             BigDecimal issued = rs.getBigDecimal("issued_qty");
             BigDecimal returned = rs.getBigDecimal("returned_qty");
             BigDecimal net = issued.subtract(returned);
-            return new MaterialRequirementResponse(rs.getObject("id", UUID.class), rs.getObject("item_id", UUID.class),
-                    rs.getString("code"), rs.getString("name"), required, issued, returned, net,
-                    rs.getString("symbol"), ProductionMaterialReadiness.line(net, required));
+            BigDecimal stdCost = rs.getBigDecimal("std_cost");
+            BigDecimal estUnitCost = stdCost;
+            BigDecimal estTotalCost = stdCost != null ? stdCost.multiply(required) : null;
+            BigDecimal actUnitCost = rs.getBigDecimal("actual_unit_cost");
+            BigDecimal actTotalCost = actUnitCost != null && net.signum() > 0
+                    ? actUnitCost.multiply(net) : null;
+            return new MaterialRequirementResponse(rs.getObject("id", UUID.class),
+                    rs.getObject("item_id", UUID.class), rs.getString("code"), rs.getString("name"),
+                    required, issued, returned, net, rs.getString("symbol"),
+                    ProductionMaterialReadiness.line(net, required),
+                    estUnitCost, estTotalCost, actUnitCost, actTotalCost);
         }, tenantId, jobId);
     }
 

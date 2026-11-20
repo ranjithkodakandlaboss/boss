@@ -239,6 +239,8 @@ function isBomComponent(itemType?: string) {
 function BomForm({ items, uoms, onClose, onSaved }: { items: Item[]; uoms: Uom[]; onClose: () => void; onSaved: () => void }) {
   const parents = items.filter((item) => isBomParent(item));
   const [itemId, setItemId] = useState("");
+  const [labourCostPerUnit, setLabourCostPerUnit] = useState("");
+  const [machineCostPerUnit, setMachineCostPerUnit] = useState("");
   const [lines, setLines] = useState<BomLine[]>([{ componentItemId: "", qty: "", uomId: uoms[0]?.id ?? "", scrapFactor: 0 }]);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
@@ -272,6 +274,8 @@ function BomForm({ items, uoms, onClose, onSaved }: { items: Item[]; uoms: Uom[]
         method: "POST",
         headers: { "Idempotency-Key": safeRandomUUID() },
         body: JSON.stringify({
+          labourCostPerUnit: labourCostPerUnit !== "" ? Number(labourCostPerUnit) : null,
+          machineCostPerUnit: machineCostPerUnit !== "" ? Number(machineCostPerUnit) : null,
           lines: lines.map((line) => ({
             componentItemId: line.componentItemId,
             qty: line.quantityFormula?.trim() ? (Number(line.qty) || 1) : Number(line.qty),
@@ -306,6 +310,16 @@ function BomForm({ items, uoms, onClose, onSaved }: { items: Item[]; uoms: Uom[]
         </select>
         {parents.length === 0 && <p className="mt-1 text-xs text-[var(--error)]">No manufactured finished goods or semi-finished items found. Add items in the Items catalogue first.</p>}
       </label>
+      <div className="mt-4 grid grid-cols-2 gap-3">
+        <label className="flex flex-col gap-1 text-sm font-medium text-[var(--text)]">
+          Labour cost per unit (₹)
+          <input aria-label="Labour cost per unit" className="eoss-input w-full font-normal" type="number" min="0" step="0.01" value={labourCostPerUnit} onChange={(event) => setLabourCostPerUnit(event.target.value)} placeholder="Optional" />
+        </label>
+        <label className="flex flex-col gap-1 text-sm font-medium text-[var(--text)]">
+          Machine cost per unit (₹)
+          <input aria-label="Machine cost per unit" className="eoss-input w-full font-normal" type="number" min="0" step="0.01" value={machineCostPerUnit} onChange={(event) => setMachineCostPerUnit(event.target.value)} placeholder="Optional" />
+        </label>
+      </div>
       <div className="mt-4 space-y-2">
         <p className="text-xs font-medium text-[var(--text-2)]">Components</p>
         {lines.map((line, index) => (
