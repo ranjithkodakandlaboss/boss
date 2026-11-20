@@ -73,14 +73,17 @@ export default function BomPage({ embedded = false }: { embedded?: boolean }) {
       {loading ? <LoadingState label="Loading bills of materials" /> : error ? <ErrorState body={error} /> : (
         <div className="grid gap-4 p-5 lg:grid-cols-[1fr_1fr]">
           <table className="w-full text-left text-sm">
-            <thead><tr className="text-xs text-[var(--text-3)]"><th>Finished item</th><th>Version</th><th>Status</th></tr></thead>
+            <thead><tr className="text-xs text-[var(--text-3)]"><th>Finished item</th><th>Version</th><th>Status</th><th /></tr></thead>
             <tbody>
-              {boms.length === 0 && <tr><td colSpan={3} className="py-6 text-[var(--text-3)]">No bills of materials yet. Create one before opening a production job.</td></tr>}
+              {boms.length === 0 && <tr><td colSpan={4} className="py-6 text-[var(--text-3)]">No bills of materials yet. Create one before opening a production job.</td></tr>}
               {boms.map((bom) => (
                 <tr key={bom.id} className="cursor-pointer border-t border-[var(--border)]" onClick={() => setSelected(bom)}>
                   <td className="py-2">{bom.itemCode} {bom.itemName}</td>
                   <td>v{bom.version}</td>
                   <td>{bom.status === "approved" ? "Approved" : bom.status}</td>
+                  <td className="py-2 text-right" onClick={e => e.stopPropagation()}>
+                    <button type="button" className="text-xs px-2 py-1 rounded-lg font-semibold text-white" style={{ background: 'var(--brand-fill)' }} onClick={() => setSelected(bom)}>View</button>
+                  </td>
                 </tr>
               ))}
             </tbody>

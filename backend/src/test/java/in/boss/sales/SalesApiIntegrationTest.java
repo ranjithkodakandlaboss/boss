@@ -945,6 +945,7 @@ class SalesApiIntegrationTest extends BaseMasterDataIntegrationTest {
         assertThat(first.cpo().decisionChannel()).isEqualTo("OWNER_RECORDED");
         assertThat(first.cpo().decidedBy()).isEqualTo(BossContextHolder.get().userId());
         assertThat(first.cpo().lines().get(0).unitPrice()).isEqualByComparingTo("20.00");
+        assertThat(first.cpo().lines().get(0).producedQty()).isEqualByComparingTo("0");
         assertThat(jdbc.queryForObject(
                 "SELECT COUNT(*) FROM cpos WHERE tenant_id = ? AND quotation_id = ?",
                 Integer.class, tenantId, quotation.id())).isEqualTo(1);
@@ -953,6 +954,7 @@ class SalesApiIntegrationTest extends BaseMasterDataIntegrationTest {
                 new in.boss.sales.api.SalesApiDtos.UpdateCpoRequest("OFFLINE-15", "Updated reference", null, 45))
                 .customerPoRef()).isEqualTo("OFFLINE-15");
         assertThat(customerPoService.get(first.cpo().id()).lines().get(0).unitPrice()).isEqualByComparingTo("20.00");
+        assertThat(customerPoService.get(first.cpo().id()).lines().get(0).producedQty()).isEqualByComparingTo("0");
 
         var declined = sentQuotation(new BigDecimal("18.00"));
         salesService.updateQuotationStatus(declined.id(), "rejected", "Customer declined offline");

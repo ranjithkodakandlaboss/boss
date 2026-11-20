@@ -7,8 +7,9 @@ import CreatableSelect, { roleAllowed } from "../components/shared/CreatableSele
 import RecordSheet from "../components/shared/RecordSheet";
 import StatusChip from "../components/shared/StatusChip";
 import { createLot, lotFields } from "../inventory/inlineCreate";
+import { createInspection as createQualityInspection, recordResult as recordQualityInspectionResult } from "../quality/api";
 import {
-  addCost, cancelJob, concede, displayDate, featureFlags, getJob, getJobCosting, issueMaterial, money, openInspection, readinessLabel,
+  addCost, cancelJob, completeJob, concede, displayDate, featureFlags, getJob, getJobCosting, issueMaterial, money, openInspection, readinessLabel,
   recordInspection, releaseHold, returnMaterial, skipStage, usableLots,
   type JobCosting, type LotOption, type ProductionJob,
 } from "./api";
@@ -85,7 +86,24 @@ export default function JobWorkspacePage() {
       {tab === "Overview" && <Overview job={job} />}
       {tab === "Stages" && <Stages job={job} canWrite={canWrite && flags["production.stage.transition"] !== false} onSkip={(stageId, reason) => act(() => skipStage(job.id, stageId, reason), "Stage skipped")} />}
       {tab === "Materials" && <Materials job={job} canIssue={canWrite && flags["production.material.issue"] !== false} canReturn={canWrite && flags["production.material.return"] !== false} onIssue={(requirementId, lotId, qty, note) => act(() => issueMaterial(job.id, requirementId, lotId, qty, note), "Material issued")} onReturn={(issueId, qty, note) => act(() => returnMaterial(job.id, issueId, qty, note), "Material returned")} />}
-      {tab === "Quality" && <Quality job={job} enabled={flags["production.inspection.gate"] !== false} canQuality={canQuality} canConcede={canConcede} onOpen={(stageId) => act(() => openInspection(job.id, stageId), "Inspection opened")} onResult={(inspectionId, result, note) => act(() => recordInspection(job.id, inspectionId, result, note), "Inspection recorded")} onConcede={(inspectionId, note) => act(() => concede(job.id, inspectionId, note), "Concession approved")} />}
+      {tab === "Quality" && <Quality
+        job={job}
+        enabled={flags["production.inspection.gate"] !== false}
+        canQuality={canQuality}
+        canConcede={canConcede}
+        onOpen={(stageId) => act(() => openInspection(job.id, stageId), "Inspection opened")}
+        onOpenFinal={() => act(() => createQualityInspection({
+          inspectionType: "final",
+          referenceType: "production_job",
+          referenceId: job.id,
+          ...(job.itemId ? { itemId: job.itemId } : {}),
+          quantityInspected: Number(job.qty ?? 0),
+          notes: "Final production inspection",
+        }), "Final inspection opened")}
+        onResult={(inspectionId, result, note) => act(() => recordInspection(job.id, inspectionId, result, note), "Inspection recorded")}
+        onFinalResult={(inspectionId, result) => void finalizeInspection(inspectionId, result)}
+        onConcede={(inspectionId, note) => act(() => concede(job.id, inspectionId, note), "Concession approved")}
+      />}
       {tab === "NCR / Rework" && <Ncr job={job} />}
       {tab === "Updates" && <Updates job={job} />}
       {tab === "Blockers" && <Blockers job={job} />}
@@ -108,6 +126,22 @@ export default function JobWorkspacePage() {
     } catch (cause) {
       setError(cause instanceof ApiError ? cause.message : "The change was not saved");
       return false;
+    }
+  }
+
+  async function finalizeInspection(inspectionId: string, result: "pass" | "fail") {
+    if (!job) return;
+    const saved = await act(() => recordQualityInspectionResult(inspectionId, {
+      result,
+      quantityAccepted: result === "pass" ? Number(job.qty ?? 0) : 0,
+      quantityRejected: result === "fail" ? Number(job.qty ?? 0) : 0,
+      notes: result === "pass" ? "Final quantity accepted" : "Final inspection failed",
+    }), "Final inspection recorded");
+    const stagesClosed = (job.stages ?? []).length > 0
+      && (job.stages ?? []).every((stage) => stage.status === "completed" || stage.status === "skipped");
+    if (saved && result === "pass" && stagesClosed && job.status === "in_progress"
+        && job.materialReadiness === "issued") {
+      await act(() => completeJob(job.id), "Job completed");
     }
   }
 }
@@ -176,6 +210,7 @@ function Stages({ job, canWrite, onSkip }: { job: ProductionJob; canWrite: boole
           <div>
             <div className="text-sm font-semibold">{stage.seqNo}. {stage.stageName}</div>
             <div className="text-xs" style={{ color: "var(--text-3)" }}>{stage.workCentre || "Work centre not set"} · Inspection {stage.inspectionStatus}</div>
+            {stage.blockerReason && <div role="status" className="text-xs mt-1" style={{ color: "var(--error)" }}>Machine blocker: {stage.blockerReason}</div>}
           </div>
           <div className="flex items-center gap-2">
             <StatusChip status={stage.status} size="sm" />
@@ -219,12 +254,14 @@ function MaterialRow({ job, row, canIssue, onIssue }: { job: ProductionJob; row:
   const canCreateLot = roleAllowed(user?.roles, ["OWNER", "OPS_MANAGER", "STORE_KEEPER"]);
   const [lots, setLots] = useState<LotOption[]>([]);
   const [lotError, setLotError] = useState("");
+  const [lotsLoading, setLotsLoading] = useState(false);
   const [lotReload, setLotReload] = useState(0);
   const [lotId, setLotId] = useState("");
   const [qty, setQty] = useState(String(Math.max(row.requiredQty - row.netIssuedQty, 0)));
   useEffect(() => {
     if (!canIssue) return;
     setLotError("");
+    setLotsLoading(true);
     usableLots(row.itemId, job.id).then((page) => setLots((page.content ?? []).filter((lot) => {
       if (job.siteId && lot.siteId && lot.siteId !== job.siteId) return false;
       const status = (lot.status || "").toLowerCase();
@@ -235,7 +272,8 @@ function MaterialRow({ job, row, canIssue, onIssue }: { job: ProductionJob; row:
       .catch((cause: unknown) => {
         setLots([]);
         setLotError(cause instanceof Error ? cause.message : "Lots could not be loaded.");
-      });
+      })
+      .finally(() => setLotsLoading(false));
   }, [canIssue, row.itemId, job.siteId, job.id, lotReload]);
   return (
     <div className="rounded-xl border p-3" style={{ borderColor: "var(--border)" }}>
@@ -251,6 +289,8 @@ function MaterialRow({ job, row, canIssue, onIssue }: { job: ProductionJob; row:
               return { id: created.id, label: lotChoice(option) };
             }} />
           </div>
+          {lotsLoading && <p role="status" className="text-xs">Loading usable lots…</p>}
+          {!lotsLoading && !lotError && lots.length === 0 && <p className="text-xs" style={{ color: "var(--text-3)" }}>No usable lots found. Quarantined and held lots are excluded.</p>}
           <label className="text-xs">Qty<input className="eoss-input mt-1 w-24" aria-label={`Issue quantity for ${row.itemCode}`} value={qty} onChange={(event) => setQty(event.target.value)} /></label>
           <button type="button" className="px-3 py-1.5 rounded-lg text-xs font-semibold text-white" style={{ background: "var(--brand-fill)" }} disabled={!lotId || Number(qty) <= 0} onClick={() => onIssue(row.id, lotId, Number(qty), "Issued to job")}>Issue</button>
         </div>
@@ -279,18 +319,19 @@ function ReturnControl({ movementId, max, onReturn }: { movementId: string; max:
   );
 }
 
-function Quality({ job, enabled, canQuality, canConcede, onOpen, onResult, onConcede }: {
+function Quality({ job, enabled, canQuality, canConcede, onOpen, onOpenFinal, onResult, onFinalResult, onConcede }: {
   job: ProductionJob; enabled: boolean; canQuality: boolean; canConcede: boolean;
   onOpen: (stageId: string) => void; onResult: (inspectionId: string, result: "pass" | "fail", note: string) => void; onConcede: (inspectionId: string, note: string) => void;
+  onOpenFinal: () => void;
+  onFinalResult: (inspectionId: string, result: "pass" | "fail") => void;
 }) {
-  if (!enabled) return <p className="text-sm">In-process inspection is turned off for this company.</p>;
-  const inspectionStages = (job.stages ?? []).filter((stage) => stage.requiresInspection);
+  const inspectionStages = enabled ? (job.stages ?? []).filter((stage) => stage.requiresInspection) : [];
   const inspections = job.inspections ?? [];
-  if (inspectionStages.length === 0 && inspections.length === 0) {
-    return <p className="text-sm" style={{ color: "var(--text-3)" }}>No quality inspections are configured for this job.</p>;
-  }
+  const finalInspection = inspections.find((inspection) => !inspection.stageId
+    && ["final", "dispatch_readiness"].includes((inspection.inspectionType ?? "").toLowerCase()));
   return (
     <div className="space-y-3">
+      {!enabled && <p className="text-sm">In-process inspection is turned off for this company. Final inspection is still required before job completion.</p>}
       {inspectionStages.map((stage) => (
         <div key={stage.id} className="rounded-xl border p-3 text-sm" style={{ borderColor: "var(--border)" }}>
           <div className="flex justify-between"><span>{stage.stageName}</span><StatusChip status={stage.inspectionStatus} size="sm" /></div>
@@ -299,17 +340,32 @@ function Quality({ job, enabled, canQuality, canConcede, onOpen, onResult, onCon
       ))}
       {inspections.map((inspection) => (
         <div key={inspection.id} className="rounded-xl border p-3 text-sm space-y-2" style={{ borderColor: "var(--border)" }}>
-          <div>{inspection.inspectionNumber} · {inspection.inspectionType} · {inspection.result || inspection.status}</div>
-          {canQuality && !inspection.result && (
+          <div>{inspection.stageId ? `${job.stages?.find((stage) => stage.id === inspection.stageId)?.stageName ?? "Stage"} · ` : "Job · "}{inspection.inspectionNumber} · {inspection.inspectionType} · {inspection.result || inspection.status}</div>
+          {inspection.quantityInspected != null && <div className="text-xs">Inspected {inspection.quantityInspected} · Accepted {inspection.quantityAccepted ?? "—"} · Rejected {inspection.quantityRejected ?? "—"}</div>}
+          {canQuality && !inspection.result && inspection.stageId && (
             <div className="flex gap-2">
               <button type="button" onClick={() => onResult(inspection.id, "pass", "Accepted")}>Pass</button>
               <button type="button" onClick={() => onResult(inspection.id, "fail", "Rejected")}>Fail</button>
             </div>
           )}
+          {canQuality && !inspection.result && !inspection.stageId
+            && ["final", "dispatch_readiness"].includes((inspection.inspectionType ?? "").toLowerCase()) && (
+              <div className="flex gap-2">
+                <button type="button" onClick={() => onFinalResult(inspection.id, "pass")}>Pass final inspection</button>
+                <button type="button" onClick={() => onFinalResult(inspection.id, "fail")}>Fail final inspection</button>
+              </div>
+            )}
           {inspection.ncrId && <div>NCR {inspection.ncrStatus}{inspection.concessionStatus ? ` · concession ${inspection.concessionStatus}` : ""}</div>}
-          {canConcede && inspection.result === "fail" && inspection.concessionStatus !== "approved" && <button type="button" onClick={() => { const note = window.prompt("Concession note"); if (note) onConcede(inspection.id, note); }}>Approve concession</button>}
+          {canConcede && inspection.stageId && inspection.result === "fail" && inspection.concessionStatus !== "approved" && <button type="button" onClick={() => { const note = window.prompt("Concession note"); if (note) onConcede(inspection.id, note); }}>Approve concession</button>}
         </div>
       ))}
+      {!finalInspection && (
+        <section className="rounded-xl border p-3 text-sm" style={{ borderColor: "var(--border)" }}>
+          <div className="font-semibold">Final inspection required</div>
+          <p className="text-xs mt-1" style={{ color: "var(--text-2)" }}>Inspect and accept the full job quantity before the job can be completed.</p>
+          {canQuality && <button type="button" className="text-xs font-semibold mt-2" onClick={onOpenFinal}>Open final inspection</button>}
+        </section>
+      )}
     </div>
   );
 }
@@ -331,14 +387,26 @@ function Updates({ job }: { job: ProductionJob }) {
 
 function Blockers({ job }: { job: ProductionJob }) {
   const failed = (job.stages ?? []).filter((stage) => stage.inspectionStatus === "failed");
-  if (job.status !== "on_hold" && job.risk !== "blocked" && failed.length === 0 && job.risk !== "awaiting_material") {
+  const machines = (job.stages ?? []).filter((stage) => stage.blockerReason);
+  const stagesClosed = (job.stages ?? []).length > 0
+    && (job.stages ?? []).every((stage) => stage.status === "completed" || stage.status === "skipped");
+  const finalPassed = (job.inspections ?? []).some((inspection) =>
+    !inspection.stageId
+    && ["final", "dispatch_readiness"].includes((inspection.inspectionType ?? "").toLowerCase())
+    && inspection.result === "pass"
+    && Number(inspection.quantityAccepted ?? 0) >= Number(job.qty ?? 0));
+  if (job.status !== "on_hold" && job.risk !== "blocked" && failed.length === 0
+      && job.risk !== "awaiting_material" && machines.length === 0
+      && !(stagesClosed && !finalPassed && job.status !== "completed")) {
     return <p className="text-sm" style={{ color: "var(--text-3)" }}>No open blocker.</p>;
   }
   return (
     <ul className="text-sm space-y-1">
-      {job.status === "on_hold" && <li>The job is on hold.</li>}
+      {job.status === "on_hold" && <li>The job is on hold{job.holdReason ? `: ${job.holdReason}` : "."}</li>}
       {job.risk === "awaiting_material" && <li>Material is not ready. {job.projectionBasis}</li>}
       {failed.map((stage) => <li key={stage.id}>{stage.stageName} is waiting on a failed inspection.</li>)}
+      {machines.map((stage) => <li key={stage.id}>{stage.stageName} is blocked by machine downtime: {stage.blockerReason}</li>)}
+      {stagesClosed && !finalPassed && job.status !== "completed" && <li>A passing final inspection covering all {job.qty} units is required before job completion.</li>}
     </ul>
   );
 }

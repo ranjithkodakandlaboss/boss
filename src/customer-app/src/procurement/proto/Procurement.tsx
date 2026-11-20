@@ -977,6 +977,7 @@ function QuoteCompareModal({
                                 Qty: {cell.quotedQty}{cell.qtyMismatch && <span className="text-amber-700 font-semibold"> (Diff)</span>}
                                 {' · '}₹{cell.lineTotal.toLocaleString('en-IN')}
                               </div>
+                              <div className="text-[11px] text-[var(--text-2)]">Grade: {cell.grade || '—'}</div>
                               {cell.gradeMismatch && (
                                 <div className="text-[11px] text-amber-700 font-semibold">
                                   Grade diff: {cell.grade || 'Unspecified'}

@@ -662,6 +662,7 @@ export default function PRDetail() {
                                 ₹{cell.unitPrice.toLocaleString('en-IN')}/{row.uom} × {cell.quotedQty}
                                 {row.lowestUnitPrice === cell.unitPrice && <span className="ml-1 px-1 rounded bg-emerald-100 text-emerald-700 font-sans text-[10px]">Lowest</span>}
                                 {cell.qtyMismatch && <div className="text-amber-700 font-sans text-[10px]">Qty variance vs {row.requiredQty}</div>}
+                                <div className="font-sans text-[10px] text-[var(--text-2)]">Grade: {cell.grade || '—'}</div>
                                 {cell.gradeMismatch && <div className="text-amber-700 font-sans text-[10px]">Grade diff: {cell.grade}</div>}
                               </div>
                             )}

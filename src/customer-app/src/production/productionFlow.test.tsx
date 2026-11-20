@@ -53,7 +53,7 @@ beforeEach(() => {
     if (url.includes("/tenant/info")) return Promise.resolve(json({ id: "t", name: "North Works", status: "active" }));
     if (url.includes("/onboarding")) return Promise.resolve(json({ industryType: "GENERAL_MANUFACTURING", completed: true, company: { sites: [], stores: [] } }));
     if (url.includes("/jobs/features")) return Promise.resolve(json({ "production.job.create": true, "production.routing.stages": true, "production.material.issue": true, "production.stage.transition": true }));
-    if (url.includes("/eligible-cpos")) return Promise.resolve(json([{ cpoId, cpoLineId: lineId, cpoNumber: "CPO-100", customerName: "North Works", itemId, itemName: "Frame", qty: 10, sellingPrice: 1000, siteName: "Plant" }]));
+    if (url.includes("/eligible-cpos")) return Promise.resolve(json([{ cpoId, cpoLineId: lineId, lineNo: 1, cpoNumber: "CPO-100", customerName: "North Works", itemId, itemCode: "FRAME", itemName: "Frame", qty: 10, remainingQty: 7, sellingPrice: 1000, siteName: "Plant" }]));
     if (url.includes("/routing-templates")) return Promise.resolve(json([{ id: templateId, name: "Frame route", version: "v3", stageCount: 1 }]));
     if (url.includes("/inventory/lots")) return Promise.resolve(json({ content: [{ id: lotId, itemId, batchRef: "BATCH", availableQty: 20, siteId: "site" }] }));
     if (url.endsWith(`/api/v1/jobs/${jobId}/costing`)) return Promise.resolve(json({
@@ -97,6 +97,7 @@ it("opens a job from an eligible customer order and issues material", async () =
   expect((await screen.findAllByText("JOB-100")).length).toBeGreaterThan(0);
   await userEvent.click(screen.getByRole("button", { name: "New Job" }));
   await userEvent.selectOptions(await screen.findByLabelText("Customer PO"), lineId);
+  expect(screen.getByRole("option", { name: /CPO-100 — Line 1 — North Works — FRAME Frame — 7 remaining/ })).toBeInTheDocument();
   expect(screen.getByText(/Selling price stays on the Customer PO/)).toBeInTheDocument();
   await userEvent.selectOptions(screen.getByLabelText("Production workflow"), templateId);
   await userEvent.type(screen.getByLabelText("Planned End"), "2026-12-01");
@@ -169,7 +170,7 @@ it("adds a workflow when none is active and does not add a priority", async () =
     if (url.includes("/tenant/info")) return Promise.resolve(json({ id: "t", name: "North Works", status: "active" }));
     if (url.includes("/onboarding")) return Promise.resolve(json({ industryType: "GENERAL_MANUFACTURING", completed: true, company: { sites: [], stores: [] } }));
     if (url.includes("/jobs/features")) return Promise.resolve(json({ "production.job.create": true }));
-    if (url.includes("/eligible-cpos")) return Promise.resolve(json([{ cpoId, cpoLineId: lineId, cpoNumber: "CPO-100", customerName: "North Works", itemId, itemName: "Frame", qty: 10, sellingPrice: 1000, siteName: "Plant" }]));
+    if (url.includes("/eligible-cpos")) return Promise.resolve(json([{ cpoId, cpoLineId: lineId, lineNo: 1, cpoNumber: "CPO-100", customerName: "North Works", itemId, itemName: "Frame", qty: 10, sellingPrice: 1000, siteName: "Plant" }]));
     if (url.includes("/routing-templates") && init?.method === "POST") {
       expect(JSON.parse(String(init.body))).toEqual({ name: "Frame route", stageName: "Cutting", stages: [{ name: "Cutting" }] });
       return Promise.resolve(json({ id: createdTemplate, name: "Frame route", version: "v1", stageCount: 1 }, 201));
@@ -193,5 +194,5 @@ it("adds a workflow when none is active and does not add a priority", async () =
   await userEvent.type(screen.getByLabelText("Workflow name"), "Frame route");
   await userEvent.type(screen.getByLabelText("Stages in order, separated by commas"), "Cutting");
   await userEvent.click(screen.getByRole("button", { name: "Save" }));
-  expect(await screen.findByRole("option", { name: "Frame route (1 stages)" })).toBeInTheDocument();
+  expect(await screen.findByRole("option", { name: "Frame route · v1 · 1 stages" })).toBeInTheDocument();
 });

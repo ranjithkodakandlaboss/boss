@@ -6,6 +6,7 @@ import in.boss.production.api.ProductionApiDtos.JobStageResponse;
 import in.boss.production.api.ProductionApiDtos.MaterialMovementResponse;
 import in.boss.production.api.ProductionApiDtos.MaterialRequirementResponse;
 import in.boss.production.api.ProductionApiDtos.ProductionJobResponse;
+import in.boss.maintenance.domain.MaintenanceService;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
@@ -27,13 +28,15 @@ class ProductionJobView {
     private final ProductionSupport support;
     private final ProductionMaterialReadiness readiness;
     private final JobCostingService costing;
+    private final MaintenanceService maintenance;
 
     ProductionJobView(JdbcTemplate jdbc, ProductionSupport support, ProductionMaterialReadiness readiness,
-                      JobCostingService costing) {
+                      JobCostingService costing, MaintenanceService maintenance) {
         this.jdbc = jdbc;
         this.support = support;
         this.readiness = readiness;
         this.costing = costing;
+        this.maintenance = maintenance;
     }
 
     ProductionJobResponse map(ResultSet rs, int row) throws SQLException {
@@ -56,7 +59,8 @@ class ProductionJobView {
                 rs.getObject("customer_id", UUID.class), rs.getString("customer_name"),
                 rs.getObject("finished_item_id", UUID.class), rs.getString("item_code"), rs.getString("item_name"),
                 rs.getBigDecimal("quantity"), rs.getString("uom_symbol"), rs.getObject("routing_id", UUID.class),
-                rs.getString("routing_name"), rs.getString("routing_version"), status, rs.getString("priority"),
+                rs.getString("routing_name"), rs.getString("routing_version"), status, rs.getString("hold_reason"),
+                rs.getString("priority"),
                 rs.getObject("site_id", UUID.class), rs.getString("site_name"), date(rs, "planned_start"), plannedEnd,
                 instant(rs, "actual_start"), instant(rs, "actual_end"), currentStage(stages), materialReadiness,
                 risk.name, risk.daysRemaining, risk.projected, risk.basis, stages, materials,
@@ -72,10 +76,10 @@ class ProductionJobView {
                 FROM job_stages s
                 LEFT JOIN assets a ON a.id = s.asset_id AND a.tenant_id = s.tenant_id
                 WHERE s.tenant_id = ? AND s.job_id = ? ORDER BY s.seq_no
-                """, (rs, row) -> stage(tenantId, rs), tenantId, jobId);
+                """, (rs, row) -> stage(tenantId, jobId, rs), tenantId, jobId);
     }
 
-    private JobStageResponse stage(UUID tenantId, ResultSet rs) throws SQLException {
+    private JobStageResponse stage(UUID tenantId, UUID jobId, ResultSet rs) throws SQLException {
         UUID stageId = rs.getObject("id", UUID.class);
         boolean required = rs.getBoolean("requires_inspection");
         String label = rs.getString("stage_label_snapshot");
@@ -87,7 +91,8 @@ class ProductionJobView {
                 inspectionStatus(tenantId, stageId, required), rs.getBoolean("is_optional"), rs.getBoolean("is_optional"),
                 rs.getString("work_centre"), instant(rs, "actual_start"), instant(rs, "actual_end"),
                 rs.getObject("completed_by", UUID.class), rs.getObject("asset_id", UUID.class),
-                rs.getString("asset_number"));
+                rs.getString("asset_number"),
+                maintenance.machineBlocker(tenantId, jobId, stageId, rs.getString("work_centre")));
     }
 
     private String inspectionStatus(UUID tenantId, UUID stageId, boolean required) {
@@ -151,19 +156,27 @@ class ProductionJobView {
 
     private List<InspectionResponse> inspections(UUID tenantId, UUID jobId) {
         return jdbc.query("""
-                SELECT q.id, q.reference_id, q.inspection_number, q.inspection_type, q.status, q.result,
+                SELECT q.id,
+                       CASE WHEN q.reference_type = 'job_stage' THEN q.reference_id END AS stage_id,
+                       q.inspection_number, q.inspection_type, q.status, q.result,
+                       q.quantity_inspected, q.quantity_accepted, q.quantity_rejected,
                        n.id AS ncr_id, n.status AS ncr_status, c.status AS concession_status
                 FROM quality_inspections q
-                JOIN job_stages s ON s.id = q.reference_id AND s.tenant_id = q.tenant_id
+                LEFT JOIN job_stages s ON s.id = q.reference_id AND s.tenant_id = q.tenant_id
+                     AND q.reference_type = 'job_stage'
                 LEFT JOIN ncrs n ON n.inspection_id = q.id AND n.tenant_id = q.tenant_id
                 LEFT JOIN concessions c ON c.ncr_id = n.id AND c.tenant_id = n.tenant_id
-                WHERE q.tenant_id = ? AND s.job_id = ? AND q.reference_type = 'job_stage'
+                WHERE q.tenant_id = ?
+                  AND ((q.reference_type = 'production_job' AND q.reference_id = ?)
+                    OR (q.reference_type = 'job_stage' AND s.job_id = ?))
                 ORDER BY q.created_at
                 """, (rs, row) -> new InspectionResponse(rs.getObject("id", UUID.class),
-                rs.getObject("reference_id", UUID.class), rs.getString("inspection_number"),
+                rs.getObject("stage_id", UUID.class), rs.getString("inspection_number"),
                 rs.getString("inspection_type"), rs.getString("status"), rs.getString("result"),
+                rs.getBigDecimal("quantity_inspected"), rs.getBigDecimal("quantity_accepted"),
+                rs.getBigDecimal("quantity_rejected"),
                 rs.getObject("ncr_id", UUID.class), rs.getString("ncr_status"),
-                rs.getString("concession_status")), tenantId, jobId);
+                rs.getString("concession_status")), tenantId, jobId, jobId);
     }
 
     private static String currentStage(List<JobStageResponse> stages) {
@@ -204,7 +217,8 @@ class ProductionJobView {
     }
 
     private static boolean isMaterialRisk(String materialReadiness) {
-        return "shortage".equals(materialReadiness) || "awaiting_procurement".equals(materialReadiness)
+        return "partial".equals(materialReadiness) || "shortage".equals(materialReadiness)
+                || "awaiting_procurement".equals(materialReadiness)
                 || "awaiting_grn".equals(materialReadiness) || "quality_hold".equals(materialReadiness);
     }
 

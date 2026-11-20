@@ -23,27 +23,27 @@ class ProductionMaterialReadiness {
         }
         boolean allCovered = materials.stream().allMatch(row -> row.netIssuedQty().compareTo(row.requiredQty()) >= 0);
         if (allCovered) {
-            return "reserved";
+            return "issued";
         }
         boolean anyIssued = materials.stream().anyMatch(row -> row.netIssuedQty().signum() > 0);
+        if (anyIssued) {
+            return "partial";
+        }
         boolean stockCovers = materials.stream().allMatch(row -> usable(tenantId, row.itemId())
                 .compareTo(row.requiredQty().subtract(row.netIssuedQty())) >= 0);
         if (qualityHold(tenantId, materials)) {
             return "quality_hold";
         }
         String procurement = procurementReadiness(tenantId, jobId);
-        if (procurement != null && !anyIssued) {
+        if (procurement != null) {
             return procurement;
-        }
-        if (anyIssued) {
-            return "partial";
         }
         return stockCovers ? "available" : "shortage";
     }
 
     static String line(BigDecimal net, BigDecimal required) {
         if (net.compareTo(required) >= 0) {
-            return "reserved";
+            return "issued";
         }
         if (net.signum() > 0) {
             return "partial";

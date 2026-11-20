@@ -150,6 +150,30 @@ class SpoCrudTest extends BaseMasterDataIntegrationTest {
     }
 
     @Test
+    void persistsCommittedDateAndNotesWhenIssuing() throws Exception {
+        UUID spoId = createSpo(UUID.randomUUID().toString(), supplierId, quotationId, "5.000", "12.50");
+        setContext(tenantId, siteId, actorId);
+
+        MvcResult result = mockMvc.perform(post("/api/v1/spos/" + spoId + "/issue")
+                        .with(user("owner").roles("OWNER"))
+                        .header("Idempotency-Key", UUID.randomUUID().toString())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"committedDate\":\"2026-11-30\",\"notes\":\"MTC required on delivery\"}"))
+                .andExpect(status().isOk())
+                .andReturn();
+
+        JsonNode issued = objectMapper.readTree(result.getResponse().getContentAsString());
+        assertThat(issued.path("committedDate").asText()).isEqualTo("2026-11-30");
+        assertThat(issued.path("notes").asText()).isEqualTo("MTC required on delivery");
+        assertThat(jdbc.queryForObject("""
+                SELECT expected_delivery::text FROM spos WHERE tenant_id = ? AND id = ?
+                """, String.class, tenantId, spoId)).isEqualTo("2026-11-30");
+        assertThat(jdbc.queryForObject("""
+                SELECT notes FROM spos WHERE tenant_id = ? AND id = ?
+                """, String.class, tenantId, spoId)).isEqualTo("MTC required on delivery");
+    }
+
+    @Test
     void rejectsMismatchedQuotationSupplierAndExcessPrQuantity() throws Exception {
         UUID otherSupplierId = insert("""
                 INSERT INTO suppliers (tenant_id, code, name)

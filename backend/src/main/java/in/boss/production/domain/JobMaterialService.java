@@ -94,8 +94,8 @@ public class JobMaterialService {
         if (qty.compareTo(remaining) > 0) {
             throw ProductionSupport.badRequest("Issue quantity exceeds the remaining requirement");
         }
-        MaterialLotResponse lot = usableLot(request.lotId(), requirement.itemId(), job.siteId(), jobId, qty);
-        ensureIssueReservation(jobId, lot, qty);
+        MaterialLotResponse lot = usableLot(request.lotId(), requirement.itemId(), job, qty);
+        ensureIssueReservation(job, lot, qty);
         UUID issueId = UUID.randomUUID();
         inventoryCall[0] = true;
         var movement = inventory.issueReservedMaterial(
@@ -147,19 +147,81 @@ public class JobMaterialService {
                 lot.id(), "return", qty, source.unitCost(), java.time.Instant.now());
     }
 
-    private void ensureIssueReservation(UUID jobId, MaterialLotResponse lot, BigDecimal qty) {
-        BigDecimal reserved = reservedForJobLot(jobId, lot.id());
+    private void ensureIssueReservation(JobRow job, MaterialLotResponse lot, BigDecimal qty) {
+        BigDecimal reserved = reservedForJobLot(job.id(), lot.id());
         if (reserved.compareTo(qty) >= 0) {
             return;
         }
-        if (hasActiveJobReservation(jobId)) {
-            return;
-        }
+
         BigDecimal needed = qty.subtract(reserved);
-        var reservation = inventory.reserveForJob(new ReservationRequest(jobId, List.of(
-                new ReservationRequirement(lot.itemId(), lot.storeId(), needed))), false);
-        if (!"FULLY_RESERVED".equals(reservation.status()) || !coversLot(reservation, lot.id(), needed)) {
-            throw ProductionSupport.badRequest("Usable available stock is not sufficient");
+        List<CpoReservationRow> cpoReservations = activeCpoReservations(job, lot);
+        BigDecimal cpoReserved = cpoReservations.stream().map(CpoReservationRow::quantity)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal fromCpo = needed.min(cpoReserved);
+        BigDecimal fromAvailable = needed.subtract(fromCpo);
+
+        if (fromAvailable.signum() > 0) {
+            if (hasActiveJobReservation(job.id())) {
+                throw ProductionSupport.badRequest(
+                        "Active job reservations do not cover the issue quantity for this lot");
+            }
+            var reservation = inventory.reserveForJob(new ReservationRequest(job.id(), List.of(
+                    new ReservationRequirement(lot.itemId(), lot.storeId(), fromAvailable))), false);
+            if (!"FULLY_RESERVED".equals(reservation.status()) || !coversLot(reservation, lot.id(), fromAvailable)) {
+                throw ProductionSupport.badRequest("Usable available stock is not sufficient");
+            }
+        }
+
+        if (fromCpo.signum() > 0) {
+            transferCpoReservations(job, lot, cpoReservations, fromCpo);
+        }
+    }
+
+    private List<CpoReservationRow> activeCpoReservations(JobRow job, MaterialLotResponse lot) {
+        if (job.cpoId() == null) {
+            return List.of();
+        }
+        return jdbc.query("""
+                SELECT id, reserved_qty FROM stock_reservation_records
+                WHERE tenant_id = ? AND reference_type = 'cpo' AND reference_id = ?
+                  AND (cpo_line_id = ? OR cpo_line_id IS NULL)
+                  AND lot_id = ? AND item_id = ? AND status = 'active'
+                ORDER BY id FOR UPDATE
+                """, (rs, row) -> new CpoReservationRow(
+                rs.getObject("id", UUID.class), rs.getBigDecimal("reserved_qty")),
+                support.requireContext().tenantId(), job.cpoId(), job.cpoLineId(), lot.id(), lot.itemId());
+    }
+
+    private void transferCpoReservations(
+            JobRow job, MaterialLotResponse lot, List<CpoReservationRow> reservations, BigDecimal quantity) {
+        BossContext context = support.requireContext();
+        BigDecimal remaining = quantity;
+        for (CpoReservationRow reservation : reservations) {
+            if (remaining.signum() == 0) {
+                break;
+            }
+            BigDecimal moved = reservation.quantity().min(remaining);
+            if (moved.compareTo(reservation.quantity()) == 0) {
+                jdbc.update("""
+                        UPDATE stock_reservation_records
+                        SET reference_type = 'production_job', reference_id = ?, cpo_line_id = NULL
+                        WHERE tenant_id = ? AND id = ? AND status = 'active'
+                        """, job.id(), context.tenantId(), reservation.id());
+            } else {
+                jdbc.update("""
+                        UPDATE stock_reservation_records SET reserved_qty = reserved_qty - ?
+                        WHERE tenant_id = ? AND id = ? AND status = 'active' AND reserved_qty >= ?
+                        """, moved, context.tenantId(), reservation.id(), moved);
+                jdbc.update("""
+                        INSERT INTO stock_reservation_records
+                          (tenant_id, lot_id, item_id, reserved_qty, reference_type, reference_id, status)
+                        VALUES (?, ?, ?, ?, 'production_job', ?, 'active')
+                        """, context.tenantId(), lot.id(), lot.itemId(), moved, job.id());
+            }
+            remaining = remaining.subtract(moved);
+        }
+        if (remaining.signum() > 0) {
+            throw ProductionSupport.conflict("Customer PO reservation changed while issuing material");
         }
     }
 
@@ -192,15 +254,15 @@ public class JobMaterialService {
         return allocated.compareTo(qty) >= 0;
     }
 
-    private MaterialLotResponse usableLot(UUID lotId, UUID itemId, UUID siteId, UUID jobId, BigDecimal qty) {
+    private MaterialLotResponse usableLot(UUID lotId, UUID itemId, JobRow job, BigDecimal qty) {
         MaterialLotResponse lot = inventory.getLot(lotId);
-        if (!itemId.equals(lot.itemId()) || !siteId.equals(lot.siteId())) {
+        if (!itemId.equals(lot.itemId()) || !job.siteId().equals(lot.siteId())) {
             throw ProductionSupport.badRequest("Lot does not match the requirement and job site");
         }
         if (!"available".equals(lot.status()) && !"reserved".equals(lot.status())) {
             throw ProductionSupport.badRequest("Lot status " + lot.status() + " cannot be issued to production");
         }
-        if (qty.compareTo(usableQuantity(lot, jobId)) > 0) {
+        if (qty.compareTo(usableQuantity(lot, job)) > 0) {
             throw ProductionSupport.badRequest("Usable available stock is not sufficient");
         }
         return lot;
@@ -217,13 +279,15 @@ public class JobMaterialService {
         return lot;
     }
 
-    private BigDecimal usableQuantity(MaterialLotResponse lot, UUID jobId) {
+    private BigDecimal usableQuantity(MaterialLotResponse lot, JobRow job) {
         BossContext context = support.requireContext();
         BigDecimal others = sum("""
                 SELECT COALESCE(SUM(reserved_qty), 0) FROM stock_reservation_records
                 WHERE tenant_id = ? AND lot_id = ? AND status = 'active'
-                  AND NOT (reference_type = 'production_job' AND reference_id = ?)
-                """, context.tenantId(), lot.id(), jobId);
+                  AND NOT ((reference_type = 'production_job' AND reference_id = ?)
+                    OR (reference_type = 'cpo' AND reference_id = ?
+                        AND (cpo_line_id = ? OR cpo_line_id IS NULL)))
+                """, context.tenantId(), lot.id(), job.id(), job.cpoId(), job.cpoLineId());
         BigDecimal recorded = sum("""
                 SELECT COALESCE(SUM(reserved_qty), 0) FROM stock_reservation_records
                 WHERE tenant_id = ? AND lot_id = ? AND status = 'active'
@@ -250,6 +314,14 @@ public class JobMaterialService {
         if (!JobStatusMachine.PLANNED.equals(job.status())) {
             return;
         }
+        Integer incomplete = jdbc.queryForObject("""
+                SELECT COUNT(*) FROM job_material_requirements
+                WHERE tenant_id = ? AND job_id = ?
+                  AND issued_qty - returned_qty < required_qty
+                """, Integer.class, tenantId, job.id());
+        if (incomplete != null && incomplete > 0) {
+            return;
+        }
         JobStatusMachine.assertTransition(job.status(), JobStatusMachine.RELEASED);
         jdbc.update("""
                 UPDATE production_jobs SET status = 'released', updated_at = NOW()
@@ -260,10 +332,12 @@ public class JobMaterialService {
 
     private JobRow lockJob(UUID tenantId, UUID jobId) {
         JobRow job = jdbc.query("""
-                SELECT id, status, site_id FROM production_jobs
+                SELECT id, status, site_id, cpo_id, cpo_line_id FROM production_jobs
                 WHERE tenant_id = ? AND id = ? FOR UPDATE
                 """, rs -> rs.next() ? new JobRow(rs.getObject("id", UUID.class),
-                rs.getString("status"), rs.getObject("site_id", UUID.class)) : null, tenantId, jobId);
+                rs.getString("status"), rs.getObject("site_id", UUID.class),
+                rs.getObject("cpo_id", UUID.class), rs.getObject("cpo_line_id", UUID.class)) : null,
+                tenantId, jobId);
         if (job == null) {
             throw ProductionSupport.notFound("Production job not found");
         }
@@ -330,10 +404,12 @@ public class JobMaterialService {
         MaterialMovementResponse run(boolean[] inventoryCall);
     }
 
-    private record JobRow(UUID id, String status, UUID siteId) {}
+    private record JobRow(UUID id, String status, UUID siteId, UUID cpoId, UUID cpoLineId) {}
 
     private record Requirement(UUID id, UUID itemId, BigDecimal required, BigDecimal issued, BigDecimal returned) {}
 
     private record IssueRow(UUID id, UUID requirementId, UUID lotId, BigDecimal quantity,
                             BigDecimal unitCost, String type) {}
+
+    private record CpoReservationRow(UUID id, BigDecimal quantity) {}
 }

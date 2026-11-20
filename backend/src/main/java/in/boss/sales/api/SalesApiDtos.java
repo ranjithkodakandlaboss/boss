@@ -411,6 +411,7 @@ public final class SalesApiDtos {
             String itemCode,
             String itemName,
             BigDecimal qty,
+            BigDecimal producedQty,
             String uomSymbol,
             BigDecimal unitPrice,
             BigDecimal gstRate,

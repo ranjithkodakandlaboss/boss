@@ -1,5 +1,7 @@
 package in.boss.production.domain;
 
+import in.boss.inventory.api.InventoryApiDtos.CreateLotRequest;
+import in.boss.inventory.domain.InventoryService;
 import in.boss.production.api.ProductionApiDtos.ProductionJobResponse;
 import in.boss.production.api.ProductionApiDtos.ReasonRequest;
 import in.boss.production.api.ProductionApiDtos.StageActionRequest;
@@ -11,6 +13,7 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
@@ -33,11 +36,13 @@ public class JobStageService {
     private final AuditService audit;
     private final OutboxPublisher outbox;
     private final in.boss.maintenance.domain.MaintenanceService maintenance;
+    private final InventoryService inventory;
 
     public JobStageService(JdbcTemplate jdbc, ProductionSupport support, ProductionFeatureFlags flags,
                            ProductionMetrics metrics, ProductionQueryService query, JobCostingService costing,
                            AuditService audit, OutboxPublisher outbox,
-                           in.boss.maintenance.domain.MaintenanceService maintenance) {
+                           in.boss.maintenance.domain.MaintenanceService maintenance,
+                           InventoryService inventory) {
         this.jdbc = jdbc;
         this.support = support;
         this.flags = flags;
@@ -47,6 +52,7 @@ public class JobStageService {
         this.audit = audit;
         this.outbox = outbox;
         this.maintenance = maintenance;
+        this.inventory = inventory;
     }
 
     @PreAuthorize(PRODUCTION_EXECUTE)
@@ -56,6 +62,7 @@ public class JobStageService {
         flags.require(context.tenantId(), ProductionFeatureFlags.STAGE_TRANSITION);
         StageRow stage = lockStage(context.tenantId(), jobId, stageId);
         String jobStatus = lockJobStatus(context.tenantId(), jobId);
+        requireMaterialsIssued(context.tenantId(), jobId, "start");
         requireRunnable(jobStatus);
         StageStatusMachine.assertTransition(stage.status(), StageStatusMachine.IN_PROGRESS);
         requirePriorClosed(context.tenantId(), jobId, stage.seq());
@@ -78,6 +85,7 @@ public class JobStageService {
         flags.require(context.tenantId(), ProductionFeatureFlags.STAGE_TRANSITION);
         StageRow stage = lockStage(context.tenantId(), jobId, stageId);
         String jobStatus = lockJobStatus(context.tenantId(), jobId);
+        requireMaterialsIssued(context.tenantId(), jobId, "complete");
         requireRunnable(jobStatus);
         StageStatusMachine.assertTransition(stage.status(), StageStatusMachine.COMPLETED);
         requirePriorClosed(context.tenantId(), jobId, stage.seq());
@@ -98,6 +106,28 @@ public class JobStageService {
             metrics.stageOutcome("completed");
             metrics.stageDuration(Duration.between(started, Instant.now()));
         });
+        return query.get(jobId);
+    }
+
+    @PreAuthorize(PRODUCTION_COMPLETE)
+    public ProductionJobResponse finish(UUID jobId) {
+        BossContext context = support.requireContext();
+        support.denyForeignJob(jdbc, jobId);
+        flags.require(context.tenantId(), ProductionFeatureFlags.STAGE_TRANSITION);
+        String status = lockJobStatus(context.tenantId(), jobId);
+        if (!JobStatusMachine.IN_PROGRESS.equals(status)) {
+            throw ProductionSupport.conflict("Only an in-progress job can be completed");
+        }
+        Integer open = jdbc.queryForObject("""
+                SELECT COUNT(*) FROM job_stages
+                WHERE tenant_id = ? AND job_id = ? AND status NOT IN ('completed', 'skipped')
+                """, Integer.class, context.tenantId(), jobId);
+        if (open != null && open > 0) {
+            throw ProductionSupport.conflict("All job stages must be completed or skipped first");
+        }
+        requireMaterialsIssued(context.tenantId(), jobId, "complete");
+        requireFinalInspection(context.tenantId(), jobId);
+        finishJobIfDone(context.tenantId(), jobId);
         return query.get(jobId);
     }
 
@@ -139,6 +169,26 @@ public class JobStageService {
     }
 
     private boolean gateOpen(UUID tenantId, UUID stageId) {
+        Integer unresolvedFailures = jdbc.queryForObject("""
+                SELECT COUNT(*) FROM quality_inspections q
+                WHERE q.tenant_id = ? AND q.reference_type = 'job_stage' AND q.reference_id = ?
+                  AND q.status = 'completed' AND q.result = 'fail'
+                  AND (
+                    NOT EXISTS (SELECT 1 FROM ncrs n
+                                WHERE n.tenant_id = q.tenant_id AND n.inspection_id = q.id)
+                    OR EXISTS (
+                      SELECT 1 FROM ncrs n
+                      WHERE n.tenant_id = q.tenant_id AND n.inspection_id = q.id
+                        AND n.status NOT IN ('resolved', 'closed')
+                        AND NOT EXISTS (SELECT 1 FROM concessions c
+                                        WHERE c.tenant_id = n.tenant_id AND c.ncr_id = n.id
+                                          AND c.status = 'approved')
+                    )
+                  )
+                """, Integer.class, tenantId, stageId);
+        if (unresolvedFailures != null && unresolvedFailures > 0) {
+            return false;
+        }
         Integer passed = jdbc.queryForObject("""
                 SELECT COUNT(*) FROM quality_inspections
                 WHERE tenant_id = ? AND reference_type = 'job_stage' AND reference_id = ?
@@ -179,16 +229,19 @@ public class JobStageService {
         if (open != null && open > 0) {
             return;
         }
+        requireMaterialsIssued(tenantId, jobId, "complete");
         String status = lockJobStatus(tenantId, jobId);
         if (!JobStatusMachine.IN_PROGRESS.equals(status)) {
             return;
         }
+        requireFinalInspection(tenantId, jobId);
         JobStatusMachine.assertTransition(status, JobStatusMachine.COMPLETED);
         jdbc.update("""
                 UPDATE production_jobs
                 SET status = 'completed', actual_end = NOW(), updated_at = NOW()
                 WHERE tenant_id = ? AND id = ?
                 """, tenantId, jobId);
+        releaseFinishedGoods(tenantId, jobId);
         costing.close(tenantId, jobId);
         metrics.afterCommit(() -> metrics.jobTransition(JobStatusMachine.IN_PROGRESS, JobStatusMachine.COMPLETED));
         audit.record("production_job", jobId, "STATUS", "{\"status\":\"in_progress\"}",
@@ -202,6 +255,92 @@ public class JobStageService {
                 """, Integer.class, tenantId, jobId, seq);
         if (open != null && open > 0) {
             throw ProductionSupport.conflict("Earlier stages must be completed or skipped first");
+        }
+    }
+
+    private void requireMaterialsIssued(UUID tenantId, UUID jobId, String action) {
+        Integer incomplete = jdbc.queryForObject("""
+                SELECT COUNT(*) FROM job_material_requirements
+                WHERE tenant_id = ? AND job_id = ?
+                  AND issued_qty - returned_qty < required_qty
+                """, Integer.class, tenantId, jobId);
+        if (incomplete != null && incomplete > 0) {
+            throw ProductionSupport.conflict(
+                    "All required job materials must be issued before a stage can " + action);
+        }
+    }
+
+    private void requireFinalInspection(UUID tenantId, UUID jobId) {
+        Integer passed = jdbc.queryForObject("""
+                SELECT COUNT(*) FROM quality_inspections q
+                JOIN production_jobs j ON j.id = q.reference_id AND j.tenant_id = q.tenant_id
+                WHERE q.tenant_id = ? AND q.reference_type = 'production_job' AND q.reference_id = ?
+                  AND q.inspection_type IN ('final', 'dispatch_readiness')
+                  AND q.status = 'completed' AND q.result = 'pass'
+                  AND q.quantity_accepted >= j.quantity
+                  AND NOT EXISTS (
+                    SELECT 1 FROM ncrs n
+                    WHERE n.tenant_id = q.tenant_id AND n.inspection_id = q.id
+                      AND n.status NOT IN ('resolved', 'closed')
+                      AND NOT EXISTS (SELECT 1 FROM concessions c
+                                      WHERE c.tenant_id = n.tenant_id AND c.ncr_id = n.id
+                                        AND c.status = 'approved')
+                  )
+                """, Integer.class, tenantId, jobId);
+        if (passed == null || passed == 0) {
+            throw ProductionSupport.conflict(
+                    "A passed final inspection covering the full job quantity is required before completion");
+        }
+    }
+
+    private void releaseFinishedGoods(UUID tenantId, UUID jobId) {
+        ProductionOutput output = jdbc.query("""
+                SELECT j.job_number, j.finished_item_id, j.site_id, j.cpo_line_id, j.quantity,
+                       i.item_type
+                FROM production_jobs j
+                JOIN items i ON i.id = j.finished_item_id AND i.tenant_id = j.tenant_id
+                WHERE j.tenant_id = ? AND j.id = ?
+                """, rs -> rs.next() ? new ProductionOutput(rs.getString("job_number"),
+                rs.getObject("finished_item_id", UUID.class), rs.getObject("site_id", UUID.class),
+                rs.getObject("cpo_line_id", UUID.class), rs.getBigDecimal("quantity"),
+                rs.getString("item_type")) : null, tenantId, jobId);
+        if (output == null) {
+            throw ProductionSupport.notFound("Production job not found");
+        }
+        if (!"finished_goods".equals(output.itemType())) {
+            throw ProductionSupport.conflict("Only finished goods can be released to finished-goods inventory");
+        }
+        UUID storeId = jdbc.query("""
+                SELECT id FROM stores
+                WHERE tenant_id = ? AND site_id = ? AND store_type = 'finished_goods'
+                ORDER BY code LIMIT 1 FOR SHARE
+                """, rs -> rs.next() ? rs.getObject("id", UUID.class) : null, tenantId, output.siteId());
+        if (storeId == null) {
+            throw ProductionSupport.conflict(
+                    "Configure a finished-goods store at the production site before completing this job");
+        }
+        BigDecimal accepted = jdbc.query("""
+                SELECT quantity_accepted FROM quality_inspections
+                WHERE tenant_id = ? AND reference_type = 'production_job' AND reference_id = ?
+                  AND inspection_type IN ('final', 'dispatch_readiness')
+                  AND status = 'completed' AND result = 'pass'
+                  AND quantity_accepted >= ?
+                ORDER BY created_at DESC LIMIT 1
+                """, rs -> rs.next() ? rs.getBigDecimal("quantity_accepted") : null,
+                tenantId, jobId, output.quantity());
+        if (accepted == null) {
+            throw ProductionSupport.conflict("Accepted finished quantity is not available for inventory release");
+        }
+        inventory.createProductionOutputLot(new CreateLotRequest(output.itemId(), storeId, output.quantity(), null,
+                "Production " + output.jobNumber(), null, "available", null),
+                "FG-" + output.jobNumber(), jobId);
+        int updated = jdbc.update("""
+                UPDATE cpo_lines
+                SET produced_qty = produced_qty + ?
+                WHERE tenant_id = ? AND id = ? AND produced_qty + ? <= quantity
+                """, output.quantity(), tenantId, output.cpoLineId(), output.quantity());
+        if (updated != 1) {
+            throw ProductionSupport.conflict("Production quantity exceeds the remaining Customer PO line quantity");
         }
     }
 
@@ -254,4 +393,7 @@ public class JobStageService {
     }
 
     private record StageRow(UUID id, int seq, String status, boolean inspection, boolean optional, Instant started) {}
+
+    private record ProductionOutput(String jobNumber, UUID itemId, UUID siteId, UUID cpoLineId,
+                                    BigDecimal quantity, String itemType) {}
 }

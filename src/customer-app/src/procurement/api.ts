@@ -68,6 +68,7 @@ export type QuoteLineRecord = {
   leadTimeDays?: number;
   isSelected?: boolean;
   taxRate?: number;
+  grade?: string;
 };
 export type QuoteRecord = {
   id: string;
@@ -98,6 +99,7 @@ export type ComparisonOffer = {
   leadTimeDays?: number;
   validUntil?: string;
   isSelected?: boolean;
+  grade?: string;
 };
 export type ComparisonLine = {
   prLineId: string;
@@ -134,6 +136,8 @@ export type SpoRecord = {
   supplierId: string;
   supplierName?: string;
   status: string;
+  committedDate?: string;
+  notes?: string;
   lines?: SpoLineRecord[];
   totalAmount?: number;
   paymentTerms?: number;
@@ -280,7 +284,8 @@ export const procurementApi = {
   spos: () => allPages<SpoRecord>("/api/v1/spos"),
   spo: (id: string) => api<SpoRecord>(`/api/v1/spos/${id}`),
   createSpo: (body: unknown, idempotencyKey: string) => write<SpoRecord>("/api/v1/spos", "POST", body, idempotencyKey),
-  issueSpo: (id: string) => write<SpoRecord>(`/api/v1/spos/${id}/issue`, "POST", undefined, `spo-issue:${id}`),
+  issueSpo: (id: string, body: { committedDate?: string; notes?: string }) =>
+    write<SpoRecord>(`/api/v1/spos/${id}/issue`, "POST", body, `spo-issue:${id}`),
   acknowledgeSpo: (id: string) => write<SpoRecord>(`/api/v1/spos/${id}/acknowledge`, "POST", undefined, `spo-ack:${id}`),
   cancelSpo: (id: string) => write<SpoRecord>(`/api/v1/spos/${id}/cancel`, "POST", undefined, `spo-cancel:${id}`),
   declineSpo: (id: string, reason: string) => write<SpoRecord>(`/api/v1/spos/${id}/decline`, "POST", { reason }, `spo-decline:${id}`),

@@ -497,8 +497,8 @@ export default function SupplierRFQCreate() {
                       onChange={e => setChannel(e.target.value as SupplierInvitation['channel'])}
                     >
                       <option value="email">Email (with RFQ PDF attachment)</option>
-                      <option value="portal">Supplier Portal Link</option>
-                      <option value="whatsapp">WhatsApp Business Message</option>
+                      <option value="portal" disabled>Supplier Portal Link (not configured)</option>
+                      <option value="whatsapp" disabled>WhatsApp Business Message (not configured)</option>
                     </select>
                   </div>
                   <div>
@@ -534,7 +534,7 @@ export default function SupplierRFQCreate() {
                     Review Recipients Before Sending ({selectedMatchCards.length})
                   </h2>
                   <p className="text-xs text-[var(--text-3)] mt-0.5">
-                    Prototype notice: No live external emails/messages are dispatched; invitation records will be created in BOSS with audit tracking.
+                    Email delivery is attempted through the configured provider. If dispatch is unavailable, the request is saved and a warning is shown.
                   </p>
                 </div>
                 <span className="text-xs px-2.5 py-1 rounded-full bg-[var(--surface-2)] font-medium text-[var(--text-2)]">

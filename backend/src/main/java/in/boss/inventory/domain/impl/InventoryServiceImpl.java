@@ -91,6 +91,20 @@ public class InventoryServiceImpl implements InventoryService {
 
     @Override
     public MaterialLotResponse createLot(CreateLotRequest request, String preferredLotNumber) {
+        return createLot(request, preferredLotNumber, null);
+    }
+
+    @Override
+    public MaterialLotResponse createProductionOutputLot(
+            CreateLotRequest request, String preferredLotNumber, UUID productionJobId) {
+        if (productionJobId == null || request.grnLineId() != null) {
+            throw new InventoryValidationException("A production job reference is required for production output");
+        }
+        return createLot(request, preferredLotNumber, productionJobId);
+    }
+
+    private MaterialLotResponse createLot(
+            CreateLotRequest request, String preferredLotNumber, UUID productionJobId) {
         BossContext ctx = requireContext();
         String status = LotStatus.canonical(request.status());
         LotStatus.assertCreatable(status);
@@ -109,16 +123,19 @@ public class InventoryServiceImpl implements InventoryService {
         repository.insertLot(lotId, ctx.tenantId(), request.itemId(), request.storeId(), lotNumber,
                 blankToNull(request.batchRef()), qty, unitCost, status, request.expiryDate());
 
-        MovementType opening = request.grnLineId() == null ? MovementType.OPENING_BALANCE : MovementType.RECEIPT;
-        String referenceType = request.grnLineId() == null ? null : "GRN";
-        UUID movementId = appendMovement(ctx, lotId, request.itemId(), request.storeId(), opening, qty,
-                unitCost, referenceType, request.grnLineId(), null);
+        MovementType movementType = request.grnLineId() != null || productionJobId != null
+                ? MovementType.RECEIPT : MovementType.OPENING_BALANCE;
+        String referenceType = request.grnLineId() != null ? "GRN"
+                : productionJobId != null ? "production_job" : null;
+        UUID referenceId = request.grnLineId() != null ? request.grnLineId() : productionJobId;
+        UUID movementId = appendMovement(ctx, lotId, request.itemId(), request.storeId(), movementType, qty,
+                unitCost, referenceType, referenceId, null);
 
         LotRow lot = requireVisibleLot(ctx, lotId, false);
         Map<String, Object> snapshot = lotSnapshot(lot);
         auditService.record("LOT", lotId, "CREATE", null, json(snapshot));
         events.lotCreated(lotId, snapshot);
-        events.movementCreated(movementId, movementSnapshot(movementId, lot, opening, qty));
+        events.movementCreated(movementId, movementSnapshot(movementId, lot, movementType, qty));
         replenishmentService.checkAfterStockChange(ctx.tenantId(), request.itemId(), request.storeId());
         return toLot(lot);
     }
