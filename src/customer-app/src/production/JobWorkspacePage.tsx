@@ -39,6 +39,38 @@ function stageVariance(stage: { actualStartAt?: string; actualEndAt?: string; es
   return Math.round(((actualMin - stage.estimatedDurationMin) / stage.estimatedDurationMin) * 100);
 }
 
+function stageDateVarianceDays(stage: { plannedEnd?: string; actualEndAt?: string }): number | null {
+  if (!stage.plannedEnd || !stage.actualEndAt) return null;
+  const planned = new Date(stage.plannedEnd).getTime();
+  const actual = new Date(stage.actualEndAt).getTime();
+  return Math.round((actual - planned) / 86400000);
+}
+
+function stageHealth(stage: { status: string; plannedStart?: string; plannedEnd?: string; actualEndAt?: string }): "green" | "amber" | "red" | null {
+  if (!stage.plannedEnd) return null;
+  if (stage.status === "completed") {
+    if (!stage.actualEndAt) return null;
+    const days = (new Date(stage.actualEndAt).getTime() - new Date(stage.plannedEnd).getTime()) / 86400000;
+    if (days <= 0) return "green";
+    if (days <= 1) return "amber";
+    return "red";
+  }
+  if (stage.status === "in_progress") {
+    const days = (Date.now() - new Date(stage.plannedEnd).getTime()) / 86400000;
+    if (days < 0) return "green";
+    if (days <= 1) return "amber";
+    return "red";
+  }
+  // pending: check if plannedStart has already passed
+  if (stage.plannedStart && Date.now() > new Date(stage.plannedStart).getTime()) return "amber";
+  return null;
+}
+
+const HEALTH_COLORS = { green: "var(--success)", amber: "var(--warning)", red: "var(--error)" };
+function HealthDot({ color }: { color: "green" | "amber" | "red" }) {
+  return <span style={{ display: "inline-block", width: 8, height: 8, borderRadius: "50%", background: HEALTH_COLORS[color], flexShrink: 0 }} />;
+}
+
 export default function JobWorkspacePage() {
   const { id = "" } = useParams();
   const navigate = useNavigate();
@@ -300,7 +332,10 @@ function Stages({ job, canWrite, onSkip }: { job: ProductionJob; canWrite: boole
           <div key={stage.id} className="rounded-xl border p-3" style={{ borderColor: "var(--border)" }}>
             <div className="flex items-start justify-between gap-3">
               <div className="flex-1 min-w-0">
-                <div className="text-sm font-semibold">{stage.seqNo}. {stage.stageName}</div>
+                <div className="text-sm font-semibold flex items-center gap-1.5">
+                  {stageHealth(stage) && <HealthDot color={stageHealth(stage)!} />}
+                  {stage.seqNo}. {stage.stageName}
+                </div>
                 <div className="text-xs mt-0.5 flex flex-wrap gap-x-3 gap-y-0.5" style={{ color: "var(--text-3)" }}>
                   <span>{stage.workCentre || "No work centre"}</span>
                   {stage.assignedOperator && <span>Operator: <strong>{stage.assignedOperator}</strong></span>}
@@ -410,22 +445,32 @@ function PlanTab({ job, canWrite, onSaved }: { job: ProductionJob; canWrite: boo
         <div className="rounded-xl border overflow-x-auto" style={{ borderColor: "var(--border)" }}>
           <table className="w-full text-xs">
             <thead style={{ background: "var(--surface-2)" }}>
-              <tr>{["Stage", "Work Centre", "Planned Start", "Planned End", "Est. Duration", "Actual Start", "Actual End", "Variance", "Status"].map((h) => (
+              <tr>{["Stage", "Work Centre", "Planned Start", "Planned End", "Est. Duration", "Actual Start", "Actual End", "Schedule", "Effort %", "Status"].map((h) => (
                 <th key={h} className="text-left px-3 py-2 font-semibold whitespace-nowrap" style={{ color: "var(--text-3)" }}>{h}</th>
               ))}</tr>
             </thead>
             <tbody>
               {stages.map((stage) => {
                 const v = stageVariance(stage);
+                const health = stageHealth(stage);
+                const dateDiff = stageDateVarianceDays(stage);
                 return (
                   <tr key={stage.id} className="border-t" style={{ borderColor: "var(--border)" }}>
-                    <td className="px-3 py-2 font-medium whitespace-nowrap">{stage.seqNo}. {stage.stageName}</td>
+                    <td className="px-3 py-2 font-medium whitespace-nowrap">
+                      <span className="flex items-center gap-1.5">
+                        {health && <HealthDot color={health} />}
+                        {stage.seqNo}. {stage.stageName}
+                      </span>
+                    </td>
                     <td className="px-3 py-2" style={{ color: "var(--text-3)" }}>{stage.workCentre || "—"}</td>
                     <td className="px-3 py-2 whitespace-nowrap">{displayDate(stage.plannedStart) || "—"}</td>
                     <td className="px-3 py-2 whitespace-nowrap">{displayDate(stage.plannedEnd) || "—"}</td>
                     <td className="px-3 py-2 whitespace-nowrap">{stage.estimatedDurationMin != null ? `${(stage.estimatedDurationMin / 60).toFixed(1)}h` : "—"}</td>
                     <td className="px-3 py-2 whitespace-nowrap">{displayDate(stage.actualStartAt) || "—"}</td>
                     <td className="px-3 py-2 whitespace-nowrap">{displayDate(stage.actualEndAt) || "—"}</td>
+                    <td className="px-3 py-2 whitespace-nowrap font-mono" style={{ color: dateDiff == null ? "var(--text-3)" : dateDiff > 0 ? "var(--error)" : "var(--success)" }}>
+                      {dateDiff == null ? "—" : dateDiff === 0 ? "On time" : `${dateDiff > 0 ? "+" : ""}${dateDiff}d`}
+                    </td>
                     <td className={`px-3 py-2 font-mono ${varianceClass(v)}`}>{v != null ? `${v > 0 ? "+" : ""}${v}%` : "—"}</td>
                     <td className="px-3 py-2"><StatusChip status={stage.status} size="sm" /></td>
                   </tr>
