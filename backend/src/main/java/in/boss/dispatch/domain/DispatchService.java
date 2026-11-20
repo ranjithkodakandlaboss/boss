@@ -32,15 +32,10 @@ import java.util.*;
 @Service
 public class DispatchService {
 
-    private static final Map<String, String> HISTORY_TITLES = Map.of(
-            "create", "Dispatch Created",
-            "status_change", "Status Updated",
-            "pod_recorded", "Proof of Delivery Confirmed",
-            "packing_recorded", "Packing Recorded"
-    );
-
     private final JdbcTemplate jdbc;
     private final InventoryRepository inventoryRepository;
+    private final DispatchInventoryCoordinator inventoryCoordinator;
+    private final DispatchReader dispatchReader;
     private final QualityService qualityService;
     private final AuditService auditService;
     private final OutboxPublisher outbox;
@@ -55,6 +50,8 @@ public class DispatchService {
             ObjectMapper objectMapper) {
         this.jdbc = jdbc;
         this.inventoryRepository = inventoryRepository;
+        this.inventoryCoordinator = new DispatchInventoryCoordinator(jdbc, inventoryRepository);
+        this.dispatchReader = new DispatchReader(jdbc);
         this.qualityService = qualityService;
         this.auditService = auditService;
         this.outbox = outbox;
@@ -78,59 +75,52 @@ public class DispatchService {
         BossContext ctx = requireContext();
         UUID tenantId = ctx.tenantId();
 
+        validateCreateRequest(tenantId, req);
+        UUID cpoId = inventoryCoordinator.resolveCpoId(tenantId, req);
+        inventoryCoordinator.validateCustomerPo(tenantId, req.customerId(), cpoId);
+
+        UUID siteId = resolveSiteId(tenantId, req.sourceSiteId());
+        UUID jobId = inventoryCoordinator.resolveJobId(req);
+        UUID clearanceCertId = checkQualityGate(tenantId, jobId);
+        inventoryCoordinator.validateCreateLines(tenantId, req, siteId, jobId, cpoId);
+
+        String dispatchNumber = generateDispatchNumber(tenantId);
+        String challanNumber = dispatchNumber.replace("DSP-", "CHL-");
+        UUID dispatchId = UUID.randomUUID();
+
+        BigDecimal totalQty = calculateTotalQty(req.lines());
+        int lineCount = req.lines() != null ? req.lines().size() : 0;
+
+        insertDispatchRecord(ctx, tenantId, dispatchId, dispatchNumber, challanNumber, cpoId, siteId, jobId, clearanceCertId, totalQty, lineCount, req);
+        inventoryCoordinator.insertLines(tenantId, dispatchId, jobId, clearanceCertId, req.lines());
+        insertPackages(tenantId, dispatchId, req.packages());
+
+        auditService.record("dispatch", dispatchId, "create", null,
+                toJson(Map.of("dispatchNumber", dispatchNumber, "status", "pending_docs", "customerId", req.customerId().toString())));
+        outbox.publish("dispatch", dispatchId, "dispatch.created",
+                toJson(Map.of("dispatchNumber", dispatchNumber, "status", "pending_docs", "tenantId", tenantId)));
+
+        return getDispatch(dispatchId);
+    }
+
+    private void validateCreateRequest(UUID tenantId, CreateDispatchRequest req) {
         if (req.customerId() == null) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Customer ID is required");
         }
         if (req.dispatchDate() == null) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Dispatch date is required");
         }
-        if (req.cpoId() == null) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Customer PO is required");
-        }
         if (req.lines() == null || req.lines().isEmpty()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "At least one PO line is required");
         }
-
-        // Validate customer belongs to tenant
         validateCustomer(tenantId, req.customerId());
         validateDispatchMethodOption(tenantId, req.dispatchMethodOptionId());
-        {
-            var order = jdbc.query("""
-                    SELECT status, customer_id FROM cpos WHERE tenant_id = ? AND id = ? FOR UPDATE
-                    """, rs -> rs.next()
-                            ? new OrderRow(rs.getString("status"), rs.getObject("customer_id", UUID.class))
-                            : null, tenantId, req.cpoId());
-            if (order == null) {
-                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Customer PO was not found for this tenant");
-            }
-            requireDispatchableOrder(order.status());
-            if (!req.customerId().equals(order.customerId())) {
-                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                        "Customer PO does not belong to the selected customer");
-            }
-        }
+    }
 
-        // Validate site if provided, or fallback to default site
-        UUID siteId = resolveSiteId(tenantId, req.sourceSiteId());
-
-        UUID jobId = resolveJobId(req);
-        UUID clearanceCertId = checkQualityGate(tenantId, jobId);
-        validateCreateLines(tenantId, req, siteId, jobId);
-
-        // Generate Dispatch Number (DSP-YYYY-XXX)
-        String dispatchNumber = generateDispatchNumber(tenantId);
-
-        // Generate Challan Number
-        int currentYear = Year.now().getValue();
-        String challanNumber = dispatchNumber.replace("DSP-", "CHL-");
-
-        UUID dispatchId = UUID.randomUUID();
-        String initialStatus = "pending_docs";
-
-        BigDecimal totalQty = calculateTotalQty(req.lines());
-        int lineCount = req.lines() != null ? req.lines().size() : 0;
-
-        // Insert into dispatches table
+    private void insertDispatchRecord(
+            BossContext ctx, UUID tenantId, UUID dispatchId, String dispatchNumber, String challanNumber,
+            UUID cpoId, UUID siteId, UUID jobId, UUID clearanceCertId,
+            BigDecimal totalQty, int lineCount, CreateDispatchRequest req) {
         jdbc.update("""
                 INSERT INTO dispatches (
                   id, tenant_id, dispatch_number, cpo_id, customer_id, site_id,
@@ -146,417 +136,20 @@ public class DispatchService {
                   ?, NOW(), NOW()
                 )
                 """,
-                dispatchId, tenantId, dispatchNumber, req.cpoId(), req.customerId(), siteId,
-                initialStatus, req.dispatchDate(), req.expectedDelivery(), req.vehicleNumber(),
+                dispatchId, tenantId, dispatchNumber, cpoId, req.customerId(), siteId,
+                "pending_docs", req.dispatchDate(), req.expectedDelivery(), req.vehicleNumber(),
                 req.carrier(), req.carrier(), req.driverName(), req.lrNumber(), req.sourceStoreId(),
                 req.sourceStoreName(), jobId, clearanceCertId, challanNumber, req.notes(),
                 totalQty, lineCount, req.dispatchMethodOptionId(), ctx.userId()
         );
-
-        // Insert dispatch lines if provided
-        insertLines(tenantId, dispatchId, jobId, clearanceCertId, req.lines());
-
-        // Insert packages if provided
-        insertPackages(tenantId, dispatchId, req.packages());
-
-        // Record Audit event
-        auditService.record("dispatch", dispatchId, "create", null,
-                toJson(Map.of("dispatchNumber", dispatchNumber, "status", initialStatus, "customerId", req.customerId().toString())));
-
-        // Outbox event
-        outbox.publish("dispatch", dispatchId, "dispatch.created",
-                toJson(Map.of("dispatchNumber", dispatchNumber, "status", initialStatus, "tenantId", tenantId)));
-
-        return getDispatch(dispatchId);
     }
 
     public List<DispatchSummary> listDispatches(String siteFilter, String statusFilter, String search) {
-        BossContext ctx = requireContext();
-        UUID tenantId = ctx.tenantId();
-
-        StringBuilder sql = new StringBuilder("""
-                SELECT d.id, d.dispatch_number, d.customer_id, c.name AS customer_name,
-                       d.cpo_id, cp.cpo_number, d.job_id, pj.job_number,
-                       d.site_id, ps.name AS site_name, d.source_store_id, st.name AS store_name,
-                       COALESCE(d.carrier, d.transporter) AS carrier,
-                       d.dispatch_method_option_id, d.dispatch_method_label_snapshot AS dispatch_method_label,
-                       d.vehicle_number, d.driver_name,
-                       d.lr_number, d.dispatch_date, d.expected_delivery, d.total_qty, d.line_count,
-                       d.status, d.has_pod, d.created_at
-                FROM dispatches d
-                JOIN customers c ON c.id = d.customer_id AND c.tenant_id = d.tenant_id
-                JOIN physical_sites ps ON ps.id = d.site_id AND ps.tenant_id = d.tenant_id
-                LEFT JOIN cpos cp ON cp.id = d.cpo_id AND cp.tenant_id = d.tenant_id
-                LEFT JOIN production_jobs pj ON pj.id = d.job_id AND pj.tenant_id = d.tenant_id
-                LEFT JOIN stores st ON st.id = d.source_store_id AND st.tenant_id = d.tenant_id
-                WHERE d.tenant_id = ?
-                """);
-
-        List<Object> params = new ArrayList<>();
-        params.add(tenantId);
-
-        if (siteFilter != null && !siteFilter.isBlank() && !"all".equalsIgnoreCase(siteFilter)) {
-            try {
-                params.add(UUID.fromString(siteFilter));
-                sql.append(" AND d.site_id = ?");
-            } catch (IllegalArgumentException ignored) {}
-        }
-
-        if (statusFilter != null && !statusFilter.isBlank() && !"all".equalsIgnoreCase(statusFilter)) {
-            if ("ready".equalsIgnoreCase(statusFilter)) {
-                sql.append(" AND d.status IN ('draft', 'pending', 'pending_docs')");
-            } else {
-                params.add(statusFilter.toLowerCase());
-                sql.append(" AND d.status = ?");
-            }
-        }
-
-        if (search != null && !search.isBlank()) {
-            params.add("%" + search.trim().toLowerCase() + "%");
-            params.add("%" + search.trim().toLowerCase() + "%");
-            sql.append(" AND (LOWER(d.dispatch_number) LIKE ? OR LOWER(c.name) LIKE ?)");
-        }
-
-        sql.append(" ORDER BY d.created_at DESC");
-
-        return jdbc.query(sql.toString(), (rs, i) -> {
-            UUID jobId = getUuid(rs, "job_id");
-            String jobNumber = rs.getString("job_number");
-            List<String> jobs = jobNumber != null ? List.of(jobNumber) : Collections.emptyList();
-
-            return new DispatchSummary(
-                    (UUID) rs.getObject("id"),
-                    rs.getString("dispatch_number"),
-                    (UUID) rs.getObject("customer_id"),
-                    rs.getString("customer_name"),
-                    getUuid(rs, "cpo_id"),
-                    rs.getString("cpo_number"),
-                    jobId,
-                    jobNumber,
-                    jobs,
-                    (UUID) rs.getObject("site_id"),
-                    rs.getString("site_name"),
-                    getUuid(rs, "source_store_id"),
-                    rs.getString("store_name"),
-                    rs.getString("carrier"),
-                    getUuid(rs, "dispatch_method_option_id"),
-                    rs.getString("dispatch_method_label"),
-                    rs.getString("vehicle_number"),
-                    rs.getString("driver_name"),
-                    rs.getString("lr_number"),
-                    getLocalDate(rs, "dispatch_date"),
-                    getLocalDate(rs, "expected_delivery"),
-                    rs.getBigDecimal("total_qty"),
-                    rs.getInt("line_count"),
-                    rs.getString("status"),
-                    rs.getBoolean("has_pod"),
-                    rs.getTimestamp("created_at").toInstant()
-            );
-        }, params.toArray());
+        return dispatchReader.listDispatches(requireContext().tenantId(), siteFilter, statusFilter, search);
     }
 
     public DispatchDetail getDispatch(UUID dispatchId) {
-        BossContext ctx = requireContext();
-        UUID tenantId = ctx.tenantId();
-
-        List<DispatchDetail> list = jdbc.query("""
-                SELECT d.id, d.dispatch_number, d.customer_id, c.name AS customer_name,
-                       d.cpo_id, cp.cpo_number, d.job_id, pj.job_number,
-                       d.site_id, ps.name AS site_name, d.source_store_id,
-                       COALESCE(d.source_store_name, st.name) AS store_name,
-                       COALESCE(d.carrier, d.transporter) AS carrier,
-                       d.dispatch_method_option_id, d.dispatch_method_label_snapshot AS dispatch_method_label,
-                       d.vehicle_number, d.driver_name,
-                       d.lr_number, d.dispatch_date, d.expected_delivery, d.actual_delivery_date,
-                       d.delivery_condition, d.pod_reference, d.delivery_notes,
-                       d.total_qty, d.line_count, d.status, d.has_pod,
-                       d.quality_release_id, d.challan_number, d.challan_gcs_path,
-                       d.created_at, d.updated_at
-                FROM dispatches d
-                JOIN customers c ON c.id = d.customer_id AND c.tenant_id = d.tenant_id
-                JOIN physical_sites ps ON ps.id = d.site_id AND ps.tenant_id = d.tenant_id
-                LEFT JOIN cpos cp ON cp.id = d.cpo_id AND cp.tenant_id = d.tenant_id
-                LEFT JOIN production_jobs pj ON pj.id = d.job_id AND pj.tenant_id = d.tenant_id
-                LEFT JOIN stores st ON st.id = d.source_store_id AND st.tenant_id = d.tenant_id
-                WHERE d.tenant_id = ? AND d.id = ?
-                """, (rs, i) -> {
-            UUID id = (UUID) rs.getObject("id");
-            UUID jobId = getUuid(rs, "job_id");
-            String jobNumber = rs.getString("job_number");
-            List<String> jobs = jobNumber != null ? List.of(jobNumber) : Collections.emptyList();
-
-            return new DispatchDetail(
-                    id,
-                    rs.getString("dispatch_number"),
-                    (UUID) rs.getObject("customer_id"),
-                    rs.getString("customer_name"),
-                    getUuid(rs, "cpo_id"),
-                    rs.getString("cpo_number"),
-                    jobId,
-                    jobNumber,
-                    jobs,
-                    (UUID) rs.getObject("site_id"),
-                    rs.getString("site_name"),
-                    getUuid(rs, "source_store_id"),
-                    rs.getString("store_name"),
-                    null, // destination
-                    rs.getString("carrier"),
-                    getUuid(rs, "dispatch_method_option_id"),
-                    rs.getString("dispatch_method_label"),
-                    rs.getString("vehicle_number"),
-                    rs.getString("driver_name"),
-                    rs.getString("lr_number"),
-                    getLocalDate(rs, "dispatch_date"),
-                    getLocalDate(rs, "expected_delivery"),
-                    getLocalDate(rs, "actual_delivery_date"),
-                    rs.getString("delivery_condition"),
-                    rs.getString("pod_reference"),
-                    rs.getString("delivery_notes"),
-                    null, // receivedByName (will load from pod_records if present)
-                    null, // receivedAt
-                    rs.getBoolean("has_pod"),
-                    rs.getString("status"),
-                    rs.getBigDecimal("total_qty"),
-                    rs.getInt("line_count"),
-                    getUuid(rs, "quality_release_id"),
-                    null, // qualityReleaseStatus
-                    null, // qualityReleaseBy
-                    null, // qualityInspectionId
-                    null, // qualityInspectionNumber
-                    null, // qualityInspectionResult
-                    null, // failedInspectionId
-                    null, // failedInspectionNumber
-                    null, // linkedNcrId
-                    null, // linkedNcrNumber
-                    rs.getString("challan_number"),
-                    rs.getString("challan_gcs_path"),
-                    Collections.emptyList(), // lines
-                    Collections.emptyList(), // packages
-                    Collections.emptyList(), // history
-                    Collections.emptyList(), // linkedInvoices
-                    rs.getTimestamp("created_at").toInstant(),
-                    rs.getTimestamp("updated_at").toInstant()
-            );
-        }, tenantId, dispatchId);
-
-        if (list.isEmpty()) {
-            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Dispatch not found");
-        }
-
-        DispatchDetail base = list.get(0);
-
-        // Load POD Record if exists
-        String receivedByName = null;
-        Instant receivedAt = null;
-        try {
-            var podMap = jdbc.queryForMap(
-                    "SELECT received_by, received_at FROM pod_records WHERE tenant_id = ? AND dispatch_id = ?",
-                    tenantId, dispatchId);
-            receivedByName = (String) podMap.get("received_by");
-            var ts = (java.sql.Timestamp) podMap.get("received_at");
-            if (ts != null) receivedAt = ts.toInstant();
-        } catch (EmptyResultDataAccessException ignored) {}
-
-        // Load Dispatch Lines
-        List<DispatchLineDto> lines = jdbc.query("""
-                SELECT dl.id, dl.dispatch_id, dl.cpo_line_id, dl.job_id, pj.job_number,
-                       dl.item_id, it.code AS item_code, it.name AS item_name,
-                       dl.lot_id, ml.lot_number, dl.quantity, dl.uom_id, uom.symbol AS uom_symbol,
-                       dl.packing_spec_id, dl.clearance_cert_id, dl.line_no
-                FROM dispatch_lines dl
-                JOIN items it ON it.id = dl.item_id AND it.tenant_id = dl.tenant_id
-                JOIN units_of_measure uom ON uom.id = dl.uom_id
-                LEFT JOIN production_jobs pj ON pj.id = dl.job_id AND pj.tenant_id = dl.tenant_id
-                LEFT JOIN material_lots ml ON ml.id = dl.lot_id AND ml.tenant_id = dl.tenant_id
-                WHERE dl.tenant_id = ? AND dl.dispatch_id = ?
-                ORDER BY dl.line_no ASC
-                """, (rs, i) -> new DispatchLineDto(
-                (UUID) rs.getObject("id"),
-                (UUID) rs.getObject("dispatch_id"),
-                getUuid(rs, "cpo_line_id"),
-                getUuid(rs, "job_id"),
-                rs.getString("job_number"),
-                (UUID) rs.getObject("item_id"),
-                rs.getString("item_code"),
-                rs.getString("item_name"),
-                getUuid(rs, "lot_id"),
-                rs.getString("lot_number"),
-                rs.getBigDecimal("quantity"),
-                (UUID) rs.getObject("uom_id"),
-                rs.getString("uom_symbol"),
-                getUuid(rs, "packing_spec_id"),
-                getUuid(rs, "clearance_cert_id"),
-                rs.getInt("line_no")
-        ), tenantId, dispatchId);
-
-        // Load Packages
-        List<DispatchPackageDto> packages = jdbc.query("""
-                SELECT id, dispatch_id, package_code, package_type, product_description,
-                       quantity, uom, weight_kg, length_mm, width_mm, height_mm, packing_notes, created_at
-                FROM dispatch_packages
-                WHERE tenant_id = ? AND dispatch_id = ?
-                ORDER BY created_at ASC
-                """, (rs, i) -> new DispatchPackageDto(
-                (UUID) rs.getObject("id"),
-                (UUID) rs.getObject("dispatch_id"),
-                rs.getString("package_code"),
-                rs.getString("package_type"),
-                rs.getString("product_description"),
-                rs.getBigDecimal("quantity"),
-                rs.getString("uom"),
-                rs.getBigDecimal("weight_kg"),
-                rs.getBigDecimal("length_mm"),
-                rs.getBigDecimal("width_mm"),
-                rs.getBigDecimal("height_mm"),
-                rs.getString("packing_notes"),
-                rs.getTimestamp("created_at").toInstant()
-        ), tenantId, dispatchId);
-
-        // Check Quality Info for the Job
-        UUID qualityReleaseId = base.qualityReleaseId();
-        String qualityReleaseStatus = null;
-        String qualityReleaseBy = null;
-        UUID qualityInspectionId = null;
-        String qualityInspectionNumber = null;
-        String qualityInspectionResult = null;
-        UUID failedInspectionId = null;
-        String failedInspectionNumber = null;
-        UUID linkedNcrId = null;
-        String linkedNcrNumber = null;
-
-        if (qualityReleaseId != null) {
-            try {
-                var cert = jdbc.queryForMap("""
-                        SELECT cc.status, u.display_name AS issued_by_name
-                          FROM clearance_certificates cc
-                          LEFT JOIN app_users u ON u.id = cc.issued_by
-                         WHERE cc.tenant_id = ? AND cc.id = ?
-                        """, tenantId, qualityReleaseId);
-                qualityReleaseStatus = (String) cert.get("status");
-                qualityReleaseBy = (String) cert.get("issued_by_name");
-            } catch (EmptyResultDataAccessException ignored) {}
-        }
-
-        if (base.jobId() != null) {
-            // Find latest inspection for this job
-            try {
-                var insp = jdbc.queryForMap("""
-                        SELECT qi.id, qi.inspection_number, qi.result, u.display_name AS inspector_name
-                        FROM quality_inspections qi
-                        LEFT JOIN app_users u ON u.id = qi.inspector_id
-                        WHERE qi.tenant_id = ? AND qi.reference_id = ?
-                        ORDER BY qi.created_at DESC LIMIT 1
-                        """, tenantId, base.jobId());
-                qualityInspectionId = (UUID) insp.get("id");
-                qualityInspectionNumber = (String) insp.get("inspection_number");
-                qualityInspectionResult = (String) insp.get("result");
-
-                if ("fail".equals(qualityInspectionResult)) {
-                    failedInspectionId = qualityInspectionId;
-                    failedInspectionNumber = qualityInspectionNumber;
-                }
-            } catch (EmptyResultDataAccessException ignored) {}
-
-            // Find linked NCR if any
-            try {
-                var ncr = jdbc.queryForMap("""
-                        SELECT n.id, n.ncr_number
-                        FROM ncrs n
-                        JOIN quality_inspections qi ON qi.id = n.inspection_id
-                        WHERE n.tenant_id = ? AND qi.reference_id = ?
-                        ORDER BY n.created_at DESC LIMIT 1
-                        """, tenantId, base.jobId());
-                linkedNcrId = (UUID) ncr.get("id");
-                linkedNcrNumber = (String) ncr.get("ncr_number");
-            } catch (EmptyResultDataAccessException ignored) {}
-        }
-
-        // Load Linked Invoices
-        List<LinkedInvoiceDto> linkedInvoices = jdbc.query("""
-                SELECT id, invoice_number, status, total_amount, invoice_date
-                FROM invoices
-                WHERE tenant_id = ? AND dispatch_id = ?
-                ORDER BY created_at DESC
-                """, (rs, i) -> new LinkedInvoiceDto(
-                (UUID) rs.getObject("id"),
-                rs.getString("invoice_number"),
-                rs.getString("status"),
-                rs.getBigDecimal("total_amount"),
-                getLocalDate(rs, "invoice_date")
-        ), tenantId, dispatchId);
-
-        // Load History from audit_events
-        List<DispatchHistoryDto> history = jdbc.query("""
-                SELECT a.id, a.action, u.display_name AS actor_name, a.created_at
-                FROM audit_events a
-                LEFT JOIN app_users u ON u.id = a.actor_id
-                WHERE a.tenant_id = ? AND a.entity_type = 'dispatch' AND a.entity_id = ?
-                ORDER BY a.created_at DESC
-                """, (rs, i) -> {
-            String act = rs.getString("action");
-            String title = HISTORY_TITLES.getOrDefault(act, "Dispatch Updated (" + act + ")");
-            return new DispatchHistoryDto(
-                    (UUID) rs.getObject("id"),
-                    act,
-                    title,
-                    "Action recorded by " + (rs.getString("actor_name") != null ? rs.getString("actor_name") : "system"),
-                    rs.getString("actor_name"),
-                    rs.getTimestamp("created_at").toInstant()
-            );
-        }, tenantId, dispatchId);
-
-        return new DispatchDetail(
-                base.id(),
-                base.dispatchNumber(),
-                base.customerId(),
-                base.customerName(),
-                base.cpoId(),
-                base.cpoNumber(),
-                base.jobId(),
-                base.jobNumber(),
-                base.jobs(),
-                base.sourceSiteId(),
-                base.sourceSiteName(),
-                base.sourceStoreId(),
-                base.sourceStoreName(),
-                base.destination(),
-                base.carrier(),
-                base.dispatchMethodOptionId(),
-                base.dispatchMethodLabel(),
-                base.vehicleNumber(),
-                base.driverName(),
-                base.lrNumber(),
-                base.dispatchDate(),
-                base.expectedDelivery(),
-                base.actualDeliveryDate(),
-                base.deliveryCondition(),
-                base.podReference(),
-                base.deliveryNotes(),
-                receivedByName,
-                receivedAt,
-                base.hasPoD(),
-                base.status(),
-                base.totalQty(),
-                lines.size(),
-                qualityReleaseId,
-                qualityReleaseStatus,
-                qualityReleaseBy,
-                qualityInspectionId,
-                qualityInspectionNumber,
-                qualityInspectionResult,
-                failedInspectionId,
-                failedInspectionNumber,
-                linkedNcrId,
-                linkedNcrNumber,
-                base.challanNumber(),
-                base.challanGcsPath(),
-                lines,
-                packages,
-                history,
-                linkedInvoices,
-                base.createdAt(),
-                base.updatedAt()
-        );
+        return dispatchReader.getDispatch(requireContext().tenantId(), dispatchId);
     }
 
     // ==========================================
@@ -606,7 +199,7 @@ public class DispatchService {
                 throw new ResponseStatusException(HttpStatus.CONFLICT,
                         "Cannot dispatch: Quality inspection gate active. " + eligibility.reason());
             }
-            consumeFinishedGoods(current, tenantId);
+            inventoryCoordinator.consumeFinishedGoods(current, tenantId, ctx.userId());
         }
 
         DispatchStatusMachine.apply(jdbc, tenantId, dispatchId, nextStatus, current.lines());
@@ -793,176 +386,7 @@ public class DispatchService {
         return eligibility.clearanceCertificateId();
     }
 
-    private UUID resolveJobId(CreateDispatchRequest req) {
-        Set<UUID> lineJobs = new HashSet<>();
-        for (var line : req.lines()) {
-            if (line.jobId() != null) lineJobs.add(line.jobId());
-        }
-        UUID jobId = req.jobId() != null ? req.jobId()
-                : lineJobs.size() == 1 ? lineJobs.iterator().next() : null;
-        if (jobId == null || lineJobs.stream().anyMatch(lineJob -> !jobId.equals(lineJob))) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    "All dispatch lines must belong to one selected production job");
-        }
-        return jobId;
-    }
 
-    private void validateCreateLines(UUID tenantId, CreateDispatchRequest req, UUID siteId, UUID jobId) {
-        if (req.sourceStoreId() == null) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    "A finished-goods store is required");
-        }
-        Map<UUID, BigDecimal> quantitiesByCpoLine = new HashMap<>();
-        Map<UUID, BigDecimal> quantitiesByLot = new HashMap<>();
-        Map<UUID, UUID> itemsByLot = new HashMap<>();
-        for (var line : req.lines()) {
-            if (line.cpoLineId() == null) {
-                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                        "A Customer PO line is required");
-            }
-            if (line.lotId() == null) {
-                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                        "A finished-goods lot is required");
-            }
-            if (line.quantity() == null || line.quantity().signum() <= 0) {
-                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                        "Dispatch quantity must be greater than zero");
-            }
-            if (line.jobId() == null || !jobId.equals(line.jobId())) {
-                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                        "Every dispatch line must belong to the selected production job");
-            }
-            UUID itemId = resolveItemId(tenantId, line.itemId(), jobId);
-            if (itemId == null) {
-                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                        "A finished-goods item is required for each dispatch line");
-            }
-            quantitiesByCpoLine.merge(line.cpoLineId(), line.quantity(), BigDecimal::add);
-            quantitiesByLot.merge(line.lotId(), line.quantity(), BigDecimal::add);
-            UUID previousItemId = itemsByLot.putIfAbsent(line.lotId(), itemId);
-            if (previousItemId != null && !previousItemId.equals(itemId)) {
-                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                        "A finished-goods lot cannot contain more than one item");
-            }
-            validateJobPoLine(tenantId, req.cpoId(), line.cpoLineId(), jobId, itemId);
-        }
-        quantitiesByCpoLine.forEach((lineId, quantity) ->
-                validateCpoLineLimit(tenantId, req.cpoId(), lineId, quantity));
-        quantitiesByLot.forEach((lotId, quantity) -> validateFinishedGoodsLot(
-                tenantId, siteId, req.sourceStoreId(), lotId, itemsByLot.get(lotId), quantity));
-    }
-
-    private void validateJobPoLine(UUID tenantId, UUID cpoId, UUID cpoLineId, UUID jobId, UUID itemId) {
-        Boolean matches = jdbc.queryForObject("""
-                SELECT EXISTS (
-                    SELECT 1 FROM production_jobs j
-                    JOIN cpo_lines cl ON cl.tenant_id = j.tenant_id AND cl.id = j.cpo_line_id
-                    WHERE j.tenant_id = ? AND j.id = ? AND j.cpo_id = ?
-                      AND j.cpo_line_id = ? AND cl.cpo_id = ? AND cl.item_id = ?
-                )
-                """, Boolean.class, tenantId, jobId, cpoId, cpoLineId, cpoId, itemId);
-        if (!Boolean.TRUE.equals(matches)) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    "The selected PO line, item, and production job do not match");
-        }
-    }
-
-    private void validateFinishedGoodsLot(
-            UUID tenantId, UUID siteId, UUID storeId, UUID lotId, UUID itemId, BigDecimal quantity) {
-        LotRow lot = inventoryRepository.findLot(tenantId, lotId, true)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
-                        "Finished-goods lot was not found for this tenant"));
-        if (!LotStatus.AVAILABLE.equals(lot.status())
-                || !itemId.equals(lot.itemId())
-                || !storeId.equals(lot.storeId())
-                || !siteId.equals(lot.siteId())) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT,
-                    "Select an available finished-goods lot for the selected item, site, and store");
-        }
-        Boolean finishedGoods = jdbc.queryForObject("""
-                SELECT i.item_type = 'finished_goods' AND s.store_type = 'finished_goods'
-                  FROM items i
-                  JOIN stores s ON s.tenant_id = i.tenant_id
-                 WHERE i.tenant_id = ? AND i.id = ? AND s.id = ?
-                """, Boolean.class, tenantId, itemId, storeId);
-        if (!Boolean.TRUE.equals(finishedGoods)) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT,
-                    "Dispatch requires a finished-goods item and finished-goods store");
-        }
-        BigDecimal pendingQty = jdbc.queryForObject("""
-                SELECT COALESCE(SUM(dl.quantity), 0)
-                  FROM dispatch_lines dl
-                  JOIN dispatches d ON d.tenant_id = dl.tenant_id AND d.id = dl.dispatch_id
-                 WHERE dl.tenant_id = ? AND dl.lot_id = ?
-                   AND d.status IN ('draft', 'pending', 'pending_docs', 'packed')
-                """, BigDecimal.class, tenantId, lotId);
-        BigDecimal available = lot.quantity().subtract(lot.reservedQty())
-                .subtract(pendingQty == null ? BigDecimal.ZERO : pendingQty);
-        if (quantity.compareTo(available) > 0) {
-            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "Dispatch quantity exceeds eligible finished-goods stock. Available: " + available);
-        }
-    }
-
-    private void consumeFinishedGoods(DispatchDetail dispatch, UUID tenantId) {
-        if (dispatch.lines() == null || dispatch.lines().isEmpty()) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT,
-                    "A dispatch needs at least one PO line before it can be marked dispatched");
-        }
-        Map<UUID, BigDecimal> quantitiesByLot = new TreeMap<>(Comparator.comparing(UUID::toString));
-        Map<UUID, UUID> itemsByLot = new HashMap<>();
-        for (var line : dispatch.lines()) {
-            if (line.lotId() == null || line.itemId() == null || line.quantity() == null) {
-                throw new ResponseStatusException(HttpStatus.CONFLICT,
-                        "Every dispatch line must identify a finished-goods lot and quantity");
-            }
-            quantitiesByLot.merge(line.lotId(), line.quantity(), BigDecimal::add);
-            UUID previousItemId = itemsByLot.putIfAbsent(line.lotId(), line.itemId());
-            if (previousItemId != null && !previousItemId.equals(line.itemId())) {
-                throw new ResponseStatusException(HttpStatus.CONFLICT,
-                        "A finished-goods lot cannot contain more than one item");
-            }
-        }
-        for (var allocation : quantitiesByLot.entrySet()) {
-            UUID lotId = allocation.getKey();
-            LotRow lot = inventoryRepository.findLot(tenantId, lotId, true)
-                    .orElseThrow(() -> new ResponseStatusException(HttpStatus.CONFLICT,
-                            "Finished-goods lot is no longer available"));
-            BigDecimal quantity = allocation.getValue();
-            if (!LotStatus.AVAILABLE.equals(lot.status())
-                    || !lot.itemId().equals(itemsByLot.get(lotId))
-                    || !lot.storeId().equals(dispatch.sourceStoreId())
-                    || !lot.siteId().equals(dispatch.sourceSiteId())) {
-                throw new ResponseStatusException(HttpStatus.CONFLICT,
-                        "Finished-goods lot is no longer eligible for dispatch");
-            }
-            BigDecimal newQuantity = lot.quantity().subtract(quantity);
-            if (quantity.signum() <= 0 || newQuantity.compareTo(lot.reservedQty()) < 0) {
-                throw new ResponseStatusException(HttpStatus.CONFLICT,
-                        "Dispatch quantity exceeds the available finished-goods lot balance");
-            }
-            BigDecimal pendingOthers = jdbc.queryForObject("""
-                    SELECT COALESCE(SUM(dl.quantity), 0)
-                      FROM dispatch_lines dl
-                      JOIN dispatches d ON d.tenant_id = dl.tenant_id AND d.id = dl.dispatch_id
-                     WHERE dl.tenant_id = ? AND dl.lot_id = ? AND d.id <> ?
-                       AND d.status IN ('draft', 'pending', 'pending_docs', 'packed')
-                    """, BigDecimal.class, tenantId, lotId, dispatch.id());
-            if (newQuantity.subtract(lot.reservedQty())
-                    .compareTo(pendingOthers == null ? BigDecimal.ZERO : pendingOthers) < 0) {
-                throw new ResponseStatusException(HttpStatus.CONFLICT,
-                        "Another pending dispatch is already allocated to this finished-goods lot");
-            }
-            String nextStatus = LotStatusMachine.statusAfterMovement(
-                    lot.status(), MovementType.ISSUE, newQuantity, lot.reservedQty());
-            inventoryRepository.updateLot(tenantId, lot.id(), newQuantity, nextStatus);
-            UUID movementId = UUID.randomUUID();
-            inventoryRepository.insertMovement(movementId, tenantId, MovementType.ISSUE.dbValue(),
-                    lot.itemId(), lot.id(), lot.storeId(), null, quantity, lot.unitCost(),
-                    "DISPATCH", dispatch.id(), requireContext().userId(),
-                    "Dispatched " + dispatch.dispatchNumber());
-        }
-    }
 
     private String generateDispatchNumber(UUID tenantId) {
         int currentYear = Year.now().getValue();
@@ -983,123 +407,11 @@ public class DispatchService {
         return totalQty;
     }
 
-    private void insertLines(UUID tenantId, UUID dispatchId, UUID defaultJobId, UUID defaultCertId, List<CreateDispatchLineRequest> lines) {
-        if (lines == null || lines.isEmpty()) return;
-        int lineNo = 1;
-        for (var lineReq : lines) {
-            UUID lineJobId = lineReq.jobId() != null ? lineReq.jobId() : defaultJobId;
-            UUID lineItemId = resolveItemId(tenantId, lineReq.itemId(), lineJobId);
-            UUID lineUomId = resolveUomId(tenantId, lineReq.uomId(), lineItemId);
-
-            jdbc.update("""
-                    INSERT INTO dispatch_lines (
-                      id, tenant_id, dispatch_id, cpo_line_id, item_id, lot_id,
-                      quantity, uom_id, packing_spec_id, line_no, job_id, clearance_cert_id, created_at
-                    ) VALUES (
-                      gen_random_uuid(), ?, ?, ?, ?, ?,
-                      ?, ?, ?, ?, ?, ?, NOW()
-                    )
-                    """,
-                    tenantId, dispatchId, lineReq.cpoLineId(), lineItemId, lineReq.lotId(),
-                    lineReq.quantity(),
-                    lineUomId, lineReq.packingSpecId(), lineNo++, lineJobId,
-                    lineReq.clearanceCertId() != null ? lineReq.clearanceCertId() : defaultCertId
-            );
-        }
-    }
-
-    private UUID resolveItemId(UUID tenantId, UUID lineItemId, UUID lineJobId) {
-        if (lineItemId != null) return lineItemId;
-        if (lineJobId != null) {
-            try {
-                return jdbc.queryForObject(
-                        "SELECT finished_item_id FROM production_jobs WHERE tenant_id = ? AND id = ?",
-                        UUID.class, tenantId, lineJobId);
-            } catch (EmptyResultDataAccessException ignored) {}
-        }
-        return null;
-    }
-
-    private UUID resolveUomId(UUID tenantId, UUID lineUomId, UUID lineItemId) {
-        if (lineUomId != null) return lineUomId;
-        if (lineItemId != null) {
-            try {
-                lineUomId = jdbc.queryForObject(
-                        "SELECT base_uom_id FROM items WHERE tenant_id = ? AND id = ?",
-                        UUID.class, tenantId, lineItemId);
-            } catch (EmptyResultDataAccessException ignored) {}
-        }
-        if (lineUomId == null) {
-            try {
-                lineUomId = jdbc.queryForObject(
-                        "SELECT id FROM units_of_measure WHERE tenant_id = ? ORDER BY is_base DESC, created_at LIMIT 1",
-                        UUID.class, tenantId);
-            } catch (EmptyResultDataAccessException ignored) {}
-        }
-        return lineUomId;
-    }
-
-    private void validateCpoLineLimit(UUID tenantId, UUID cpoId, UUID cpoLineId, BigDecimal reqQty) {
-        var cpoLineData = jdbc.queryForMap(
-                """
-                SELECT l.quantity, l.delivered_qty, c.status, l.cpo_id,
-                       COALESCE((
-                           SELECT SUM(dl.quantity)
-                             FROM dispatch_lines dl
-                             JOIN dispatches d ON d.tenant_id = dl.tenant_id AND d.id = dl.dispatch_id
-                            WHERE dl.tenant_id = l.tenant_id AND dl.cpo_line_id = l.id
-                              AND d.status IN ('draft', 'pending', 'pending_docs', 'packed')
-                       ), 0) AS pending_qty
-                  FROM cpo_lines l JOIN cpos c ON c.tenant_id = l.tenant_id AND c.id = l.cpo_id
-                 WHERE l.tenant_id = ? AND l.id = ? FOR UPDATE OF c, l
-                """,
-                tenantId, cpoLineId);
-        requireDispatchableOrder((String) cpoLineData.get("status"));
-        if (!cpoId.equals(cpoLineData.get("cpo_id"))) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    "Customer PO line does not belong to the selected Customer PO");
-        }
-        BigDecimal orderedQty = (BigDecimal) cpoLineData.get("quantity");
-        BigDecimal alreadyDelivered = (BigDecimal) cpoLineData.get("delivered_qty");
-        BigDecimal pendingQty = (BigDecimal) cpoLineData.get("pending_qty");
-        BigDecimal remaining = orderedQty
-                .subtract(alreadyDelivered != null ? alreadyDelivered : BigDecimal.ZERO)
-                .subtract(pendingQty != null ? pendingQty : BigDecimal.ZERO);
-        if (reqQty != null && reqQty.compareTo(remaining) > 0) {
-            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "Dispatch quantity " + reqQty + " exceeds eligible outstanding quantity " + remaining);
-        }
-    }
-
     public PoLineAvailability getPoLineAvailability(UUID cpoLineId) {
-        UUID tenantId = requireContext().tenantId();
-        Map<String, Object> row;
-        try {
-            row = jdbc.queryForMap("""
-                    SELECT l.quantity, l.delivered_qty,
-                           COALESCE((
-                               SELECT SUM(dl.quantity)
-                                 FROM dispatch_lines dl
-                                 JOIN dispatches d ON d.tenant_id = dl.tenant_id AND d.id = dl.dispatch_id
-                                WHERE dl.tenant_id = l.tenant_id AND dl.cpo_line_id = l.id
-                                  AND d.status IN ('draft', 'pending', 'pending_docs', 'packed')
-                           ), 0) AS pending_qty
-                      FROM cpo_lines l
-                     WHERE l.tenant_id = ? AND l.id = ?
-                    """, tenantId, cpoLineId);
-        } catch (EmptyResultDataAccessException e) {
-            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Customer PO line not found");
-        }
-        BigDecimal ordered = (BigDecimal) row.get("quantity");
-        BigDecimal delivered = (BigDecimal) row.get("delivered_qty");
-        BigDecimal pending = (BigDecimal) row.get("pending_qty");
-        BigDecimal safeDelivered = delivered != null ? delivered : BigDecimal.ZERO;
-        BigDecimal safePending = pending != null ? pending : BigDecimal.ZERO;
-        BigDecimal remaining = ordered.subtract(safeDelivered).subtract(safePending).max(BigDecimal.ZERO);
-        return new PoLineAvailability(cpoLineId, ordered, safeDelivered, safePending, remaining);
+        return inventoryCoordinator.getPoLineAvailability(requireContext().tenantId(), cpoLineId);
     }
 
-    private static void requireDispatchableOrder(String status) {
+    static void requireDispatchableOrder(String status) {
         if (!Set.of("open", "partial", "feasibility_approved").contains(status)) {
             throw new ResponseStatusException(HttpStatus.CONFLICT,
                     "Customer PO status " + status + " cannot be dispatched");
@@ -1133,16 +445,4 @@ public class DispatchService {
             return "{}";
         }
     }
-
-    private static UUID getUuid(ResultSet rs, String col) throws SQLException {
-        Object obj = rs.getObject(col);
-        return obj instanceof UUID u ? u : null;
-    }
-
-    private static LocalDate getLocalDate(ResultSet rs, String col) throws SQLException {
-        java.sql.Date d = rs.getDate(col);
-        return d != null ? d.toLocalDate() : null;
-    }
-
-    private record OrderRow(String status, UUID customerId) {}
 }

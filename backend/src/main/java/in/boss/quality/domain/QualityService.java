@@ -459,24 +459,8 @@ public class QualityService {
             throw notFound("Inspection not found");
         }
         InspectionDetail inspection = getInspection(request.inspectionId());
-        validateItem(ctx.tenantId(), request.itemId());
-        if (inspection.itemId() != null && !inspection.itemId().equals(request.itemId())) {
-            throw badRequest("NCR item must match the linked inspection");
-        }
-        UUID inspectionJobId = jobIdForInspection(ctx.tenantId(), inspection);
-        if (request.jobId() != null && inspectionJobId != null
-                && !request.jobId().equals(inspectionJobId)) {
-            throw badRequest("NCR job must match the linked inspection");
-        }
-        UUID jobId = inspectionJobId != null ? inspectionJobId : request.jobId();
-        if (jobId != null) {
-            requireExists("production_jobs", ctx.tenantId(), jobId, "Production job not found");
-        }
+        UUID jobId = validateNcrTarget(ctx, request, inspection);
         UUID lotId = request.lotId() != null ? request.lotId() : inspection.lotId();
-        if (request.severity() != null
-                && !List.of("critical", "major", "medium", "minor").contains(request.severity())) {
-            throw badRequest("Invalid NCR severity");
-        }
         ConfigOption defectCategory = resolveConfigOption(
                 ctx.tenantId(), request.defectCategoryId(), "DEFECT_CATEGORY");
 
@@ -505,6 +489,27 @@ public class QualityService {
         return getNcr(id);
     }
 
+    private UUID validateNcrTarget(BossContext ctx, CreateNcrRequest request, InspectionDetail inspection) {
+        validateItem(ctx.tenantId(), request.itemId());
+        if (inspection.itemId() != null && !inspection.itemId().equals(request.itemId())) {
+            throw badRequest("NCR item must match the linked inspection");
+        }
+        UUID inspectionJobId = jobIdForInspection(ctx.tenantId(), inspection);
+        if (request.jobId() != null && inspectionJobId != null
+                && !request.jobId().equals(inspectionJobId)) {
+            throw badRequest("NCR job must match the linked inspection");
+        }
+        UUID jobId = inspectionJobId != null ? inspectionJobId : request.jobId();
+        if (jobId != null) {
+            requireExists("production_jobs", ctx.tenantId(), jobId, "Production job not found");
+        }
+        if (request.severity() != null
+                && !List.of("critical", "major", "medium", "minor").contains(request.severity())) {
+            throw badRequest("Invalid NCR severity");
+        }
+        return jobId;
+    }
+
     @PreAuthorize(BossPermissions.QUALITY_WRITE)
     public NcrDetail updateNcr(UUID ncrId, UpdateNcrRequest request) {
         BossContext ctx = requireContext();
@@ -519,19 +524,7 @@ public class QualityService {
                 .contains(nextStatus)) {
             throw badRequest("Invalid NCR status");
         }
-        String nextDisposition = request.disposition() == null
-                ? current.disposition() : request.disposition();
-        if ("rework".equals(nextStatus)) {
-            if (nextDisposition != null && !"rework".equals(nextDisposition)) {
-                throw badRequest("Rework status requires rework disposition");
-            }
-            nextDisposition = "rework";
-        } else if ("scrapped".equals(nextStatus)) {
-            if (nextDisposition != null && !"scrap".equals(nextDisposition)) {
-                throw badRequest("Scrapped status requires scrap disposition");
-            }
-            nextDisposition = "scrap";
-        }
+        String nextDisposition = resolveNcrDisposition(nextStatus, request.disposition(), current.disposition());
 
         jdbc.update("""
                 UPDATE ncrs
@@ -553,6 +546,23 @@ public class QualityService {
                 "{\"status\":\"" + current.status() + "\"}",
                 "{\"status\":\"" + request.status() + "\"}");
         return getNcr(ncrId);
+    }
+
+    private String resolveNcrDisposition(String nextStatus, String requestDisposition, String currentDisposition) {
+        String nextDisposition = requestDisposition == null ? currentDisposition : requestDisposition;
+        if ("rework".equals(nextStatus)) {
+            if (nextDisposition != null && !"rework".equals(nextDisposition)) {
+                throw badRequest("Rework status requires rework disposition");
+            }
+            return "rework";
+        }
+        if ("scrapped".equals(nextStatus)) {
+            if (nextDisposition != null && !"scrap".equals(nextDisposition)) {
+                throw badRequest("Scrapped status requires scrap disposition");
+            }
+            return "scrap";
+        }
+        return nextDisposition;
     }
 
     @PreAuthorize(BossPermissions.QUALITY_WRITE)
