@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { ArrowRightLeft, Pencil, Plus, ShieldAlert } from "lucide-react";
+import { ArrowRightLeft, ExternalLink, Plus, ShieldAlert, SlidersHorizontal } from "lucide-react";
 import ErrorState from "../components/shared/ErrorState";
 import LoadingState from "../components/shared/LoadingState";
+import RecordSheet from "../components/shared/RecordSheet";
 import RecordTable, { type RecordColumn } from "../components/shared/RecordTable";
-import { loadLots, loadPositions, loadStores, quantity, type Position, type Store } from "./api";
+import { loadLots, loadPositions, loadStores, mutate, quantity, type Lot, type Position, type Store } from "./api";
 import StockNav from "./stockNav";
 
 type StockRow = Position & { id: string; qcHoldQty: number; lotCount: number; status: string };
@@ -29,6 +30,7 @@ export default function InventoryHome() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [storeWarning, setStoreWarning] = useState("");
+  const [adjustRow, setAdjustRow] = useState<StockRow | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -44,9 +46,11 @@ export default function InventoryHome() {
       const companyStores = company.stores;
       if (!active) return;
       const held = new Map<string, number>();
+      const holdLotsByKey = new Map<string, Lot>();
       for (const lot of quarantined) {
         const key = `${lot.itemId}:${lot.storeId}`;
         held.set(key, (held.get(key) ?? 0) + Number(lot.qty));
+        if (!holdLotsByKey.has(key)) holdLotsByKey.set(key, lot);
       }
       const lotCountMap = new Map<string, number>();
       for (const lot of [...available, ...reserved]) {
@@ -55,12 +59,41 @@ export default function InventoryHome() {
       }
       setStores(companyStores);
       setStoreWarning(company.failed ? "Stores could not be loaded. Locations are taken from the stock rows." : "");
-      setRows(positions.map((position) => {
+      const positionRows: StockRow[] = positions.map((position) => {
         const qcHoldQty = held.get(`${position.itemId}:${position.storeId}`) ?? 0;
         const lotCount = lotCountMap.get(`${position.itemId}:${position.storeId}`) ?? 0;
         const next = { ...position, id: `${position.itemId}:${position.storeId}`, qcHoldQty, lotCount, status: "" };
         return { ...next, status: rowStatus(next) };
-      }));
+      });
+      // DEF-044: add rows for items that only have quarantine lots (no available/reserved position)
+      const positionKeys = new Set(positionRows.map((r) => `${r.itemId}:${r.storeId}`));
+      const holdOnlyRows: StockRow[] = [];
+      for (const [key, lot] of holdLotsByKey) {
+        if (!positionKeys.has(key)) {
+          const holdQty = held.get(key) ?? 0;
+          const synthetic: StockRow = {
+            itemId: lot.itemId,
+            itemCode: lot.itemCode,
+            itemName: lot.itemName,
+            storeId: lot.storeId,
+            storeName: lot.storeName,
+            totalQty: 0,
+            reservedQty: 0,
+            availableQty: 0,
+            inTransitQty: 0,
+            reorderPoint: null,
+            uomSymbol: lot.uomSymbol,
+            id: key,
+            qcHoldQty: holdQty,
+            lotCount: 0,
+            status: "Quality Hold",
+            valuationAmt: 0,
+            lastMovedAt: null,
+          } as unknown as StockRow;
+          holdOnlyRows.push(synthetic);
+        }
+      }
+      setRows([...positionRows, ...holdOnlyRows]);
     }).catch((reason: unknown) => {
       if (active) setError(reason instanceof Error ? reason.message : "Inventory could not be loaded.");
     }).finally(() => { if (active) setLoading(false); });
@@ -78,11 +111,19 @@ export default function InventoryHome() {
       return text && (status === "all" || row.status === status);
     });
   }, [scoped, search, status]);
-  const totals = visible.reduce((sum, row) => ({
-    available: sum.available + Number(row.availableQty),
-    reserved: sum.reserved + Number(row.reservedQty),
-    hold: sum.hold + row.qcHoldQty,
-  }), { available: 0, reserved: 0, hold: 0 });
+  // DEF-052: group available/hold/reserved by UOM instead of summing across different units
+  const uomTotals = useMemo(() => {
+    const map = new Map<string, { available: number; hold: number; reserved: number }>();
+    for (const row of visible) {
+      const uom = row.uomSymbol || "";
+      const entry = map.get(uom) ?? { available: 0, hold: 0, reserved: 0 };
+      entry.available += Number(row.availableQty);
+      entry.hold += row.qcHoldQty;
+      entry.reserved += Number(row.reservedQty);
+      map.set(uom, entry);
+    }
+    return map;
+  }, [visible]);
 
   const columns: RecordColumn<StockRow>[] = [
     { key: "itemCode", label: "Code", value: (row) => row.itemCode, render: (row) => <span className="font-semibold text-[var(--brand)]">{row.itemCode}</span> },
@@ -154,33 +195,111 @@ export default function InventoryHome() {
               columns={columns}
               empty="No stock positions"
               onRow={(row) => navigate(`/inventory/item/${row.itemId}`)}
-              trailing={(row) => <RowActions row={row} rows={rows} />}
+              trailing={(row) => <RowActions row={row} rows={rows} onAdjust={() => setAdjustRow(row)} />}
             />}
       </div>
       <footer className="flex flex-wrap gap-4 border-t px-5 py-2 text-xs" style={{ borderColor: "var(--border)", color: "var(--text-3)" }}>
         <span>{visible.length} of {rows.length} stock rows</span>
-        <span>{quantity(totals.available)} available</span>
-        <span>{quantity(totals.reserved)} reserved</span>
-        <span>{quantity(totals.hold)} QC hold</span>
+        {[...uomTotals.entries()].map(([uom, t]) => (
+          <span key={uom}>
+            {quantity(t.available, uom)} avail
+            {t.hold > 0 && <> · {quantity(t.hold, uom)} QC hold</>}
+            {t.reserved > 0 && <> · {quantity(t.reserved, uom)} reserved</>}
+          </span>
+        ))}
       </footer>
+      {adjustRow && <AdjustStockSheet row={adjustRow} onClose={() => setAdjustRow(null)} onDone={() => { setAdjustRow(null); window.location.reload(); }} />}
     </div>
   );
 }
 
-function RowActions({ row, rows }: { row: StockRow; rows: StockRow[] }) {
+function RowActions({ row, rows, onAdjust }: { row: StockRow; rows: StockRow[]; onAdjust: () => void }) {
   const source = rows.find((other) => other.itemId === row.itemId && other.storeId !== row.storeId && other.availableQty > 0);
   const qty = Math.max((row.reorderPoint ?? 0) - row.availableQty, row.reorderPoint || 1);
   const pr = new URLSearchParams({ code: row.itemCode, materialId: row.itemId, name: row.itemName, uom: row.uomSymbol, qty: String(qty) });
   return (
     <div className="flex items-center justify-end gap-2">
-      <Link to={`/inventory/item/${row.itemId}?edit=1`} className="text-[var(--text-3)] hover:text-[var(--text)]" title="Edit material" onClick={(event) => event.stopPropagation()}>
-        <Pencil size={13} />
+      <button type="button" title="Adjust stock" className="text-[var(--text-3)] hover:text-[var(--text)]" onClick={(event) => { event.stopPropagation(); onAdjust(); }}>
+        <SlidersHorizontal size={13} />
+      </button>
+      <Link to={`/inventory/item/${row.itemId}`} className="text-[var(--text-3)] hover:text-[var(--text)]" title="View item" onClick={(event) => event.stopPropagation()}>
+        <ExternalLink size={13} />
       </Link>
       <Link to={`/procurement/pr/new?${pr}`} className="rounded-lg px-2 py-1 text-xs font-semibold text-white" style={{ background: "var(--brand-fill)" }} onClick={(event) => event.stopPropagation()}>Create PR</Link>
       {source && (
         <Link to={`/inventory/transfer?from=${encodeURIComponent(source.storeName)}&to=${encodeURIComponent(row.storeName)}&material=${encodeURIComponent(row.itemCode)}&qty=${encodeURIComponent(String(Math.min(source.availableQty, qty)))}`} className="text-xs font-semibold text-[var(--brand)]" onClick={(event) => event.stopPropagation()}>Move stock</Link>
       )}
     </div>
+  );
+}
+
+function AdjustStockSheet({ row, onClose, onDone }: { row: StockRow; onClose: () => void; onDone: () => void }) {
+  const [direction, setDirection] = useState<"add" | "reduce">("add");
+  const [qty, setQty] = useState("");
+  const [reason, setReason] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState("");
+
+  const handleSave = async () => {
+    const q = Number(qty);
+    if (!q || q <= 0) { setErr("Enter a positive quantity."); return; }
+    if (!reason.trim()) { setErr("Reason is required."); return; }
+    setSaving(true);
+    setErr("");
+    try {
+      // Find an available lot for this item+store to post the movement against
+      const lots = await loadLots(`itemId=${row.itemId}&storeId=${row.storeId}&status=available`);
+      const lot = lots[0];
+      if (!lot && direction === "reduce") { setErr("No available lot found to reduce."); setSaving(false); return; }
+      if (!lot && direction === "add") {
+        // For positive adjustments with no existing lot, we still need a lot — post as a new lot via /api/v1/inventory/lots
+        // For now, tell the user to use Opening Stock if no lot exists
+        setErr("No available lot exists for this item+store. Use Opening Stock to add new stock."); setSaving(false); return;
+      }
+      await mutate(`/api/v1/inventory/lots/${lot.id}/movements`, "POST", {
+        movementType: direction === "add" ? "adjustment_add" : "adjustment_reduce",
+        qty: q,
+        referenceType: "manual_adjustment",
+        note: reason.trim(),
+      });
+      onDone();
+    } catch (e: unknown) {
+      setErr(e instanceof Error ? e.message : "Adjustment failed.");
+      setSaving(false);
+    }
+  };
+
+  return (
+    <RecordSheet title={`Adjust Stock — ${row.itemCode}`} subtitle={`${row.itemName} · ${row.storeName}`} onClose={onClose} primary={{ label: saving ? "Saving…" : "Save Adjustment", onClick: handleSave, disabled: saving }} secondary={{ label: "Cancel", onClick: onClose }}>
+      <div className="space-y-4 text-sm">
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="block text-xs text-[var(--text-3)] mb-1">Current Available</label>
+            <div className="eoss-input bg-[var(--surface-2)]">{quantity(row.availableQty, row.uomSymbol)}</div>
+          </div>
+          <div>
+            <label className="block text-xs text-[var(--text-3)] mb-1">QC Hold</label>
+            <div className="eoss-input bg-[var(--surface-2)]">{quantity(row.qcHoldQty, row.uomSymbol)}</div>
+          </div>
+        </div>
+        <div>
+          <label className="block text-xs text-[var(--text-3)] mb-1">Direction</label>
+          <div className="flex gap-2">
+            <button type="button" onClick={() => setDirection("add")} className={`flex-1 rounded-lg border py-2 text-xs font-semibold ${direction === "add" ? "border-[var(--success)] text-[var(--success)] bg-[var(--success-bg)]" : "border-[var(--border)] text-[var(--text-2)]"}`}>+ Add</button>
+            <button type="button" onClick={() => setDirection("reduce")} className={`flex-1 rounded-lg border py-2 text-xs font-semibold ${direction === "reduce" ? "border-[var(--error)] text-[var(--error)] bg-[var(--error-bg)]" : "border-[var(--border)] text-[var(--text-2)]"}`}>− Reduce</button>
+          </div>
+        </div>
+        <div>
+          <label className="block text-xs text-[var(--text-3)] mb-1">Quantity ({row.uomSymbol}) *</label>
+          <input type="number" min="0.001" step="any" className="eoss-input w-full font-mono" value={qty} onChange={(e) => setQty(e.target.value)} placeholder="0.000" />
+        </div>
+        <div>
+          <label className="block text-xs text-[var(--text-3)] mb-1">Reason *</label>
+          <input className="eoss-input w-full" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Physical count correction, damaged stock write-off…" />
+        </div>
+        {err && <p className="text-xs text-[var(--error)]">{err}</p>}
+      </div>
+    </RecordSheet>
   );
 }
 
