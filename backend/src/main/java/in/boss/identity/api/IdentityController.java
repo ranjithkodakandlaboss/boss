@@ -4,6 +4,7 @@ import in.boss.identity.domain.CompanyLocationService;
 import in.boss.identity.domain.CompanyWorkspaceService;
 import in.boss.identity.domain.CustomerIdentityService;
 import in.boss.shared.security.BossPermissions;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import org.springframework.http.HttpStatus;
@@ -80,6 +81,11 @@ public class IdentityController {
     @PreAuthorize(BossPermissions.OWNER)
     public Map<String, Object> saveCompany(@RequestBody CompanySaveRequest request) {
         return company.save(request, false);
+    }
+
+    @GetMapping("/sites")
+    public List<Map<String, Object>> listSites() {
+        return locations.listSites();
     }
 
     @PostMapping("/company/sites")

@@ -72,6 +72,16 @@ public class CompanyLocationService {
         return store;
     }
 
+    public List<Map<String, Object>> listSites() {
+        BossContext context = BossContextHolder.get();
+        if (context == null || context.tenantId() == null) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Sign-in is required");
+        }
+        return jdbc.queryForList(
+                "SELECT id, name, code FROM physical_sites WHERE tenant_id = ? ORDER BY name",
+                context.tenantId());
+    }
+
     private UUID legalEntity(UUID tenantId) {
         List<UUID> ids = jdbc.query(
                 "SELECT id FROM legal_entities WHERE tenant_id = ? ORDER BY created_at LIMIT 1",
