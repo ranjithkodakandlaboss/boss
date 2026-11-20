@@ -18,7 +18,36 @@ export type JobStage = {
   blockerReason?: string;
   actualStartAt?: string;
   actualEndAt?: string;
+  // Planning and execution (new – nullable for historical jobs)
+  plannedStart?: string;
+  plannedEnd?: string;
+  estimatedDurationMin?: number;
+  completedQty?: number;
+  blockedQty?: number;
+  assignedOperator?: string;
+  assignedOperatorId?: string;
+  variancePct?: number;
 };
+
+export type StagePlanEntry = {
+  seqNo: number;
+  stageName: string;
+  workCentre?: string;
+  estimatedDurationMin: number;
+  plannedStart: string;
+  plannedEnd: string;
+};
+
+export type PlanPreview = {
+  estimatedStartDate: string;
+  expectedCompletionDate: string;
+  deliveryRisk: string;
+  deliveryRiskReason?: string;
+  stages: StagePlanEntry[];
+};
+
+export type CustomerOption = { id: string; name: string; code?: string };
+export type ItemOption = { id: string; name: string; code?: string; uomId?: string; uomSymbol?: string };
 
 export type MaterialRequirement = {
   id: string;
@@ -251,8 +280,12 @@ export function createRoutingTemplate(name: string, stageName: string, stages?: 
 }
 
 export function createJob(body: {
-  cpoId: string;
-  cpoLineId: string;
+  cpoId?: string;
+  cpoLineId?: string;
+  customerId?: string;
+  itemId?: string;
+  uomId?: string;
+  siteId?: string;
   routingTemplateId: string;
   scheduledStart?: string;
   scheduledEnd?: string;
@@ -260,6 +293,63 @@ export function createJob(body: {
   quantity?: number;
 }) {
   return post<ProductionJob>("/api/v1/jobs", body);
+}
+
+export function previewPlan(body: {
+  routingTemplateId: string;
+  quantity: number;
+  deliveryDate: string;
+}): Promise<PlanPreview> {
+  // Frontend-only preview: returns mock data until the backend endpoint is wired
+  return Promise.resolve(buildMockPlan(body.deliveryDate));
+}
+
+function buildMockPlan(deliveryDate: string): PlanPreview {
+  const end = new Date(deliveryDate);
+  const stages: StagePlanEntry[] = [
+    { seqNo: 1, stageName: "Material Prep", workCentre: "Store", estimatedDurationMin: 240, plannedStart: "", plannedEnd: "" },
+    { seqNo: 2, stageName: "Machining", workCentre: "CNC Bay", estimatedDurationMin: 480, plannedStart: "", plannedEnd: "" },
+    { seqNo: 3, stageName: "Assembly", workCentre: "Assembly", estimatedDurationMin: 360, plannedStart: "", plannedEnd: "" },
+    { seqNo: 4, stageName: "Finishing", workCentre: "Finishing", estimatedDurationMin: 240, plannedStart: "", plannedEnd: "" },
+  ];
+  let cursor = new Date(end);
+  for (let i = stages.length - 1; i >= 0; i--) {
+    const stageEnd = new Date(cursor);
+    cursor.setDate(cursor.getDate() - Math.ceil(stages[i].estimatedDurationMin / 480));
+    stages[i].plannedEnd = stageEnd.toISOString().split("T")[0];
+    stages[i].plannedStart = cursor.toISOString().split("T")[0];
+  }
+  const today = new Date();
+  const startDate = new Date(cursor);
+  const daysToStart = Math.round((startDate.getTime() - today.getTime()) / 86400000);
+  const risk = daysToStart < -1 ? "delayed" : daysToStart < 2 ? "at_risk" : "on_track";
+  const riskReason = risk === "delayed" ? "Production cannot start in time to meet the delivery date"
+    : risk === "at_risk" ? "Very little buffer before production must start"
+    : undefined;
+  return {
+    estimatedStartDate: startDate.toISOString().split("T")[0],
+    expectedCompletionDate: end.toISOString().split("T")[0],
+    deliveryRisk: risk,
+    deliveryRiskReason: riskReason,
+    stages,
+  };
+}
+
+export function listCustomers(): Promise<CustomerOption[]> {
+  return api<{ content?: CustomerOption[] }>("/api/v1/customers?size=200")
+    .then((page) => page.content ?? [])
+    .catch(() => []);
+}
+
+export function listItems(): Promise<ItemOption[]> {
+  return api<{ content?: ItemOption[] }>("/api/v1/items?size=200&itemType=finished_goods")
+    .then((page) => page.content ?? [])
+    .catch(() => []);
+}
+
+export function listSites(): Promise<{ id: string; name: string }[]> {
+  return api<{ id: string; name: string }[]>("/api/v1/sites")
+    .catch(() => []);
 }
 
 export function cancelJob(id: string, reason: string) {

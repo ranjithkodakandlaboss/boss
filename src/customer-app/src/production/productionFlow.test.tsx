@@ -100,8 +100,9 @@ it("opens a job from an eligible customer order and issues material", async () =
   expect(screen.getByRole("option", { name: /CPO-100 — Line 1 — North Works — FRAME Frame — 7 remaining/ })).toBeInTheDocument();
   expect(screen.getByText(/Selling price stays on the Customer PO/)).toBeInTheDocument();
   await userEvent.selectOptions(screen.getByLabelText("Production workflow"), templateId);
-  await userEvent.type(screen.getByLabelText("Planned End"), "2026-12-01");
-  await userEvent.click(screen.getByRole("button", { name: "Create job" }));
+  await userEvent.type(screen.getByLabelText("Delivery Date"), "2026-12-01");
+  await userEvent.click(screen.getByRole("button", { name: "Preview Plan →" }));
+  await userEvent.click(await screen.findByRole("button", { name: "Confirm and Create Job" }));
   expect(await screen.findByRole("heading", { name: "North Works" })).toBeInTheDocument();
   await userEvent.click(screen.getByRole("button", { name: "Materials" }));
   await userEvent.selectOptions(await screen.findByLabelText("Lot for PLATE"), lotId);

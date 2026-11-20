@@ -14,7 +14,30 @@ import {
   type JobCosting, type LotOption, type ProductionJob,
 } from "./api";
 
-const TABS = ["Overview", "Stages", "Materials", "Quality", "NCR / Rework", "Updates", "Blockers", "History"];
+const TABS = ["Overview", "Stages", "Plan", "Materials", "Quality", "NCR / Rework", "Updates", "Blockers", "History"];
+
+function healthColor(job: ProductionJob): "green" | "amber" | "red" {
+  if (job.status === "cancelled" || job.status === "completed") return "green";
+  if (job.status === "on_hold" || job.risk === "blocked") return "red";
+  if (job.risk === "delayed" || (job.daysRemaining != null && job.daysRemaining < 0)) return "red";
+  if (job.risk === "at_risk" || job.risk === "awaiting_material") return "amber";
+  return "green";
+}
+
+function varianceClass(pct?: number) {
+  if (pct == null) return "";
+  if (pct > 20) return "text-[var(--error)]";
+  if (pct < -20) return "text-[var(--success)]";
+  return "text-[var(--text-2)]";
+}
+
+function stageVariance(stage: { actualStartAt?: string; actualEndAt?: string; estimatedDurationMin?: number }): number | undefined {
+  if (!stage.estimatedDurationMin || !stage.actualStartAt) return undefined;
+  const start = new Date(stage.actualStartAt).getTime();
+  const end = stage.actualEndAt ? new Date(stage.actualEndAt).getTime() : Date.now();
+  const actualMin = (end - start) / 60000;
+  return Math.round(((actualMin - stage.estimatedDurationMin) / stage.estimatedDurationMin) * 100);
+}
 
 export default function JobWorkspacePage() {
   const { id = "" } = useParams();
@@ -85,6 +108,7 @@ export default function JobWorkspacePage() {
       </div>
       {tab === "Overview" && <Overview job={job} />}
       {tab === "Stages" && <Stages job={job} canWrite={canWrite && flags["production.stage.transition"] !== false} onSkip={(stageId, reason) => act(() => skipStage(job.id, stageId, reason), "Stage skipped")} />}
+      {tab === "Plan" && <PlanTab job={job} />}
       {tab === "Materials" && <Materials job={job} canIssue={canWrite && flags["production.material.issue"] !== false} canReturn={canWrite && flags["production.material.return"] !== false} onIssue={(requirementId, lotId, qty, note) => act(() => issueMaterial(job.id, requirementId, lotId, qty, note), "Material issued")} onReturn={(issueId, qty, note) => act(() => returnMaterial(job.id, issueId, qty, note), "Material returned")} />}
       {tab === "Quality" && <Quality
         job={job}
@@ -177,26 +201,75 @@ function currentStage(job: ProductionJob) {
 }
 
 function Overview({ job }: { job: ProductionJob }) {
+  const hColor = healthColor(job);
+  const hStyle = { color: hColor === "green" ? "var(--success)" : hColor === "amber" ? "var(--warning)" : "var(--error)" };
+  const hLabel = hColor === "green" ? "On Track" : hColor === "amber" ? "Needs Attention" : "Delayed / Blocked";
+  const stages = job.stages ?? [];
+  const completedStages = stages.filter((s) => s.status === "completed" || s.status === "skipped").length;
+  const totalStages = stages.length;
+  const progressPct = totalStages > 0 ? Math.round((completedStages / totalStages) * 100) : 0;
+
+  // Determine health reason
+  const reasons: string[] = [];
+  if (job.status === "on_hold") reasons.push(job.holdReason ? `On hold: ${job.holdReason}` : "Job is on hold");
+  if (job.risk === "awaiting_material") reasons.push("Material is not ready");
+  if (job.daysRemaining != null && job.daysRemaining < 0) reasons.push(`${Math.abs(job.daysRemaining)} days past planned completion`);
+  if (stages.some((s) => s.blockerReason)) reasons.push("Machine or asset blocked");
+  if (stages.some((s) => s.inspectionStatus === "failed")) reasons.push("Failed inspection awaiting resolution");
+
   return (
-    <div className="grid md:grid-cols-2 gap-4">
-      <section className="rounded-xl border p-4 space-y-2" style={{ borderColor: "var(--border)" }}>
-        <h2 className="text-sm font-bold">Job</h2>
-        <p className="text-sm">{job.itemName} · {job.qty} {job.uomSymbol}</p>
-        <p className="text-xs" style={{ color: "var(--text-2)" }}>Workflow: {job.routingTemplateName} {job.routingTemplateVersion}</p>
-        <p className="text-xs">{job.projectionBasis}</p>
-        <StatusChip status={job.risk ?? "on_track"} size="sm" />
+    <div className="space-y-4">
+      {/* Job Health Card */}
+      <section className="rounded-xl border p-4 space-y-3" style={{ borderColor: hColor === "green" ? "var(--border)" : hColor === "amber" ? "var(--warning)" : "var(--error)" }}>
+        <div className="flex items-center justify-between">
+          <h2 className="text-sm font-bold">Job Health</h2>
+          <span className="text-sm font-bold" style={hStyle}>{hLabel}</span>
+        </div>
+        {reasons.length > 0 && (
+          <ul className="text-xs space-y-0.5" style={{ color: hColor === "amber" ? "var(--warning)" : "var(--error)" }}>
+            {reasons.map((r) => <li key={r}>· {r}</li>)}
+          </ul>
+        )}
+        <div>
+          <div className="flex justify-between text-xs mb-1" style={{ color: "var(--text-3)" }}>
+            <span>Stage progress</span>
+            <span>{completedStages} / {totalStages} stages · {progressPct}%</span>
+          </div>
+          <div className="h-2 rounded-full overflow-hidden" style={{ background: "var(--surface-2)" }}>
+            <div className="h-full rounded-full" style={{ width: `${progressPct}%`, background: hColor === "green" ? "var(--success)" : hColor === "amber" ? "var(--warning)" : "var(--error)" }} />
+          </div>
+        </div>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+          <div><span style={{ color: "var(--text-3)" }}>Total qty</span><div className="font-semibold">{job.qty} {job.uomSymbol}</div></div>
+          <div><span style={{ color: "var(--text-3)" }}>Delivery date</span><div className="font-semibold" style={job.daysRemaining != null && job.daysRemaining < 0 ? { color: "var(--error)" } : {}}>{displayDate(job.plannedEnd)}</div></div>
+          <div><span style={{ color: "var(--text-3)" }}>Material</span><div className="font-semibold">{readinessLabel(job.materialReadiness)}</div></div>
+          <div><span style={{ color: "var(--text-3)" }}>Risk</span><div className="font-semibold">{job.risk ? job.risk.replace(/_/g, " ") : "on track"}</div></div>
+        </div>
       </section>
-      <section className="rounded-xl border p-4" style={{ borderColor: "var(--border)" }}>
-        <h2 className="text-sm font-bold mb-3">Stages</h2>
-        <ol className="space-y-2">
-          {(job.stages ?? []).map((stage) => (
-            <li key={stage.id} className="flex items-center justify-between text-sm">
-              <span>{stage.seqNo}. {stage.stageName}</span>
-              <StatusChip status={stage.status} size="sm" />
-            </li>
-          ))}
-        </ol>
-      </section>
+
+      <div className="grid md:grid-cols-2 gap-4">
+        <section className="rounded-xl border p-4 space-y-2" style={{ borderColor: "var(--border)" }}>
+          <h2 className="text-sm font-bold">Job Details</h2>
+          <p className="text-sm">{job.itemName} · {job.qty} {job.uomSymbol}</p>
+          <p className="text-xs" style={{ color: "var(--text-2)" }}>Workflow: {job.routingTemplateName} {job.routingTemplateVersion}</p>
+          {job.projectionBasis && <p className="text-xs" style={{ color: "var(--text-3)" }}>{job.projectionBasis}</p>}
+        </section>
+        <section className="rounded-xl border p-4" style={{ borderColor: "var(--border)" }}>
+          <h2 className="text-sm font-bold mb-3">Stage Progress</h2>
+          <ol className="space-y-2">
+            {stages.map((stage) => {
+              const v = stageVariance(stage);
+              return (
+                <li key={stage.id} className="flex items-center justify-between text-xs">
+                  <span className="flex-1">{stage.seqNo}. {stage.stageName}</span>
+                  {v != null && <span className={`mr-2 font-mono ${varianceClass(v)}`}>{v > 0 ? "+" : ""}{v}%</span>}
+                  <StatusChip status={stage.status} size="sm" />
+                </li>
+              );
+            })}
+          </ol>
+        </section>
+      </div>
     </div>
   );
 }
@@ -205,20 +278,92 @@ function Stages({ job, canWrite, onSkip }: { job: ProductionJob; canWrite: boole
   const navigate = useNavigate();
   return (
     <div className="space-y-2">
-      {(job.stages ?? []).map((stage) => (
-        <div key={stage.id} className="rounded-xl border p-3 flex items-center justify-between gap-3" style={{ borderColor: "var(--border)" }}>
-          <div>
-            <div className="text-sm font-semibold">{stage.seqNo}. {stage.stageName}</div>
-            <div className="text-xs" style={{ color: "var(--text-3)" }}>{stage.workCentre || "Work centre not set"} · Inspection {stage.inspectionStatus}</div>
-            {stage.blockerReason && <div role="status" className="text-xs mt-1" style={{ color: "var(--error)" }}>Machine blocker: {stage.blockerReason}</div>}
+      {(job.stages ?? []).map((stage) => {
+        const v = stageVariance(stage);
+        const totalQty = Number(job.qty ?? 0);
+        const doneQty = stage.completedQty != null ? Number(stage.completedQty) : null;
+        const blockedQty = stage.blockedQty != null ? Number(stage.blockedQty) : null;
+        const inProgressQty = doneQty != null ? Math.max(0, totalQty - doneQty - (blockedQty ?? 0)) : null;
+        return (
+          <div key={stage.id} className="rounded-xl border p-3" style={{ borderColor: "var(--border)" }}>
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex-1 min-w-0">
+                <div className="text-sm font-semibold">{stage.seqNo}. {stage.stageName}</div>
+                <div className="text-xs mt-0.5 flex flex-wrap gap-x-3 gap-y-0.5" style={{ color: "var(--text-3)" }}>
+                  <span>{stage.workCentre || "No work centre"}</span>
+                  {stage.assignedOperator && <span>Operator: <strong>{stage.assignedOperator}</strong></span>}
+                  {stage.plannedStart && <span>Planned: {displayDate(stage.plannedStart)} → {displayDate(stage.plannedEnd)}</span>}
+                  {stage.estimatedDurationMin != null && <span>Est: {(stage.estimatedDurationMin / 60).toFixed(1)}h</span>}
+                  {stage.actualStartAt && <span>Started: {displayDate(stage.actualStartAt)}</span>}
+                  {stage.actualEndAt && <span>Ended: {displayDate(stage.actualEndAt)}</span>}
+                </div>
+                {/* Quantity row – only shown when captured */}
+                {doneQty != null && (
+                  <div className="text-xs mt-1 flex gap-3" style={{ color: "var(--text-2)" }}>
+                    <span>Total: <strong>{totalQty}</strong></span>
+                    <span>Done: <strong>{doneQty}</strong></span>
+                    {blockedQty != null && blockedQty > 0 && <span style={{ color: "var(--warning)" }}>Blocked: <strong>{blockedQty}</strong></span>}
+                    {inProgressQty != null && inProgressQty > 0 && <span>In Progress: <strong>{inProgressQty}</strong></span>}
+                  </div>
+                )}
+                {stage.blockerReason && <div role="status" className="text-xs mt-1" style={{ color: "var(--error)" }}>Blocked: {stage.blockerReason}</div>}
+              </div>
+              <div className="flex items-center gap-2 flex-shrink-0">
+                {v != null && <span className={`text-xs font-mono ${varianceClass(v)}`}>{v > 0 ? "+" : ""}{v}%</span>}
+                <StatusChip status={stage.status} size="sm" />
+                {stage.status !== "completed" && stage.status !== "skipped" && <button type="button" className="text-xs font-semibold" style={{ color: "var(--brand)" }} onClick={() => navigate(`/jobs/${job.id}/stage/${stage.id}`)}>Update</button>}
+                {canWrite && stage.canSkip && stage.status === "pending" && <button type="button" className="text-xs" onClick={() => { const reason = window.prompt("Why is this optional stage skipped?"); if (reason) onSkip(stage.id, reason); }}>Skip</button>}
+              </div>
+            </div>
           </div>
-          <div className="flex items-center gap-2">
-            <StatusChip status={stage.status} size="sm" />
-            {stage.status !== "completed" && stage.status !== "skipped" && <button type="button" className="text-xs font-semibold" onClick={() => navigate(`/jobs/${job.id}/stage/${stage.id}`)}>Update</button>}
-            {canWrite && stage.canSkip && stage.status === "pending" && <button type="button" className="text-xs" onClick={() => { const reason = window.prompt("Why is this optional stage skipped?"); if (reason) onSkip(stage.id, reason); }}>Skip</button>}
-          </div>
-        </div>
-      ))}
+        );
+      })}
+    </div>
+  );
+}
+
+function PlanTab({ job }: { job: ProductionJob }) {
+  const stages = job.stages ?? [];
+  const hasPlanning = stages.some((s) => s.plannedStart || s.estimatedDurationMin);
+  if (!hasPlanning) {
+    return (
+      <div className="rounded-xl border p-6 text-center text-sm" style={{ borderColor: "var(--border)", color: "var(--text-3)" }}>
+        <p>No production plan recorded for this job.</p>
+        <p className="mt-1 text-xs">Planning data is captured when creating a job with backward scheduling.</p>
+      </div>
+    );
+  }
+  return (
+    <div className="space-y-3">
+      <div className="rounded-xl border overflow-hidden" style={{ borderColor: "var(--border)" }}>
+        <table className="w-full text-xs">
+          <thead style={{ background: "var(--surface-2)" }}>
+            <tr>
+              {["Stage", "Work Centre", "Planned Start", "Planned End", "Est. Duration", "Actual Start", "Actual End", "Variance", "Status"].map((h) => (
+                <th key={h} className="text-left px-3 py-2 font-semibold" style={{ color: "var(--text-3)" }}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {stages.map((stage) => {
+              const v = stageVariance(stage);
+              return (
+                <tr key={stage.id} className="border-t" style={{ borderColor: "var(--border)" }}>
+                  <td className="px-3 py-2 font-medium">{stage.seqNo}. {stage.stageName}</td>
+                  <td className="px-3 py-2" style={{ color: "var(--text-3)" }}>{stage.workCentre || "—"}</td>
+                  <td className="px-3 py-2">{displayDate(stage.plannedStart) !== "—" ? displayDate(stage.plannedStart) : "—"}</td>
+                  <td className="px-3 py-2">{displayDate(stage.plannedEnd) !== "—" ? displayDate(stage.plannedEnd) : "—"}</td>
+                  <td className="px-3 py-2">{stage.estimatedDurationMin != null ? `${(stage.estimatedDurationMin / 60).toFixed(1)}h` : "—"}</td>
+                  <td className="px-3 py-2">{displayDate(stage.actualStartAt) !== "—" ? displayDate(stage.actualStartAt) : "—"}</td>
+                  <td className="px-3 py-2">{displayDate(stage.actualEndAt) !== "—" ? displayDate(stage.actualEndAt) : "—"}</td>
+                  <td className={`px-3 py-2 font-mono ${varianceClass(v)}`}>{v != null ? `${v > 0 ? "+" : ""}${v}%` : "—"}</td>
+                  <td className="px-3 py-2"><StatusChip status={stage.status} size="sm" /></td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
