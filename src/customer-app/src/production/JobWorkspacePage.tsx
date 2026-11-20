@@ -9,7 +9,7 @@ import StatusChip from "../components/shared/StatusChip";
 import { createLot, lotFields } from "../inventory/inlineCreate";
 import { createInspection as createQualityInspection, recordResult as recordQualityInspectionResult } from "../quality/api";
 import {
-  addCost, cancelJob, completeJob, concede, displayDate, featureFlags, getJob, getJobCosting, issueMaterial, money, openInspection, readinessLabel,
+  addCost, cancelJob, completeJob, concede, displayDate, featureFlags, getJob, getJobCosting, issueMaterial, money, openInspection, previewPlanForJob, readinessLabel,
   recordInspection, releaseHold, returnMaterial, savePlan, skipStage, usableLots,
   type JobCosting, type LotOption, type ProductionJob,
 } from "./api";
@@ -336,30 +336,6 @@ function Stages({ job, canWrite, onSkip }: { job: ProductionJob; canWrite: boole
 
 type PlanRow = { stageId: string; stageName: string; workCentre?: string; estimatedDurationMin?: number; plannedStart: string; plannedEnd: string };
 
-function buildPlanRows(job: ProductionJob, deliveryDate: string): PlanRow[] {
-  const stages = job.stages ?? [];
-  if (stages.length === 0) return [];
-  const rows: PlanRow[] = stages.map((s) => ({
-    stageId: s.id,
-    stageName: s.stageName,
-    workCentre: s.workCentre,
-    estimatedDurationMin: s.estimatedDurationMin,
-    plannedStart: s.plannedStart ?? "",
-    plannedEnd: s.plannedEnd ?? "",
-  }));
-  // Backward schedule: work from delivery date, 8h = 1 working day
-  let cursor = new Date(deliveryDate);
-  for (let i = rows.length - 1; i >= 0; i--) {
-    const durationDays = Math.max(1, Math.ceil((rows[i].estimatedDurationMin ?? 480) / 480));
-    const end = new Date(cursor);
-    cursor = new Date(cursor);
-    cursor.setDate(cursor.getDate() - durationDays);
-    rows[i].plannedEnd = end.toISOString().split("T")[0];
-    rows[i].plannedStart = cursor.toISOString().split("T")[0];
-  }
-  return rows;
-}
-
 function PlanTab({ job, canWrite, onSaved }: { job: ProductionJob; canWrite: boolean; onSaved: () => void }) {
   const stages = job.stages ?? [];
   const hasPlanning = stages.some((s) => s.plannedStart);
@@ -370,6 +346,7 @@ function PlanTab({ job, canWrite, onSaved }: { job: ProductionJob; canWrite: boo
       ? stages.map((s) => ({ stageId: s.id, stageName: s.stageName, workCentre: s.workCentre, estimatedDurationMin: s.estimatedDurationMin, plannedStart: s.plannedStart ?? "", plannedEnd: s.plannedEnd ?? "" }))
       : []
   );
+  const [generating, setGenerating] = useState(false);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
   const generatedRef = useRef(false);
@@ -378,14 +355,29 @@ function PlanTab({ job, canWrite, onSaved }: { job: ProductionJob; canWrite: boo
   useEffect(() => {
     if (!hasPlanning && deliveryDate && !generatedRef.current && stages.length > 0) {
       generatedRef.current = true;
-      setRows(buildPlanRows(job, deliveryDate));
+      void generate();
     }
   }, [hasPlanning, deliveryDate, stages.length]);
 
-  function generate() {
+  async function generate() {
     if (!deliveryDate) { setErr("Enter a delivery date first"); return; }
     setErr("");
-    setRows(buildPlanRows(job, deliveryDate));
+    setGenerating(true);
+    try {
+      const preview = await previewPlanForJob(job.id, deliveryDate);
+      setRows(preview.map((s) => ({
+        stageId: s.stageId,
+        stageName: s.stageName,
+        workCentre: stages.find((st) => st.id === s.stageId)?.workCentre,
+        estimatedDurationMin: s.estimatedDurationMin,
+        plannedStart: s.plannedStart,
+        plannedEnd: s.plannedEnd,
+      })));
+    } catch (cause) {
+      setErr(cause instanceof Error ? cause.message : "Could not generate schedule");
+    } finally {
+      setGenerating(false);
+    }
   }
 
   function updateRow(idx: number, field: "plannedStart" | "plannedEnd", value: string) {
@@ -463,8 +455,8 @@ function PlanTab({ job, canWrite, onSaved }: { job: ProductionJob; canWrite: boo
           Delivery date
           <input type="date" className="eoss-input w-full mt-1" value={deliveryDate} onChange={(e) => setDeliveryDate(e.target.value)} />
         </label>
-        <button type="button" onClick={generate} className="px-3 py-2 rounded-lg text-xs font-semibold text-white" style={{ background: "var(--brand-fill)" }}>
-          Generate schedule
+        <button type="button" onClick={() => void generate()} disabled={generating} className="px-3 py-2 rounded-lg text-xs font-semibold text-white" style={{ background: "var(--brand-fill)", opacity: generating ? 0.6 : 1 }}>
+          {generating ? "Generating…" : "Generate schedule"}
         </button>
       </div>
 

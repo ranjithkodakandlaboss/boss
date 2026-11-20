@@ -72,7 +72,8 @@ class ProductionJobView {
         return jdbc.query("""
                 SELECT s.id, s.seq_no, s.name, s.stage_code, s.stage_config_option_id, s.stage_label_snapshot,
                        s.status, s.requires_inspection, s.is_optional, s.work_centre, s.asset_id,
-                       a.asset_number, s.actual_start, s.actual_end, s.completed_by
+                       a.asset_number, s.actual_start, s.actual_end, s.completed_by,
+                       s.planned_start, s.planned_end, s.completed_qty, s.blocked_qty
                 FROM job_stages s
                 LEFT JOIN assets a ON a.id = s.asset_id AND a.tenant_id = s.tenant_id
                 WHERE s.tenant_id = ? AND s.job_id = ? ORDER BY s.seq_no
@@ -92,7 +93,9 @@ class ProductionJobView {
                 rs.getString("work_centre"), instant(rs, "actual_start"), instant(rs, "actual_end"),
                 rs.getObject("completed_by", UUID.class), rs.getObject("asset_id", UUID.class),
                 rs.getString("asset_number"),
-                maintenance.machineBlocker(tenantId, jobId, stageId, rs.getString("work_centre")));
+                maintenance.machineBlocker(tenantId, jobId, stageId, rs.getString("work_centre")),
+                date(rs, "planned_start"), date(rs, "planned_end"), null,
+                rs.getBigDecimal("completed_qty"), rs.getBigDecimal("blocked_qty"));
     }
 
     private String inspectionStatus(UUID tenantId, UUID stageId, boolean required) {

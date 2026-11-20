@@ -19,19 +19,60 @@ public final class ProductionApiDtos {
     private ProductionApiDtos() {}
 
     public record CreateJobRequest(
-            @NotNull UUID cpoId,
-            @NotNull UUID cpoLineId,
+            // Mode A — from Customer PO (cpoId + cpoLineId required together)
+            UUID cpoId,
+            UUID cpoLineId,
+            // Mode B — standalone (customerId + itemId + qty + siteId required together)
+            UUID customerId,
+            UUID itemId,
+            @DecimalMin("0.001") BigDecimal qty,
+            UUID siteId,
+            String description,
+            // common
             @NotNull UUID routingTemplateId,
             LocalDate scheduledStart,
             LocalDate scheduledEnd,
             @Pattern(regexp = "low|normal|high|urgent") String priority,
             @DecimalMin("0.001") BigDecimal quantity
     ) {
+        /** Legacy 6-arg compact constructor */
         public CreateJobRequest(UUID cpoId, UUID cpoLineId, UUID routingTemplateId,
                                  LocalDate scheduledStart, LocalDate scheduledEnd, String priority) {
-            this(cpoId, cpoLineId, routingTemplateId, scheduledStart, scheduledEnd, priority, null);
+            this(cpoId, cpoLineId, null, null, null, null, null,
+                 routingTemplateId, scheduledStart, scheduledEnd, priority, null);
+        }
+        /** Legacy 7-arg compact constructor (adds explicit quantity) */
+        public CreateJobRequest(UUID cpoId, UUID cpoLineId, UUID routingTemplateId,
+                                 LocalDate scheduledStart, LocalDate scheduledEnd,
+                                 String priority, BigDecimal quantity) {
+            this(cpoId, cpoLineId, null, null, null, null, null,
+                 routingTemplateId, scheduledStart, scheduledEnd, priority, quantity);
+        }
+        public boolean isStandalone() {
+            return cpoId == null && cpoLineId == null;
         }
     }
+
+    public record StagePlanEntry(
+            @NotNull UUID stageId,
+            @NotNull LocalDate plannedStart,
+            @NotNull LocalDate plannedEnd
+    ) {}
+
+    public record SavePlanRequest(
+            @NotNull @NotEmpty List<@jakarta.validation.Valid StagePlanEntry> stages
+    ) {}
+
+    public record PlanPreviewStage(
+            UUID stageId,
+            String stageName,
+            int seqNo,
+            int estimatedDurationMin,
+            LocalDate plannedStart,
+            LocalDate plannedEnd
+    ) {}
+
+    public record PlanPreviewResponse(List<PlanPreviewStage> stages) {}
 
     public record ReasonRequest(@NotBlank String reason) {}
 
@@ -87,8 +128,25 @@ public final class ProductionApiDtos {
             UUID completedBy,
             UUID assetId,
             String assetCode,
-            String blockerReason
-    ) {}
+            String blockerReason,
+            // plan columns (null when no plan has been set)
+            LocalDate plannedStart,
+            LocalDate plannedEnd,
+            Integer estimatedDurationMin,
+            BigDecimal completedQty,
+            BigDecimal blockedQty
+    ) {
+        /** Legacy compact constructor — keeps existing callers compiling */
+        public JobStageResponse(UUID id, int seqNo, String stageName, String stageCode,
+                UUID stageConfigOptionId, String status, boolean requiresInspection,
+                String inspectionStatus, boolean isOptional, boolean canSkip, String workCentre,
+                Instant actualStartAt, Instant actualEndAt, UUID completedBy, UUID assetId,
+                String assetCode, String blockerReason) {
+            this(id, seqNo, stageName, stageCode, stageConfigOptionId, status, requiresInspection,
+                 inspectionStatus, isOptional, canSkip, workCentre, actualStartAt, actualEndAt,
+                 completedBy, assetId, assetCode, blockerReason, null, null, null, null, null);
+        }
+    }
 
     public record MaterialRequirementResponse(
             UUID id,

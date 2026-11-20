@@ -356,6 +356,21 @@ export function savePlan(jobId: string, stages: Array<{ stageId: string; planned
   return post<ProductionJob>(`/api/v1/jobs/${jobId}/plan`, { stages });
 }
 
+export type BackendPlanPreviewStage = {
+  stageId: string;
+  stageName: string;
+  seqNo: number;
+  estimatedDurationMin: number;
+  plannedStart: string;
+  plannedEnd: string;
+};
+
+export function previewPlanForJob(jobId: string, deliveryDate: string): Promise<BackendPlanPreviewStage[]> {
+  return api<{ stages: BackendPlanPreviewStage[] }>(
+    `/api/v1/jobs/${jobId}/plan-preview?deliveryDate=${deliveryDate}`
+  ).then((r) => r.stages ?? []);
+}
+
 export function cancelJob(id: string, reason: string) {
   return post<ProductionJob>(`/api/v1/jobs/${id}/cancel`, { reason });
 }
