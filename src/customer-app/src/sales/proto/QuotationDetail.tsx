@@ -323,6 +323,13 @@ export default function QuotationDetail() {
                   <td />
                 </tr>
               )}
+              {quotation.discountAmount != null && quotation.discountAmount > 0 && (
+                <tr>
+                  <td colSpan={7} className="text-right text-xs text-[var(--text-2)] pr-4">Discount</td>
+                  <td className="font-mono text-sm text-red-600">−{fmtMoney(quotation.discountAmount)}</td>
+                  <td />
+                </tr>
+              )}
               <tr>
                 <td colSpan={7} className="text-right text-xs font-bold text-[var(--text-2)] pr-4">Total</td>
                 <td className="font-mono text-base font-bold text-[var(--text)]">{fmtMoney(quotation.totalValue)}</td>
