@@ -258,7 +258,7 @@ export default function Sales({ backgroundSearch }: { backgroundSearch?: string 
         >
           {tab === 'pos' && (
             <>
-            <div className="md:hidden p-3 space-y-2" aria-hidden="true">
+            <div className="md:hidden p-3 space-y-2" aria-hidden="true" inert>
               {filteredPos.map(p => (
                 <button key={p.id} type="button" onClick={() => openWithOrigin(`/sales/po/${p.id}`)} tabIndex={-1}
                   className="w-full text-left rounded-xl border p-3" style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}>
@@ -322,19 +322,23 @@ export default function Sales({ backgroundSearch }: { backgroundSearch?: string 
                       <td className="px-4 py-3">
                         <StatusChip status={p.status} />
                       </td>
-                      <td className="px-4 py-3 w-[100px]" onClick={e => e.stopPropagation()}>
+                      <td className="px-4 py-3 w-[108px]" onClick={e => e.stopPropagation()}>
                         <div className="flex items-center gap-1">
                           <button type="button" onClick={() => openWithOrigin(`/sales/po/${p.id}`)}
                             className="text-xs px-2 py-1 rounded-lg font-semibold text-white" style={{ background: 'var(--brand-fill)' }}>
                             Open
                           </button>
-                          <span className="inline-flex items-center gap-0.5">
-                            {canCreate && p.status !== 'cancelled' && p.status !== 'complete' && jobs.filter(j => j.customerPoId === p.id).every(j => !['in_progress', 'complete'].includes(j.status)) ? (
-                              <button onClick={() => openWithOrigin(`/sales/po/${p.id}/amend`)} className="p-1 rounded hover:bg-[var(--surface-2)]" title="Amend Customer PO"><Pencil size={12} style={{ color: 'var(--text-3)' }} /></button>
-                            ) : <span className="inline-block w-[20px]" />}
-                            {canCreate && p.status !== 'cancelled' && p.status !== 'complete' && jobs.filter(j => j.customerPoId === p.id).every(j => ['cancelled', 'complete'].includes(j.status)) ? (
-                              <button onClick={() => handleCancelPo(p.id)} className="p-1 rounded hover:bg-[var(--surface-2)]" title="Cancel Customer PO"><XCircle size={12} style={{ color: 'var(--error,#DC2626)' }} /></button>
-                            ) : <span className="inline-block w-[20px]" />}
+                          <span className="inline-flex items-center">
+                            <span className="inline-block w-5 h-5 flex items-center justify-center">
+                              {canCreate && p.status !== 'cancelled' && p.status !== 'complete' && jobs.filter(j => j.customerPoId === p.id).every(j => !['in_progress', 'complete'].includes(j.status)) && (
+                                <button onClick={() => openWithOrigin(`/sales/po/${p.id}/amend`)} className="p-1 rounded hover:bg-[var(--surface-2)]" title="Amend Customer PO"><Pencil size={12} style={{ color: 'var(--text-3)' }} /></button>
+                              )}
+                            </span>
+                            <span className="inline-block w-5 h-5 flex items-center justify-center">
+                              {canCreate && p.status !== 'cancelled' && p.status !== 'complete' && jobs.filter(j => j.customerPoId === p.id).every(j => ['cancelled', 'complete'].includes(j.status)) && (
+                                <button onClick={() => handleCancelPo(p.id)} className="p-1 rounded hover:bg-[var(--surface-2)]" title="Cancel Customer PO"><XCircle size={12} style={{ color: 'var(--error,#DC2626)' }} /></button>
+                              )}
+                            </span>
                           </span>
                         </div>
                       </td>

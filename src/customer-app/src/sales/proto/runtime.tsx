@@ -389,7 +389,7 @@ function mapPo(po: Cpo): CustomerPO {
     quotationId: po.quotationId,
     rfqId: po.rfqId,
     rfqRef: po.rfqNumber,
-    deliveryTerms: po.notes || "",
+    deliveryTerms: po.deliveryTerms || po.notes || "",
     originType: "from_quotation",
     commercialLocked: true,
     commercialLockReason: "The accepted quotation price stays on this Customer PO.",

@@ -219,6 +219,7 @@ export type Cpo = {
   paymentTerms?: number;
   paymentTermsText?: string;
   notes?: string;
+  deliveryTerms?: string;
   discountAmount?: number;
   decisionChannel?: string;
   decisionNote?: string;
