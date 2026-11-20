@@ -76,8 +76,9 @@ public class ApprovedProcurementMailSender implements ProcurementMailSender {
     private SendResult sendResend(String toEmail, String subject, String html) {
         String apiKey = secret(resendApiKey, resendApiKeyFile);
         if (apiKey == null) {
+            log.warn("Supplier invitation email not sent: Resend API key is not configured (boss-resend-api-key-dev / RESEND_API_KEY)");
             return new SendResult(false, null,
-                    "Resend API key is not configured. Add a secret version to GCP Secret Manager [boss-resend-api-key-dev] or set RESEND_API_KEY.");
+                    "Email could not be sent — mail delivery is not configured. Ask an administrator to check mail settings.");
         }
         try {
             String body = mapper.writeValueAsString(Map.of(

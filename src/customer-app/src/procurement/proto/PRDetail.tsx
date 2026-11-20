@@ -519,7 +519,7 @@ export default function PRDetail() {
                     <th>Freight</th>
                     <th>Valid Until</th>
                     <th>Status</th>
-                    <th className="text-right">Decision</th>
+                    <th className="text-right whitespace-nowrap min-w-[160px]">Decision</th>
                   </tr>
                 </thead>
             <tbody>
@@ -804,11 +804,11 @@ export default function PRDetail() {
       </div>
 
       {confirming === 'approve' && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-          <div className="rounded-2xl border p-6 w-full max-w-sm shadow-xl" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
+        <div className="fixed inset-0 bg-black/40 flex justify-end z-[80]" onClick={() => setConfirming(null)}>
+          <div className="relative h-full w-full max-w-sm border-l shadow-2xl flex flex-col p-6" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }} onClick={e => e.stopPropagation()}>
             <h3 className="font-bold text-[var(--text)] mb-2">Approve PR?</h3>
             <p className="text-sm text-[var(--text-2)] mb-5">{pr.prNumber} · {lines.length} lines · Est. {fmtMoney(totalEstValue)}</p>
-            <div className="flex gap-3">
+            <div className="flex gap-3 mt-auto">
               <button onClick={() => setConfirming(null)} className="flex-1 py-2 border border-[var(--border)] text-[var(--text)] rounded-lg text-sm">Cancel</button>
               <button onClick={handleApprove} className="flex-1 py-2 text-white rounded-lg text-sm font-semibold" style={{ background: 'var(--success,#16A34A)' }}>Approve</button>
             </div>
@@ -817,12 +817,12 @@ export default function PRDetail() {
       )}
 
       {confirming === 'reject' && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-          <div className="rounded-2xl border p-6 w-full max-w-sm shadow-xl" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
+        <div className="fixed inset-0 bg-black/40 flex justify-end z-[80]" onClick={() => setConfirming(null)}>
+          <div className="relative h-full w-full max-w-sm border-l shadow-2xl flex flex-col p-6" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }} onClick={e => e.stopPropagation()}>
             <h3 className="font-bold text-[var(--text)] mb-2">Reject PR?</h3>
             <p className="text-sm text-[var(--text-2)] mb-3">This will mark {pr.prNumber} rejected.</p>
             <textarea className="eoss-input w-full mb-4" rows={2} placeholder="Reason for rejection..." value={rejectNote} onChange={e => setRejectNote(e.target.value)} />
-            <div className="flex gap-3">
+            <div className="flex gap-3 mt-auto">
               <button onClick={() => setConfirming(null)} className="flex-1 py-2 border border-[var(--border)] text-[var(--text)] rounded-lg text-sm">Cancel</button>
               <button onClick={handleReject} className="flex-1 py-2 text-white rounded-lg text-sm font-semibold" style={{ background: 'var(--error,#DC2626)' }}>Reject</button>
             </div>

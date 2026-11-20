@@ -502,8 +502,9 @@ export function ProcurementProvider({ children }: { children?: ReactNode }) {
   }, []);
 
   const value = useMemo(() => {
-    const requested = (dataRef.current.quotes as any[] | undefined)?.filter((quote) => quote.status === "requested")
-      ?? [];
+    const requested = (dataRef.current.quotes as any[] | undefined)?.filter(
+        (quote) => quote.status === "requested" || (quote.deliveryStatus && quote.deliveryStatus !== "not_sent")
+      ) ?? [];
     const supplierInvitations = requested.map((quote) => ({
       id: quote.id,
       prId: quote.prId,

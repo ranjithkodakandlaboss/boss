@@ -54,10 +54,15 @@ import DocumentsPage from "./documents/DocumentsPage";
 import DocumentDetailPage from "./documents/DocumentDetailPage";
 
 function Background({ pathname }: { pathname: string }) {
-  if (pathname.split("?")[0] === "/sales") {
-    return <SalesHome backgroundSearch={pathname.includes("?") ? pathname.slice(pathname.indexOf("?")) : ""} />;
+  const basePath = pathname.split("?")[0];
+  const search = pathname.includes("?") ? pathname.slice(pathname.indexOf("?")) : "";
+  if (basePath === "/sales") {
+    return <SalesHome backgroundSearch={search} />;
   }
-  const screen = findScreen(pathname.split("?")[0]);
+  if (basePath === "/procurement" || basePath.startsWith("/procurement")) {
+    return <ProcurementHome />;
+  }
+  const screen = findScreen(basePath);
   if (!screen) return null;
   return <ScreenPage screen={screen} />;
 }
