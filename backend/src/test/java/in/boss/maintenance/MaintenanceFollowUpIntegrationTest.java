@@ -168,6 +168,7 @@ class MaintenanceFollowUpIntegrationTest extends BaseMasterDataIntegrationTest {
                 .isEqualTo("pending");
 
         as(siteA);
+        maintenance.startEvent(event.id());
         maintenance.closeEvent(event.id(), new CloseEventRequest(null, "Belt", "Replaced belt", null, null, null));
         startStage(jobA).andExpect(status().isOk());
         assertThat(jdbc.queryForObject("SELECT status FROM job_stages WHERE job_id = ?", String.class, jobA))

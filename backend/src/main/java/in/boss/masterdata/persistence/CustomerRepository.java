@@ -18,5 +18,7 @@ public interface CustomerRepository extends JpaRepository<CustomerEntity, UUID>,
     Optional<CustomerEntity> findForUpdateByIdAndTenantId(UUID id, UUID tenantId);
     Optional<CustomerEntity> findByTenantIdAndCode(UUID tenantId, String code);
     boolean existsByTenantIdAndCode(UUID tenantId, String code);
+    boolean existsByTenantIdAndGstinIgnoreCase(UUID tenantId, String gstin);
+    boolean existsByTenantIdAndGstinIgnoreCaseAndIdNot(UUID tenantId, String gstin, UUID id);
     Page<CustomerEntity> findByTenantId(UUID tenantId, Pageable pageable);
 }

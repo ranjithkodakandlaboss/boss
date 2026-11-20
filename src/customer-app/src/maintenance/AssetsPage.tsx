@@ -65,7 +65,6 @@ export function ConfigSelect({ category, label, value, onChange, options, byLabe
   category: string; label: string; value?: string | null; onChange: (v: string) => void; options: ConfigOption[];
   byLabel?: boolean; ctl?: OptionsCtl;
 }) {
-  const [query, setQuery] = useState("");
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState("");
   const [addError, setAddError] = useState("");
@@ -76,9 +75,7 @@ export function ConfigSelect({ category, label, value, onChange, options, byLabe
   if (!ctl.ready) return <select aria-label={label} disabled className="eoss-input w-full"><option>Loading…</option></select>;
 
   const inlineAddable = INLINE_ADD_CATEGORIES.includes(category);
-  const needle = query.trim().toLowerCase();
-  const matches = needle ? options.filter((o) => o.label.toLowerCase().includes(needle)) : options;
-  const showAdd = ctl.canAdd && inlineAddable && !adding && (options.length === 0 || (needle !== "" && matches.length === 0));
+  const showAdd = ctl.canAdd && inlineAddable && !adding;
 
   async function save() {
     const text = name.trim();
@@ -89,7 +86,7 @@ export function ConfigSelect({ category, label, value, onChange, options, byLabe
       await createConfigOption(category, { code, label: text, sortOrder: options.length + 1 });
       await ctl.reload();
       onChange(byLabel ? text : code);
-      setAdding(false); setName(""); setQuery("");
+      setAdding(false); setName("");
     } catch (err) {
       setAddError(err instanceof ApiError ? err.message : "Could not add the option.");
     } finally { setBusy(false); }
@@ -97,13 +94,9 @@ export function ConfigSelect({ category, label, value, onChange, options, byLabe
 
   return (
     <div className="space-y-1">
-      {inlineAddable && (
-        <input aria-label={`Search ${label}`} placeholder={`Search ${label.toLowerCase()}…`} className="eoss-input w-full" value={query} onChange={(e) => setQuery(e.target.value)} />
-      )}
-      <Select label={label} byLabel={byLabel} value={value} onChange={onChange} options={matches} />
+      <Select label={label} byLabel={byLabel} value={value} onChange={onChange} options={options} />
       {options.length === 0 && <p className="text-xs text-[var(--text-3)]">No {label.toLowerCase()} options yet.</p>}
-      {needle !== "" && matches.length === 0 && options.length > 0 && <p className="text-xs text-[var(--text-3)]">No match for “{query.trim()}”.</p>}
-      {showAdd && <button type="button" className="text-xs underline" onClick={() => { setAdding(true); setName(query.trim()); setAddError(""); }}>Add New {label}</button>}
+      {showAdd && <button type="button" className="text-xs underline" onClick={() => { setAdding(true); setName(""); setAddError(""); }}>Add New {label}</button>}
       {adding && (
         <div className="flex gap-2 items-center">
           <input aria-label={`New ${label}`} className="eoss-input flex-1" value={name} onChange={(e) => setName(e.target.value)} />
@@ -135,7 +128,7 @@ export function AssetFormModal({ open, asset, options, lookup, ctl, onClose, onS
 
   async function submit(e: FormEvent) {
     e.preventDefault();
-    if (!form.assetCode?.trim() || !form.name?.trim() || !form.siteId || !form.manufacturer?.trim()) { setError("Asset code, name, site and manufacturer are required."); return; }
+    if (!form.assetCode?.trim() || !form.name?.trim() || !form.siteId) { setError("Asset code, name and site are required."); return; }
     setSaving(true); setError("");
     try {
       const saved = asset ? await updateAsset(asset.id, form) : await createAsset(form);
@@ -172,7 +165,7 @@ export function AssetFormModal({ open, asset, options, lookup, ctl, onClose, onS
             </select>
           </Field>
           <Field label="Criticality"><ConfigSelect category="ASSET_CRITICALITY" ctl={ctl} label="Criticality" value={form.criticality} onChange={(v) => set({ criticality: v })} options={options.ASSET_CRITICALITY ?? []} /></Field>
-          <Field label="Manufacturer *"><input aria-label="Manufacturer" required className="eoss-input w-full" value={form.manufacturer ?? ""} onChange={(e) => set({ manufacturer: e.target.value })} /></Field>
+          <Field label="Manufacturer"><input aria-label="Manufacturer" className="eoss-input w-full" value={form.manufacturer ?? ""} onChange={(e) => set({ manufacturer: e.target.value })} /></Field>
           <Field label="Model"><input aria-label="Model" className="eoss-input w-full" value={form.model ?? ""} onChange={(e) => set({ model: e.target.value })} /></Field>
           <Field label="Serial number"><input aria-label="Serial number" className="eoss-input w-full" value={form.serialNumber ?? ""} onChange={(e) => set({ serialNumber: e.target.value })} /></Field>
           <Field label="Status"><Select label="Status" value={form.status} onChange={(v) => set({ status: v })} options={(options.ASSET_STATUS ?? []).filter((o) => o.code !== "retired")} /></Field>
@@ -192,11 +185,11 @@ export function AssetFormModal({ open, asset, options, lookup, ctl, onClose, onS
         </div>
         <fieldset className="text-xs">
           <legend className="font-medium mb-1">Supported production stages</legend>
-          <div className="flex flex-wrap gap-2">
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-x-3 gap-y-2">
             {(options.PRODUCTION_STAGES ?? []).map((stage) => (
-              <label key={stage.id} className="inline-flex items-center gap-1">
+              <label key={stage.id} className="flex min-w-0 items-start gap-1">
                 <input type="checkbox" checked={capabilities.includes(stage.id)} onChange={() => setCapabilities((current) => current.includes(stage.id) ? current.filter((id) => id !== stage.id) : [...current, stage.id])} />
-                {stage.label}
+                <span className="leading-4">{stage.label}</span>
               </label>
             ))}
             {(options.PRODUCTION_STAGES ?? []).length === 0 && <span className="text-[var(--text-3)]">No production stages are configured.</span>}
@@ -224,6 +217,7 @@ export function EventFormModal({ open, assets, assetId, options, lookup, ctl, on
   async function submit(e: FormEvent) {
     e.preventDefault();
     if (!form.assetId || !form.eventType || !form.symptom.trim()) { setError("Asset, event type and description are required."); return; }
+    if (!form.technicianUserId && !form.technicianName?.trim()) { setError("Technician / responsible person is required."); return; }
     if (form.eventType === "Breakdown" && !form.downtimeStart) { setError("Downtime start is required for a breakdown."); return; }
     if (form.eventType !== "Breakdown" && !form.plannedDate) { setError("Planned date is required."); return; }
     if (completed && !form.completionDate) { setError("Completion time is required for a completed event."); return; }
@@ -256,14 +250,14 @@ export function EventFormModal({ open, assets, assetId, options, lookup, ctl, on
         <Field label="Event type *"><Select label="Event type" value={form.eventType} onChange={(v) => set({ eventType: v })} options={options.MAINTENANCE_EVENT_TYPE ?? []} /></Field>
         {form.eventType && <Field label="Severity"><ConfigSelect category="MAINTENANCE_SEVERITY" ctl={ctl} label="Severity" value={form.severity} onChange={(v) => set({ severity: v })} options={options.MAINTENANCE_SEVERITY ?? []} /></Field>}
         <Field label="Description *"><textarea aria-label="Description" className="eoss-input w-full" rows={2} value={form.symptom} onChange={(e) => set({ symptom: e.target.value })} /></Field>
-        <Field label="Technician">
+        <Field label="Technician *">
           <select aria-label="Technician" className="eoss-input w-full" value={form.technicianUserId ?? ""} onChange={(e) => set({ technicianUserId: e.target.value || undefined, technicianName: e.target.value ? undefined : form.technicianName })}>
             <option value="">Select…</option>
             {lookup.technicians.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
           </select>
         </Field>
         {!form.technicianUserId && (
-          <Field label="External technician / contractor"><input aria-label="External technician" placeholder="Name, if not a BOSS user" className="eoss-input w-full" value={form.technicianName ?? ""} onChange={(e) => set({ technicianName: e.target.value })} /></Field>
+          <Field label="External technician / contractor *"><input aria-label="External technician" required aria-required="true" placeholder="Name, if not a BOSS user" className="eoss-input w-full" value={form.technicianName ?? ""} onChange={(e) => set({ technicianName: e.target.value })} /></Field>
         )}
         {form.eventType === "Breakdown" ? (
           <>
@@ -271,7 +265,7 @@ export function EventFormModal({ open, assets, assetId, options, lookup, ctl, on
             <fieldset><legend className="text-xs font-semibold text-[var(--text-2)]">Affected jobs</legend>
               <div className="max-h-28 overflow-y-auto mt-1 space-y-1">
                 {lookup.jobs.length === 0 && <p className="text-xs text-[var(--text-3)]">No active jobs.</p>}
-                {lookup.jobs.map((j) => (
+                {lookup.jobs.filter((j) => ["planned", "released", "in_progress", "on_hold"].includes(j.status)).map((j) => (
                   <label key={j.id} className="flex items-center gap-2 text-xs"><input type="checkbox" checked={form.affectedJobIds?.includes(j.id) ?? false} onChange={() => toggleJob(j.id)} />{j.jobNumber}</label>
                 ))}
               </div>
@@ -307,10 +301,10 @@ export function EventFormModal({ open, assets, assetId, options, lookup, ctl, on
 
 type Focus = "all" | "breakdown" | "overdue" | "due_soon";
 
-export default function AssetsPage() {
+export default function AssetsPage({ backgroundTab }: { backgroundTab?: "assets" | "events" } = {}) {
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
-  const tab = params.get("tab") === "events" ? "events" : "assets";
+  const tab = backgroundTab ?? (params.get("tab") === "events" ? "events" : "assets");
   const { user } = useCustomer();
   const canManage = (user?.roles.map((r) => r.role) ?? []).some((r) => MANAGE_ROLES.includes(r));
   const { options, lookup, error: optionsError, ctl } = useMaintenanceOptions();
@@ -405,7 +399,7 @@ export default function AssetsPage() {
       <div className="flex flex-wrap items-center gap-2">
         <div className="relative">
           <Search size={13} className="absolute left-2.5 top-2.5 text-[var(--text-3)]" />
-          <input aria-label="Search" placeholder={tab === "assets" ? "Search assets" : "Search events"} className="eoss-input pl-9" value={search} onChange={(e) => setSearch(e.target.value)} />
+          <input aria-label="Search" placeholder={tab === "assets" ? "Search assets" : "Search events"} className="eoss-search-input" value={search} onChange={(e) => setSearch(e.target.value)} />
         </div>
         {tab === "assets" ? (
           <>
@@ -429,7 +423,13 @@ export default function AssetsPage() {
         )}
       </div>
 
-      {loading && <p className="text-sm text-[var(--text-3)]">Loading maintenance data…</p>}
+      {loading && (
+        <div role="status" aria-label="Loading maintenance data" className="space-y-2 animate-pulse">
+          <div className="h-4 w-40 rounded bg-[var(--surface-3)]" />
+          <div className="h-9 w-full rounded-lg bg-[var(--surface-2)]" />
+          <div className="h-32 w-full rounded-xl bg-[var(--surface-2)]" />
+        </div>
+      )}
       {error && (
         <div role="alert" className="text-sm" style={{ color: "var(--error)" }}>
           {error} <button type="button" className="underline" onClick={load}>Retry</button>
@@ -483,10 +483,10 @@ export default function AssetsPage() {
       )}
 
       {!loading && !error && tab === "events" && (
-        <div className="p-5 space-y-3 max-w-4xl">
+        <div className="w-full min-w-0 p-5 space-y-3">
           {visibleEvents.length === 0 && <p className="text-center py-10 text-sm" style={{ color: "var(--text-3)" }}>No maintenance events found.</p>}
           {visibleEvents.map((e) => (
-            <div key={e.id} className="rounded-xl border p-4 cursor-pointer hover:opacity-90 transition-opacity"
+            <div key={e.id} className="w-full rounded-xl border p-4 cursor-pointer hover:opacity-90 transition-opacity"
               style={{ borderColor: (e.eventType === "Breakdown" && e.status !== "closed") ? "var(--error)" : "var(--border)", background: "var(--surface)" }}
               onClick={() => navigate(`/assets/me/${e.id}`)}>
               <div className="flex items-start justify-between gap-3">

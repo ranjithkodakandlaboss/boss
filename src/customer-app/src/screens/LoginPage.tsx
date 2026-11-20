@@ -23,8 +23,8 @@ export default function LoginPage() {
     setPending(true);
     setError("");
     try {
-      const token = await firebaseSignIn(String(data.get("email") ?? ""), String(data.get("password") ?? ""));
-      signIn(token);
+      const session = await firebaseSignIn(String(data.get("email") ?? ""), String(data.get("password") ?? ""));
+      signIn(session.idToken, session.refreshToken, session.expiresIn);
       navigate("/");
       window.location.reload();
     } catch (caught) {

@@ -3,8 +3,11 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { Plus, Search, X, PackageCheck, Trash2 } from "lucide-react";
 import { useCustomer } from "../auth/CustomerState";
 import StatusChip from "../components/shared/StatusChip";
+import RecordSheet from "../components/shared/RecordSheet";
 import SortableHeader from "../components/shared/SortableHeader";
 import CreatableSelect from "../components/shared/CreatableSelect";
+import { loadLots, type Lot } from "../inventory/api";
+import { createClearanceCertificate } from "../quality/api";
 import {
   listDispatches,
   createDispatch,
@@ -17,18 +20,21 @@ import {
   listConfigOptions,
   listDispatchMethods,
   createConfigOption,
+  loadPoLineAvailability,
   type DispatchSummary,
   type Site,
   type Store,
   type Customer,
   type Job,
   type QualityEligibility,
+  type PoLineAvailability,
   type ConfigOption,
 } from "./api";
 
 type DispatchSortKey =
   | "number"
   | "customer"
+  | "sourceStore"
   | "jobs"
   | "carrier"
   | "dispatchDate"
@@ -62,6 +68,9 @@ export default function DispatchPage() {
   const canManage = roles.some((r) =>
     ["owner", "ops_manager", "dispatch", "store_keeper"].includes(r)
   );
+  const canIssueQualityRelease = roles.some((r) =>
+    ["owner", "ops_manager", "quality_inspector"].includes(r)
+  );
 
   const [dispatches, setDispatches] = useState<DispatchSummary[]>([]);
   const [sites, setSites] = useState<Site[]>([]);
@@ -83,9 +92,19 @@ export default function DispatchPage() {
   // Modal state
   const [showModal, setShowModal] = useState(false);
   const [podDispatchId, setPodDispatchId] = useState<string | null>(null);
+  const [selectedCpoId, setSelectedCpoId] = useState("");
   const [selectedJobId, setSelectedJobId] = useState("");
+  const [selectedLotId, setSelectedLotId] = useState("");
+  const [dispatchQuantity, setDispatchQuantity] = useState("");
+  const [lots, setLots] = useState<Lot[]>([]);
+  const [loadingLots, setLoadingLots] = useState(false);
+  const [lotsError, setLotsError] = useState("");
   const [eligibility, setEligibility] = useState<QualityEligibility | null>(null);
   const [checkingEligibility, setCheckingEligibility] = useState(false);
+  const [issuingQualityRelease, setIssuingQualityRelease] = useState(false);
+  const [poLineAvailability, setPoLineAvailability] = useState<PoLineAvailability | null>(null);
+  const [checkingPoLineAvailability, setCheckingPoLineAvailability] = useState(false);
+  const [poLineAvailabilityError, setPoLineAvailabilityError] = useState("");
   const [creating, setCreating] = useState(false);
 
   // Form state
@@ -130,10 +149,15 @@ export default function DispatchPage() {
       setDispatchMethods(dispatchMethodOpts);
 
       if (comp.sites.length > 0 && !form.sourceSiteId) {
+        const firstStore = comp.stores.find((store) =>
+          store.siteId === comp.sites[0].id && store.storeType === "finished_goods"
+        );
         setForm((f) => ({
           ...f,
           sourceSiteId: comp.sites[0].id,
           sourceSiteName: comp.sites[0].name,
+          sourceStoreId: firstStore?.id ?? "",
+          sourceStoreName: firstStore?.name ?? "",
         }));
       }
     } catch {
@@ -153,8 +177,9 @@ export default function DispatchPage() {
     const plan = searchParams.get("plan");
     if (!plan || jobs.length === 0) return;
     const job = jobs.find((j) => j.id === plan || j.jobNumber === plan);
-    if (!job) return;
+    if (!job || !job.cpoId) return;
     setSelectedJobId(job.id);
+    setSelectedCpoId(job.cpoId);
     setForm((f) => ({
       ...f,
       customerId: job.customerId ?? f.customerId,
@@ -168,14 +193,86 @@ export default function DispatchPage() {
   useEffect(() => {
     if (!selectedJobId) {
       setEligibility(null);
+      setPoLineAvailability(null);
       return;
     }
     setCheckingEligibility(true);
     checkDispatchEligibility(selectedJobId)
       .then((res) => setEligibility(res))
-      .catch(() => setEligibility({ jobId: selectedJobId, eligible: true, reason: "Quality clearance checked", blockers: [] }))
+      .catch((cause) => setEligibility({
+        jobId: selectedJobId,
+        eligible: false,
+        reason: cause instanceof Error ? cause.message : "Quality release could not be verified",
+        blockers: ["Quality release could not be verified"],
+      }))
       .finally(() => setCheckingEligibility(false));
   }, [selectedJobId]);
+
+  useEffect(() => {
+    const job = jobs.find((candidate) => candidate.id === selectedJobId);
+    if (!job?.cpoLineId) {
+      setPoLineAvailability(null);
+      setCheckingPoLineAvailability(false);
+      setPoLineAvailabilityError("");
+      return;
+    }
+
+    let active = true;
+    setCheckingPoLineAvailability(true);
+    setPoLineAvailability(null);
+    setPoLineAvailabilityError("");
+    loadPoLineAvailability(job.cpoLineId)
+      .then((availability) => {
+        if (active) setPoLineAvailability(availability);
+      })
+      .catch((cause) => {
+        if (active) {
+          setPoLineAvailability(null);
+          setPoLineAvailabilityError(cause instanceof Error
+            ? cause.message
+            : "Remaining PO quantity could not be verified");
+        }
+      })
+      .finally(() => {
+        if (active) setCheckingPoLineAvailability(false);
+      });
+    return () => { active = false; };
+  }, [jobs, selectedJobId]);
+
+  useEffect(() => {
+    const job = jobs.find((candidate) => candidate.id === selectedJobId);
+    if (!job?.itemId || !form.sourceStoreId) {
+      setLots([]);
+      setSelectedLotId("");
+      setDispatchQuantity("");
+      setLotsError("");
+      return;
+    }
+
+    let active = true;
+    setLoadingLots(true);
+    setLotsError("");
+    setLots([]);
+    setSelectedLotId("");
+    setDispatchQuantity("");
+    loadLots(`itemId=${encodeURIComponent(job.itemId)}&storeId=${encodeURIComponent(form.sourceStoreId)}&status=available`)
+      .then((rows) => {
+        if (active) {
+          setLots(rows.filter((lot) =>
+            lot.status === "available" && lot.availableQty > 0
+          ));
+        }
+      })
+      .catch((cause) => {
+        if (active) {
+          setLotsError(cause instanceof Error ? cause.message : "Finished-goods lots could not be loaded");
+        }
+      })
+      .finally(() => {
+        if (active) setLoadingLots(false);
+      });
+    return () => { active = false; };
+  }, [jobs, selectedJobId, form.sourceStoreId]);
 
   const handleDeleteDispatch = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -193,37 +290,50 @@ export default function DispatchPage() {
       showToastMsg("error", "Not dispatch-eligible", eligibility.reason);
       return;
     }
-    if (!form.customerId || !form.dispatchDate) {
-      showToastMsg("error", "Customer and dispatch date are required");
+    const job = jobs.find((candidate) => candidate.id === selectedJobId);
+    const lot = lots.find((candidate) => candidate.id === selectedLotId);
+    const quantity = Number(dispatchQuantity);
+    if (!form.customerId || !form.dispatchDate || !job?.cpoId || !job.cpoLineId || !lot
+      || !Number.isFinite(quantity) || quantity <= 0 || !eligibility?.eligible
+      || !poLineAvailability || quantity > maxDispatchQuantity) {
+      showToastMsg("error", "Select an eligible PO line, finished-goods lot, and quantity");
       return;
     }
 
     try {
       setCreating(true);
       const cust = customers.find((c) => c.id === form.customerId);
-      const eligibleJob = jobs.find((j) => j.id === selectedJobId);
 
       const created = await createDispatch({
         customerId: form.customerId,
         customerName: cust?.tradingName || cust?.name || form.customerName,
-        jobId: eligibleJob?.id,
-        cpoId: eligibleJob?.customerPoId,
+        jobId: job.id,
+        cpoId: job.cpoId,
         sourceSiteId: form.sourceSiteId || undefined,
         sourceSiteName: form.sourceSiteName || undefined,
-        sourceStoreId: form.sourceStoreId || undefined,
-        sourceStoreName: form.sourceStoreName || undefined,
+        sourceStoreId: lot.storeId,
+        sourceStoreName: lot.storeName,
         carrier: form.carrier || undefined,
         dispatchMethodOptionId: form.dispatchMethodOptionId || undefined,
         vehicleNumber: form.vehicleNumber || undefined,
         lrNumber: form.lrNumber || undefined,
         dispatchDate: form.dispatchDate,
-        jobs: eligibleJob ? [eligibleJob.jobNumber] : [],
-        lines: eligibleJob ? [{ jobId: eligibleJob.id, quantity: 1, itemId: undefined }] : [],
+        jobs: [job.jobNumber],
+        lines: [{
+          cpoLineId: job.cpoLineId,
+          jobId: job.id,
+          itemId: job.itemId,
+          quantity,
+          lotId: lot.id,
+        }],
       });
 
       setDispatches((prev) => [created, ...prev]);
       setShowModal(false);
       setSelectedJobId("");
+      setSelectedCpoId("");
+      setSelectedLotId("");
+      setDispatchQuantity("");
       showToastMsg("success", "Dispatch created", created.dispatchNumber);
     } catch (err: any) {
       showToastMsg("error", "Creation failed", err?.message ?? "Could not create dispatch");
@@ -231,6 +341,53 @@ export default function DispatchPage() {
       setCreating(false);
     }
   };
+
+  const handleIssueQualityRelease = async () => {
+    const job = jobs.find((candidate) => candidate.id === selectedJobId);
+    if (!job) return;
+    try {
+      setIssuingQualityRelease(true);
+      await createClearanceCertificate({ jobId: job.id });
+      setEligibility(await checkDispatchEligibility(job.id));
+      showToastMsg("success", "Quality release issued", job.jobNumber);
+    } catch (cause) {
+      showToastMsg("error", "Quality release failed",
+        cause instanceof Error ? cause.message : "The quality release could not be issued");
+    } finally {
+      setIssuingQualityRelease(false);
+    }
+  };
+
+  const purchaseOrders = Array.from(
+    new Map(
+      jobs
+        .filter((job) => job.customerId === form.customerId && job.cpoId && job.cpoNumber)
+        .map((job) => [job.cpoId!, { id: job.cpoId!, number: job.cpoNumber! }])
+    ).values()
+  );
+  const poLines = jobs.filter((job) =>
+    job.customerId === form.customerId
+      && job.cpoId === selectedCpoId
+      && job.cpoLineId
+      && job.itemId
+      && job.status === "completed"
+  );
+  const selectedJob = jobs.find((job) => job.id === selectedJobId);
+  const selectedLot = lots.find((lot) => lot.id === selectedLotId);
+  const maxDispatchQuantity = selectedJob && selectedLot
+    ? Math.min(
+      selectedJob.qty ?? selectedLot.availableQty,
+      selectedLot.availableQty,
+      poLineAvailability?.remainingQty ?? 0
+    )
+    : 0;
+
+  useEffect(() => {
+    const quantity = Number(dispatchQuantity);
+    if (dispatchQuantity && Number.isFinite(quantity) && quantity > maxDispatchQuantity && maxDispatchQuantity > 0) {
+      setDispatchQuantity(String(maxDispatchQuantity));
+    }
+  }, [dispatchQuantity, maxDispatchQuantity]);
 
   // Base and KPI counts
   const base = dispatches.filter(
@@ -260,6 +417,8 @@ export default function DispatchPage() {
         ? a.dispatchNumber
         : sortKey === "customer"
         ? a.customerName
+        : sortKey === "sourceStore"
+        ? placeLabel(a.sourceSiteName, a.sourceStoreName)
         : sortKey === "jobs"
         ? (a.jobs ?? []).join(", ")
         : sortKey === "carrier"
@@ -277,6 +436,8 @@ export default function DispatchPage() {
         ? b.dispatchNumber
         : sortKey === "customer"
         ? b.customerName
+        : sortKey === "sourceStore"
+        ? placeLabel(b.sourceSiteName, b.sourceStoreName)
         : sortKey === "jobs"
         ? (b.jobs ?? []).join(", ")
         : sortKey === "carrier"
@@ -435,12 +596,13 @@ export default function DispatchPage() {
             </div>
 
             {/* Desktop Table */}
-            <table className="hidden md:table w-full text-sm border-separate border-spacing-0" style={{ minWidth: 800 }}>
+            <table className="hidden md:table w-full text-sm border-separate border-spacing-0" style={{ minWidth: 900 }}>
               <thead style={{ position: "sticky", top: 0, zIndex: 5 }}>
                 <tr style={{ background: "var(--surface-2)" }}>
                   {([
                     ["Dispatch #", "number"],
                     ["Customer", "customer"],
+                    ["Ship from", "sourceStore"],
                     ["Jobs", "jobs"],
                     ["Carrier / Vehicle", "carrier"],
                     ["Dispatch Date", "dispatchDate"],
@@ -480,9 +642,9 @@ export default function DispatchPage() {
                     </td>
                     <td className="px-4 py-3 text-sm font-medium" style={{ color: "var(--text)" }}>
                       {d.customerName}
-                      <div className="text-[11px] font-normal text-[var(--text-3)]">
-                        {placeLabel(d.sourceSiteName, d.sourceStoreName)}
-                      </div>
+                    </td>
+                    <td className="px-4 py-3 text-xs" style={{ color: "var(--text-2)" }}>
+                      {placeLabel(d.sourceSiteName, d.sourceStoreName)}
                     </td>
                     <td className="px-4 py-3 font-mono text-xs" style={{ color: "var(--text-2)" }}>
                       {(d.jobs ?? []).join(", ") || "—"}
@@ -551,35 +713,44 @@ export default function DispatchPage() {
         )}
       </div>
 
-      {/* New Dispatch Modal */}
+      {/* New Dispatch drawer */}
       {showModal && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-          <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-6 w-full max-w-md shadow-2xl">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="font-bold text-base text-[var(--text)]">New Dispatch</h2>
-              <button
-                type="button"
-                onClick={() => setShowModal(false)}
-                className="text-[var(--text-3)] hover:text-[var(--text)]"
-              >
-                <X size={18} />
-              </button>
-            </div>
-
+        <RecordSheet
+          title="New Dispatch"
+          subtitle="Select an eligible Customer PO line and finished-goods lot"
+          width="lg"
+          pinnedFooter
+          onClose={() => setShowModal(false)}
+          secondary={{ label: "Cancel", onClick: () => setShowModal(false) }}
+          primary={{
+            label: creating ? "Creating…" : "Create Dispatch",
+            onClick: handleCreate,
+            disabled: creating || !form.customerId || !form.dispatchDate || !selectedJobId
+              || !selectedLotId || !dispatchQuantity || checkingEligibility || !eligibility?.eligible,
+          }}
+        >
             <div className="space-y-3 text-sm">
               {/* Ship-from site and store */}
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="text-xs text-[var(--text-3)] block mb-1">Ship-from site</label>
+                  <label htmlFor="dispatch-site" className="text-xs text-[var(--text-3)] block mb-1">Ship-from site</label>
                   <select
+                    id="dispatch-site"
                     value={form.sourceSiteId}
                     onChange={(e) => {
                       const s = sites.find((x) => x.id === e.target.value);
+                      const store = stores.find((candidate) =>
+                        candidate.siteId === e.target.value && candidate.storeType === "finished_goods"
+                      );
                       setForm((f) => ({
                         ...f,
                         sourceSiteId: e.target.value,
                         sourceSiteName: s?.name ?? "",
+                        sourceStoreId: store?.id ?? "",
+                        sourceStoreName: store?.name ?? "",
                       }));
+                      setSelectedLotId("");
+                      setDispatchQuantity("");
                     }}
                     className="w-full px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm text-[var(--text)] focus:outline-none focus:border-[var(--brand)]"
                   >
@@ -591,8 +762,9 @@ export default function DispatchPage() {
                   </select>
                 </div>
                 <div>
-                  <label className="text-xs text-[var(--text-3)] block mb-1">Ship-from store</label>
+                  <label htmlFor="dispatch-store" className="text-xs text-[var(--text-3)] block mb-1">Finished-goods store *</label>
                   <select
+                    id="dispatch-store"
                     value={form.sourceStoreId}
                     onChange={(e) => {
                       const st = stores.find((x) => x.id === e.target.value);
@@ -601,12 +773,16 @@ export default function DispatchPage() {
                         sourceStoreId: e.target.value,
                         sourceStoreName: st?.name ?? "",
                       }));
+                      setSelectedLotId("");
+                      setDispatchQuantity("");
                     }}
                     className="w-full px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm text-[var(--text)] focus:outline-none focus:border-[var(--brand)]"
                   >
-                    <option value="">Select store…</option>
                     {stores
-                      .filter((st) => !form.sourceSiteId || st.siteId === form.sourceSiteId)
+                      .filter((st) =>
+                        st.storeType === "finished_goods"
+                        && (!form.sourceSiteId || st.siteId === form.sourceSiteId)
+                      )
                       .map((st) => (
                         <option key={st.id} value={st.id}>
                           {st.name}
@@ -625,6 +801,10 @@ export default function DispatchPage() {
                   value={form.customerId}
                   onChange={(e) => {
                     const c = customers.find((x) => x.id === e.target.value);
+                    setSelectedCpoId("");
+                    setSelectedJobId("");
+                    setSelectedLotId("");
+                    setDispatchQuantity("");
                     setForm((f) => ({
                       ...f,
                       customerId: e.target.value,
@@ -642,20 +822,60 @@ export default function DispatchPage() {
                 </select>
               </div>
 
-              {/* Production Job */}
+              {/* Customer PO and line */}
               <div>
-                <label className="text-xs text-[var(--text-3)] block mb-1">
-                  Job (checks quality release before dispatch)
-                </label>
+                <label htmlFor="dispatch-cpo" className="text-xs text-[var(--text-3)] block mb-1">Customer PO *</label>
                 <select
-                  value={selectedJobId}
-                  onChange={(e) => setSelectedJobId(e.target.value)}
+                  id="dispatch-cpo"
+                  aria-label="Customer PO"
+                  value={selectedCpoId}
+                  disabled={!form.customerId}
+                  onChange={(e) => {
+                    setSelectedCpoId(e.target.value);
+                    setSelectedJobId("");
+                    setSelectedLotId("");
+                    setDispatchQuantity("");
+                  }}
                   className="w-full px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm text-[var(--text)] focus:outline-none focus:border-[var(--brand)]"
                 >
-                  <option value="">No specific job (free dispatch)</option>
-                  {jobs.map((j) => (
-                    <option key={j.id} value={j.id}>
-                      {j.jobNumber} {j.description ? `— ${j.description}` : ""}
+                  <option value="">Select Customer PO…</option>
+                  {purchaseOrders.map((po) => (
+                    <option key={po.id} value={po.id}>
+                      {po.number}
+                    </option>
+                  ))}
+                </select>
+                <label htmlFor="dispatch-po-line" className="text-xs text-[var(--text-3)] block mt-3 mb-1">PO line *</label>
+                <select
+                  id="dispatch-po-line"
+                  aria-label="PO line"
+                  value={selectedJobId}
+                  disabled={!selectedCpoId}
+                  onChange={(e) => {
+                    const job = poLines.find((candidate) => candidate.id === e.target.value);
+                    setSelectedJobId(e.target.value);
+                    setSelectedLotId("");
+                    setDispatchQuantity("");
+                    if (job?.siteId) {
+                      const site = sites.find((candidate) => candidate.id === job.siteId);
+                      const store = stores.find((candidate) =>
+                        candidate.siteId === job.siteId && candidate.storeType === "finished_goods"
+                      );
+                      setForm((current) => ({
+                        ...current,
+                        sourceSiteId: job.siteId!,
+                        sourceSiteName: site?.name ?? current.sourceSiteName,
+                        sourceStoreId: store?.id ?? "",
+                        sourceStoreName: store?.name ?? "",
+                      }));
+                    }
+                  }}
+                  className="w-full px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm text-[var(--text)] focus:outline-none focus:border-[var(--brand)]"
+                >
+                  <option value="">Select PO line…</option>
+                  {poLines.map((job) => (
+                    <option key={job.id} value={job.id}>
+                      {job.itemCode ?? job.itemName ?? "Item"} · {job.jobNumber} · {job.qty ?? "—"} {job.uomSymbol ?? ""}
                     </option>
                   ))}
                 </select>
@@ -671,6 +891,81 @@ export default function DispatchPage() {
                     {eligibility.eligible
                       ? `✓ Dispatch-eligible — ${eligibility.reason}`
                       : `✗ Not eligible — ${eligibility.reason}`}
+                  </p>
+                )}
+                {eligibility && !eligibility.eligible
+                  && ["passed", "concession_granted"].includes(eligibility.inspectionStatus ?? "")
+                  && eligibility.blockers.some((blocker) => blocker.toLowerCase().includes("clearance certificate"))
+                  && canIssueQualityRelease && (
+                    <button
+                      type="button"
+                      onClick={handleIssueQualityRelease}
+                      disabled={issuingQualityRelease}
+                      className="mt-2 px-3 py-1.5 rounded-lg text-xs font-semibold border border-[var(--border)] disabled:opacity-50"
+                    >
+                      {issuingQualityRelease ? "Issuing quality release…" : "Issue quality release"}
+                    </button>
+                  )}
+              </div>
+
+              <div>
+                <label htmlFor="dispatch-lot" className="text-xs text-[var(--text-3)] block mb-1">Finished-goods lot *</label>
+                <select
+                  id="dispatch-lot"
+                  aria-label="Finished-goods lot"
+                  value={selectedLotId}
+                  disabled={!selectedJobId || !form.sourceStoreId || loadingLots || lots.length === 0}
+                  onChange={(e) => {
+                    setSelectedLotId(e.target.value);
+                    const lot = lots.find((candidate) => candidate.id === e.target.value);
+                    const job = jobs.find((candidate) => candidate.id === selectedJobId);
+                    setDispatchQuantity(lot && job
+                      ? String(Math.min(job.qty ?? lot.availableQty, lot.availableQty))
+                      : "");
+                  }}
+                  className="w-full px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm text-[var(--text)] focus:outline-none focus:border-[var(--brand)]"
+                >
+                  <option value="">{loadingLots ? "Loading lots…" : "Select finished-goods lot…"}</option>
+                  {lots.map((lot) => (
+                    <option key={lot.id} value={lot.id}>
+                      {lot.lotNumber || lot.batchRef || lot.id.slice(0, 8)} · {lot.availableQty} {lot.uomSymbol} available
+                    </option>
+                  ))}
+                </select>
+                {lotsError && <p role="alert" className="text-xs mt-1 text-[var(--error)]">{lotsError}</p>}
+                {!loadingLots && !lotsError && selectedJobId && lots.length === 0 && (
+                  <p className="text-xs mt-1 text-[var(--text-3)]">No available finished-goods stock for this PO line and store.</p>
+                )}
+                {checkingPoLineAvailability && (
+                  <p className="text-xs mt-1 text-[var(--text-3)]">Checking remaining Customer PO quantity…</p>
+                )}
+                {poLineAvailability && (
+                  <p className="text-xs mt-1 text-[var(--text-3)]">
+                    Remaining Customer PO quantity: {poLineAvailability.remainingQty} {selectedJob?.uomSymbol ?? ""}
+                  </p>
+                )}
+                {poLineAvailabilityError && (
+                  <p role="alert" className="text-xs mt-1 text-[var(--error)]">{poLineAvailabilityError}</p>
+                )}
+              </div>
+
+              <div>
+                <label htmlFor="dispatch-quantity" className="text-xs text-[var(--text-3)] block mb-1">Quantity *</label>
+                <input
+                  id="dispatch-quantity"
+                  aria-label="Quantity"
+                  type="number"
+                  min="0.001"
+                  step="0.001"
+                  max={maxDispatchQuantity || undefined}
+                  value={dispatchQuantity}
+                  disabled={!selectedLotId}
+                  onChange={(e) => setDispatchQuantity(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm text-[var(--text)] focus:outline-none focus:border-[var(--brand)]"
+                />
+                {selectedLot && (
+                  <p className="text-xs mt-1 text-[var(--text-3)]">
+                    Maximum dispatchable: {maxDispatchQuantity} {selectedLot.uomSymbol}
                   </p>
                 )}
               </div>
@@ -703,7 +998,7 @@ export default function DispatchPage() {
                     const matched = carriers.find((c) => c.id === val);
                     setForm((f) => ({ ...f, carrier: matched?.label ?? val }));
                   }}
-                  placeholder="DTDC / Blue Dart / VRL…"
+                  placeholder="Select carrier…"
                   creatable={canManage}
                   options={carriers.map((c) => ({ id: c.id, label: c.label }))}
                   fields={[{ name: "label", label: "Carrier name", required: true }]}
@@ -727,7 +1022,7 @@ export default function DispatchPage() {
                       const matched = vehicles.find((v) => v.id === val);
                       setForm((f) => ({ ...f, vehicleNumber: matched?.label ?? val }));
                     }}
-                    placeholder="TS09XX0000"
+                    placeholder="Select vehicle…"
                     creatable={canManage}
                     options={vehicles.map((v) => ({ id: v.id, label: v.label }))}
                     fields={[{ name: "label", label: "Vehicle registration #", required: true }]}
@@ -761,30 +1056,7 @@ export default function DispatchPage() {
               </div>
             </div>
 
-            <div className="flex gap-2 mt-5">
-              <button
-                type="button"
-                onClick={() => setShowModal(false)}
-                className="flex-1 py-2 border border-[var(--border)] text-[var(--text)] rounded-lg text-sm"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                disabled={
-                  creating ||
-                  !form.customerId ||
-                  !form.dispatchDate ||
-                  (!!eligibility && !eligibility.eligible)
-                }
-                onClick={handleCreate}
-                className="flex-1 py-2 bg-[var(--brand-fill, #7048F5)] text-white rounded-lg text-sm font-medium disabled:opacity-50"
-              >
-                {creating ? "Creating…" : "Create Dispatch"}
-              </button>
-            </div>
-          </div>
-        </div>
+        </RecordSheet>
       )}
 
       {/* PoD Modal */}

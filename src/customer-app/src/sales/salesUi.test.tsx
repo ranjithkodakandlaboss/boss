@@ -149,6 +149,19 @@ it("clears a customer rating without silently restoring the previous rating", as
   expect(JSON.parse(String(call?.[1]?.body)).rating).toBeNull();
 });
 
+it("searches the Customer Directory by GSTIN case-insensitively and ignores GSTIN spaces", async () => {
+  renderSales("/sales?tab=customers");
+  const search = await screen.findByPlaceholderText("Search customer name, GSTIN or city");
+  await userEvent.type(search, "27 aabcu9603r1zx");
+
+  expect(await screen.findByText("27AABCU9603R1ZX")).toBeInTheDocument();
+  expect(screen.getByText("1 of 1 customers")).toBeInTheDocument();
+
+  await userEvent.clear(search);
+  await userEvent.type(search, "pUnE");
+  expect(screen.getByText("27AABCU9603R1ZX")).toBeInTheDocument();
+});
+
 it.each(["rfqs", "pos"])("aligns %s line counts with their column header", async tab => {
   poCreated = true;
   renderSales(`/sales?tab=${tab}`);

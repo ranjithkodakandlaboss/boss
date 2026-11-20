@@ -16,6 +16,7 @@ const asset = {
 const event = {
   id: "ev1", eventNumber: "ME-1", assetId: asset.id, assetCode: "CNC-01", assetName: "CNC Lathe",
   eventType: "Breakdown", status: "open", symptom: "Spindle failure", technicianName: "Ravi",
+  affectedJobIds: ["job1"],
   affectedJobs: [{ id: "job1", jobNumber: "JOB-1" }],
   affectedStages: [{
     id: "stage1", jobId: "job1", jobNumber: "JOB-1", sequence: 1, name: "Cutting", status: "pending",
@@ -36,6 +37,7 @@ const options: Record<string, { id: string; code: string; label: string }[]> = {
 };
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
 let posted: { url: string; body: unknown }[] = [];
+let eventCalls: { method: string; url: string; body: unknown }[] = [];
 let failCreate = false;
 let failOptions = false;
 let emptyWorkCentres = false;
@@ -43,7 +45,7 @@ let configPosts: { url: string; body: any }[] = [];
 let repairs: unknown[] = [];
 
 beforeEach(() => {
-  posted = []; failCreate = false; failOptions = false; emptyWorkCentres = false; configPosts = []; repairs = [];
+  posted = []; eventCalls = []; failCreate = false; failOptions = false; emptyWorkCentres = false; configPosts = []; repairs = [];
   signIn("test-session");
   vi.stubGlobal("fetch", vi.fn((input: RequestInfo, init?: RequestInit) => {
     const url = String(input);
@@ -68,9 +70,28 @@ beforeEach(() => {
     if (url.includes("/maintenance/assets/") && url.endsWith("/readings")) return Promise.resolve(json([]));
     if (url.includes("/maintenance/assets/") && url.endsWith("/activity")) return Promise.resolve(json([{ action: "CREATE", actor: "Owner", at: "2026-01-01T00:00:00Z" }]));
     if (url.includes("/maintenance/events/") && url.endsWith("/activity")) return Promise.resolve(json([]));
+    if (url.includes("/maintenance/events/") && init?.method === "PUT") {
+      eventCalls.push({ method: init.method, url, body: JSON.parse(String(init.body)) });
+      return Promise.resolve(json(event));
+    }
+    if (url.includes("/maintenance/events/") && init?.method === "POST") {
+      eventCalls.push({ method: init.method, url, body: JSON.parse(String(init.body ?? "{}")) });
+      return Promise.resolve(json(event));
+    }
     if (url.includes("/maintenance/events/")) return Promise.resolve(json(event));
     if (/\/maintenance\/assets\/[\w-]+$/.test(url)) return Promise.resolve(json({ ...asset, status: "breakdown", openEvents: 1 }));
-    if (url.includes("/maintenance/lookups")) return Promise.resolve(json({ sites: [{ id: siteId, name: "Plant", code: "P1" }], technicians: [], jobs: [] }));
+    if (url.includes("/maintenance/lookups")) return Promise.resolve(json({
+      sites: [{ id: siteId, name: "Plant", code: "P1" }], technicians: [],
+      jobs: [
+        { id: "job1", jobNumber: "JOB-1", status: "released" },
+        { id: "job2", jobNumber: "JOB-2", status: "in_progress" },
+        { id: "job-done", jobNumber: "JOB-DONE", status: "completed" },
+      ],
+    }));
+    if (init?.method === "POST" && url.endsWith("/maintenance/events")) {
+      eventCalls.push({ method: init.method, url, body: JSON.parse(String(init.body)) });
+      return Promise.resolve(json(event, 201));
+    }
     if (init?.method === "POST" && url.includes("/maintenance/assets")) {
       expect(new Headers(init.headers).get("Idempotency-Key")).toBeTruthy();
       if (failCreate) return Promise.resolve(json({ message: "Asset code already exists" }, 409));
@@ -96,6 +117,22 @@ it("lists assets and takes dropdown options from the config API", async () => {
   expect(within(dialog).getByRole("option", { name: "Machining" })).toBeTruthy();
 });
 
+it("shows a lightweight loading state while maintenance data loads", async () => {
+  renderPage();
+  expect(screen.queryByText("Loading maintenance data…")).toBeNull();
+  expect(screen.getByRole("status", { name: "Loading maintenance data" })).toBeTruthy();
+  await waitFor(() => expect(screen.queryByRole("status", { name: "Loading maintenance data" })).toBeNull());
+});
+
+it("uses the shared padded search field and a regular grid for supported stages", async () => {
+  renderPage();
+  expect(await screen.findByText("CNC-01")).toBeTruthy();
+  expect(screen.getByLabelText("Search").className).toContain("eoss-search-input");
+  await userEvent.click(screen.getByRole("button", { name: /Add Asset/ }));
+  const dialog = await screen.findByRole("dialog");
+  expect(within(dialog).getByRole("group", { name: "Supported production stages" }).querySelector("div")?.className).toContain("grid");
+});
+
 it("creates an asset and shows API errors", async () => {
   renderPage();
   await userEvent.click(await screen.findByRole("button", { name: /Add Asset/ }));
@@ -112,6 +149,17 @@ it("creates an asset and shows API errors", async () => {
   await userEvent.click(within(dialog).getByRole("button", { name: "Save Asset" }));
   await waitFor(() => expect(posted).toHaveLength(1));
   expect(posted[0].body).toMatchObject({ assetCode: "PRESS-9", siteId });
+});
+
+it("allows creating an asset without a manufacturer", async () => {
+  const dialog = await openAddAsset();
+  await userEvent.type(within(dialog).getByLabelText("Asset code"), "PRESS-10");
+  await userEvent.type(within(dialog).getByLabelText("Asset name"), "Press");
+  await waitFor(() => expect(within(dialog).getByRole("option", { name: "Plant" })).toBeTruthy());
+  await userEvent.selectOptions(within(dialog).getByLabelText("Site"), siteId);
+  await userEvent.click(within(dialog).getByRole("button", { name: "Save Asset" }));
+  await waitFor(() => expect(posted).toHaveLength(1));
+  expect(posted[0].body).not.toHaveProperty("manufacturer");
 });
 
 async function openAddAsset() {
@@ -132,11 +180,15 @@ it("offers Add New for an empty tenant dropdown, then refreshes and selects the 
   await waitFor(() => expect((within(dialog).getByRole("combobox", { name: "Work centre" }) as HTMLSelectElement).value).toBe("Paint Booth"));
 });
 
-it("offers Add New when a search matches nothing", async () => {
+it("keeps configurable selects aligned and offers inline add without duplicate search inputs", async () => {
   const dialog = await openAddAsset();
-  await userEvent.type(await within(dialog).findByLabelText("Search Category"), "Grinder");
-  expect(within(dialog).getByText(/No match for/)).toBeTruthy();
+  await within(dialog).findByRole("button", { name: /Add New Category/ });
+  expect(within(dialog).queryByLabelText("Search Category")).toBeNull();
+  expect(within(dialog).queryByLabelText("Search Work centre")).toBeNull();
+  expect(within(dialog).queryByLabelText("Search Criticality")).toBeNull();
   expect(within(dialog).getByRole("button", { name: /Add New Category/ })).toBeTruthy();
+  expect(within(dialog).getByRole("button", { name: /Add New Work centre/ })).toBeTruthy();
+  expect(within(dialog).getByRole("button", { name: /Add New Criticality/ })).toBeTruthy();
 });
 
 it("shows Retry instead of Add New when options fail to load, and never offers Add New for system categories", async () => {
@@ -175,4 +227,48 @@ it("shows affected stages, customer due dates, capable alternatives and the resp
   expect(screen.getByText("Ravi Tech")).toBeTruthy();
   expect(screen.getByText(/the whole job is not put on hold/)).toBeTruthy();
   expect(screen.getByText(/responsible owner is not notified automatically/)).toBeTruthy();
+});
+
+it("requires a technician and keeps completed jobs out of the event form", async () => {
+  renderPage();
+  await userEvent.click(await screen.findByRole("button", { name: /Log Event/ }));
+  const dialog = await screen.findByRole("dialog");
+  expect(within(dialog).getByLabelText("External technician")).toHaveAttribute("required");
+  expect(within(dialog).getByLabelText("External technician")).toHaveAttribute("aria-required", "true");
+  await userEvent.selectOptions(within(dialog).getByLabelText("Event type"), "Breakdown");
+  expect(within(dialog).getByText("JOB-2")).toBeTruthy();
+  expect(within(dialog).queryByText("JOB-DONE")).toBeNull();
+
+  await userEvent.selectOptions(within(dialog).getByLabelText("Event asset"), asset.id);
+  await userEvent.selectOptions(within(dialog).getByLabelText("Severity"), "high");
+  await userEvent.type(within(dialog).getByLabelText("Description"), "Spindle failure");
+  await userEvent.type(within(dialog).getByLabelText("Downtime start"), "2026-11-20T08:00");
+  await userEvent.click(within(dialog).getByRole("button", { name: "Log event" }));
+  expect((await within(dialog).findByRole("alert")).textContent).toContain("Technician");
+  expect(eventCalls).toHaveLength(0);
+});
+
+it("adds an active job to an existing breakdown event", async () => {
+  render(<MemoryRouter initialEntries={["/assets/me/ev1"]}><CustomerProvider><Routes><Route path="/assets/me/:id" element={<MaintenanceEventDetailPage />} /></Routes></CustomerProvider></MemoryRouter>);
+  expect(await screen.findByRole("heading", { name: "Affected production stages" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Start work" })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Close event" })).toBeNull();
+  await userEvent.click(screen.getByRole("button", { name: "Add affected job" }));
+  const select = await screen.findByRole("combobox", { name: "Add affected job" });
+  expect(within(select).queryByRole("option", { name: "JOB-DONE" })).toBeNull();
+  await userEvent.selectOptions(select, "job2");
+  await userEvent.click(screen.getByRole("button", { name: "Save affected jobs" }));
+  await waitFor(() => expect(eventCalls).toHaveLength(1));
+  expect(eventCalls[0]).toMatchObject({
+    method: "PUT",
+    url: expect.stringContaining("/maintenance/events/ev1/affected-jobs"),
+    body: { affectedJobIds: ["job2"] },
+  });
+});
+
+it("renders maintenance event cards at the full available width", async () => {
+  render(<MemoryRouter initialEntries={["/assets?tab=events"]}><CustomerProvider><Routes><Route path="/assets" element={<AssetsPage />} /></Routes></CustomerProvider></MemoryRouter>);
+  const eventNumber = await screen.findByText("ME-1");
+  const card = eventNumber.closest(".rounded-xl.border");
+  expect(card?.className).toContain("w-full");
 });

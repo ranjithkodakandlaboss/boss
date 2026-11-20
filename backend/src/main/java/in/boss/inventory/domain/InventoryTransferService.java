@@ -246,12 +246,22 @@ public class InventoryTransferService {
 
         List<IndexedLine> lines = transferLines(context.tenantId(), transferId);
         String receivedNote = request == null ? null : blankToNull(request.receivedNote());
+        String destinationStoreType = inventoryRepository.storeLocation(
+                        context.tenantId(), transfer.toStoreId())
+                .map(InventoryRepository.StoreLocation::storeType)
+                .orElseThrow(() -> new IllegalStateException(
+                        "Transfer destination store is missing: " + transfer.toStoreId()));
         for (IndexedLine line : lines) {
             LotRow source = line.lot();
             UUID destinationLotId = UUID.randomUUID();
             String destinationLotNumber = "TRF-" + line.id().toString().substring(0, 8).toUpperCase();
-            String destinationStatus = source.expiryDate() != null
-                    && source.expiryDate().isBefore(LocalDate.now()) ? "quarantine" : "available";
+            String destinationStatus = switch (destinationStoreType) {
+                case "quarantine" -> LotStatus.QUARANTINE;
+                case "rejected" -> LotStatus.REJECTED;
+                default -> source.expiryDate() != null
+                        && source.expiryDate().isBefore(LocalDate.now())
+                        ? LotStatus.QUARANTINE : LotStatus.AVAILABLE;
+            };
             inventoryRepository.insertLot(destinationLotId, context.tenantId(), source.itemId(),
                     transfer.toStoreId(), destinationLotNumber, source.batchNumber(), line.quantity(),
                     source.unitCost(), destinationStatus, source.expiryDate());

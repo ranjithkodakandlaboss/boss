@@ -3,6 +3,7 @@ package in.boss.production.domain;
 import in.boss.production.api.ProductionApiDtos.CostSummary;
 import in.boss.production.api.ProductionApiDtos.InspectionResponse;
 import in.boss.production.api.ProductionApiDtos.JobStageResponse;
+import in.boss.production.api.ProductionApiDtos.MaintenanceActivity;
 import in.boss.production.api.ProductionApiDtos.MaterialMovementResponse;
 import in.boss.production.api.ProductionApiDtos.MaterialRequirementResponse;
 import in.boss.production.api.ProductionApiDtos.ProductionJobResponse;
@@ -65,7 +66,42 @@ class ProductionJobView {
                 instant(rs, "actual_start"), instant(rs, "actual_end"), currentStage(stages), materialReadiness,
                 risk.name, risk.daysRemaining, risk.projected, risk.basis, stages, materials,
                 movements(tenantId, jobId), inspections(tenantId, jobId), estimated, actual, variance,
-                instant(rs, "created_at"));
+                instant(rs, "created_at"), maintenanceActivity(tenantId, jobId));
+    }
+
+    private List<MaintenanceActivity> maintenanceActivity(UUID tenantId, UUID jobId) {
+        return jdbc.query("""
+                WITH activity AS (
+                    SELECT action, COALESCE(new_data ->> 'eventNumber', 'Maintenance event') AS event_number,
+                           created_at AS at
+                    FROM audit_events
+                    WHERE tenant_id = ? AND entity_type = 'production_job' AND entity_id = ?
+                      AND action IN ('MACHINE_BLOCK', 'MACHINE_UNBLOCK')
+                    UNION ALL
+                    SELECT 'MACHINE_BLOCK', e.event_number, e.created_at
+                    FROM maintenance_events e
+                    WHERE e.tenant_id = ? AND e.event_type = 'Breakdown'
+                      AND (? = ANY(e.affected_job_ids) OR EXISTS (
+                          SELECT 1 FROM job_stages s
+                          WHERE s.tenant_id = e.tenant_id AND s.job_id = ? AND s.asset_id = e.asset_id
+                      ))
+                    UNION ALL
+                    SELECT 'MACHINE_UNBLOCK', e.event_number, e.completion_date
+                    FROM maintenance_events e
+                    WHERE e.tenant_id = ? AND e.event_type = 'Breakdown' AND e.status = 'closed'
+                      AND e.completion_date IS NOT NULL
+                      AND (? = ANY(e.affected_job_ids) OR EXISTS (
+                          SELECT 1 FROM job_stages s
+                          WHERE s.tenant_id = e.tenant_id AND s.job_id = ? AND s.asset_id = e.asset_id
+                      ))
+                ), deduplicated AS (
+                    SELECT DISTINCT ON (action, event_number) action, event_number, at
+                    FROM activity
+                    ORDER BY action, event_number, at DESC
+                )
+                SELECT action, event_number, at FROM deduplicated ORDER BY at DESC
+                """, (rs, row) -> new MaintenanceActivity(rs.getString("action"), rs.getString("event_number"),
+                instant(rs, "at")), tenantId, jobId, tenantId, jobId, jobId, tenantId, jobId, jobId);
     }
 
     private List<JobStageResponse> stages(UUID tenantId, UUID jobId) {

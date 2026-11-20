@@ -82,6 +82,20 @@ class MaintenanceIntegrationTest extends BaseMasterDataIntegrationTest {
     }
 
     @Test
+    void manufacturerIsOptionalWhenCreatingAnAsset() {
+        AssetRequest withoutManufacturer = new AssetRequest("LTH-NO-MAKE", "Lathe", "Machining Equipment", siteId,
+                "CNC Bay", null, "ST-20", "SN1", "High", "hours", new BigDecimal("100"), null,
+                LocalDate.now().minusDays(30), null, "hours", new BigDecimal("500"), 90, userId,
+                null, null, null, null);
+
+        AssetResponse created = maintenance.createAsset(withoutManufacturer);
+        assertThat(created.manufacturer()).isNull();
+        AssetRequest rename = new AssetRequest(null, "Renamed lathe", null, null, null, null, null, null,
+                null, null, null, null, null, null, null, null, null, null, null, null, null, null);
+        assertThat(maintenance.updateAsset(created.id(), rename).manufacturer()).isNull();
+    }
+
+    @Test
     void assetLifecycleKeepsStatusAndServiceDatesConsistent() {
         AssetResponse created = maintenance.createAsset(asset("LTH-1"));
         assertThat(created.status()).isEqualTo("operational");
@@ -103,6 +117,9 @@ class MaintenanceIntegrationTest extends BaseMasterDataIntegrationTest {
         assertThatThrownBy(() -> maintenance.archiveAsset(created.id(), new ArchiveRequest("old")))
                 .hasMessageContaining("still open");
         assertThatThrownBy(() -> maintenance.closeEvent(event.id(), new CloseEventRequest(null, null, null, null, null, null)))
+                .hasMessageContaining("Start work");
+        maintenance.startEvent(event.id());
+        assertThatThrownBy(() -> maintenance.closeEvent(event.id(), new CloseEventRequest(null, null, null, null, null, null)))
                 .hasMessageContaining("Work done");
 
         EventResponse closed = maintenance.closeEvent(event.id(),
@@ -111,8 +128,8 @@ class MaintenanceIntegrationTest extends BaseMasterDataIntegrationTest {
         assertThat(closed.downtimeHours()).isGreaterThan(new BigDecimal("2.9"));
         AssetResponse after = maintenance.getAsset(created.id());
         assertThat(after.status()).isEqualTo("operational");
-        assertThat(after.lastServiceDate()).isEqualTo(LocalDate.now());
-        assertThat(after.nextServiceDate()).isEqualTo(LocalDate.now().plusDays(90));
+        assertThat(after.lastServiceDate()).isEqualTo(created.lastServiceDate());
+        assertThat(after.nextServiceDate()).isEqualTo(created.nextServiceDate());
         assertThat(maintenance.createEvent(breakdown(created.id())).eventNumber()).endsWith("-002");
 
         maintenance.markRepaired(created.id(), new RepairRequest(Instant.now(), "Drive fault", "Reset drive", null));
@@ -147,6 +164,8 @@ class MaintenanceIntegrationTest extends BaseMasterDataIntegrationTest {
         AssetResponse after = maintenance.getAsset(a.id());
         assertThat(after.status()).isEqualTo("operational");
         assertThat(after.lastServiceReading()).isEqualByComparingTo("160");
+        assertThat(after.lastServiceDate()).isEqualTo(LocalDate.now());
+        assertThat(after.nextServiceDate()).isEqualTo(LocalDate.now().plusDays(90));
     }
 
     @Test
@@ -165,8 +184,26 @@ class MaintenanceIntegrationTest extends BaseMasterDataIntegrationTest {
         jdbc.update("UPDATE maintenance_events SET affected_job_ids = ARRAY[?::uuid] WHERE id = ?", jobId, e.id());
         assertThat(maintenance.machineBlocker(tenantId, jobId, "CNC Bay")).contains(e.eventNumber());
         assertThat(maintenance.machineBlocker(tenantId, jobId, "Press Shop")).isNull();
+        maintenance.startEvent(e.id());
         maintenance.closeEvent(e.id(), new CloseEventRequest(null, null, "Fixed", null, null, null));
         assertThat(maintenance.machineBlocker(tenantId, jobId, "CNC Bay")).isNull();
+    }
+
+    @Test
+    void breakdownMustStartBeforeCloseAndRejectFutureCompletionTimes() {
+        AssetResponse a = maintenance.createAsset(asset("LTH-CLOSE-GATE"));
+        EventResponse event = maintenance.createEvent(breakdown(a.id()));
+
+        assertThatThrownBy(() -> maintenance.closeEvent(event.id(),
+                new CloseEventRequest(Instant.now(), null, "Repaired", null, null, null)))
+                .hasMessageContaining("Start work");
+        assertThat(maintenance.getEvent(event.id()).status()).isEqualTo("open");
+
+        maintenance.startEvent(event.id());
+        assertThatThrownBy(() -> maintenance.closeEvent(event.id(),
+                new CloseEventRequest(Instant.now().plus(1, ChronoUnit.DAYS), null, "Repaired", null, null, null)))
+                .hasMessageContaining("future");
+        assertThat(maintenance.getEvent(event.id()).status()).isEqualTo("in_progress");
     }
 
     @Test

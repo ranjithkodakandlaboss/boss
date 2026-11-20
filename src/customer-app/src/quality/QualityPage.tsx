@@ -5,12 +5,12 @@ import RecordSheet from "../components/shared/RecordSheet";
 import { useCustomer } from "../auth/CustomerState";
 import SortableHeader from "../components/shared/SortableHeader";
 import StatusChip from "../components/shared/StatusChip";
-import { allPages, type Item } from "../inventory/api";
 import {
   listInspections, listNcrs, createInspection, createNcr,
-  listConfigOptions,
+  listConfigOptions, listInspectionReferences, listTemplates,
   severityLabel, inspectionTypeLabel, displayDate,
   type InspectionSummary, type NcrSummary, type ConfigOption,
+  type InspectionReferenceOption, type ChecklistTemplate,
 } from "./api";
 
 type Tab = "inspections" | "ncrs";
@@ -23,6 +23,12 @@ function sortRows<T>(rows: T[], key: string, dir: "asc" | "desc", getValue: (row
     const cmp = String(av).localeCompare(String(bv), undefined, { numeric: true });
     return dir === "asc" ? cmp : -cmp;
   });
+}
+
+function referenceTypeLabel(type: string) {
+  if (type === "production_job") return "Production job";
+  if (type === "job_stage") return "Job stage";
+  return "GRN";
 }
 
 export default function QualityPage() {
@@ -51,9 +57,6 @@ export default function QualityPage() {
   const [defectOptionsLoading, setDefectOptionsLoading] = useState(true);
   const [inspectionOptionsError, setInspectionOptionsError] = useState("");
   const [defectOptionsError, setDefectOptionsError] = useState("");
-  const [items, setItems] = useState<Item[]>([]);
-  const [itemsError, setItemsError] = useState("");
-
   // New Inspection dialog
   const [showNewInspection, setShowNewInspection] = useState(false);
   const [newInspType, setNewInspType] = useState("");
@@ -61,6 +64,13 @@ export default function QualityPage() {
   const [newInspRefType, setNewInspRefType] = useState("production_job");
   const [newInspRefId, setNewInspRefId] = useState("");
   const [newInspItemId, setNewInspItemId] = useState("");
+  const [inspectionReferences, setInspectionReferences] = useState<InspectionReferenceOption[]>([]);
+  const [inspectionReferencesLoading, setInspectionReferencesLoading] = useState(false);
+  const [inspectionReferencesError, setInspectionReferencesError] = useState("");
+  const [inspectionTemplates, setInspectionTemplates] = useState<ChecklistTemplate[]>([]);
+  const [inspectionTemplatesLoading, setInspectionTemplatesLoading] = useState(false);
+  const [inspectionTemplatesError, setInspectionTemplatesError] = useState("");
+  const [newInspTemplateId, setNewInspTemplateId] = useState("");
   const [newInspQty, setNewInspQty] = useState("1");
   const [newInspNotes, setNewInspNotes] = useState("");
   const [saving, setSaving] = useState(false);
@@ -92,9 +102,37 @@ export default function QualityPage() {
     listConfigOptions("DEFECT_CATEGORY").then(setDefectCategories)
       .catch((e: Error) => setDefectOptionsError(`Unable to load defect categories: ${e.message}`))
       .finally(() => setDefectOptionsLoading(false));
-    allPages<Item>("/api/v1/items?status=active").then(setItems)
-      .catch((e: Error) => setItemsError(`Unable to load items: ${e.message}`));
   }, []);
+
+  useEffect(() => {
+    if (!showNewInspection) return;
+    let active = true;
+    setInspectionReferencesLoading(true);
+    setInspectionReferencesError("");
+    listInspectionReferences(newInspRefType).then((options) => {
+      if (active) setInspectionReferences(options);
+    }).catch((e: Error) => {
+      if (active) setInspectionReferencesError(`Unable to load inspection references: ${e.message}`);
+    }).finally(() => {
+      if (active) setInspectionReferencesLoading(false);
+    });
+    return () => { active = false; };
+  }, [showNewInspection, newInspRefType]);
+
+  useEffect(() => {
+    if (!showNewInspection) return;
+    let active = true;
+    setInspectionTemplatesLoading(true);
+    setInspectionTemplatesError("");
+    listTemplates({ inspectionType: newInspWorkflowType, activeOnly: true }).then((templates) => {
+      if (active) setInspectionTemplates(templates);
+    }).catch((e: Error) => {
+      if (active) setInspectionTemplatesError(`Unable to load inspection templates: ${e.message}`);
+    }).finally(() => {
+      if (active) setInspectionTemplatesLoading(false);
+    });
+    return () => { active = false; };
+  }, [showNewInspection, newInspWorkflowType]);
 
   useEffect(() => {
     setLoading(true);
@@ -133,8 +171,8 @@ export default function QualityPage() {
 
   async function handleCreateInspection(e?: React.FormEvent) {
     if (e) e.preventDefault();
-    if (!newInspType || !newInspItemId || !newInspRefId.trim()) {
-      setSaveError("Select an inspection category and item, and enter a reference ID.");
+    if (!newInspType || !newInspItemId || !newInspRefId) {
+      setSaveError("Select an inspection category and linked record.");
       return;
     }
     if (!newInspQty.trim() || !Number.isFinite(Number(newInspQty)) || Number(newInspQty) <= 0) {
@@ -150,6 +188,7 @@ export default function QualityPage() {
         referenceType: newInspRefType,
         referenceId: newInspRefId,
         itemId: newInspItemId,
+        templateId: newInspTemplateId || undefined,
         quantityInspected: Number(newInspQty),
         notes: newInspNotes || undefined,
       });
@@ -254,8 +293,8 @@ export default function QualityPage() {
           </select>
         ) : (
           <div className="flex gap-1.5 flex-wrap">
-            {(["all", "open", "rework", "concession_requested", "closed"] as const).map((key) => {
-              const labels: Record<string, string> = { all: `All (${filteredNcrs.length})`, open: "Open", rework: "Rework", concession_requested: "Concession", closed: "Closed" };
+            {(["all", "open", "under_review", "rework", "resolved", "scrapped", "closed"] as const).map((key) => {
+              const labels: Record<string, string> = { all: `All (${filteredNcrs.length})`, open: "Open", under_review: "Under Review", rework: "Rework", resolved: "Resolved", scrapped: "Scrapped", closed: "Closed" };
               return (
                 <button key={key} type="button" onClick={() => setStatusFilter(key)} className="px-3 py-1 rounded-full text-xs font-semibold border whitespace-nowrap" style={{ background: statusFilter === key ? "var(--brand-fill)" : "var(--surface)", color: statusFilter === key ? "#fff" : "var(--text-2)", borderColor: statusFilter === key ? "var(--brand-fill)" : "var(--border)" }}>
                   {labels[key]}
@@ -345,7 +384,7 @@ export default function QualityPage() {
           <form onSubmit={handleCreateInspection} className="space-y-3">
             <label className="block text-sm">
               <span className="text-[var(--text-2)] font-medium">Workflow type</span>
-              <select className="mt-1 w-full eoss-input" value={newInspWorkflowType} onChange={(e) => setNewInspWorkflowType(e.target.value)}>
+              <select className="mt-1 w-full eoss-input" value={newInspWorkflowType} onChange={(e) => { setNewInspWorkflowType(e.target.value); setNewInspTemplateId(""); }}>
                 <option value="incoming">Incoming</option>
                 <option value="in_process">In-process</option>
                 <option value="final">Final</option>
@@ -365,28 +404,56 @@ export default function QualityPage() {
               {!inspectionOptionsLoading && !inspectionOptionsError && inspectionTypes.length === 0 && <p className="text-xs">No inspection categories available. Configure them in business settings.</p>}
             </label>
             <label className="block text-sm">
-              <span className="text-[var(--text-2)] font-medium">Item</span>
-              <select className="mt-1 w-full eoss-input" value={newInspItemId} onChange={(e) => setNewInspItemId(e.target.value)}>
-                <option value="">— Select item —</option>
-                {items.map((item) => <option key={item.id} value={item.id}>{item.code} · {item.name}</option>)}
-              </select>
-              {itemsError && <p role="alert" className="text-xs text-red-600">{itemsError}</p>}
-            </label>
-            <label className="block text-sm">
               <span className="text-[var(--text-2)] font-medium">Reference type</span>
-              <select className="mt-1 w-full eoss-input" value={newInspRefType} onChange={(e) => setNewInspRefType(e.target.value)}>
+              <select className="mt-1 w-full eoss-input" value={newInspRefType} onChange={(e) => { setNewInspRefType(e.target.value); setNewInspRefId(""); setNewInspItemId(""); }}>
                 <option value="production_job">Production Job</option>
                 <option value="job_stage">Job Stage</option>
                 <option value="grn">GRN</option>
               </select>
             </label>
             <label className="block text-sm">
-              <span className="text-[var(--text-2)] font-medium">Reference ID</span>
-              <input required className="mt-1 w-full eoss-input" placeholder="Reference UUID" value={newInspRefId} onChange={(e) => setNewInspRefId(e.target.value)} />
+              <span className="text-[var(--text-2)] font-medium">{referenceTypeLabel(newInspRefType)}</span>
+              <select
+                required
+                className="mt-1 w-full eoss-input"
+                value={newInspRefId && newInspItemId ? `${newInspRefId}:${newInspItemId}` : ""}
+                onChange={(e) => {
+                  const [referenceId = "", itemId = ""] = e.target.value.split(":");
+                  setNewInspRefId(referenceId);
+                  setNewInspItemId(itemId);
+                }}
+              >
+                <option value="">— Select linked record —</option>
+                {inspectionReferences.map((option) => (
+                  <option key={`${option.id}:${option.itemId}`} value={`${option.id}:${option.itemId}`}>
+                    {option.label} · Qty {option.quantity} · {option.status}
+                  </option>
+                ))}
+              </select>
+              {inspectionReferencesLoading && <p className="text-xs text-[var(--text-3)]">Loading linked records…</p>}
+              {inspectionReferencesError && <p role="alert" className="text-xs text-red-600">{inspectionReferencesError}</p>}
+              {!inspectionReferencesLoading && !inspectionReferencesError && inspectionReferences.length === 0 && <p className="text-xs">No available linked records.</p>}
             </label>
             <label className="block text-sm">
               <span className="text-[var(--text-2)] font-medium">Quantity inspected</span>
               <input type="number" min="0" step="any" className="mt-1 w-full eoss-input" value={newInspQty} onChange={(e) => setNewInspQty(e.target.value)} />
+            </label>
+            <label className="block text-sm">
+              <span className="text-[var(--text-2)] font-medium">Inspection template</span>
+              <select className="mt-1 w-full eoss-input" value={newInspTemplateId} onChange={(e) => setNewInspTemplateId(e.target.value)}>
+                <option value="">— No template —</option>
+                {inspectionTemplates.map((template) => (
+                  <option key={template.id} value={template.id}>{template.name}</option>
+                ))}
+              </select>
+              {inspectionTemplatesLoading && <p className="text-xs text-[var(--text-3)]">Loading templates…</p>}
+              {inspectionTemplatesError && <p role="alert" className="text-xs text-red-600">{inspectionTemplatesError}</p>}
+              {inspectionTemplates.find((template) => template.id === newInspTemplateId)?.items?.map((item) => (
+                <span key={item.id} className="mt-2 block rounded border px-2 py-1 text-xs" style={{ borderColor: "var(--border)" }}>
+                  {item.description}: {item.specMin ?? "—"} to {item.specMax ?? "—"} {item.unit ?? ""}
+                  {item.isMandatory ? " · Required" : ""}
+                </span>
+              ))}
             </label>
             <label className="block text-sm">
               <span className="text-[var(--text-2)] font-medium">Notes</span>
@@ -621,6 +688,12 @@ function NcrsTable({
             <div className="text-xs mt-0.5" style={{ color: "var(--text-3)" }}>
               {ncr.itemCode ? `${ncr.itemCode} · ` : ""}{severityLabel(ncr.severity)} · {displayDate(ncr.createdAt)}
             </div>
+            <div className="mt-1 flex flex-wrap gap-2 text-xs" style={{ color: "var(--text-3)" }}>
+              {ncr.jobNumber && <span>Job {ncr.jobNumber}</span>}
+              {ncr.stageName && <span>Stage {ncr.stageName}</span>}
+              {ncr.lotNumber && <span>Lot {ncr.lotNumber}</span>}
+              {ncr.inspectionNumber && <span>Inspection {ncr.inspectionNumber}</span>}
+            </div>
           </button>
         ))}
       </div>
@@ -648,6 +721,9 @@ function NcrsTable({
                   <div className="flex items-center gap-3 mt-1 text-xs" style={{ color: "var(--text-3)" }}>
                     {ncr.itemCode && <span>{ncr.itemCode}{ncr.itemName ? ` — ${ncr.itemName}` : ""}</span>}
                     {ncr.quantity && <span>Qty: {ncr.quantity}</span>}
+                    {ncr.jobNumber && <span>Job: {ncr.jobNumber}</span>}
+                    {ncr.stageName && <span>Stage: {ncr.stageName}</span>}
+                    {ncr.lotNumber && <span>Lot: {ncr.lotNumber}</span>}
                     <span>{displayDate(ncr.createdAt)}</span>
                   </div>
                 </div>

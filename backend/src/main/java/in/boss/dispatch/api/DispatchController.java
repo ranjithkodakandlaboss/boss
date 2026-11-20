@@ -45,6 +45,12 @@ public class DispatchController {
         return service.getDispatch(id);
     }
 
+    @GetMapping("/dispatches/cpo-lines/{cpoLineId}/availability")
+    @PreAuthorize(BossPermissions.DISPATCH_VIEW)
+    public PoLineAvailability getPoLineAvailability(@PathVariable UUID cpoLineId) {
+        return service.getPoLineAvailability(cpoLineId);
+    }
+
     @PostMapping("/dispatches")
     @ResponseStatus(HttpStatus.CREATED)
     @PreAuthorize(BossPermissions.DISPATCH_WRITE)

@@ -14,6 +14,14 @@ function countLabel(count: number, singular: string, plural: string) {
   return `${count} ${count === 1 ? singular : plural}`;
 }
 
+function normalizeText(value: string | null | undefined) {
+  return (value ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+function normalizeGstin(value: string | null | undefined) {
+  return (value ?? '').replace(/\s+/g, '').toUpperCase();
+}
+
 export default function CustomerDirectory() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -27,8 +35,13 @@ export default function CustomerDirectory() {
   const [sortKey, setSortKey] = useState<CustomerSortKey>('customer');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
   const filtered = customers.filter(c => {
-    const q = search.toLowerCase();
-    const matchSearch = !q || c.legalName.toLowerCase().includes(q) || c.tradingName.toLowerCase().includes(q) || c.gstin.includes(q) || c.city.toLowerCase().includes(q);
+    const q = normalizeText(search);
+    const gstinQuery = normalizeGstin(search);
+    const matchSearch = !q
+      || normalizeText(c.legalName).includes(q)
+      || normalizeText(c.tradingName).includes(q)
+      || normalizeGstin(c.gstin).includes(gstinQuery)
+      || normalizeText(c.city).includes(q);
     const matchStatus = statusFilter === 'all' || c.status === statusFilter;
     return matchSearch && matchStatus;
   });

@@ -3,9 +3,23 @@ import { api, safeRandomUUID } from "../auth/api";
 // ---- Config options (loaded from /api/v1/config/options/{category}) ----
 
 export type ConfigOption = { id: string; code: string; label: string };
+export type InspectionReferenceOption = {
+  id: string;
+  label: string;
+  itemId: string;
+  itemCode: string;
+  itemName: string;
+  quantity: number;
+  status: string;
+};
 
 export function listConfigOptions(category: string) {
   return api<ConfigOption[]>(`/api/v1/config/options/${category}`);
+}
+
+export function listInspectionReferences(referenceType: string) {
+  const query = new URLSearchParams({ referenceType });
+  return api<InspectionReferenceOption[]>(`/api/v1/quality/inspection-references?${query}`);
 }
 
 // ---- Types ----
@@ -43,6 +57,9 @@ export type ChecklistResponse = {
   itemDescription: string;
   responseType: string;
   isMandatory: boolean;
+  unit?: string;
+  specMin?: number;
+  specMax?: number;
   responseValue?: string;
   responsePass?: boolean;
   observation?: string;
@@ -53,11 +70,16 @@ export type NcrSummary = {
   id: string;
   ncrNumber: string;
   inspectionId?: string;
+  inspectionNumber?: string;
   itemId?: string;
   itemCode?: string;
   itemName?: string;
   lotId?: string;
   jobId?: string;
+  jobNumber?: string;
+  stageId?: string;
+  stageName?: string;
+  lotNumber?: string;
   defectCategoryId?: string;
   defectCategoryLabel?: string;
   defectDescription?: string;
@@ -84,7 +106,12 @@ export type Concession = {
 
 export type NcrDetail = NcrSummary & {
   inspectionNumber?: string;
-  jobNumber?: string;
+  inspectionType?: string;
+  inspectionResult?: string;
+  referenceType?: string;
+  referenceId?: string;
+  reworkInspectionId?: string;
+  reworkInspectionNumber?: string;
   rootCause?: string;
   resolution?: string;
   resolvedBy?: string;
@@ -254,6 +281,10 @@ export function updateNcr(id: string, body: {
   resolution?: string;
 }) {
   return patch<NcrDetail>(`/api/v1/quality/ncrs/${id}`, body);
+}
+
+export function startNcrReinspection(id: string) {
+  return post<NcrDetail>(`/api/v1/quality/ncrs/${id}/reinspection`, {});
 }
 
 export function createConcession(ncrId: string, body: {

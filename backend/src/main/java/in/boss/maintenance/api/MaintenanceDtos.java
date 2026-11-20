@@ -64,6 +64,8 @@ public final class MaintenanceDtos {
             String correctiveAction, String partsUsed
     ) {}
 
+    public record AddAffectedJobsRequest(List<UUID> affectedJobIds) {}
+
     public record RepairRequest(Instant completionDate, String rootCause, String workDone, String resolutionNotes) {}
 
     public record ActivityEntry(String action, String actor, Instant at) {}

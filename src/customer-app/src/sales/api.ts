@@ -1,11 +1,8 @@
-import { api, safeRandomUUID } from "../auth/api";
+import { api, authorizedFetch, safeRandomUUID } from "../auth/api";
 
 async function downloadSalesPdf(path: string, fallbackName: string, failure: string) {
-  const token = (await import("../auth/session")).currentToken();
   const base = import.meta.env.VITE_CUSTOMER_API_URL ?? "http://127.0.0.1:8080";
-  const response = await fetch(`${base}${path}`, {
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
-  });
+  const response = await authorizedFetch(`${base}${path}`);
   if (!response.ok) {
     const body = await response.json().catch(() => null);
     throw new Error(body?.detail || body?.message || (response.status === 422

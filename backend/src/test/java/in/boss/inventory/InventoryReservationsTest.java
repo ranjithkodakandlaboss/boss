@@ -639,6 +639,51 @@ class InventoryReservationsTest extends InventoryIntegrationTest {
     }
 
     @Test
+    void interSiteTransferReceivingIntoRestrictedStoresKeepsLotsUnavailable() {
+        record RestrictedStore(UUID storeId, String lotStatus) {}
+
+        asKeeper();
+        UUID legalEntityId = jdbc.queryForObject("""
+                SELECT legal_entity_id FROM physical_sites WHERE tenant_id = ? AND id = ?
+                """, UUID.class, seed.tenantId(), seed.siteId());
+        UUID destinationSiteId = insert("""
+                INSERT INTO physical_sites (tenant_id, legal_entity_id, name, code)
+                VALUES (?, ?, 'Restricted Destination', ?) RETURNING id
+                """, seed.tenantId(), legalEntityId,
+                "RDS-" + UUID.randomUUID().toString().substring(0, 8));
+        UUID quarantineStoreId = insert("""
+                INSERT INTO stores (tenant_id, site_id, name, code, store_type)
+                VALUES (?, ?, 'Quarantine Destination', ?, 'quarantine') RETURNING id
+                """, seed.tenantId(), destinationSiteId,
+                "QDS-" + UUID.randomUUID().toString().substring(0, 8));
+        UUID rejectedStoreId = insert("""
+                INSERT INTO stores (tenant_id, site_id, name, code, store_type)
+                VALUES (?, ?, 'Rejected Destination', ?, 'rejected') RETURNING id
+                """, seed.tenantId(), destinationSiteId,
+                "RJS-" + UUID.randomUUID().toString().substring(0, 8));
+        var sourceLot = inventoryService.createLot(lotRequest("10"));
+
+        for (var destination : List.of(
+                new RestrictedStore(quarantineStoreId, "quarantine"),
+                new RestrictedStore(rejectedStoreId, "rejected"))) {
+            var transfer = transferService.create(new CreateTransferRequest(
+                    seed.storeId(), destination.storeId(), null, null,
+                    List.of(new TransferLineRequest(sourceLot.id(), new BigDecimal("2")))));
+            transferService.receive(transfer.id(), new ReceiveTransferRequest(null));
+
+            var receivedLot = inventoryService.listLots(
+                    seed.itemId(), destination.storeId(), null, 0, 10).content().getFirst();
+            assertThat(receivedLot.status()).isEqualTo(destination.lotStatus());
+            assertThat(receivedLot.availableQty()).isEqualByComparingTo("0.000");
+        }
+
+        assertThat(inventoryService.getPosition(null, seed.itemId(), null, false, 0, 50).content())
+                .filteredOn(position -> position.storeId().equals(quarantineStoreId)
+                        || position.storeId().equals(rejectedStoreId))
+                .isEmpty();
+    }
+
+    @Test
     void concurrentReservationsNeverExceedTheLockedLotBalance() throws Exception {
         asKeeper();
         inventoryService.createLot(lotRequest("6"));
