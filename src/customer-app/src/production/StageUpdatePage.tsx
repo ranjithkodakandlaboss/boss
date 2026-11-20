@@ -58,7 +58,7 @@ export default function StageUpdatePage() {
     event.preventDefault();
     if (!job || !stage || !enabled) return;
     // Quantity validation for complete action
-    if (action === "complete" && doneQty + badQty > totalQty) {
+    if (doneQty + badQty > totalQty) {
       setError(`Completed + blocked quantity (${doneQty + badQty}) cannot exceed the job quantity (${totalQty}).`);
       return;
     }
@@ -110,10 +110,10 @@ export default function StageUpdatePage() {
           </div>
         </div>
 
-        {/* Quantity tracking – shown for complete action */}
-        {action === "complete" && (
+        {/* Quantity tracking – always shown so progress can be recorded at any action */}
+        {totalQty > 0 && (
           <div className="space-y-3 rounded-xl border p-3" style={{ background: "var(--surface-2)", borderColor: "var(--border)" }}>
-            <div className="text-xs font-semibold">Quantity Update</div>
+            <div className="text-xs font-semibold">{action === "complete" ? "Final Quantities" : "Progress Snapshot"}</div>
             <div className="grid grid-cols-2 gap-3">
               <label className="text-xs">Completed Qty<input className="eoss-input w-full mt-1" aria-label="Completed quantity" inputMode="decimal" value={completedQty} onChange={(e) => setCompletedQty(e.target.value)} /></label>
               <label className="text-xs">Blocked Qty<input className="eoss-input w-full mt-1" aria-label="Blocked quantity" inputMode="decimal" value={blockedQty} onChange={(e) => setBlockedQty(e.target.value)} /></label>
