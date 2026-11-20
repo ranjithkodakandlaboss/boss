@@ -193,6 +193,13 @@ public class ProductionJobController {
         return stages.complete(jobId, stageId, request);
     }
 
+    @PostMapping("/{jobId}/stages/{stageId}/progress")
+    @PreAuthorize(BossPermissions.PRODUCTION_EXECUTE)
+    public ProductionJobResponse progress(@PathVariable UUID jobId, @PathVariable UUID stageId,
+                                          @RequestBody(required = false) StageActionRequest request) {
+        return stages.progress(jobId, stageId, request);
+    }
+
     @PostMapping("/{jobId}/stages/{stageId}/skip")
     @PreAuthorize(BossPermissions.OWNER_OR_OPS)
     public ProductionJobResponse skip(@PathVariable UUID jobId, @PathVariable UUID stageId,

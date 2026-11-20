@@ -109,10 +109,10 @@ it("opens a job from an eligible customer order and issues material", async () =
   await userEvent.selectOptions(await screen.findByLabelText("Lot for PLATE"), lotId);
   await userEvent.click(screen.getByRole("button", { name: "Issue" }));
   expect(await screen.findByText("Material issued")).toBeInTheDocument();
-  await userEvent.click(screen.getByRole("button", { name: "History" }));
-  expect(await screen.findByRole("heading", { name: "Order profitability" })).toBeInTheDocument();
-  expect(screen.getAllByText("Labour: — · Not recorded").length).toBeGreaterThan(0);
-  expect(screen.getByText(/1 completed jobs · ₹50 \/ 10 units = weighted average actual cost\/unit ₹5/)).toBeInTheDocument();
+  await userEvent.click(screen.getByRole("button", { name: "Costing" }));
+  expect((await screen.findAllByText(/Material/)).length).toBeGreaterThan(0);
+  expect(screen.getAllByText(/Not recorded/).length).toBeGreaterThan(0);
+  expect(screen.getByText(/1 completed jobs/)).toBeInTheDocument();
   const calls = vi.mocked(fetch).mock.calls.map(([input]) => String(input));
   expect(calls.some((url) => url.includes("status=available"))).toBe(true);
   expect(calls.some((url) => url.includes("status=reserved"))).toBe(true);

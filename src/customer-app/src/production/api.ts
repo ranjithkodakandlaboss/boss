@@ -381,6 +381,20 @@ export function startStage(jobId: string, stageId: string, note: string) {
   return post<ProductionJob>(`/api/v1/jobs/${jobId}/stages/${stageId}/start`, { note });
 }
 
+export function progressStage(
+  jobId: string,
+  stageId: string,
+  note: string,
+  completedQty?: number,
+  blockedQty?: number,
+) {
+  return post<ProductionJob>(`/api/v1/jobs/${jobId}/stages/${stageId}/progress`, {
+    note: note || null,
+    completedQty: completedQty ?? null,
+    blockedQty: blockedQty ?? null,
+  });
+}
+
 export function completeStage(
   jobId: string,
   stageId: string,

@@ -115,6 +115,40 @@ public class JobStageService {
         return query.get(jobId);
     }
 
+    @PreAuthorize(PRODUCTION_EXECUTE)
+    public ProductionJobResponse progress(UUID jobId, UUID stageId, StageActionRequest request) {
+        BossContext context = support.requireContext();
+        support.denyForeignJob(jdbc, jobId);
+        flags.require(context.tenantId(), ProductionFeatureFlags.STAGE_TRANSITION);
+        StageRow stage = lockStage(context.tenantId(), jobId, stageId);
+        String jobStatus = lockJobStatus(context.tenantId(), jobId);
+        requireRunnable(jobStatus);
+        // Allow progress on pending (auto-starts) or in_progress stages
+        if (!StageStatusMachine.IN_PROGRESS.equals(stage.status())
+                && !StageStatusMachine.PENDING.equals(stage.status())) {
+            throw ProductionSupport.conflict("Stage status " + stage.status() + " does not accept progress updates");
+        }
+        requirePriorClosed(context.tenantId(), jobId, stage.seq());
+        if (StageStatusMachine.PENDING.equals(stage.status())) {
+            requireMachineAvailable(context.tenantId(), jobId, stageId);
+        }
+        jdbc.update("""
+                UPDATE job_stages
+                SET status = 'in_progress', actual_start = COALESCE(actual_start, NOW()),
+                    operator_id = COALESCE(operator_id, ?),
+                    completed_qty = COALESCE(?, completed_qty),
+                    blocked_qty   = COALESCE(?, blocked_qty),
+                    notes = COALESCE(?, notes)
+                WHERE tenant_id = ? AND id = ?
+                """, context.userId(),
+                request != null ? request.completedQty() : null,
+                request != null ? request.blockedQty() : null,
+                note(request), context.tenantId(), stageId);
+        moveJobToProgress(context.tenantId(), jobId, jobStatus);
+        audit.record("job_stage", stageId, "PROGRESS", null, "{\"status\":\"in_progress\"}");
+        return query.get(jobId);
+    }
+
     @PreAuthorize(PRODUCTION_COMPLETE)
     public ProductionJobResponse finish(UUID jobId) {
         BossContext context = support.requireContext();

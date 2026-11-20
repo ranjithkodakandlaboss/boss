@@ -9,12 +9,12 @@ import StatusChip from "../components/shared/StatusChip";
 import { createLot, lotFields } from "../inventory/inlineCreate";
 import { createInspection as createQualityInspection, recordResult as recordQualityInspectionResult } from "../quality/api";
 import {
-  addCost, cancelJob, completeJob, concede, displayDate, featureFlags, getJob, getJobCosting, issueMaterial, money, openInspection, previewPlanForJob, readinessLabel,
-  recordInspection, releaseHold, returnMaterial, savePlan, skipStage, usableLots,
+  addCost, cancelJob, completeJob, completeStage, concede, displayDate, featureFlags, getJob, getJobCosting, holdJob, issueMaterial, money, openInspection, previewPlanForJob,
+  progressStage, readinessLabel, recordInspection, releaseHold, returnMaterial, savePlan, skipStage, usableLots,
   type JobCosting, type LotOption, type ProductionJob,
 } from "./api";
 
-const TABS = ["Overview", "Stages", "Plan", "Materials", "Quality", "NCR / Rework", "Updates", "Blockers", "History"];
+const TABS = ["Overview", "Stages", "Plan", "Materials", "Quality", "NCR / Rework", "Updates", "Blockers", "Costing", "History"];
 
 function healthColor(job: ProductionJob): "green" | "amber" | "red" {
   if (job.status === "cancelled" || job.status === "completed") return "green";
@@ -89,6 +89,10 @@ export default function JobWorkspacePage() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [cancelOpen, setCancelOpen] = useState(false);
+  const [updateStageId, setUpdateStageId] = useState<string | null>(null);
+  const canExecute = roles.some((role) => ["OWNER", "OPS_MANAGER", "PRODUCTION_SUPERVISOR", "FIELD_WORKER"].includes(role));
+  const canComplete = roles.some((role) => ["OWNER", "OPS_MANAGER", "PRODUCTION_SUPERVISOR", "QUALITY_INSPECTOR"].includes(role));
+  const canHold = canWrite;
 
   async function load() {
     try {
@@ -142,7 +146,7 @@ export default function JobWorkspacePage() {
               </button>
             );
           })()}
-          {!closed && <button type="button" className="px-4 py-2 rounded-lg text-xs font-semibold text-white" style={{ background: "var(--brand-fill)" }} onClick={() => navigate(`/jobs/${job.id}/stage/${currentStage(job)?.id ?? ""}`)}>Record progress</button>}
+          {!closed && <button type="button" className="px-4 py-2 rounded-lg text-xs font-semibold text-white" style={{ background: "var(--brand-fill)" }} onClick={() => setUpdateStageId(currentStage(job)?.id ?? null)}>Record progress</button>}
         </div>
       </div>
       {notice && <p role="status" className="text-sm" style={{ color: "var(--success)" }}>{notice}</p>}
@@ -151,7 +155,7 @@ export default function JobWorkspacePage() {
         {TABS.map((name) => <button key={name} type="button" onClick={() => setTab(name)} className="px-3 py-2 text-xs font-semibold whitespace-nowrap" style={{ color: tab === name ? "var(--brand)" : "var(--text-2)", borderBottom: tab === name ? "2px solid var(--brand)" : "2px solid transparent" }}>{name}</button>)}
       </div>
       {tab === "Overview" && <Overview job={job} />}
-      {tab === "Stages" && <Stages job={job} canWrite={canWrite && flags["production.stage.transition"] !== false} onSkip={(stageId, reason) => act(() => skipStage(job.id, stageId, reason), "Stage skipped")} />}
+      {tab === "Stages" && <Stages job={job} canWrite={canWrite && flags["production.stage.transition"] !== false} onSkip={(stageId, reason) => act(() => skipStage(job.id, stageId, reason), "Stage skipped")} onUpdate={(stageId) => setUpdateStageId(stageId)} />}
       {tab === "Plan" && <PlanTab job={job} canWrite={canWrite} onSaved={() => { setNotice("Production plan saved"); void load(); }} />}
       {tab === "Materials" && <Materials job={job} canIssue={canWrite && flags["production.material.issue"] !== false} canReturn={canWrite && flags["production.material.return"] !== false} onIssue={(requirementId, lotId, qty, note) => act(() => issueMaterial(job.id, requirementId, lotId, qty, note), "Material issued")} onReturn={(issueId, qty, note) => act(() => returnMaterial(job.id, issueId, qty, note), "Material returned")} />}
       {tab === "Quality" && <Quality
@@ -175,13 +179,24 @@ export default function JobWorkspacePage() {
       {tab === "NCR / Rework" && <Ncr job={job} />}
       {tab === "Updates" && <Updates job={job} />}
       {tab === "Blockers" && <Blockers job={job} />}
-      {tab === "History" && <History
+      {tab === "Costing" && <CostingTab
         job={job}
         canViewCost={canViewCost && flags["production.job.costing"] !== false}
         canEditCost={canEditCost && flags["production.job.costing"] !== false && !closed}
         onCost={(type, description, amount) => act(() => addCost(job.id, type, description, amount), "Cost recorded")}
       />}
+      {tab === "History" && <History job={job} />}
       {cancelOpen && <CancelDialog job={job} onClose={() => setCancelOpen(false)} onDone={() => { setCancelOpen(false); void load(); }} />}
+      {updateStageId && <StageUpdateSheet
+        job={job}
+        stageId={updateStageId}
+        enabled={flags["production.stage.transition"] !== false}
+        canExecute={canExecute}
+        canHold={canHold}
+        canComplete={canComplete}
+        onClose={() => setUpdateStageId(null)}
+        onDone={() => { setUpdateStageId(null); void load(); }}
+      />}
     </div>
   );
 
@@ -318,8 +333,7 @@ function Overview({ job }: { job: ProductionJob }) {
   );
 }
 
-function Stages({ job, canWrite, onSkip }: { job: ProductionJob; canWrite: boolean; onSkip: (stageId: string, reason: string) => void }) {
-  const navigate = useNavigate();
+function Stages({ job, canWrite, onSkip, onUpdate }: { job: ProductionJob; canWrite: boolean; onSkip: (stageId: string, reason: string) => void; onUpdate: (stageId: string) => void }) {
   return (
     <div className="space-y-2">
       {(job.stages ?? []).map((stage) => {
@@ -358,7 +372,7 @@ function Stages({ job, canWrite, onSkip }: { job: ProductionJob; canWrite: boole
               <div className="flex items-center gap-2 flex-shrink-0">
                 {v != null && <span className={`text-xs font-mono ${varianceClass(v)}`}>{v > 0 ? "+" : ""}{v}%</span>}
                 <StatusChip status={stage.status} size="sm" />
-                {stage.status !== "completed" && stage.status !== "skipped" && <button type="button" className="text-xs font-semibold" style={{ color: "var(--brand)" }} onClick={() => navigate(`/jobs/${job.id}/stage/${stage.id}`)}>Update</button>}
+                {stage.status !== "completed" && stage.status !== "skipped" && <button type="button" className="text-xs font-semibold" style={{ color: "var(--brand)" }} onClick={() => onUpdate(stage.id)}>Update</button>}
                 {canWrite && stage.canSkip && stage.status === "pending" && <button type="button" className="text-xs" onClick={() => { const reason = window.prompt("Why is this optional stage skipped?"); if (reason) onSkip(stage.id, reason); }}>Skip</button>}
               </div>
             </div>
@@ -735,7 +749,7 @@ function Blockers({ job }: { job: ProductionJob }) {
   );
 }
 
-function History({ job, canViewCost, canEditCost, onCost }: {
+function CostingTab({ job, canViewCost, canEditCost, onCost }: {
   job: ProductionJob;
   canViewCost: boolean;
   canEditCost: boolean;
@@ -764,92 +778,265 @@ function History({ job, canViewCost, canEditCost, onCost }: {
     if (canViewCost) void loadCosting();
   }, [job.id, canViewCost]);
 
+  if (!canViewCost) return <p className="text-sm" style={{ color: "var(--text-3)" }}>You do not have permission to view costing for this job.</p>;
+
   return (
-    <div className="grid md:grid-cols-2 gap-4">
-      <section className="text-sm space-y-3 md:col-span-2">
-        <h2 className="font-bold">Record</h2>
-        <p>Created {displayDate(job.createdAt)} · Started {displayDate(job.actualStart)} · Completed {displayDate(job.actualEnd)}</p>
-        {canViewCost && (
-          <section aria-label="Job profitability" className="rounded-lg border p-3 space-y-3" style={{ borderColor: "var(--border)" }}>
-            <h3 className="font-bold">Order profitability</h3>
-            {costLoading && <p>Loading costing…</p>}
-            {costError && <p role="alert" style={{ color: "var(--error)" }}>{costError}</p>}
-            {costing && (
-              <>
-                <p className="text-xs" style={{ color: "var(--text-2)" }}>{costing.estimatedCostBasis}</p>
-                <div className="grid sm:grid-cols-2 gap-3">
-                  <div>
-                    <h4 className="font-semibold">Estimated</h4>
-                    <p>Revenue: {money(costing.estimatedCost.sellingPrice)}</p>
-                    <p>Material: {money(costing.estimatedCost.materialCost)} · {costStatus(costing.estimatedCost.materialStatus)}</p>
-                    <p>Labour: {money(costing.estimatedCost.labourCost)} · {costStatus(costing.estimatedCost.labourStatus)}</p>
-                    <p>Overhead: {money(costing.estimatedCost.overheadCost)} · {costStatus(costing.estimatedCost.overheadStatus)}</p>
-                    <p>Total: {money(costing.estimatedCost.totalCost)} · Profit: {money(costing.estimatedProfit)} · Margin: {costing.estimatedCost.marginPct == null ? "—" : `${costing.estimatedCost.marginPct}%`}</p>
-                  </div>
-                  <div>
-                    <h4 className="font-semibold">Actual</h4>
-                    <p>Revenue (locked to Customer PO): {money(costing.actualCost.sellingPrice)}</p>
-                    <p>Material: {money(costing.actualCost.materialCost)} · {costStatus(costing.actualCost.materialStatus)}</p>
-                    <p>Labour: {money(costing.actualCost.labourCost)} · {costStatus(costing.actualCost.labourStatus)}</p>
-                    <p>Overhead: {money(costing.actualCost.overheadCost)} · {costStatus(costing.actualCost.overheadStatus)}</p>
-                    <p>Total: {money(costing.actualCost.totalCost)} · Profit: {money(costing.actualProfit)} · Margin: {costing.actualCost.marginPct == null ? "—" : `${costing.actualCost.marginPct}%`}</p>
-                    <p>Variance (actual − estimated): {money(costing.variance)}</p>
-                  </div>
-                </div>
-                <div>
-                  <h4 className="font-semibold">Historical reference</h4>
-                  {costing.historicalReference.completedOrderCount === 0
-                    ? <p>No fully costed earlier jobs match this item and routing.</p>
-                    : <p>{costing.historicalReference.completedOrderCount} completed jobs · {money(costing.historicalReference.totalActualCost)} / {costing.historicalReference.totalQuantity} units = weighted average actual cost/unit {money(costing.historicalReference.weightedAverageUnitCost)}</p>}
-                  <p className="text-xs" style={{ color: "var(--text-2)" }}>{costing.historicalReference.basis}</p>
-                </div>
-                {costing.entries.length > 0 && (
-                  <div>
-                    <h4 className="font-semibold">Cost entries</h4>
-                    <ul className="text-xs space-y-1">
-                      {costing.entries.map((entry) => (
-                        <li key={entry.id}>{entry.estimated ? "Estimate" : "Actual"} · {entry.entryType} · {entry.description} · {money(entry.amount)} · {displayDate(entry.createdAt)}</li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-              </>
-            )}
+    <div className="space-y-4">
+      {costLoading && <p className="text-sm" style={{ color: "var(--text-3)" }}>Loading costing…</p>}
+      {costError && <p role="alert" className="text-sm" style={{ color: "var(--error)" }}>{costError}</p>}
+      {costing && (
+        <>
+          <p className="text-xs" style={{ color: "var(--text-2)" }}>{costing.estimatedCostBasis}</p>
+
+          {/* Estimated vs Actual comparison table */}
+          <section className="rounded-xl border overflow-x-auto" style={{ borderColor: "var(--border)" }}>
+            <table className="w-full text-xs">
+              <thead style={{ background: "var(--surface-2)" }}>
+                <tr>
+                  {["Component", "Estimated", "Actual", "Variance"].map((h) => (
+                    <th key={h} className="text-left px-3 py-2 font-semibold" style={{ color: "var(--text-3)" }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {[
+                  { label: "Revenue", est: costing.estimatedCost.sellingPrice, act: costing.actualCost.sellingPrice },
+                  { label: "Material", est: costing.estimatedCost.materialCost, act: costing.actualCost.materialCost, estStatus: costing.estimatedCost.materialStatus, actStatus: costing.actualCost.materialStatus },
+                  { label: "Labour", est: costing.estimatedCost.labourCost, act: costing.actualCost.labourCost, estStatus: costing.estimatedCost.labourStatus, actStatus: costing.actualCost.labourStatus },
+                  { label: "Overhead", est: costing.estimatedCost.overheadCost, act: costing.actualCost.overheadCost, estStatus: costing.estimatedCost.overheadStatus, actStatus: costing.actualCost.overheadStatus },
+                  { label: "Total Cost", est: costing.estimatedCost.totalCost, act: costing.actualCost.totalCost },
+                  { label: "Profit", est: costing.estimatedProfit, act: costing.actualProfit },
+                  { label: "Margin", est: costing.estimatedCost.marginPct != null ? `${costing.estimatedCost.marginPct}%` : undefined, act: costing.actualCost.marginPct != null ? `${costing.actualCost.marginPct}%` : undefined, raw: true },
+                ].map(({ label, est, act, estStatus, actStatus, raw }) => {
+                  const estAmt = raw ? undefined : (est as number | undefined);
+                  const actAmt = raw ? undefined : (act as number | undefined);
+                  const variance = estAmt != null && actAmt != null ? actAmt - estAmt : undefined;
+                  return (
+                    <tr key={label} className="border-t" style={{ borderColor: "var(--border)" }}>
+                      <td className="px-3 py-2 font-medium">{label}</td>
+                      <td className="px-3 py-2">
+                        <span>{raw ? (est ?? "—") : money(est as number | undefined)}</span>
+                        {estStatus && <span className="ml-1 text-[11px]" style={{ color: "var(--text-3)" }}>({costStatus(estStatus)})</span>}
+                      </td>
+                      <td className="px-3 py-2">
+                        <span>{raw ? (act ?? "—") : money(act as number | undefined)}</span>
+                        {actStatus && <span className="ml-1 text-[11px]" style={{ color: "var(--text-3)" }}>({costStatus(actStatus)})</span>}
+                      </td>
+                      <td className="px-3 py-2 font-mono" style={{ color: variance == null ? "var(--text-3)" : variance > 0 ? "var(--error)" : "var(--success)" }}>
+                        {variance != null ? `${variance > 0 ? "+" : ""}${money(variance)}` : "—"}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </section>
-        )}
-        <table className="w-full text-left text-xs">
-          <caption className="text-left font-semibold mb-1">Stages</caption>
-          <thead><tr><th>Stage</th><th>Work centre</th><th>Asset</th><th>Status</th></tr></thead>
-          <tbody>{(job.stages ?? []).map((stage) => <tr key={stage.id}><td>{stage.stageName}</td><td>{stage.workCentre || "—"}</td><td>{stage.assetCode || "—"}</td><td>{stage.status}</td></tr>)}</tbody>
-        </table>
-        <table className="w-full text-left text-xs">
-          <caption className="text-left font-semibold mb-1">Material movements</caption>
-          <thead><tr><th>Item</th><th>Type</th><th>Qty</th><th>When</th></tr></thead>
-          <tbody>{(job.movements ?? []).map((movement) => <tr key={movement.id}><td>{movement.lotId || "—"}</td><td>{movement.issueType}</td><td>{movement.quantity}</td><td>{displayDate(movement.createdAt)}</td></tr>)}</tbody>
-        </table>
-        <table className="w-full text-left text-xs">
-          <caption className="text-left font-semibold mb-1">Materials</caption>
-          <thead><tr><th>Item</th><th>Required</th><th>Issued</th><th>Returned</th></tr></thead>
-          <tbody>{(job.materials ?? []).map((material) => <tr key={material.id}><td>{material.itemCode}</td><td>{material.requiredQty}</td><td>{material.issuedQty}</td><td>{material.returnedQty}</td></tr>)}</tbody>
-        </table>
-      </section>
+
+          {/* Historical reference */}
+          <section className="rounded-xl border p-4 space-y-1 text-sm" style={{ borderColor: "var(--border)" }}>
+            <h3 className="font-bold text-sm">Historical reference</h3>
+            {costing.historicalReference.completedOrderCount === 0
+              ? <p className="text-xs" style={{ color: "var(--text-3)" }}>No fully costed earlier jobs match this item and routing.</p>
+              : <p className="text-xs">{costing.historicalReference.completedOrderCount} completed jobs · {money(costing.historicalReference.totalActualCost)} / {costing.historicalReference.totalQuantity} units = weighted avg cost/unit <strong>{money(costing.historicalReference.weightedAverageUnitCost)}</strong></p>}
+            <p className="text-xs" style={{ color: "var(--text-2)" }}>{costing.historicalReference.basis}</p>
+          </section>
+
+          {/* Cost entries */}
+          {costing.entries.length > 0 && (
+            <section className="rounded-xl border overflow-x-auto" style={{ borderColor: "var(--border)" }}>
+              <table className="w-full text-xs">
+                <caption className="text-left font-semibold px-3 py-2">Cost entries</caption>
+                <thead style={{ background: "var(--surface-2)" }}>
+                  <tr>{["Type", "Description", "Amount", "Kind", "Date"].map((h) => <th key={h} className="text-left px-3 py-2 font-semibold" style={{ color: "var(--text-3)" }}>{h}</th>)}</tr>
+                </thead>
+                <tbody>
+                  {costing.entries.map((entry) => (
+                    <tr key={entry.id} className="border-t" style={{ borderColor: "var(--border)" }}>
+                      <td className="px-3 py-2">{entry.entryType}</td>
+                      <td className="px-3 py-2">{entry.description}</td>
+                      <td className="px-3 py-2 font-mono">{money(entry.amount)}</td>
+                      <td className="px-3 py-2">{entry.estimated ? "Estimate" : "Actual"}</td>
+                      <td className="px-3 py-2">{displayDate(entry.createdAt)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </section>
+          )}
+        </>
+      )}
+
+      {/* Add actual cost entry — editable form for authorised roles */}
       {canEditCost && (
-        <form className="space-y-2" onSubmit={async (event) => {
-          event.preventDefault();
-          if (await onCost(type, description, Number(amount))) {
-            await loadCosting();
-            setDescription("");
-            setAmount("");
-          }
-        }}>
-          <h2 className="text-sm font-bold">Add labour or overhead</h2>
-          <select className="eoss-input w-full" aria-label="Cost type" value={type} onChange={(event) => setType(event.target.value as "LABOUR" | "OVERHEAD")}><option value="LABOUR">Labour</option><option value="OVERHEAD">Overhead</option></select>
-          <input className="eoss-input w-full" aria-label="Cost description / reason" value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Description or adjustment reason" />
-          <input className="eoss-input w-full" aria-label="Cost amount" type="number" min="0" step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} placeholder="Amount (enter 0 to confirm no cost)" />
-          <button type="submit" className="px-3 py-1.5 rounded-lg text-xs font-semibold text-white" style={{ background: "var(--brand-fill)" }} disabled={!description.trim() || amount === "" || Number(amount) < 0}>Save cost</button>
-        </form>
+        <section className="rounded-xl border p-4 space-y-3" style={{ borderColor: "var(--border)" }}>
+          <h3 className="font-bold text-sm">Add actual cost entry</h3>
+          <form className="space-y-2" onSubmit={async (event) => {
+            event.preventDefault();
+            if (await onCost(type, description, Number(amount))) {
+              await loadCosting();
+              setDescription("");
+              setAmount("");
+            }
+          }}>
+            <div className="grid sm:grid-cols-3 gap-2">
+              <select className="eoss-input" aria-label="Cost type" value={type} onChange={(event) => setType(event.target.value as "LABOUR" | "OVERHEAD")}>
+                <option value="LABOUR">Labour</option>
+                <option value="OVERHEAD">Overhead</option>
+              </select>
+              <input className="eoss-input" aria-label="Cost description / reason" value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Description or reason" />
+              <input className="eoss-input" aria-label="Cost amount" type="number" min="0" step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} placeholder="Amount (₹)" />
+            </div>
+            <button type="submit" className="px-3 py-1.5 rounded-lg text-xs font-semibold text-white" style={{ background: "var(--brand-fill)" }} disabled={!description.trim() || amount === "" || Number(amount) < 0}>Save cost entry</button>
+          </form>
+        </section>
       )}
     </div>
+  );
+}
+
+function History({ job }: { job: ProductionJob }) {
+  return (
+    <div className="space-y-4 text-sm">
+      <section>
+        <h2 className="font-bold mb-2">Record</h2>
+        <p>Created {displayDate(job.createdAt)} · Started {displayDate(job.actualStart)} · Completed {displayDate(job.actualEnd)}</p>
+      </section>
+      <div className="rounded-xl border overflow-x-auto" style={{ borderColor: "var(--border)" }}>
+        <table className="w-full text-xs">
+          <caption className="text-left font-semibold px-3 py-2">Stages</caption>
+          <thead style={{ background: "var(--surface-2)" }}><tr><th className="text-left px-3 py-2">Stage</th><th className="text-left px-3 py-2">Work centre</th><th className="text-left px-3 py-2">Asset</th><th className="text-left px-3 py-2">Status</th></tr></thead>
+          <tbody>{(job.stages ?? []).map((stage) => <tr key={stage.id} className="border-t" style={{ borderColor: "var(--border)" }}><td className="px-3 py-2">{stage.stageName}</td><td className="px-3 py-2">{stage.workCentre || "—"}</td><td className="px-3 py-2">{stage.assetCode || "—"}</td><td className="px-3 py-2">{stage.status}</td></tr>)}</tbody>
+        </table>
+      </div>
+      <div className="rounded-xl border overflow-x-auto" style={{ borderColor: "var(--border)" }}>
+        <table className="w-full text-xs">
+          <caption className="text-left font-semibold px-3 py-2">Material movements</caption>
+          <thead style={{ background: "var(--surface-2)" }}><tr><th className="text-left px-3 py-2">Lot / Item</th><th className="text-left px-3 py-2">Type</th><th className="text-left px-3 py-2">Qty</th><th className="text-left px-3 py-2">When</th></tr></thead>
+          <tbody>{(job.movements ?? []).map((movement) => <tr key={movement.id} className="border-t" style={{ borderColor: "var(--border)" }}><td className="px-3 py-2">{movement.lotId || "—"}</td><td className="px-3 py-2">{movement.issueType}</td><td className="px-3 py-2">{movement.quantity}</td><td className="px-3 py-2">{displayDate(movement.createdAt)}</td></tr>)}</tbody>
+        </table>
+      </div>
+      <div className="rounded-xl border overflow-x-auto" style={{ borderColor: "var(--border)" }}>
+        <table className="w-full text-xs">
+          <caption className="text-left font-semibold px-3 py-2">Materials</caption>
+          <thead style={{ background: "var(--surface-2)" }}><tr><th className="text-left px-3 py-2">Item</th><th className="text-left px-3 py-2">Required</th><th className="text-left px-3 py-2">Issued</th><th className="text-left px-3 py-2">Returned</th></tr></thead>
+          <tbody>{(job.materials ?? []).map((material) => <tr key={material.id} className="border-t" style={{ borderColor: "var(--border)" }}><td className="px-3 py-2">{material.itemCode}</td><td className="px-3 py-2">{material.requiredQty}</td><td className="px-3 py-2">{material.issuedQty}</td><td className="px-3 py-2">{material.returnedQty}</td></tr>)}</tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function StageUpdateSheet({ job, stageId, enabled, canExecute, canHold, canComplete, onClose, onDone }: {
+  job: ProductionJob;
+  stageId: string;
+  enabled: boolean;
+  canExecute: boolean;
+  canHold: boolean;
+  canComplete: boolean;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const stage = job.stages?.find((s) => s.id === stageId) ?? null;
+  const [action, setAction] = useState<"continue" | "hold" | "complete">("continue");
+  const [notes, setNotes] = useState("");
+  const [completedQty, setCompletedQty] = useState(() => {
+    const totalQty = Number(job.qty ?? 0);
+    return totalQty > 0 ? String(totalQty) : "";
+  });
+  const [blockedQty, setBlockedQty] = useState("");
+  const [blockedReason, setBlockedReason] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  if (!stage) return null;
+
+  const totalQty = Number(job.qty ?? 0);
+  const doneQty = Number(completedQty) || 0;
+  const badQty = Number(blockedQty) || 0;
+  const inProgressQty = Math.max(0, totalQty - doneQty - badQty);
+  const allowed = enabled && ((action === "continue" && canExecute) || (action === "hold" && canHold) || (action === "complete" && canComplete));
+
+  async function submit() {
+    if (!enabled) return;
+    if (doneQty + badQty > totalQty) {
+      setError(`Completed + blocked (${doneQty + badQty}) cannot exceed the job quantity (${totalQty}).`);
+      return;
+    }
+    if (!stage) return;
+    setError("");
+    setSaving(true);
+    const stageId = stage.id;
+    try {
+      const noteText = [notes, badQty > 0 && blockedReason ? `Blockage: ${blockedReason}` : ""].filter(Boolean).join(" | ");
+      if (action === "continue") await progressStage(job.id, stageId, noteText, doneQty > 0 ? doneQty : undefined, badQty > 0 ? badQty : undefined);
+      if (action === "hold") await holdJob(job.id, noteText || "Held from the stage update");
+      if (action === "complete") await completeStage(job.id, stageId, noteText, doneQty > 0 ? doneQty : undefined, badQty > 0 ? badQty : undefined);
+      onDone();
+    } catch (cause) {
+      setError(cause instanceof ApiError ? cause.message : "The stage was not updated");
+      setSaving(false);
+    }
+  }
+
+  return (
+    <RecordSheet
+      title="Stage Update"
+      subtitle={`${job.jobNumber} · ${stage.stageName}`}
+      onClose={onClose}
+      width="md"
+      secondary={{ label: "Cancel", onClick: onClose }}
+      primary={{ label: saving ? "Saving…" : "Save Update", onClick: () => void submit(), disabled: !allowed || saving }}
+    >
+      <div className="space-y-4 text-sm">
+        {/* Stage context */}
+        <div className="rounded-xl border p-3 text-xs grid grid-cols-2 gap-2" style={{ background: "var(--surface-2)", borderColor: "var(--border)" }}>
+          <div><span style={{ color: "var(--text-3)" }}>Work Centre</span><div>{stage.workCentre || "—"}</div></div>
+          <div><span style={{ color: "var(--text-3)" }}>Job Qty</span><div>{job.qty} {job.uomSymbol}</div></div>
+          <div><span style={{ color: "var(--text-3)" }}>Stage Status</span><div>{stage.status}</div></div>
+          <div><span style={{ color: "var(--text-3)" }}>Inspection</span><div>{stage.inspectionStatus}</div></div>
+        </div>
+
+        {/* Action selector */}
+        <div>
+          <div className="text-xs font-semibold mb-2">Action</div>
+          <div className="grid grid-cols-3 gap-2">
+            {(["continue", "hold", "complete"] as const).map((value) => (
+              <button key={value} type="button" onClick={() => setAction(value)} className="py-2 rounded-lg border text-xs font-medium capitalize" style={{ background: action === value ? "var(--brand-fill)" : "transparent", color: action === value ? "#fff" : "var(--text-2)", borderColor: action === value ? "var(--brand)" : "var(--border)" }}>
+                {value === "continue" ? "Start / Continue" : value}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Quantity tracking */}
+        {totalQty > 0 && (
+          <div className="space-y-3 rounded-xl border p-3" style={{ background: "var(--surface-2)", borderColor: "var(--border)" }}>
+            <div className="text-xs font-semibold">{action === "complete" ? "Final Quantities" : "Progress Snapshot"}</div>
+            <div className="grid grid-cols-2 gap-3">
+              <label className="text-xs">Completed Qty<input className="eoss-input w-full mt-1" aria-label="Completed quantity" inputMode="decimal" value={completedQty} onChange={(e) => setCompletedQty(e.target.value)} /></label>
+              <label className="text-xs">Blocked Qty<input className="eoss-input w-full mt-1" aria-label="Blocked quantity" inputMode="decimal" value={blockedQty} onChange={(e) => setBlockedQty(e.target.value)} /></label>
+            </div>
+            <div className="text-xs flex gap-3" style={{ color: "var(--text-3)" }}>
+              <span>Total: <strong>{totalQty}</strong></span>
+              <span>Done: <strong>{doneQty}</strong></span>
+              {badQty > 0 && <span style={{ color: "var(--warning)" }}>Blocked: <strong>{badQty}</strong></span>}
+              {inProgressQty > 0 && <span>In Progress: <strong>{inProgressQty}</strong></span>}
+            </div>
+            {badQty > 0 && (
+              <label className="text-xs">Blockage reason<input className="eoss-input w-full mt-1" aria-label="Blockage reason" value={blockedReason} onChange={(e) => setBlockedReason(e.target.value)} placeholder="Describe what is blocking this quantity…" /></label>
+            )}
+          </div>
+        )}
+
+        {/* Notes */}
+        <label className="block text-xs font-semibold">Notes / Observations
+          <textarea rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Any issues, deviations or notes…" className="w-full mt-1 px-3 py-2 rounded-lg border text-sm" style={{ borderColor: "var(--border)", background: "var(--surface)" }} />
+        </label>
+
+        {!enabled && <p className="text-xs" style={{ color: "var(--text-3)" }}>Stage updates are turned off for this company.</p>}
+        {error && <p role="alert" className="text-xs" style={{ color: "var(--error)" }}>{error}</p>}
+      </div>
+    </RecordSheet>
   );
 }
 
