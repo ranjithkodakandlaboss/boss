@@ -22,14 +22,13 @@ public final class ProductionApiDtos {
             // Mode A — from Customer PO (cpoId + cpoLineId required together)
             UUID cpoId,
             UUID cpoLineId,
-            // Mode B — standalone (customerId + itemId + qty + siteId required together)
+            // Mode B — standalone (customerId + itemId + siteId required together)
             UUID customerId,
             UUID itemId,
-            @DecimalMin("0.001") BigDecimal qty,
             UUID siteId,
             String description,
             // common
-            @NotNull UUID routingTemplateId,
+            UUID routingTemplateId,
             LocalDate scheduledStart,
             LocalDate scheduledEnd,
             @Pattern(regexp = "low|normal|high|urgent") String priority,
@@ -38,14 +37,14 @@ public final class ProductionApiDtos {
         /** Legacy 6-arg compact constructor */
         public CreateJobRequest(UUID cpoId, UUID cpoLineId, UUID routingTemplateId,
                                  LocalDate scheduledStart, LocalDate scheduledEnd, String priority) {
-            this(cpoId, cpoLineId, null, null, null, null, null,
+            this(cpoId, cpoLineId, null, null, null, null,
                  routingTemplateId, scheduledStart, scheduledEnd, priority, null);
         }
         /** Legacy 7-arg compact constructor (adds explicit quantity) */
         public CreateJobRequest(UUID cpoId, UUID cpoLineId, UUID routingTemplateId,
                                  LocalDate scheduledStart, LocalDate scheduledEnd,
                                  String priority, BigDecimal quantity) {
-            this(cpoId, cpoLineId, null, null, null, null, null,
+            this(cpoId, cpoLineId, null, null, null, null,
                  routingTemplateId, scheduledStart, scheduledEnd, priority, quantity);
         }
         public boolean isStandalone() {
@@ -76,7 +75,11 @@ public final class ProductionApiDtos {
 
     public record ReasonRequest(@NotBlank String reason) {}
 
-    public record StageActionRequest(String note) {}
+    public record StageActionRequest(String note, BigDecimal completedQty, BigDecimal blockedQty) {
+        public StageActionRequest(String note) {
+            this(note, null, null);
+        }
+    }
 
     public record IssueMaterialRequest(
             @NotNull UUID requirementId,

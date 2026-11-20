@@ -94,9 +94,15 @@ public class JobStageService {
         jdbc.update("""
                 UPDATE job_stages
                 SET status = 'completed', actual_start = COALESCE(actual_start, NOW()),
-                    actual_end = NOW(), completed_by = ?, notes = COALESCE(?, notes)
+                    actual_end = NOW(), completed_by = ?,
+                    completed_qty = COALESCE(?, completed_qty),
+                    blocked_qty   = COALESCE(?, blocked_qty),
+                    notes = COALESCE(?, notes)
                 WHERE tenant_id = ? AND id = ?
-                """, context.userId(), note(request), context.tenantId(), stageId);
+                """, context.userId(),
+                request != null ? request.completedQty() : null,
+                request != null ? request.blockedQty() : null,
+                note(request), context.tenantId(), stageId);
         moveJobToProgress(context.tenantId(), jobId, jobStatus);
         finishJobIfDone(context.tenantId(), jobId);
         audit.record("job_stage", stageId, "COMPLETE", null, "{\"status\":\"completed\"}");
@@ -334,13 +340,16 @@ public class JobStageService {
         inventory.createProductionOutputLot(new CreateLotRequest(output.itemId(), storeId, output.quantity(), null,
                 "Production " + output.jobNumber(), null, "available", null),
                 "FG-" + output.jobNumber(), jobId);
-        int updated = jdbc.update("""
-                UPDATE cpo_lines
-                SET produced_qty = produced_qty + ?
-                WHERE tenant_id = ? AND id = ? AND produced_qty + ? <= quantity
-                """, output.quantity(), tenantId, output.cpoLineId(), output.quantity());
-        if (updated != 1) {
-            throw ProductionSupport.conflict("Production quantity exceeds the remaining Customer PO line quantity");
+        // Only update CPO produced_qty for PO-linked jobs
+        if (output.cpoLineId() != null) {
+            int updated = jdbc.update("""
+                    UPDATE cpo_lines
+                    SET produced_qty = produced_qty + ?
+                    WHERE tenant_id = ? AND id = ? AND produced_qty + ? <= quantity
+                    """, output.quantity(), tenantId, output.cpoLineId(), output.quantity());
+            if (updated != 1) {
+                throw ProductionSupport.conflict("Production quantity exceeds the remaining Customer PO line quantity");
+            }
         }
     }
 

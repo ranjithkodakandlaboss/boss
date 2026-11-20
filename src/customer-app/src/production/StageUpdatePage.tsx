@@ -64,10 +64,14 @@ export default function StageUpdatePage() {
     }
     setError("");
     try {
-      const noteText = [notes, blockedQty && Number(blockedQty) > 0 ? `Blocked qty: ${blockedQty}${blockedReason ? ` — ${blockedReason}` : ""}` : ""].filter(Boolean).join(" | ");
+      const noteText = [notes, blockedQty && Number(blockedQty) > 0 && blockedReason ? `Blockage: ${blockedReason}` : ""].filter(Boolean).join(" | ");
       if (action === "continue") await startStage(job.id, stage.id, noteText);
       if (action === "hold") await holdJob(job.id, noteText || "Held from the stage update");
-      if (action === "complete") await completeStage(job.id, stage.id, noteText);
+      if (action === "complete") await completeStage(
+        job.id, stage.id, noteText,
+        doneQty > 0 ? doneQty : undefined,
+        badQty > 0 ? badQty : undefined,
+      );
       setSaved(true);
     } catch (cause) {
       setError(cause instanceof ApiError ? cause.message : "The stage was not updated");

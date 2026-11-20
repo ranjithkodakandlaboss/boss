@@ -155,6 +155,9 @@ public class ProductionJobService {
         BossContext context = support.requireContext();
         flags.require(context.tenantId(), ProductionFeatureFlags.JOB_CREATE);
         flags.require(context.tenantId(), ProductionFeatureFlags.ROUTING_STAGES);
+        if (request.routingTemplateId() == null) {
+            throw ProductionSupport.badRequest("A production workflow is required to create a job");
+        }
         try {
             ProductionJobResponse created = request.isStandalone()
                     ? insertStandaloneJob(context, request)
@@ -184,7 +187,7 @@ public class ProductionJobService {
 
     private ProductionJobResponse insertStandaloneJob(BossContext context, CreateJobRequest request) {
         if (request.customerId() == null || request.itemId() == null
-                || request.qty() == null || request.siteId() == null) {
+                || request.quantity() == null || request.siteId() == null) {
             throw ProductionSupport.badRequest(
                     "Standalone job requires customerId, itemId, qty, and siteId");
         }
@@ -243,7 +246,7 @@ public class ProductionJobService {
                    priority, created_by)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'planned', ?, ?, ?)
                 """, jobId, context.tenantId(), jobNumber, request.customerId(), request.itemId(),
-                routing.id(), routing.version(), request.siteId(), request.qty(), uomId,
+                routing.id(), routing.version(), request.siteId(), request.quantity(), uomId,
                 request.scheduledEnd(), priority, context.userId());
         insertStages(context.tenantId(), jobId, stages);
         // No BOM explosion for standalone — materials can be added manually
