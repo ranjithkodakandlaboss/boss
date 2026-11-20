@@ -727,6 +727,11 @@ export default function PODetail() {
                     <tr key={line.id} style={{ borderBottom: '1px solid var(--border)', background: 'var(--surface)' }}>
                       <td className="px-4 py-3 text-xs" style={{ color: 'var(--text-3)' }}>{i + 1}</td>
                       <td className="px-4 py-3">
+                        {line.itemCode && (
+                          <div className="font-mono text-xs font-semibold mb-0.5" style={{ color: 'var(--brand)' }}>
+                            {line.itemCode}
+                          </div>
+                        )}
                         <div className="text-sm font-medium" style={{ color: 'var(--text)' }}>
                           {line.description}
                         </div>

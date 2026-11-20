@@ -209,9 +209,10 @@ export default function RFQDetail() {
                   <thead>
                     <tr>
                       <th>#</th>
+                      <th>Item Code</th>
+                      <th>Description</th>
                       <th>Drawing / Part No.</th>
                       <th>Rev</th>
-                      <th>Description</th>
                       <th>Material</th>
                       <th>Qty</th>
                       <th>UOM</th>
@@ -224,12 +225,13 @@ export default function RFQDetail() {
                     {lines.map((l: any, i: number) => (
                       <tr key={l.id ?? i}>
                         <td className="font-mono text-xs text-[var(--text-3)]">{l.lineNumber ?? i + 1}</td>
-                        <td className="font-mono text-xs font-semibold text-[var(--brand)]">{l.drawingNumber ?? '—'}</td>
+                        <td className="font-mono text-xs font-semibold text-[var(--brand)]">{l.itemCode ?? '—'}</td>
+                        <td className="text-sm text-[var(--text)]">{l.description ?? l.partName ?? l.itemName ?? '—'}</td>
+                        <td className="font-mono text-xs">{l.drawingNumber ?? '—'}</td>
                         <td className="font-mono text-xs">{l.drawingRevision ?? '—'}</td>
-                        <td className="text-sm text-[var(--text)]">{l.description ?? l.partName ?? '—'}</td>
                         <td className="text-xs text-[var(--text-2)]">{l.material ?? '—'}</td>
                         <td className="font-mono text-sm text-right">{l.quantity ?? l.qty ?? '—'}</td>
-                        <td className="text-xs text-[var(--text-2)]">{l.uom ?? 'Nos'}</td>
+                        <td className="text-xs text-[var(--text-2)]">{l.uomSymbol ?? l.uom ?? 'Nos'}</td>
                         <td className="font-mono text-sm text-right">
                           {l.targetPrice ? fmtMoney(l.targetPrice) : '—'}
                         </td>
