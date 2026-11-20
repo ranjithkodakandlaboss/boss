@@ -1,6 +1,7 @@
 package in.boss.production.api;
 
 import in.boss.production.api.ProductionApiDtos.AddCostRequest;
+import in.boss.production.api.ProductionApiDtos.OverridePriceRequest;
 import in.boss.production.api.ProductionApiDtos.BusinessMetrics;
 import in.boss.production.api.ProductionApiDtos.ConcessionRequest;
 import in.boss.production.api.ProductionApiDtos.CostEntryResponse;
@@ -221,6 +222,13 @@ public class ProductionJobController {
     public MaterialMovementResponse returnMaterial(@PathVariable UUID jobId,
                                                    @Valid @RequestBody ReturnMaterialRequest request) {
         return materials.returnMaterial(jobId, request);
+    }
+
+    @PostMapping("/{jobId}/materials/issues/{issueId}/price-override")
+    @PreAuthorize(BossPermissions.COSTING_WRITE)
+    public MaterialMovementResponse overridePrice(@PathVariable UUID jobId, @PathVariable UUID issueId,
+                                                  @Valid @RequestBody OverridePriceRequest request) {
+        return materials.overridePrice(jobId, issueId, request);
     }
 
     @GetMapping("/{jobId}/costing")

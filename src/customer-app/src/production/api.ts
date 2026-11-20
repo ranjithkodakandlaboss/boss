@@ -60,6 +60,10 @@ export type MaterialRequirement = {
   netIssuedQty: number;
   uomSymbol?: string;
   readiness: string;
+  estimatedUnitCost?: number;
+  estimatedTotalCost?: number;
+  actualUnitCost?: number;
+  actualTotalCost?: number;
 };
 
 export type MaterialMovement = {
@@ -423,6 +427,10 @@ export function issueMaterial(jobId: string, requirementId: string, lotId: strin
 
 export function returnMaterial(jobId: string, sourceIssueId: string, qty: number, note: string) {
   return post<MaterialMovement>(`/api/v1/jobs/${jobId}/materials/returns`, { sourceIssueId, qty, note });
+}
+
+export function overrideMaterialPrice(jobId: string, issueId: string, unitCost: number, reason: string) {
+  return post<MaterialMovement>(`/api/v1/jobs/${jobId}/materials/issues/${issueId}/price-override`, { unitCost, reason });
 }
 
 export function openInspection(jobId: string, stageId: string) {

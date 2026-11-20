@@ -289,7 +289,8 @@ public class ProductionJobService {
                 request.scheduledStart(), plannedEnd, priority, selling, context.userId());
         insertStages(context.tenantId(), jobId, stages);
         MaterialEstimate estimated = insertMaterials(context, jobId, line, quantity);
-        insertCostHeader(context.tenantId(), jobId, estimated, selling);
+        BomRates bomRates = loadBomRates(context.tenantId(), line.itemId());
+        insertCostHeader(context.tenantId(), jobId, estimated, selling, quantity, bomRates);
         audit.record("production_job", jobId, "CREATE", null, "{\"status\":\"planned\"}");
         outbox.publish("production_job", jobId, "production.job.created",
                 "{\"jobId\":\"" + jobId + "\",\"status\":\"planned\"}");
@@ -441,19 +442,48 @@ public class ProductionJobService {
         return new MaterialEstimate(JobCostCalculator.money(estimated), complete);
     }
 
-    private void insertCostHeader(UUID tenantId, UUID jobId, MaterialEstimate estimated, BigDecimal selling) {
+    private BomRates loadBomRates(UUID tenantId, UUID itemId) {
+        return jdbc.query("""
+                SELECT labour_cost_per_unit, machine_cost_per_unit FROM bom_headers
+                WHERE tenant_id = ? AND finished_item_id = ? AND status = 'approved'
+                ORDER BY created_at DESC LIMIT 1
+                """, rs -> rs.next()
+                ? new BomRates(rs.getBigDecimal("labour_cost_per_unit"), rs.getBigDecimal("machine_cost_per_unit"))
+                : new BomRates(null, null), tenantId, itemId);
+    }
+
+    private void insertCostHeader(UUID tenantId, UUID jobId, MaterialEstimate estimated, BigDecimal selling,
+                                  BigDecimal quantity, BomRates rates) {
+        BigDecimal estLabour = rates.labourCostPerUnit() != null
+                ? JobCostCalculator.money(rates.labourCostPerUnit().multiply(quantity)) : BigDecimal.ZERO;
+        BigDecimal estMachine = rates.machineCostPerUnit() != null
+                ? JobCostCalculator.money(rates.machineCostPerUnit().multiply(quantity)) : BigDecimal.ZERO;
         UUID costingId = UUID.randomUUID();
         jdbc.update("""
                 INSERT INTO job_costing_headers
-                  (id, tenant_id, job_id, est_material_cost, selling_price, status)
-                VALUES (?, ?, ?, ?, ?, 'estimated')
-                """, costingId, tenantId, jobId, estimated.materialCost(), selling);
+                  (id, tenant_id, job_id, est_material_cost, est_labour_cost, est_overhead_cost, selling_price, status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 'estimated')
+                """, costingId, tenantId, jobId, estimated.materialCost(), estLabour, estMachine, selling);
         jdbc.update("""
                 INSERT INTO job_costing_lines
                   (id, tenant_id, costing_id, cost_type, description, quantity, unit_cost, amount, is_estimated)
                 VALUES (?, ?, ?, 'material', 'Estimated BOM material; item standard cost snapshot', 1, ?, ?, TRUE)
                 """, UUID.randomUUID(), tenantId, costingId,
                 estimated.complete() ? estimated.materialCost() : null, estimated.materialCost());
+        if (estLabour.signum() > 0) {
+            jdbc.update("""
+                    INSERT INTO job_costing_lines
+                      (id, tenant_id, costing_id, cost_type, description, quantity, unit_cost, amount, is_estimated)
+                    VALUES (?, ?, ?, 'LABOUR', 'BOM labour cost per unit × quantity', ?, ?, ?, TRUE)
+                    """, UUID.randomUUID(), tenantId, costingId, quantity, rates.labourCostPerUnit(), estLabour);
+        }
+        if (estMachine.signum() > 0) {
+            jdbc.update("""
+                    INSERT INTO job_costing_lines
+                      (id, tenant_id, costing_id, cost_type, description, quantity, unit_cost, amount, is_estimated)
+                    VALUES (?, ?, ?, 'OVERHEAD', 'BOM machine cost per unit × quantity', ?, ?, ?, TRUE)
+                    """, UUID.randomUUID(), tenantId, costingId, quantity, rates.machineCostPerUnit(), estMachine);
+        }
     }
 
     private ProductionJobResponse changeStatus(UUID jobId, String target, String reason, boolean hold) {
@@ -591,4 +621,5 @@ public class ProductionJobService {
 
     private record ItemCost(UUID uomId, BigDecimal stdCost) {}
     private record MaterialEstimate(BigDecimal materialCost, boolean complete) {}
+    private record BomRates(BigDecimal labourCostPerUnit, BigDecimal machineCostPerUnit) {}
 }

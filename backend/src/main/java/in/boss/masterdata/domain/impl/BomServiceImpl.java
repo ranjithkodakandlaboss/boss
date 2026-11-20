@@ -222,6 +222,8 @@ public class BomServiceImpl implements BomService {
                 .bomType("production")
                 .isDefault(true)
                 .status("approved")
+                .labourCostPerUnit(request.getLabourCostPerUnit())
+                .machineCostPerUnit(request.getMachineCostPerUnit())
                 .createdAt(now)
                 .updatedAt(now)
                 .build();
@@ -354,6 +356,8 @@ public class BomServiceImpl implements BomService {
                 .itemName(item != null ? item.getName() : null)
                 .version(versionInt)
                 .status(header.getStatus())
+                .labourCostPerUnit(header.getLabourCostPerUnit())
+                .machineCostPerUnit(header.getMachineCostPerUnit())
                 .lines(lineDtos)
                 .build();
     }

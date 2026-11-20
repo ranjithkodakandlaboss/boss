@@ -9,7 +9,7 @@ import StatusChip from "../components/shared/StatusChip";
 import { createLot, lotFields } from "../inventory/inlineCreate";
 import { createInspection as createQualityInspection, recordResult as recordQualityInspectionResult } from "../quality/api";
 import {
-  addCost, cancelJob, completeJob, completeStage, concede, displayDate, featureFlags, getJob, getJobCosting, holdJob, issueMaterial, money, openInspection, previewPlanForJob,
+  addCost, cancelJob, completeJob, completeStage, concede, displayDate, featureFlags, getJob, getJobCosting, holdJob, issueMaterial, money, openInspection, overrideMaterialPrice, previewPlanForJob,
   progressStage, readinessLabel, recordInspection, releaseHold, returnMaterial, savePlan, skipStage, usableLots,
   type JobCosting, type LotOption, type ProductionJob,
 } from "./api";
@@ -157,7 +157,7 @@ export default function JobWorkspacePage() {
       {tab === "Overview" && <Overview job={job} />}
       {tab === "Stages" && <Stages job={job} canWrite={canWrite && flags["production.stage.transition"] !== false} onSkip={(stageId, reason) => act(() => skipStage(job.id, stageId, reason), "Stage skipped")} onUpdate={(stageId) => setUpdateStageId(stageId)} />}
       {tab === "Plan" && <PlanTab job={job} canWrite={canWrite} onSaved={() => { setNotice("Production plan saved"); void load(); }} />}
-      {tab === "Materials" && <Materials job={job} canIssue={canWrite && flags["production.material.issue"] !== false} canReturn={canWrite && flags["production.material.return"] !== false} onIssue={(requirementId, lotId, qty, note) => act(() => issueMaterial(job.id, requirementId, lotId, qty, note), "Material issued")} onReturn={(issueId, qty, note) => act(() => returnMaterial(job.id, issueId, qty, note), "Material returned")} />}
+      {tab === "Materials" && <Materials job={job} canIssue={canWrite && flags["production.material.issue"] !== false} canReturn={canWrite && flags["production.material.return"] !== false} canEditCost={canEditCost} onIssue={(requirementId, lotId, qty, note) => act(() => issueMaterial(job.id, requirementId, lotId, qty, note), "Material issued")} onReturn={(issueId, qty, note) => act(() => returnMaterial(job.id, issueId, qty, note), "Material returned")} onPriceOverride={(issueId, unitCost, reason) => act(() => overrideMaterialPrice(job.id, issueId, unitCost, reason), "Price overridden")} />}
       {tab === "Quality" && <Quality
         job={job}
         enabled={flags["production.inspection.gate"] !== false}
@@ -183,7 +183,7 @@ export default function JobWorkspacePage() {
         job={job}
         canViewCost={canViewCost && flags["production.job.costing"] !== false}
         canEditCost={canEditCost && flags["production.job.costing"] !== false && !closed}
-        onCost={(type, description, amount) => act(() => addCost(job.id, type, description, amount), "Cost recorded")}
+        onCost={(type, description, amount) => act(() => addCost(job.id, type as "LABOUR" | "OVERHEAD" | "OTHER", description, amount), "Cost recorded")}
       />}
       {tab === "History" && <History job={job} />}
       {cancelOpen && <CancelDialog job={job} onClose={() => setCancelOpen(false)} onDone={() => { setCancelOpen(false); void load(); }} />}
@@ -267,6 +267,9 @@ function Overview({ job }: { job: ProductionJob }) {
   const completedStages = stages.filter((s) => s.status === "completed" || s.status === "skipped").length;
   const totalStages = stages.length;
   const progressPct = totalStages > 0 ? Math.round((completedStages / totalStages) * 100) : 0;
+  const totalQty = Number(job.qty ?? 0);
+  const maxCompletedQty = stages.reduce((max, s) => Math.max(max, Number(s.completedQty ?? 0)), 0);
+  const qtyProgressPct = totalQty > 0 ? Math.min(100, Math.round((maxCompletedQty / totalQty) * 100)) : 0;
 
   // Determine health reason
   const reasons: string[] = [];
@@ -298,6 +301,17 @@ function Overview({ job }: { job: ProductionJob }) {
             <div className="h-full rounded-full" style={{ width: `${progressPct}%`, background: hColor === "green" ? "var(--success)" : hColor === "amber" ? "var(--warning)" : "var(--error)" }} />
           </div>
         </div>
+        {totalQty > 0 && maxCompletedQty > 0 && (
+          <div>
+            <div className="flex justify-between text-xs mb-1" style={{ color: "var(--text-3)" }}>
+              <span>Units completed</span>
+              <span>{maxCompletedQty} / {totalQty} {job.uomSymbol} · {qtyProgressPct}%</span>
+            </div>
+            <div className="h-2 rounded-full overflow-hidden" style={{ background: "var(--surface-2)" }}>
+              <div className="h-full rounded-full" style={{ width: `${qtyProgressPct}%`, background: "var(--success)" }} />
+            </div>
+          </div>
+        )}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
           <div><span style={{ color: "var(--text-3)" }}>Total qty</span><div className="font-semibold">{job.qty} {job.uomSymbol}</div></div>
           <div><span style={{ color: "var(--text-3)" }}>Delivery date</span><div className="font-semibold" style={job.daysRemaining != null && job.daysRemaining < 0 ? { color: "var(--error)" } : {}}>{displayDate(job.plannedEnd)}</div></div>
@@ -561,29 +575,49 @@ function PlanTab({ job, canWrite, onSaved }: { job: ProductionJob; canWrite: boo
   );
 }
 
-function Materials({ job, canIssue, canReturn, onIssue, onReturn }: {
-  job: ProductionJob; canIssue: boolean; canReturn: boolean;
+function Materials({ job, canIssue, canReturn, canEditCost, onIssue, onReturn, onPriceOverride }: {
+  job: ProductionJob; canIssue: boolean; canReturn: boolean; canEditCost: boolean;
   onIssue: (requirementId: string, lotId: string, qty: number, note: string) => void;
   onReturn: (issueId: string, qty: number, note: string) => void;
+  onPriceOverride: (issueId: string, unitCost: number, reason: string) => Promise<boolean>;
 }) {
   return (
     <div className="space-y-3">
       {(job.materials ?? []).map((row) => <MaterialRow key={row.id} job={job} row={row} canIssue={canIssue} onIssue={onIssue} />)}
       <h3 className="text-sm font-bold">Issues and returns</h3>
       <table className="w-full text-xs">
-        <thead><tr><th className="text-left py-1">Type</th><th className="text-left">Qty</th><th className="text-left">Lot</th><th /></tr></thead>
+        <thead><tr><th className="text-left py-1">Type</th><th className="text-left">Qty</th><th className="text-left">Unit cost</th><th className="text-left">Lot</th><th /></tr></thead>
         <tbody>
           {(job.movements ?? []).map((movement) => (
             <tr key={movement.id}>
               <td className="py-1">{movement.issueType}</td>
               <td>{movement.quantity}</td>
+              <td className="font-mono">{movement.unitCost != null ? money(movement.unitCost) : "—"}</td>
               <td className="font-mono">{movement.lotId?.slice(0, 8)}</td>
-              <td>{canReturn && movement.issueType === "issue" && <ReturnControl movementId={movement.id} max={movement.quantity} onReturn={onReturn} />}</td>
+              <td className="flex gap-2 py-1">
+                {canReturn && movement.issueType === "issue" && <ReturnControl movementId={movement.id} max={movement.quantity} onReturn={onReturn} />}
+                {canEditCost && movement.issueType === "issue" && <PriceOverrideControl movementId={movement.id} onOverride={onPriceOverride} />}
+              </td>
             </tr>
           ))}
         </tbody>
       </table>
     </div>
+  );
+}
+
+function PriceOverrideControl({ movementId, onOverride }: { movementId: string; onOverride: (issueId: string, unitCost: number, reason: string) => Promise<boolean> }) {
+  const [open, setOpen] = useState(false);
+  const [unitCost, setUnitCost] = useState("");
+  const [reason, setReason] = useState("");
+  if (!open) return <button type="button" className="text-xs" style={{ color: "var(--brand)" }} onClick={() => setOpen(true)}>Override price</button>;
+  return (
+    <span className="inline-flex flex-wrap gap-1 items-end">
+      <input className="eoss-input w-24" aria-label="Override unit cost" type="number" min="0.001" step="0.001" value={unitCost} onChange={(event) => setUnitCost(event.target.value)} placeholder="Unit cost" />
+      <input className="eoss-input w-32" aria-label="Override reason" value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Reason" />
+      <button type="button" className="text-xs font-semibold" style={{ color: "var(--brand)" }} disabled={!unitCost || !reason.trim() || Number(unitCost) <= 0} onClick={async () => { if (await onOverride(movementId, Number(unitCost), reason.trim())) { setOpen(false); setUnitCost(""); setReason(""); } }}>Save</button>
+      <button type="button" className="text-xs" onClick={() => setOpen(false)}>Cancel</button>
+    </span>
   );
 }
 
@@ -617,6 +651,14 @@ function MaterialRow({ job, row, canIssue, onIssue }: { job: ProductionJob; row:
     <div className="rounded-xl border p-3" style={{ borderColor: "var(--border)" }}>
       <div className="flex justify-between text-sm"><strong>{row.itemCode} {row.itemName}</strong><StatusChip status={row.readiness} label={readinessLabel(row.readiness)} size="sm" /></div>
       <p className="text-xs mt-1" style={{ color: "var(--text-2)" }}>Required {row.requiredQty} · Issued {row.issuedQty} · Returned {row.returnedQty} {row.uomSymbol}</p>
+      {(row.estimatedUnitCost != null || row.actualUnitCost != null) && (
+        <div className="mt-1 grid grid-cols-2 gap-x-4 text-xs" style={{ color: "var(--text-3)" }}>
+          {row.estimatedUnitCost != null && <span>Est. unit cost: <strong style={{ color: "var(--text)" }}>{money(row.estimatedUnitCost)}</strong></span>}
+          {row.estimatedTotalCost != null && <span>Est. total: <strong style={{ color: "var(--text)" }}>{money(row.estimatedTotalCost)}</strong></span>}
+          {row.actualUnitCost != null && <span>Actual unit cost: <strong style={{ color: "var(--text)" }}>{money(row.actualUnitCost)}</strong></span>}
+          {row.actualTotalCost != null && <span>Actual total: <strong style={{ color: "var(--text)" }}>{money(row.actualTotalCost)}</strong></span>}
+        </div>
+      )}
       {canIssue && row.netIssuedQty < row.requiredQty && (
         <div className="mt-2 flex flex-wrap gap-2 items-end">
           <div className="text-xs">Lot
@@ -753,9 +795,9 @@ function CostingTab({ job, canViewCost, canEditCost, onCost }: {
   job: ProductionJob;
   canViewCost: boolean;
   canEditCost: boolean;
-  onCost: (type: "LABOUR" | "OVERHEAD", description: string, amount: number) => Promise<boolean>;
+  onCost: (type: "LABOUR" | "OVERHEAD" | "OTHER", description: string, amount: number) => Promise<boolean>;
 }) {
-  const [type, setType] = useState<"LABOUR" | "OVERHEAD">("LABOUR");
+  const [type, setType] = useState<"LABOUR" | "OVERHEAD" | "OTHER">("LABOUR");
   const [description, setDescription] = useState("");
   const [amount, setAmount] = useState("");
   const [costing, setCosting] = useState<JobCosting | null>(null);
@@ -879,9 +921,10 @@ function CostingTab({ job, canViewCost, canEditCost, onCost }: {
             }
           }}>
             <div className="grid sm:grid-cols-3 gap-2">
-              <select className="eoss-input" aria-label="Cost type" value={type} onChange={(event) => setType(event.target.value as "LABOUR" | "OVERHEAD")}>
+              <select className="eoss-input" aria-label="Cost type" value={type} onChange={(event) => setType(event.target.value as "LABOUR" | "OVERHEAD" | "OTHER")}>
                 <option value="LABOUR">Labour</option>
                 <option value="OVERHEAD">Overhead</option>
+                <option value="OTHER">Miscellaneous / Additional</option>
               </select>
               <input className="eoss-input" aria-label="Cost description / reason" value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Description or reason" />
               <input className="eoss-input" aria-label="Cost amount" type="number" min="0" step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} placeholder="Amount (₹)" />

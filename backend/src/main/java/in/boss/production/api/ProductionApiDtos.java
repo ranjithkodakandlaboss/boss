@@ -161,8 +161,19 @@ public final class ProductionApiDtos {
             BigDecimal returnedQty,
             BigDecimal netIssuedQty,
             String uomSymbol,
-            String readiness
-    ) {}
+            String readiness,
+            BigDecimal estimatedUnitCost,
+            BigDecimal estimatedTotalCost,
+            BigDecimal actualUnitCost,
+            BigDecimal actualTotalCost
+    ) {
+        public MaterialRequirementResponse(UUID id, UUID itemId, String itemCode, String itemName,
+                BigDecimal requiredQty, BigDecimal issuedQty, BigDecimal returnedQty, BigDecimal netIssuedQty,
+                String uomSymbol, String readiness) {
+            this(id, itemId, itemCode, itemName, requiredQty, issuedQty, returnedQty, netIssuedQty,
+                 uomSymbol, readiness, null, null, null, null);
+        }
+    }
 
     public record MaterialMovementResponse(
             UUID id,
@@ -348,6 +359,11 @@ public final class ProductionApiDtos {
 
     public record ReviseRoutingTemplateRequest(
             @NotEmpty List<@jakarta.validation.Valid RoutingStageRequest> stages
+    ) {}
+
+    public record OverridePriceRequest(
+            @NotNull @DecimalMin("0.001") BigDecimal unitCost,
+            @NotBlank String reason
     ) {}
 
     public record PageResponse<T>(List<T> content, int page, int size, long totalElements) {}

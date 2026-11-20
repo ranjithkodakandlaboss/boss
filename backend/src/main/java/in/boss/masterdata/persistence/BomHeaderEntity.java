@@ -10,6 +10,7 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.UUID;
@@ -50,6 +51,12 @@ public class BomHeaderEntity {
 
     @Column(name = "status", nullable = false)
     private String status;
+
+    @Column(name = "labour_cost_per_unit")
+    private BigDecimal labourCostPerUnit;
+
+    @Column(name = "machine_cost_per_unit")
+    private BigDecimal machineCostPerUnit;
 
     @Column(name = "created_by")
     private UUID createdBy;
