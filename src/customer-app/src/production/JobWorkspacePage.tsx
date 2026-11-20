@@ -9,9 +9,9 @@ import StatusChip from "../components/shared/StatusChip";
 import { createLot, lotFields } from "../inventory/inlineCreate";
 import { createInspection as createQualityInspection, recordResult as recordQualityInspectionResult } from "../quality/api";
 import {
-  addCost, cancelJob, completeJob, concede, displayDate, featureFlags, getJob, getJobCosting, issueMaterial, money, openInspection, previewPlan, readinessLabel,
+  addCost, cancelJob, completeJob, concede, displayDate, featureFlags, getJob, getJobCosting, issueMaterial, money, openInspection, readinessLabel,
   recordInspection, releaseHold, returnMaterial, savePlan, skipStage, usableLots,
-  type JobCosting, type LotOption, type ProductionJob, type StagePlanEntry,
+  type JobCosting, type LotOption, type ProductionJob,
 } from "./api";
 
 const TABS = ["Overview", "Stages", "Plan", "Materials", "Quality", "NCR / Rework", "Updates", "Blockers", "History"];
@@ -99,10 +99,18 @@ export default function JobWorkspacePage() {
             <span>Due Date: <strong>{displayDate(job.plannedEnd)}</strong></span>
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           {job.status === "on_hold" && canWrite && <button type="button" className="px-4 py-2 rounded-lg text-xs font-semibold text-white" style={{ background: "var(--brand-fill)" }} onClick={() => act(() => releaseHold(job.id, "Hold released"), "Hold released")}>Release hold</button>}
           {!closed && canWrite && <button type="button" className="px-3 py-2 rounded-lg text-xs font-semibold border" style={{ borderColor: "var(--error)", color: "var(--error)" }} onClick={() => setCancelOpen(true)}>Cancel job</button>}
-          {!closed && <button type="button" className="px-4 py-2 rounded-lg text-xs font-semibold text-white" style={{ background: "var(--brand-fill)" }} onClick={() => navigate(`/jobs/${job.id}/stage/${currentStage(job)?.id ?? ""}`)}>Update stage</button>}
+          {!closed && canWrite && (() => {
+            const hasPlan = (job.stages ?? []).some((s) => s.plannedStart);
+            return (
+              <button type="button" className="px-3 py-2 rounded-lg text-xs font-semibold border" style={{ borderColor: hasPlan ? "var(--border)" : "var(--warning)", color: hasPlan ? "var(--text-2)" : "var(--warning)" }} onClick={() => { setTab("Plan"); }}>
+                {hasPlan ? "Edit plan" : "Set up plan"}
+              </button>
+            );
+          })()}
+          {!closed && <button type="button" className="px-4 py-2 rounded-lg text-xs font-semibold text-white" style={{ background: "var(--brand-fill)" }} onClick={() => navigate(`/jobs/${job.id}/stage/${currentStage(job)?.id ?? ""}`)}>Record progress</button>}
         </div>
       </div>
       {notice && <p role="status" className="text-sm" style={{ color: "var(--success)" }}>{notice}</p>}

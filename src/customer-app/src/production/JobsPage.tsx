@@ -122,7 +122,7 @@ export default function JobsPage() {
     const value = (job: ProductionJob) => ({
       number: job.jobNumber, customer: job.customerName ?? "", stage: job.currentStage ?? "",
       status: job.status, plannedEnd: job.plannedEnd ?? "", projected: job.projectedCompletion ?? "",
-      material: job.materialReadiness ?? "",
+      material: job.materialReadiness ?? "", health: healthColor(job),
     })[sortKey];
     const compared = String(value(left)).localeCompare(String(value(right)));
     return sortDir === "asc" ? compared : -compared;

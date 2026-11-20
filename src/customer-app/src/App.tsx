@@ -184,7 +184,7 @@ function Guard() {
         <Route path="inventory/lot/:id" element={<SheetLayout><LotDetail /></SheetLayout>} />
         <Route path="jobs" element={<JobsPage />} />
         <Route path="jobs/:id/stage/:stageId" element={<StageUpdatePage />} />
-        <Route path="jobs/:id" element={<JobWorkspacePage />} />
+        <Route path="jobs/:id" element={<SheetLayout><JobWorkspacePage /></SheetLayout>} />
         <Route path="sales/customers" element={<Navigate to="/sales?tab=customers" replace />} />
         <Route path="settings" element={<Navigate to="/admin" replace />} />
         <Route path="admin/audit" element={<Navigate to="/audit" replace />} />
