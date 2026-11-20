@@ -300,6 +300,7 @@ public final class ProcurementApiDtos {
             List<String> lotNumbers,
             List<String> lotStatuses,
             List<BigDecimal> lotQuantities,
+            List<String> lotSupplierRefs,
             String enteredLotNumber,
             UUID storeId,
             String storeName,
@@ -313,13 +314,18 @@ public final class ProcurementApiDtos {
             UUID supplierId,
             String supplierName,
             UUID siteId,
+            String siteName,
             String status,
             LocalDate receivedDate,
             String supplierDcRef,
             String vehicleNumber,
+            String receivedByName,
             List<GrnLineResponse> lines,
             UUID storeId,
             String storeName) {}
+
+    public record RejectGrnRequest(
+            @NotBlank @Size(max = 1000) String reason) {}
 
     public record CreateSupplierReturnLineRequest(
             @NotNull UUID grnLineId,

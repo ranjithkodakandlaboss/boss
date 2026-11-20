@@ -159,6 +159,7 @@ export type GrnLineRecord = {
   lotNumbers?: string[];
   lotStatuses?: string[];
   lotQuantities?: number[];
+  lotSupplierRefs?: string[];
   enteredLotNumber?: string;
   storeId?: string;
   storeName?: string;
@@ -171,10 +172,12 @@ export type GrnRecord = {
   supplierId: string;
   supplierName?: string;
   siteId?: string;
+  siteName?: string;
   status: string;
   receivedDate?: string;
   supplierDcRef?: string;
   vehicleNumber?: string;
+  receivedByName?: string;
   storeId?: string;
   storeName?: string;
   lines?: GrnLineRecord[];
@@ -300,6 +303,7 @@ export const procurementApi = {
   },
   grns: (spoId?: string) => allPages<GrnRecord>(spoId ? `/api/v1/grns?spoId=${spoId}` : "/api/v1/grns"),
   createGrn: (body: unknown, idempotencyKey: string) => write<GrnRecord>("/api/v1/grns", "POST", body, idempotencyKey),
+  rejectGrn: (id: string, reason: string) => write<GrnRecord>(`/api/v1/grns/${id}/reject`, "POST", { reason }, `grn-reject:${id}`),
   inspections: (grnId: string) => api<InspectionRecord[]>(`/api/v1/grns/${grnId}/inspections`),
   startInspection: (grnId: string, lotId: string) => write<InspectionRecord>(
     `/api/v1/grns/${grnId}/inspections?lotId=${lotId}`,

@@ -275,6 +275,8 @@ function mapGrn(record: GrnRecord, spo?: ReturnType<typeof mapSpo>) {
         primaryUom: line.uomSymbol || "",
         status: stored === "quarantine" ? "qc_hold" : stored,
         grnId: record.id,
+        storeLocationName: line.storeName || record.storeName || "",
+        supplierBatchRef: line.lotSupplierRefs?.[index] || undefined,
       };
     }),
     lotIds: line.lotIds ?? [],
@@ -292,7 +294,8 @@ function mapGrn(record: GrnRecord, spo?: ReturnType<typeof mapSpo>) {
     deliveryChallan: record.supplierDcRef,
     vehicleNumber: record.vehicleNumber,
     storeLocationName: record.storeName,
-    siteName: record.storeName,
+    siteName: record.siteName || null,
+    receivedBy: record.receivedByName || "",
     lineCount: lines.length,
     lines,
   };
@@ -911,7 +914,15 @@ export function ProcurementProvider({ children }: { children?: ReactNode }) {
           return { error: failure(error) };
         }
       },
-      rejectGRN: () => showToast({ type: "info", title: "Reject the lot from inspection", body: "Open the incoming inspection and record the rejected quantity. Rejected stock stays in quarantine." }),
+      rejectGRN: async (grnId: string, _actor: string, reason: string) => {
+        try {
+          await procurementApi.rejectGrn(grnId, reason || "GRN rejected");
+          await reload();
+          showToast({ type: "info", title: "GRN rejected", body: "All pending lots remain in quarantine." });
+        } catch (error) {
+          showToast({ type: "error", title: "GRN was not rejected", body: failure(error) });
+        }
+      },
       retryQuotationDelivery: (id: string) => enqueue(id, async () => {
         const saved = await procurementApi.deliverQuotation(id);
         await reload();
@@ -942,9 +953,21 @@ export function ProcurementProvider({ children }: { children?: ReactNode }) {
       },
       releaseLotFromHold: async (lotId: string) => {
         const lot = lots.find((item) => item.id === lotId);
-        const inspection = inspections.find((item) => item.lotId === lotId && item.status !== "completed");
+        if (!lot) {
+          showToast({ type: "error", title: "Lot was not released", body: "Lot record not found — please reload the page." });
+          return;
+        }
+        const passedInspection = inspections.find(
+          (item) => item.lotId === lotId && item.status === "completed" && item.result === "pass",
+        );
+        if (passedInspection) {
+          await reload();
+          showToast({ type: "success", title: "Lot released", body: "The lot passed inspection and is now available." });
+          return;
+        }
+        const incompleteInspection = inspections.find((item) => item.lotId === lotId && item.status !== "completed");
         try {
-          const current = inspection ?? await procurementApi.startInspection(lot.grnId, lotId);
+          const current = incompleteInspection ?? await procurementApi.startInspection(lot.grnId, lotId);
           await procurementApi.completeInspection(current.id, {
             acceptedQty: Number(lot.primaryQty || lot.qty),
             rejectedQty: 0,
