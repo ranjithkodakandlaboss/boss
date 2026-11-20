@@ -17,6 +17,7 @@ import java.util.UUID;
 import static in.boss.procurement.api.ProcurementApiDtos.CreateGrnRequest;
 import static in.boss.procurement.api.ProcurementApiDtos.GrnResponse;
 import static in.boss.procurement.api.ProcurementApiDtos.PageResponse;
+import static in.boss.procurement.api.ProcurementApiDtos.RejectGrnRequest;
 
 @RestController
 @RequestMapping("/api/v1/grns")
@@ -45,5 +46,11 @@ public class GoodsReceiptController {
     @ResponseStatus(HttpStatus.CREATED)
     public GrnResponse receive(@Valid @RequestBody CreateGrnRequest request) {
         return goodsReceiptService.receive(request);
+    }
+
+    @PostMapping("/{grnId}/reject")
+    public GrnResponse reject(@PathVariable UUID grnId,
+                              @Valid @RequestBody RejectGrnRequest request) {
+        return goodsReceiptService.rejectGrn(grnId, request.reason());
     }
 }

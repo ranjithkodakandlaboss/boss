@@ -89,14 +89,14 @@ public class CustomerPoService {
                 INSERT INTO cpos
                   (id, tenant_id, cpo_number, quotation_id, customer_id, site_id, status,
                    customer_po_ref, order_date, required_by_date, payment_terms, payment_terms_text, notes,
-                   discount_amount, source_revision, created_by)
-                VALUES (?, ?, ?, ?, ?, ?, 'open', ?, CURRENT_DATE, ?, ?, ?, ?, ?, ?, ?)
+                   discount_amount, source_revision, delivery_terms, created_by)
+                VALUES (?, ?, ?, ?, ?, ?, 'open', ?, CURRENT_DATE, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 cpoId, tenantId, cpoNumber, quotationId, quotation.customerId(), quotation.siteId(),
                 customerPoRef, quotation.validUntil(), quotation.paymentTerms(),
                 jdbc.queryForObject("SELECT payment_terms_text FROM quotations WHERE tenant_id = ? AND id = ?",
                         String.class, tenantId, quotationId),
-                note, quotation.discountAmount(), quotation.revision(), context.userId());
+                note, quotation.discountAmount(), quotation.revision(), quotation.deliveryTerms(), context.userId());
         copyLines(tenantId, quotationId, cpoId);
         jdbc.update("""
                 UPDATE quotations
@@ -224,7 +224,9 @@ public class CustomerPoService {
         }
         FeasibilityResponse feasibility = inventoryService.checkAndReserveForCustomerPo(cpoId);
         if (feasibility.feasible()) {
-            transitionStatus(cpoId, "feasibility_approved", false);
+            boolean hasShortfall = feasibility.materials().stream()
+                    .anyMatch(m -> m.shortfall() != null && m.shortfall().signum() > 0);
+            transitionStatus(cpoId, hasShortfall ? "partial" : "feasibility_approved", false);
         }
         return feasibility;
     }
@@ -243,7 +245,8 @@ public class CustomerPoService {
                 || ("open".equals(current) && "feasibility_pending".equals(nextStatus))
                 || ("partial".equals(current) && "feasibility_pending".equals(nextStatus))
                 || ("feasibility_pending".equals(current) && "feasibility_pending".equals(nextStatus))
-                || ("feasibility_pending".equals(current) && "feasibility_approved".equals(nextStatus));
+                || ("feasibility_pending".equals(current) && "feasibility_approved".equals(nextStatus))
+                || ("feasibility_pending".equals(current) && "partial".equals(nextStatus));
         if (!allowed) {
             throw conflict("Invalid Customer PO status transition: " + current + " -> " + nextStatus);
         }
@@ -274,9 +277,9 @@ public class CustomerPoService {
             String itemType = jdbc.query("""
                     SELECT item_type FROM items WHERE tenant_id = ? AND id = ? AND is_active
                     """, rs -> rs.next() ? rs.getString("item_type") : null, tenantId, line.itemId());
-            if (itemType == null || !Set.of("finished_goods", "semi_finished").contains(itemType)) {
+            if (itemType == null || !Set.of("finished_goods", "semi_finished", "traded", "service").contains(itemType)) {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                        "Direct Customer PO lines must use an active finished or semi-finished item: " + line.itemId());
+                        "Direct Customer PO lines must use an active finished, traded, service, or semi-finished item: " + line.itemId());
             }
         }
         UUID cpoId = UUID.randomUUID();
@@ -338,7 +341,7 @@ public class CustomerPoService {
 
     private QuotationLock lockQuotation(UUID tenantId, UUID quotationId) {
         List<QuotationLock> rows = jdbc.query("""
-                SELECT status, customer_id, site_id, valid_until, payment_terms, discount_amount, revision
+                SELECT status, customer_id, site_id, valid_until, payment_terms, discount_amount, revision, delivery_terms
                   FROM quotations
                  WHERE tenant_id = ? AND id = ?
                  FOR UPDATE
@@ -349,7 +352,8 @@ public class CustomerPoService {
                 localDate(rs, "valid_until"),
                 (Integer) rs.getObject("payment_terms"),
                 rs.getBigDecimal("discount_amount"),
-                rs.getInt("revision")), tenantId, quotationId);
+                rs.getInt("revision"),
+                rs.getString("delivery_terms")), tenantId, quotationId);
         if (rows.isEmpty()) {
             throw notFound("Quotation not found");
         }
@@ -437,7 +441,8 @@ public class CustomerPoService {
     }
 
     private record QuotationLock(String status, UUID customerId, UUID siteId, LocalDate validUntil,
-                                 Integer paymentTerms, BigDecimal discountAmount, int revision) {}
+                                 Integer paymentTerms, BigDecimal discountAmount, int revision,
+                                 String deliveryTerms) {}
 
     private record CpoStatusRow(String status, UUID siteId) {}
 

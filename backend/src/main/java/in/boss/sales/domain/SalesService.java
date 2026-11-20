@@ -478,14 +478,10 @@ public class SalesService {
             costing = quotationCostingService.calculate(tenantId, loadCostingInputs(tenantId, quotationId),
                     draft.discountAmount());
         }
-        if (!costing.available()) {
-            throw conflict("A complete quotation cost estimate is required before submission: "
-                    + String.join("; ", costing.unavailableReasons()));
-        }
         if (costing.requiresApproval()) {
             validateMarginOverride(context, note);
         }
-        if (refresh) {
+        if (refresh && costing.available()) {
             for (int i = 0; i < draft.lines().size(); i++) {
                 var line = draft.lines().get(i);
                 jdbc.update("""

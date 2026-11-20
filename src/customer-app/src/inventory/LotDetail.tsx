@@ -7,11 +7,14 @@ import LoadingState from "../components/shared/LoadingState";
 import StatusChip from "../components/shared/StatusChip";
 import { allPages, quantity, type Lot, type Movement } from "./api";
 
+type LotReservation = { id: string; referenceType: string; referenceId: string; reservedQty: number; documentNumber: string | null };
+
 export default function LotDetail() {
   const { id = "" } = useParams();
   const navigate = useNavigate();
   const [lot, setLot] = useState<Lot | null>(null);
   const [movements, setMovements] = useState<Movement[]>([]);
+  const [reservations, setReservations] = useState<LotReservation[]>([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
 
@@ -20,10 +23,12 @@ export default function LotDetail() {
     Promise.all([
       api<Lot>(`/api/v1/inventory/lots/${id}`),
       allPages<Movement>(`/api/v1/inventory/lots/${id}/movements`),
-    ]).then(([next, ledger]) => {
+      api<LotReservation[]>(`/api/v1/inventory/lots/${id}/reservations`).catch(() => [] as LotReservation[]),
+    ]).then(([next, ledger, reservationList]) => {
       if (!active) return;
       setLot(next);
       setMovements(ledger);
+      setReservations(reservationList);
     }).catch((reason: unknown) => {
       if (active) setError(reason instanceof Error ? reason.message : "Lot not found");
     }).finally(() => { if (active) setLoading(false); });
@@ -69,6 +74,36 @@ export default function LotDetail() {
         <Field label="Reserved" value={quantity(lot.reservedQty, lot.uomSymbol)} />
         <Field label="Expiry" value={lot.expiryDate || "—"} />
       </div>
+
+      {(Number(lot.reservedQty) > 0 || reservations.length > 0) && (
+        <section className="overflow-hidden rounded-xl border" style={{ borderColor: "var(--border)" }}>
+          <h2 className="border-b px-4 py-3 text-sm font-bold" style={{ borderColor: "var(--border)" }}>Reservations</h2>
+          {reservations.length === 0 ? (
+            <p className="px-4 py-4 text-sm text-[var(--text-3)]">Reserved quantity has no linked document records.</p>
+          ) : (
+            <table className="w-full text-sm">
+              <thead><tr>{["Document", "Type", "Reserved"].map((label) => <th key={label} className="px-3 py-2 text-left text-xs">{label}</th>)}</tr></thead>
+              <tbody>
+                {reservations.map((r) => (
+                  <tr key={r.id}>
+                    <td className="px-3 py-2 font-mono text-xs font-semibold">
+                      {r.referenceType === "cpo" ? (
+                        <Link to={`/sales/${r.referenceId}`} className="text-[var(--brand)] hover:underline">{r.documentNumber ?? r.referenceId.slice(0, 8)}</Link>
+                      ) : r.referenceType === "production_job" ? (
+                        <Link to={`/jobs/${r.referenceId}`} className="text-[var(--brand)] hover:underline">{r.documentNumber ?? r.referenceId.slice(0, 8)}</Link>
+                      ) : (
+                        r.documentNumber ?? r.referenceId.slice(0, 8)
+                      )}
+                    </td>
+                    <td className="px-3 py-2 text-xs text-[var(--text-2)]">{r.referenceType === "cpo" ? "Customer PO" : r.referenceType === "production_job" ? "Production job" : r.referenceType}</td>
+                    <td className="px-3 py-2 font-mono text-xs">{quantity(r.reservedQty, lot.uomSymbol)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </section>
+      )}
 
       <section className="overflow-hidden rounded-xl border" style={{ borderColor: "var(--border)" }}>
         <h2 className="border-b px-4 py-3 text-sm font-bold" style={{ borderColor: "var(--border)" }}>Stock movement ledger</h2>

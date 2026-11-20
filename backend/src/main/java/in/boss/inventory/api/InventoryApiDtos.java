@@ -253,4 +253,12 @@ public final class InventoryApiDtos {
             UUID itemId,
             BigDecimal reservedQty
     ) {}
+
+    public record LotReservationResponse(
+            UUID id,
+            String referenceType,
+            UUID referenceId,
+            BigDecimal reservedQty,
+            String documentNumber
+    ) {}
 }

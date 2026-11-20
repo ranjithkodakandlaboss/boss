@@ -1,3 +1,4 @@
+import React from "react";
 import { AlertTriangle } from "lucide-react";
 
 export default function ConfirmDialog({
@@ -9,15 +10,17 @@ export default function ConfirmDialog({
   variant = "primary",
   onConfirm,
   onCancel,
+  children,
 }: {
   open: boolean;
   title: string;
-  body: string;
+  body?: string;
   confirmLabel?: string;
   cancelLabel?: string;
   variant?: "danger" | "primary";
   onConfirm: () => void;
   onCancel: () => void;
+  children?: React.ReactNode;
 }) {
   if (!open) return null;
   return (
@@ -27,9 +30,10 @@ export default function ConfirmDialog({
           <div className={`w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 ${variant === "danger" ? "bg-[var(--error-bg)]" : "bg-[var(--info-bg)]"}`}>
             <AlertTriangle size={18} className={variant === "danger" ? "text-[var(--error)]" : "text-[var(--info)]"} />
           </div>
-          <div>
+          <div className="flex-1">
             <h3 id="confirm-title" className="font-semibold text-[var(--text)]">{title}</h3>
-            <p className="text-sm text-[var(--text-2)] mt-1">{body}</p>
+            {body && <p className="text-sm text-[var(--text-2)] mt-1">{body}</p>}
+            {children}
           </div>
         </div>
         <div className="flex gap-3 mt-6 justify-end">

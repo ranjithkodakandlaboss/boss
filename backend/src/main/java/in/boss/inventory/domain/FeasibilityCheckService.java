@@ -90,7 +90,9 @@ public class FeasibilityCheckService {
 
         Map<UUID, BigDecimal> required = explodeRequirements(context, cpoId);
         List<ReservationPlan> plans = planner.planSiteRequirements(context, cpo.siteId(), required);
-        if (plans.stream().anyMatch(plan -> plan.shortfall().signum() > 0)) {
+        boolean anyShortfall = plans.stream().anyMatch(plan -> plan.shortfall().signum() > 0);
+        boolean anyReservable = plans.stream().anyMatch(plan -> plan.reserved().signum() > 0);
+        if (anyShortfall && !anyReservable) {
             metrics.reservation("failed");
             return new FeasibilityResponse(cpoId, false, plans.stream()
                     .map(plan -> new ReservationLineResponse(plan.itemId(), null, plan.requested(),
@@ -121,7 +123,7 @@ public class FeasibilityCheckService {
         }
         changed.forEach(key -> replenishmentService.checkAfterStockChange(
                 context.tenantId(), key.itemId(), key.storeId()));
-        metrics.reservation("fully_reserved");
+        metrics.reservation(anyShortfall ? "partially_reserved" : "fully_reserved");
         return new FeasibilityResponse(cpoId, true, lines);
     }
 
@@ -136,19 +138,19 @@ public class FeasibilityCheckService {
             if (remaining.signum() <= 0) {
                 continue;
             }
+            var lineItem = itemRepository.findByIdAndTenantId(line.itemId(), context.tenantId())
+                    .orElseThrow(() -> new InventoryValidationException("Item on Customer PO line not found"));
+            if ("service".equals(lineItem.getItemType())) {
+                continue; // service lines have no inventory requirement
+            }
             var result = bomExplosionService.explodeBOM(line.itemId(), remaining);
             var materials = result.getFlatMaterials();
             if (materials == null || materials.isEmpty()) {
-                // No approved BOM — treat as a traded/stocked finished good:
-                // reserve the finished-good SKU itself from inventory.
-                var item = itemRepository.findByIdAndTenantId(line.itemId(), context.tenantId())
-                        .orElseThrow(() -> new InventoryValidationException(
-                                "Item on Customer PO line not found"));
-                if (!"finished_goods".equals(item.getItemType())) {
+                // No approved BOM — traded/stocked finished goods: reserve the SKU itself.
+                if (!"finished_goods".equals(lineItem.getItemType()) && !"traded".equals(lineItem.getItemType())) {
                     throw new InventoryValidationException(
                             "A Customer PO line has no approved BOM with material requirements");
                 }
-                // Traded or not-yet-manufactured: reserve the finished-good item itself.
                 totals.merge(line.itemId(), remaining, BigDecimal::add);
                 continue;
             }

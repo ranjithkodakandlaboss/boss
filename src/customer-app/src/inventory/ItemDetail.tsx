@@ -8,7 +8,7 @@ import ErrorState from "../components/shared/ErrorState";
 import LoadingState from "../components/shared/LoadingState";
 import StatusChip from "../components/shared/StatusChip";
 import { type ProductionJob } from "../production/api";
-import { loadJobs, loadLots, loadPositions, loadReservations, quantity, type Item, type JobReservation, type Lot, type Position } from "./api";
+import { loadJobs, loadLots, loadPositions, loadReservations, mutate, quantity, type Item, type JobReservation, type Lot, type Position } from "./api";
 import { ItemForm } from "./ItemMaster";
 
 export default function ItemDetail() {
@@ -27,29 +27,37 @@ export default function ItemDetail() {
   const [deactivateConfirm, setDeactivateConfirm] = useState(false);
   const [reactivateConfirm, setReactivateConfirm] = useState(false);
   const [error, setError] = useState("");
+  const [inlineError, setInlineError] = useState("");
   const [loading, setLoading] = useState(true);
   type BomLine = { componentItemId?: string; componentItemCode?: string; componentItemName?: string; qty?: number | string; uomSymbol?: string; scrapFactor?: number | string };
-  const [itemBom, setItemBom] = useState<{ id: string; itemId?: string; version?: number | string; status?: string; lines?: BomLine[] } | null | undefined>(undefined);
+  type BomRecord = { id: string; itemId?: string; itemCode?: string; itemName?: string; version?: number | string; status?: string; lines?: BomLine[] };
+  const [itemBom, setItemBom] = useState<BomRecord | null | undefined>(undefined);
+  const [whereUsedBoms, setWhereUsedBoms] = useState<BomRecord[]>([]);
 
   function load() {
     setLoading(true);
+    let active = true;
     Promise.all([
       api<Item>(`/api/v1/items/${id}`),
       loadPositions(`?itemId=${id}`),
       loadLots(`itemId=${id}`),
       loadJobs(),
       loadReservations(),
-      api<Array<{ id: string; itemId?: string; version?: number | string; status?: string; lines?: BomLine[] }>>("/api/v1/boms").catch(() => []),
+      api<BomRecord[]>("/api/v1/boms").catch(() => [] as BomRecord[]),
     ]).then(([next, stock, itemLots, jobPage, reserved, boms]) => {
+      if (!active) return;
       setItem(next);
       setPositions(stock);
       setLots(itemLots);
       setJobs(jobPage);
       setReservations(reserved.filter((row) => row.itemId === id));
-      const matched = Array.isArray(boms) ? boms.find((b) => b.itemId === id) : undefined;
+      const bomsArray = Array.isArray(boms) ? boms : [];
+      const matched = bomsArray.find((b) => b.itemId === id);
       setItemBom(matched ?? null);
-    }).catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "Inventory item not found."))
-      .finally(() => setLoading(false));
+      setWhereUsedBoms(bomsArray.filter((b) => (b.lines ?? []).some((line) => line.componentItemId === id)));
+    }).catch((reason: unknown) => { if (active) setError(reason instanceof Error ? reason.message : "Inventory item not found."); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
   }
 
   useEffect(() => {
@@ -58,11 +66,12 @@ export default function ItemDetail() {
       setError("Select an item to view its stock, lots and sources.");
       return;
     }
-    load();
+    return load();
   }, [id]);
 
   if (loading) return <LoadingState label="Loading inventory item" />;
   if (error || !item) return <ErrorState body={error || "Inventory item not found."} />;
+  if (editing) return <ItemForm item={item} embedded onClose={() => setEditing(false)} onSaved={() => { setEditing(false); load(); }} />;
 
   const onHand = positions.reduce((sum, row) => sum + Number(row.totalQty), 0);
   const available = positions.reduce((sum, row) => sum + Number(row.availableQty), 0);
@@ -77,18 +86,19 @@ export default function ItemDetail() {
       setDeactivateConfirm(false);
       load();
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Item could not be deactivated.");
+      const msg = reason instanceof Error ? reason.message : "Item could not be deactivated.";
+      setInlineError(msg.replace(/cannot delete item/i, "Cannot deactivate item").replace(/delete/i, "deactivate"));
       setDeactivateConfirm(false);
     }
   }
 
   async function reactivate() {
     try {
-      await api(`/api/v1/items/${item!.id}`, { method: "PATCH", body: JSON.stringify({ status: "active" }) });
+      await mutate(`/api/v1/items/${item!.id}`, "PATCH", { status: "active" });
       setReactivateConfirm(false);
       load();
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Item could not be reactivated.");
+      setInlineError(reason instanceof Error ? reason.message : "Item could not be reactivated.");
       setReactivateConfirm(false);
     }
   }
@@ -118,7 +128,7 @@ export default function ItemDetail() {
         <Fact label="Item code" value={item.code} />
         <Fact label="Category" value={item.categoryLabel || "—"} />
         <Fact label="UOM" value={item.uomSymbol || "—"} />
-        <Fact label="Tracking" value={(item.itemType ?? "").replaceAll("_", " ") || "—"} />
+        <Fact label="Item type" value={(item.itemType ?? "").replaceAll("_", " ") || "—"} />
       </div>
 
       <section className="rounded-xl border p-4" style={{ borderColor: "var(--border)" }}>
@@ -134,7 +144,7 @@ export default function ItemDetail() {
         </div>
       </section>
 
-      {error && <p role="alert" className="text-sm text-[var(--error)]">{error}</p>}
+      {inlineError && <p role="alert" className="text-sm text-[var(--error)]">{inlineError}</p>}
 
       {["finished_good", "finished_goods"].includes((item.itemType ?? "").toLowerCase()) && <section className="rounded-xl border p-4" style={{ borderColor: "var(--border)" }}>
         <h2 className="text-sm font-bold">Product specifications</h2>
@@ -175,6 +185,27 @@ export default function ItemDetail() {
           )}
         </>)}
       </section>}
+
+      <section className="overflow-hidden rounded-xl border" style={{ borderColor: "var(--border)" }}>
+        <h2 className="border-b px-4 py-3 text-sm font-bold" style={{ borderColor: "var(--border)" }}>Where used (BOM references)</h2>
+        {whereUsedBoms.length === 0 ? (
+          <p className="px-4 py-6 text-center text-sm text-[var(--text-3)]">This item is not referenced as a component in any active BOM.</p>
+        ) : (
+          <table className="w-full text-sm">
+            <thead><tr>{["BOM item code", "Product", "BOM version", "BOM status"].map((h) => <th key={h} className="px-3 py-2 text-left text-xs font-medium text-[var(--text-3)]">{h}</th>)}</tr></thead>
+            <tbody>
+              {whereUsedBoms.map((bom) => (
+                <tr key={bom.id} className="border-t" style={{ borderColor: "var(--border)" }}>
+                  <td className="px-3 py-2 font-mono text-xs">{bom.itemCode ?? "—"}</td>
+                  <td className="px-3 py-2 text-xs">{bom.itemName ?? "—"}</td>
+                  <td className="px-3 py-2 text-xs">{String(bom.version ?? "1")}</td>
+                  <td className="px-3 py-2 text-xs">{bom.status ?? "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </section>
 
       <section className="overflow-hidden rounded-xl border" style={{ borderColor: "var(--border)" }}>
         <h2 className="border-b px-4 py-3 text-sm font-bold" style={{ borderColor: "var(--border)" }}>Lot and location</h2>
@@ -219,8 +250,6 @@ export default function ItemDetail() {
           </tbody>
         </table>
       </section>
-
-      {editing && <ItemForm item={item} onClose={() => setEditing(false)} onSaved={() => { setEditing(false); load(); }} />}
 
       <ConfirmDialog
         open={deactivateConfirm}

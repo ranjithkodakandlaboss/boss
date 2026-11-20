@@ -5,6 +5,7 @@ import { ArrowLeft, CheckCircle, XCircle, ClipboardCheck } from 'lucide-react';
 import { useStore } from './runtime';
 import { useReturnNavigation } from '../../sales/proto/useReturnNavigation';
 import StatusChip from '../../components/shared/StatusChip';
+import ConfirmDialog from '../../components/shared/ConfirmDialog';
 import DocumentActions from './workflow/DocumentActions';
 import RecordHistoryPanel from './workflow/RecordHistoryPanel';
 
@@ -204,7 +205,8 @@ export default function GRNDetail() {
                               Start Inspection
                             </button>
                           )}
-                          {canInspectOrApprove && lot.status === 'qc_hold' && (
+                          {canInspectOrApprove && lot.status === 'qc_hold' &&
+                            !linkedInspections.some(i => i.lotId === lot.id && i.status === 'completed' && i.result !== 'pass') && (
                             <button
                               type="button"
                               onClick={() => releaseLotFromHold(lot.id, 'available', currentUser.name, `Released ${lot.lotNumber} to available stock from ${grn.grnNumber}`)}
@@ -279,34 +281,27 @@ export default function GRNDetail() {
         />
       </div>
 
-      {rejectModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5 w-full max-w-sm space-y-3">
-            <h3 className="text-sm font-bold text-[var(--text)]">Reject {grn.grnNumber}</h3>
-            <p className="text-xs text-[var(--text-2)]">All pending QC lots in this receipt will be segregated out of available inventory.</p>
-            <textarea
-              rows={3}
-              className="eoss-input w-full"
-              placeholder="Reason for rejecting this delivery..."
-              value={rejectReason}
-              onChange={e => setRejectReason(e.target.value)}
-            />
-            <div className="flex justify-end gap-2">
-              <button type="button" onClick={() => setRejectModal(false)} className="btn-ghost text-xs">Cancel</button>
-              <button
-                type="button"
-                onClick={() => {
-                  rejectGRN(grn.id, currentUser.name, rejectReason);
-                  setRejectModal(false);
-                }}
-                className="px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-[var(--error)]"
-              >
-                Confirm Reject
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <ConfirmDialog
+        open={rejectModal}
+        title={`Reject ${grn.grnNumber}?`}
+        body="All pending QC lots in this receipt will be segregated out of available inventory."
+        confirmLabel="Confirm Reject"
+        variant="danger"
+        onConfirm={() => {
+          rejectGRN(grn.id, currentUser.name, rejectReason);
+          setRejectModal(false);
+          setRejectReason('');
+        }}
+        onCancel={() => { setRejectModal(false); setRejectReason(''); }}
+      >
+        <textarea
+          rows={3}
+          className="eoss-input w-full mt-2"
+          placeholder="Reason for rejecting this delivery..."
+          value={rejectReason}
+          onChange={e => setRejectReason(e.target.value)}
+        />
+      </ConfirmDialog>
     </div>
   );
 }

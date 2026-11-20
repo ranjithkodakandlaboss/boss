@@ -425,15 +425,17 @@ export default function PODetail() {
                       if (created?.id) setCheckSiteId(created.id);
                     }}
                   >
-                    <select
-                      className="eoss-input text-xs py-1.5"
-                      value={checkSiteId}
-                      onChange={e => setCheckSiteId(e.target.value)}
-                      aria-label="Fulfilling site for material check"
-                    >
-                      <option value="">Select a site…</option>
-                      {sites.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                    </select>
+                    {sites.length !== 1 && (
+                      <select
+                        className="eoss-input text-xs py-1.5"
+                        value={checkSiteId}
+                        onChange={e => setCheckSiteId(e.target.value)}
+                        aria-label="Fulfilling site for material check"
+                      >
+                        <option value="">Select a site…</option>
+                        {sites.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                      </select>
+                    )}
                   </AddIfEmpty>
                   <button
                     type="button"
@@ -725,6 +727,11 @@ export default function PODetail() {
                     <tr key={line.id} style={{ borderBottom: '1px solid var(--border)', background: 'var(--surface)' }}>
                       <td className="px-4 py-3 text-xs" style={{ color: 'var(--text-3)' }}>{i + 1}</td>
                       <td className="px-4 py-3">
+                        {line.itemCode && (
+                          <div className="font-mono text-xs font-semibold mb-0.5" style={{ color: 'var(--brand)' }}>
+                            {line.itemCode}
+                          </div>
+                        )}
                         <div className="text-sm font-medium" style={{ color: 'var(--text)' }}>
                           {line.description}
                         </div>
@@ -871,7 +878,12 @@ export default function PODetail() {
                   setAvailabilityOverride(res.status);
                   setAllocResultMsg({ status: res.status, message: res.message, prId: res.createdPr?.id, prNumber: res.createdPr?.prNumber });
                   showToast({ type: 'success', title: 'Material availability confirmed', body: res.message });
+                  setBomAvailability(null);
                   await reload();
+                  try {
+                    const refreshed = await salesApi.cpoMaterialAvailability(po.id);
+                    setBomAvailability(refreshed);
+                  } catch { /* availability panel will show stale data; user can re-preview */ }
                 }
               }}
               className="px-4 py-2 rounded-lg text-sm font-semibold text-white"

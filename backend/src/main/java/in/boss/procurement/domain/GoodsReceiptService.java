@@ -72,13 +72,17 @@ public class GoodsReceiptService {
         BossContext context = requireContext();
         List<GrnResponse> headers = jdbc.query("""
                 SELECT g.id, g.grn_number, g.spo_id, o.spo_number, g.supplier_id, s.name,
-                       g.site_id, g.status, g.received_date, g.supplier_dc_ref, g.vehicle_number,
+                       g.site_id, si.name AS site_name,
+                       g.status, g.received_date, g.supplier_dc_ref, g.vehicle_number,
+                       COALESCE(u.display_name, u.email) AS received_by_name,
                        (SELECT l.store_id FROM grn_lines l WHERE l.tenant_id = g.tenant_id AND l.grn_id = g.id ORDER BY l.line_no LIMIT 1) AS store_id,
                        (SELECT st.name FROM grn_lines l JOIN stores st ON st.id = l.store_id AND st.tenant_id = l.tenant_id
                          WHERE l.tenant_id = g.tenant_id AND l.grn_id = g.id ORDER BY l.line_no LIMIT 1) AS store_name
                 FROM grns g
                 JOIN suppliers s ON s.id = g.supplier_id AND s.tenant_id = g.tenant_id
                 LEFT JOIN spos o ON o.id = g.spo_id AND o.tenant_id = g.tenant_id
+                LEFT JOIN physical_sites si ON si.id = g.site_id AND si.tenant_id = g.tenant_id
+                LEFT JOIN app_users u ON u.id = g.received_by AND u.tenant_id = g.tenant_id
                 WHERE g.tenant_id = ? AND g.id = ?
                 """, (rs, rowNum) -> new GrnResponse(
                 rs.getObject("id", UUID.class),
@@ -88,10 +92,12 @@ public class GoodsReceiptService {
                 rs.getObject("supplier_id", UUID.class),
                 rs.getString("name"),
                 rs.getObject("site_id", UUID.class),
+                rs.getString("site_name"),
                 rs.getString("status"),
                 rs.getObject("received_date", LocalDate.class),
                 rs.getString("supplier_dc_ref"),
                 rs.getString("vehicle_number"),
+                rs.getString("received_by_name"),
                 List.of(),
                 rs.getObject("store_id", UUID.class),
                 rs.getString("store_name")), context.tenantId(), grnId);
@@ -114,8 +120,9 @@ public class GoodsReceiptService {
             List<String> lotNumbers = new ArrayList<>();
             List<String> lotStatuses = new ArrayList<>();
             List<BigDecimal> lotQuantities = new ArrayList<>();
+            List<String> lotSupplierRefs = new ArrayList<>();
             jdbc.query("""
-                    SELECT DISTINCT m.lot_id, l.lot_number, l.status, l.quantity
+                    SELECT DISTINCT m.lot_id, l.lot_number, l.status, l.quantity, l.batch_number
                     FROM stock_movements m
                     JOIN material_lots l ON l.id = m.lot_id AND l.tenant_id = m.tenant_id
                     WHERE m.tenant_id = ? AND m.reference_type = 'GRN' AND m.reference_id = ?
@@ -125,6 +132,7 @@ public class GoodsReceiptService {
                 lotNumbers.add(rsLot.getString("lot_number"));
                 lotStatuses.add(rsLot.getString("status"));
                 lotQuantities.add(rsLot.getBigDecimal("quantity"));
+                lotSupplierRefs.add(rsLot.getString("batch_number"));
             }, context.tenantId(), lineId);
             return new GrnLineResponse(
                     lineId,
@@ -140,15 +148,40 @@ public class GoodsReceiptService {
                     lotNumbers,
                     lotStatuses,
                     lotQuantities,
+                    lotSupplierRefs,
                     rs.getString("lot_number"),
                     rs.getObject("store_id", UUID.class),
                     rs.getString("store_name"),
                     rs.getObject("uom_id", UUID.class));
         }, context.tenantId(), grnId);
         return new GrnResponse(header.id(), header.grnNumber(), header.spoId(), header.spoNumber(),
-                header.supplierId(), header.supplierName(), header.siteId(), header.status(),
-                header.receivedDate(), header.supplierDcRef(), header.vehicleNumber(), lines,
-                header.storeId(), header.storeName());
+                header.supplierId(), header.supplierName(), header.siteId(), header.siteName(),
+                header.status(), header.receivedDate(), header.supplierDcRef(), header.vehicleNumber(),
+                header.receivedByName(), lines, header.storeId(), header.storeName());
+    }
+
+    @Transactional
+    public GrnResponse rejectGrn(UUID grnId, String reason) {
+        BossContext context = requireContext();
+        UUID tenantId = context.tenantId();
+        List<String> allowed = List.of("draft", "pending_qc", "qc_hold");
+        String status = jdbc.query("SELECT status FROM grns WHERE tenant_id = ? AND id = ? FOR UPDATE",
+                rs -> rs.next() ? rs.getString(1) : null, tenantId, grnId);
+        if (status == null) throw notFound("Goods receipt not found");
+        if (!allowed.contains(status)) {
+            throw conflict("Only a receipt in draft or pending QC state can be rejected");
+        }
+        jdbc.update("""
+                UPDATE grn_lines
+                SET rejected_qty = received_qty, accepted_qty = 0, updated_at = NOW()
+                WHERE tenant_id = ? AND grn_id = ?
+                """, tenantId, grnId);
+        jdbc.update("""
+                UPDATE grns SET status = 'closed', updated_at = NOW()
+                WHERE tenant_id = ? AND id = ?
+                """, tenantId, grnId);
+        auditService.record("grns", grnId, "REJECTED", null, "{\"reason\":\"" + reason.replace("\"", "'") + "\"}");
+        return get(grnId);
     }
 
     @Transactional

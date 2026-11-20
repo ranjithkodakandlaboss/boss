@@ -4,6 +4,7 @@ import in.boss.inventory.persistence.InventoryReservationRepository;
 import in.boss.inventory.persistence.InventoryReservationRepository.CustomerPoLine;
 import in.boss.masterdata.api.dto.BOMExplosionMaterialDto;
 import in.boss.masterdata.domain.BomExplosionService;
+import in.boss.masterdata.persistence.ItemRepository;
 import in.boss.sales.api.SalesApiDtos.CpoMaterialAvailability;
 import in.boss.sales.api.SalesApiDtos.CpoMaterialAvailabilityLine;
 import in.boss.shared.context.BossContext;
@@ -33,13 +34,16 @@ public class CpoMaterialAvailabilityService {
     private final InventoryReservationRepository reservations;
     private final BomExplosionService explosion;
     private final CpoBomPreviewValidator bomValidator;
+    private final ItemRepository itemRepository;
 
     public CpoMaterialAvailabilityService(JdbcTemplate jdbc, InventoryReservationRepository reservations,
-                                          BomExplosionService explosion, CpoBomPreviewValidator bomValidator) {
+                                          BomExplosionService explosion, CpoBomPreviewValidator bomValidator,
+                                          ItemRepository itemRepository) {
         this.jdbc = jdbc;
         this.reservations = reservations;
         this.explosion = explosion;
         this.bomValidator = bomValidator;
+        this.itemRepository = itemRepository;
     }
 
     @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
@@ -88,15 +92,39 @@ public class CpoMaterialAvailabilityService {
             if (remaining.signum() <= 0) {
                 continue;
             }
+            var lineItem = itemRepository.findByIdAndTenantId(line.itemId(), tenantId)
+                    .orElseThrow(() -> conflict("Item on Customer PO line not found"));
+            if ("service".equals(lineItem.getItemType())) {
+                continue; // service lines have no inventory requirement
+            }
             if (!line.uomId().equals(bomValidator.itemBaseUom(tenantId, line.itemId()))) {
                 throw conflict("Customer PO line UOM differs from the product base UOM");
             }
-            bomValidator.validate(tenantId, line.itemId(), validated);
             List<BOMExplosionMaterialDto> materials =
                     explosion.explodeBOMExact(line.itemId(), remaining).getFlatMaterials();
             if (materials == null || materials.isEmpty()) {
-                throw conflict("A Customer PO line has no approved BOM with material requirements");
+                // No BOM — traded/stocked finished goods: check stock against the SKU itself.
+                var item = itemRepository.findByIdAndTenantId(line.itemId(), tenantId)
+                        .orElseThrow(() -> conflict("Item on Customer PO line not found"));
+                if (!"finished_goods".equals(item.getItemType()) && !"traded".equals(item.getItemType())) {
+                    throw conflict("A Customer PO product has no approved BOM with material requirements");
+                }
+                List<Object[]> uomRow = jdbc.query("""
+                        SELECT u.id, u.symbol FROM items i
+                         JOIN units_of_measure u ON u.id = i.base_uom_id AND u.tenant_id = i.tenant_id
+                        WHERE i.tenant_id = ? AND i.id = ?
+                        """, (rs, r) -> new Object[]{rs.getObject("id", UUID.class), rs.getString("symbol")},
+                        tenantId, line.itemId());
+                UUID uomId = uomRow.isEmpty() ? null : (UUID) uomRow.get(0)[0];
+                String uomSymbol = uomRow.isEmpty() ? "" : (String) uomRow.get(0)[1];
+                if (uomId == null) throw conflict("A BOM item or its base UOM is unavailable for this tenant");
+                Material prev = totals.get(line.itemId());
+                totals.put(line.itemId(), new Material(line.itemId(), item.getCode(), item.getName(),
+                        uomId, uomSymbol,
+                        remaining.add(prev == null ? BigDecimal.ZERO : prev.required())));
+                continue;
             }
+            bomValidator.validate(tenantId, line.itemId(), validated);
             for (BOMExplosionMaterialDto material : materials) {
                 addMaterial(totals, material);
             }
@@ -128,6 +156,7 @@ public class CpoMaterialAvailabilityService {
                   JOIN stores s ON s.id = l.store_id AND s.tenant_id = l.tenant_id
                  WHERE l.tenant_id = ? AND s.site_id = ? AND l.item_id = ?
                    AND l.status IN ('available', 'reserved')
+                   AND s.store_type NOT IN ('quarantine', 'rejected')
                    AND (l.expiry_date IS NULL OR l.expiry_date >= CURRENT_DATE)
                 """, (rs, row) -> new Stock(rs.getBigDecimal("quantity"), rs.getBigDecimal("reserved")),
                 tenantId, siteId, itemId);

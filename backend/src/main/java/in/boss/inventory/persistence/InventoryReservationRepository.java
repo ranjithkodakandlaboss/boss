@@ -350,6 +350,40 @@ public class InventoryReservationRepository {
             BigDecimal reservedQty
     ) {}
 
+    public List<LotReservationRow> activeLotReservations(UUID tenantId, UUID lotId) {
+        return jdbc.query("""
+                SELECT r.id, r.reference_type, r.reference_id, r.reserved_qty,
+                       CASE r.reference_type
+                         WHEN 'production_job' THEN j.job_number
+                         WHEN 'cpo' THEN p.cpo_number
+                         ELSE NULL
+                       END AS document_number
+                  FROM stock_reservation_records r
+                  LEFT JOIN production_jobs j ON j.id = r.reference_id
+                                              AND j.tenant_id = r.tenant_id
+                                              AND r.reference_type = 'production_job'
+                  LEFT JOIN cpos p ON p.id = r.reference_id
+                                   AND p.tenant_id = r.tenant_id
+                                   AND r.reference_type = 'cpo'
+                 WHERE r.tenant_id = ? AND r.lot_id = ? AND r.status = 'active'
+                 ORDER BY r.reference_type, document_number
+                """, (rs, rowNum) -> new LotReservationRow(
+                        rs.getObject("id", UUID.class),
+                        rs.getString("reference_type"),
+                        rs.getObject("reference_id", UUID.class),
+                        rs.getBigDecimal("reserved_qty"),
+                        rs.getString("document_number")),
+                tenantId, lotId);
+    }
+
+    public record LotReservationRow(
+            UUID id,
+            String referenceType,
+            UUID referenceId,
+            BigDecimal reservedQty,
+            String documentNumber
+    ) {}
+
     public record CustomerPoHeader(UUID siteId, String status, LocalDate requiredByDate) {}
 
     public record JobMaterialNeed(UUID itemId, BigDecimal remainingQty) {}

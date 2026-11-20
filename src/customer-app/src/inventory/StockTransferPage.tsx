@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { ArrowLeft, Layers } from "lucide-react";
+import { ArrowLeft, Layers, ShieldAlert } from "lucide-react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { api, safeRandomUUID } from "../auth/api";
 import { useCustomer } from "../auth/CustomerState";
@@ -40,7 +40,12 @@ async function loadLots(storeId: string): Promise<Lot[]> {
     page += 1;
     if (result.content.length === 0) break;
   }
-  return rows.filter((lot) => (lot.status === "available" || lot.status === "reserved") && lot.availableQty > 0);
+  // Include quarantine lots in the picker (shown with QC Hold label) but they cannot be
+  // transferred directly — the backend rejects them. The UI directs users to Release Lot.
+  return rows.filter((lot) =>
+    (lot.status === "available" || lot.status === "reserved" || lot.status === "quarantine") &&
+    (lot.availableQty > 0 || lot.status === "quarantine")
+  );
 }
 
 export default function StockTransferPage() {
@@ -170,15 +175,23 @@ export default function StockTransferPage() {
         {loadingLots ? <LoadingState label="Loading lots" />
           : <div className="block text-sm font-medium">
             Material Lot *
-            <CreatableSelect label="lot" ariaLabel="Material Lot" value={lotId} placeholder="Select a lot" error={lotError} onRetry={() => setLotReload((current) => current + 1)} creatable={canCreateLot} options={lots.map((lot) => ({ id: lot.id, label: `${lot.itemCode} · ${lot.itemName}${(lot.lotNumber || lot.batchRef) ? ` · ${lot.lotNumber || lot.batchRef}` : ""} · ${lot.availableQty} ${lot.uomSymbol} available` }))} prepare={() => lotFields({ storeId: sourceStoreId })} onChange={(id) => { setLotId(id); setQty(""); }} onCreate={async (values) => {
+            <CreatableSelect label="lot" ariaLabel="Material Lot" value={lotId} placeholder="Select a lot" error={lotError} onRetry={() => setLotReload((current) => current + 1)} creatable={canCreateLot} options={lots.map((lot) => ({ id: lot.id, label: lot.status === "quarantine" ? `[QC Hold] ${lot.itemCode} · ${lot.itemName}${(lot.lotNumber || lot.batchRef) ? ` · ${lot.lotNumber || lot.batchRef}` : ""} · ${lot.qty} ${lot.uomSymbol}` : `${lot.itemCode} · ${lot.itemName}${(lot.lotNumber || lot.batchRef) ? ` · ${lot.lotNumber || lot.batchRef}` : ""} · ${lot.availableQty} ${lot.uomSymbol} available` }))} prepare={() => lotFields({ storeId: sourceStoreId })} onChange={(id) => { setLotId(id); setQty(""); }} onCreate={async (values) => {
               const created = await createLot(values, { storeId: sourceStoreId });
               const option = { id: created.id, itemCode: created.itemCode, itemName: created.itemName, batchRef: created.batchRef ?? null, lotNumber: created.lotNumber, qty: created.qty, availableQty: created.availableQty, uomSymbol: created.uomSymbol, status: created.status, storeId: sourceStoreId };
               setLots((current) => [...current.filter((lot) => lot.id !== created.id), option]);
               return { id: created.id, label: `${option.itemCode} · ${option.itemName}` };
             }} />
           </div>}
+        {selectedLot?.status === "quarantine" && (
+          <div className="rounded-lg border px-4 py-3 text-sm flex gap-2 items-start" style={{ borderColor: "var(--warning)", background: "var(--warning-bg)" }}>
+            <ShieldAlert size={15} className="flex-shrink-0 mt-0.5" style={{ color: "var(--warning)" }} />
+            <span style={{ color: "var(--text)" }}>
+              <strong>QC Hold — transfer not available.</strong> This lot is under incoming quality inspection. To release it to available stock, open the originating GRN and use <em>Release Lot</em> once inspection passes.
+            </span>
+          </div>
+        )}
         <label className="block text-sm font-medium">
-          Quantity to dispatch * {selectedLot && <span className="font-normal text-[var(--text-2)]">(up to {selectedLot.availableQty} {selectedLot.uomSymbol})</span>}
+          Quantity to dispatch * {selectedLot && selectedLot.status !== "quarantine" && <span className="font-normal text-[var(--text-2)]">(up to {selectedLot.availableQty} {selectedLot.uomSymbol})</span>}
           <input className="eoss-input mt-1 w-full" type="number" min="0.001" max={selectedLot?.availableQty} step="0.001" required value={qty} onChange={(event) => setQty(event.target.value)} />
         </label>
         <div className="block text-sm font-medium">
@@ -197,7 +210,7 @@ export default function StockTransferPage() {
         {error && <p role="alert" className="text-sm text-[var(--error)]">{error}</p>}
         <div className="flex justify-end gap-2 pt-2">
           <button type="button" className="rounded-lg border px-4 py-2 text-sm" style={{ borderColor: "var(--border)" }} onClick={() => navigate(-1)}>Cancel</button>
-          <button type="submit" disabled={saving || loadingLots || !lots.length} className="rounded-lg px-4 py-2 text-sm font-semibold text-white disabled:opacity-40" style={{ background: "var(--brand-fill)" }}>{saving ? "Dispatching…" : "Dispatch Transfer"}</button>
+          <button type="submit" disabled={saving || loadingLots || !lots.length || selectedLot?.status === "quarantine"} className="rounded-lg px-4 py-2 text-sm font-semibold text-white disabled:opacity-40" style={{ background: "var(--brand-fill)" }}>{saving ? "Dispatching…" : "Dispatch Transfer"}</button>
         </div>
       </form>
     </div>

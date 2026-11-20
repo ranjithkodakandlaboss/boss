@@ -5,6 +5,7 @@ import in.boss.inventory.api.InventoryApiDtos.CreateLotRequest;
 import in.boss.inventory.api.InventoryApiDtos.CustomerPoReservationRequest;
 import in.boss.inventory.api.InventoryApiDtos.CustomerPoReservationResponse;
 import in.boss.inventory.api.InventoryApiDtos.InventoryPage;
+import in.boss.inventory.api.InventoryApiDtos.LotReservationResponse;
 import in.boss.inventory.api.InventoryApiDtos.JobLotReservationResponse;
 import in.boss.inventory.api.InventoryApiDtos.JobReservationResponse;
 import in.boss.inventory.api.InventoryApiDtos.InventoryPositionResponse;
@@ -107,6 +108,12 @@ public class InventoryController {
     @PreAuthorize(BossPermissions.INVENTORY_READ)
     public MaterialLotResponse getLot(@PathVariable UUID lotId) {
         return inventoryService.getLot(lotId);
+    }
+
+    @GetMapping("/lots/{lotId}/reservations")
+    @PreAuthorize(BossPermissions.INVENTORY_READ)
+    public List<LotReservationResponse> getLotReservations(@PathVariable UUID lotId) {
+        return inventoryService.getLotReservations(lotId);
     }
 
     @PostMapping("/lots/{lotId}/movements")
