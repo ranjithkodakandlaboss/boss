@@ -90,7 +90,9 @@ public class FeasibilityCheckService {
 
         Map<UUID, BigDecimal> required = explodeRequirements(context, cpoId);
         List<ReservationPlan> plans = planner.planSiteRequirements(context, cpo.siteId(), required);
-        if (plans.stream().anyMatch(plan -> plan.shortfall().signum() > 0)) {
+        boolean anyShortfall = plans.stream().anyMatch(plan -> plan.shortfall().signum() > 0);
+        boolean anyReservable = plans.stream().anyMatch(plan -> plan.reserved().signum() > 0);
+        if (anyShortfall && !anyReservable) {
             metrics.reservation("failed");
             return new FeasibilityResponse(cpoId, false, plans.stream()
                     .map(plan -> new ReservationLineResponse(plan.itemId(), null, plan.requested(),
@@ -121,7 +123,7 @@ public class FeasibilityCheckService {
         }
         changed.forEach(key -> replenishmentService.checkAfterStockChange(
                 context.tenantId(), key.itemId(), key.storeId()));
-        metrics.reservation("fully_reserved");
+        metrics.reservation(anyShortfall ? "partially_reserved" : "fully_reserved");
         return new FeasibilityResponse(cpoId, true, lines);
     }
 

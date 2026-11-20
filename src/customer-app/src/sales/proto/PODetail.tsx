@@ -425,15 +425,17 @@ export default function PODetail() {
                       if (created?.id) setCheckSiteId(created.id);
                     }}
                   >
-                    <select
-                      className="eoss-input text-xs py-1.5"
-                      value={checkSiteId}
-                      onChange={e => setCheckSiteId(e.target.value)}
-                      aria-label="Fulfilling site for material check"
-                    >
-                      <option value="">Select a site…</option>
-                      {sites.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                    </select>
+                    {sites.length !== 1 && (
+                      <select
+                        className="eoss-input text-xs py-1.5"
+                        value={checkSiteId}
+                        onChange={e => setCheckSiteId(e.target.value)}
+                        aria-label="Fulfilling site for material check"
+                      >
+                        <option value="">Select a site…</option>
+                        {sites.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                      </select>
+                    )}
                   </AddIfEmpty>
                   <button
                     type="button"
@@ -871,7 +873,12 @@ export default function PODetail() {
                   setAvailabilityOverride(res.status);
                   setAllocResultMsg({ status: res.status, message: res.message, prId: res.createdPr?.id, prNumber: res.createdPr?.prNumber });
                   showToast({ type: 'success', title: 'Material availability confirmed', body: res.message });
+                  setBomAvailability(null);
                   await reload();
+                  try {
+                    const refreshed = await salesApi.cpoMaterialAvailability(po.id);
+                    setBomAvailability(refreshed);
+                  } catch { /* availability panel will show stale data; user can re-preview */ }
                 }
               }}
               className="px-4 py-2 rounded-lg text-sm font-semibold text-white"
