@@ -877,10 +877,10 @@ function CostingTab({ job, canViewCost, canEditCost, onCost }: {
           {/* Historical reference */}
           <section className="rounded-xl border p-4 space-y-1 text-sm" style={{ borderColor: "var(--border)" }}>
             <h3 className="font-bold text-sm">Historical reference</h3>
-            {costing.historicalReference.completedOrderCount === 0
+            {!costing.historicalReference || costing.historicalReference.completedOrderCount === 0
               ? <p className="text-xs" style={{ color: "var(--text-3)" }}>No fully costed earlier jobs match this item and routing.</p>
               : <p className="text-xs">{costing.historicalReference.completedOrderCount} completed jobs · {money(costing.historicalReference.totalActualCost)} / {costing.historicalReference.totalQuantity} units = weighted avg cost/unit <strong>{money(costing.historicalReference.weightedAverageUnitCost)}</strong></p>}
-            <p className="text-xs" style={{ color: "var(--text-2)" }}>{costing.historicalReference.basis}</p>
+            {costing.historicalReference && <p className="text-xs" style={{ color: "var(--text-2)" }}>{costing.historicalReference.basis}</p>}
           </section>
 
           {/* Cost entries */}
