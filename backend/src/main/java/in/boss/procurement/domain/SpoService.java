@@ -52,6 +52,7 @@ public class SpoService {
     private final PurchaseRequisitionService prService;
     private final AuditService auditService;
     private final ObjectMapper objectMapper;
+    private final SpoQuotationMatcher quotationMatcher;
 
     public SpoService(
             JdbcTemplate jdbc,
@@ -64,6 +65,7 @@ public class SpoService {
         this.prService = prService;
         this.auditService = auditService;
         this.objectMapper = objectMapper;
+        this.quotationMatcher = new SpoQuotationMatcher(jdbc);
     }
 
     @Transactional(readOnly = true)
@@ -109,18 +111,18 @@ public class SpoService {
             throw badRequest("A purchase requisition line may appear only once in an SPO");
         }
 
-        SelectedQuotation quotation = requireSelectedQuotation(
+        SpoQuotationMatcher.SelectedQuotation quotation = quotationMatcher.requireSelectedQuotation(
                 tenantId, request.supplierQuotationId(), request.prId(), request.supplierId());
         if (!PR_STATUSES_ACCEPTING_ORDERS.contains(quotation.prStatus())) {
             throw conflict("SPOs can only be created for approved or partially ordered purchase requisitions");
         }
         requireActiveSupplier(request.supplierId());
 
-        List<ValidatedSpoLine> validatedLines = new ArrayList<>();
+        List<SpoQuotationMatcher.ValidatedSpoLine> validatedLines = new ArrayList<>();
         for (CreateSpoLineRequest line : request.lines().stream()
                 .sorted(Comparator.comparing(CreateSpoLineRequest::prLineId))
                 .toList()) {
-            ValidatedSpoLine validated = requireMatchingQuotationLine(
+            SpoQuotationMatcher.ValidatedSpoLine validated = quotationMatcher.requireMatchingQuotationLine(
                     tenantId, quotation, line);
             BigDecimal committedQty = committedQuantity(tenantId, request.prId(), line.prLineId());
             if (committedQty.add(line.orderedQty()).compareTo(validated.prQuantity()) > 0) {
@@ -148,7 +150,7 @@ public class SpoService {
                 quotation.taxAmount() == null ? BigDecimal.ZERO : quotation.taxAmount(), context.userId());
 
         int lineNo = 1;
-        for (ValidatedSpoLine line : validatedLines) {
+        for (SpoQuotationMatcher.ValidatedSpoLine line : validatedLines) {
             CreateSpoLineRequest requestLine = line.request();
             jdbc.update("""
                     INSERT INTO spo_lines
@@ -418,80 +420,6 @@ public class SpoService {
         return response;
     }
 
-    private SelectedQuotation requireSelectedQuotation(
-            UUID tenantId, UUID quotationId, UUID prId, UUID supplierId) {
-        List<SelectedQuotation> quotations = jdbc.query("""
-                SELECT q.id, q.pr_id, q.supplier_id, q.status, q.payment_terms, q.payment_terms_text,
-                       q.freight_amount, q.tax_amount, p.site_id, p.status AS pr_status
-                FROM supplier_quotations q
-                JOIN purchase_requisitions p
-                  ON p.id = q.pr_id AND p.tenant_id = q.tenant_id
-                WHERE q.tenant_id = ? AND q.id = ?
-                FOR UPDATE OF q, p
-                """, (rs, rowNum) -> new SelectedQuotation(
-                rs.getObject("id", UUID.class),
-                rs.getObject("pr_id", UUID.class),
-                rs.getObject("supplier_id", UUID.class),
-                rs.getString("status"),
-                (Integer) rs.getObject("payment_terms"),
-                rs.getString("payment_terms_text"),
-                rs.getBigDecimal("freight_amount"),
-                rs.getBigDecimal("tax_amount"),
-                rs.getObject("site_id", UUID.class),
-                rs.getString("pr_status")), tenantId, quotationId);
-        if (quotations.isEmpty()) {
-            throw notFound("Selected supplier quotation not found: " + quotationId);
-        }
-        SelectedQuotation quotation = quotations.get(0);
-        if (!"selected".equals(quotation.status())) {
-            throw conflict("SPO must be created from a selected supplier quotation");
-        }
-        if (!prId.equals(quotation.prId()) || !supplierId.equals(quotation.supplierId())) {
-            throw badRequest("SPO purchase requisition and supplier must match the selected quotation");
-        }
-        return quotation;
-    }
-
-    private ValidatedSpoLine requireMatchingQuotationLine(
-            UUID tenantId, SelectedQuotation quotation, CreateSpoLineRequest request) {
-        List<ValidatedSpoLine> lines = jdbc.query("""
-                SELECT ql.id AS quotation_line_id, ql.pr_line_id, ql.item_id,
-                       ql.quantity AS quotation_quantity, ql.uom_id, ql.unit_price, ql.tax_rate,
-                       pl.quantity AS pr_quantity, pl.item_id AS pr_item_id, pl.uom_id AS pr_uom_id
-                FROM supplier_quotation_lines ql
-                JOIN pr_lines pl
-                  ON pl.id = ql.pr_line_id AND pl.tenant_id = ql.tenant_id
-                WHERE ql.tenant_id = ? AND ql.sq_id = ? AND ql.pr_line_id = ?
-                FOR UPDATE OF ql, pl
-                """, (rs, rowNum) -> new ValidatedSpoLine(
-                rs.getObject("quotation_line_id", UUID.class),
-                rs.getObject("pr_line_id", UUID.class),
-                rs.getObject("item_id", UUID.class),
-                rs.getBigDecimal("quotation_quantity"),
-                rs.getObject("uom_id", UUID.class),
-                rs.getBigDecimal("unit_price"),
-                rs.getBigDecimal("pr_quantity"),
-                rs.getObject("pr_item_id", UUID.class),
-                rs.getObject("pr_uom_id", UUID.class),
-                rs.getBigDecimal("tax_rate"),
-                null), tenantId, quotation.id(), request.prLineId());
-        if (lines.isEmpty()) {
-            throw badRequest("Every SPO line must match a line in the selected supplier quotation");
-        }
-        if (lines.size() != 1) {
-            throw conflict("Selected quotation contains duplicate lines for a purchase requisition line");
-        }
-        ValidatedSpoLine line = lines.get(0);
-        if (!line.itemId().equals(request.itemId()) || !line.itemId().equals(line.prItemId())
-                || !line.uomId().equals(request.uomId()) || !line.uomId().equals(line.prUomId())) {
-            throw badRequest("SPO item and unit of measure must match the selected quotation and PR line");
-        }
-        if (line.unitPrice().compareTo(request.unitPrice()) != 0) {
-            throw badRequest("SPO unit price must match the selected quotation");
-        }
-        return line;
-    }
-
     private BigDecimal committedQuantity(UUID tenantId, UUID prId, UUID prLineId) {
         BigDecimal quantity = jdbc.queryForObject("""
                 SELECT COALESCE(SUM(sl.quantity), 0)
@@ -623,30 +551,6 @@ public class SpoService {
 
     private static ResponseStatusException conflict(String message) {
         return new ResponseStatusException(HttpStatus.CONFLICT, message);
-    }
-
-    private record SelectedQuotation(
-            UUID id, UUID prId, UUID supplierId, String status, Integer paymentTerms,
-            String paymentTermsText, BigDecimal freightAmount, BigDecimal taxAmount,
-            UUID siteId, String prStatus) {}
-
-    private record ValidatedSpoLine(
-            UUID quotationLineId,
-            UUID prLineId,
-            UUID itemId,
-            BigDecimal quotationQuantity,
-            UUID uomId,
-            BigDecimal unitPrice,
-            BigDecimal prQuantity,
-            UUID prItemId,
-            UUID prUomId,
-            BigDecimal taxRate,
-            CreateSpoLineRequest request) {
-        private ValidatedSpoLine withRequest(CreateSpoLineRequest request) {
-            return new ValidatedSpoLine(
-                    quotationLineId, prLineId, itemId, quotationQuantity, uomId,
-                    unitPrice, prQuantity, prItemId, prUomId, taxRate, request);
-        }
     }
 
     private SpoHeader mapHeader(java.sql.ResultSet rs) throws java.sql.SQLException {

@@ -132,10 +132,10 @@ public class InventoryServiceImpl implements InventoryService {
                 unitCost, referenceType, referenceId, null);
 
         LotRow lot = requireVisibleLot(ctx, lotId, false);
-        Map<String, Object> snapshot = lotSnapshot(lot);
+        Map<String, Object> snapshot = InventoryLotSnapshots.lotSnapshot(lot);
         auditService.record("LOT", lotId, "CREATE", null, json(snapshot));
         events.lotCreated(lotId, snapshot);
-        events.movementCreated(movementId, movementSnapshot(movementId, lot, movementType, qty));
+        events.movementCreated(movementId, InventoryLotSnapshots.movementSnapshot(movementId, lot, movementType, qty));
         replenishmentService.checkAfterStockChange(ctx.tenantId(), request.itemId(), request.storeId());
         return toLot(lot);
     }
@@ -158,7 +158,7 @@ public class InventoryServiceImpl implements InventoryService {
                 blankToNull(request.note()));
         repository.updateLot(ctx.tenantId(), lot.id(), newQty, nextStatus);
 
-        Map<String, Object> snapshot = movementSnapshot(movementId, lot, type, qty);
+        Map<String, Object> snapshot = InventoryLotSnapshots.movementSnapshot(movementId, lot, type, qty);
         auditService.record("STOCK_MOVEMENT", movementId, "CREATE", null, json(snapshot));
         if (!lot.status().equals(nextStatus)) {
             auditService.record("LOT", lot.id(), "STATUS",
@@ -440,27 +440,6 @@ public class InventoryServiceImpl implements InventoryService {
                 row.performedBy(),
                 row.notes(),
                 row.createdAt());
-    }
-
-    private static Map<String, Object> lotSnapshot(LotRow lot) {
-        Map<String, Object> snapshot = new LinkedHashMap<>();
-        snapshot.put("id", lot.id());
-        snapshot.put("itemId", lot.itemId());
-        snapshot.put("storeId", lot.storeId());
-        snapshot.put("qty", lot.quantity());
-        snapshot.put("status", LotStatus.toApi(lot.status()));
-        return snapshot;
-    }
-
-    private static Map<String, Object> movementSnapshot(
-            UUID movementId, LotRow lot, MovementType type, BigDecimal qty) {
-        Map<String, Object> snapshot = new LinkedHashMap<>();
-        snapshot.put("id", movementId);
-        snapshot.put("lotId", lot.id());
-        snapshot.put("itemId", lot.itemId());
-        snapshot.put("movementType", type.dbValue());
-        snapshot.put("qty", qty);
-        return snapshot;
     }
 
     private String json(Object value) {
