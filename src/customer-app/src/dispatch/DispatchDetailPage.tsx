@@ -621,7 +621,7 @@ export default function DispatchDetailPage() {
             <div className="relative pl-6 space-y-4 before:absolute before:left-2 before:top-2 before:bottom-2 before:w-0.5 before:bg-[var(--border)]">
               {dispatch.history.map((h) => (
                 <div key={h.id} className="relative">
-                  <div className="absolute -left-6 top-1.5 w-2.5 h-2.5 rounded-full bg-[var(--brand, #7048F5)] border-2 border-[var(--surface)]" />
+                  <div className="absolute -left-6 top-1.5 w-2.5 h-2.5 rounded-full bg-[var(--brand)] border-2 border-[var(--surface)]" />
                   <div className="flex items-center justify-between">
                     <div className="text-xs font-bold text-[var(--text)]">{h.title}</div>
                     <div className="text-[10px] text-[var(--text-3)]">
