@@ -472,25 +472,24 @@ public class SalesService {
             costing = quotationCostingService.calculate(tenantId, loadCostingInputs(tenantId, quotationId),
                     draft.discountAmount());
         }
-        if (!costing.available()) {
-            throw conflict("A complete cost estimate is required before submission. Missing: "
-                    + String.join("; ", costing.unavailableReasons()));
-        }
-        if (costing.requiresApproval()) {
-            validateMarginOverride(context, note);
-        }
-        if (refresh) {
-            for (int i = 0; i < draft.lines().size(); i++) {
-                var line = draft.lines().get(i);
-                jdbc.update("""
-                        UPDATE quotation_lines SET estimated_material_cost_per_unit = ?
-                        WHERE tenant_id = ? AND quotation_id = ? AND id = ?
-                        """, costing.lines().get(i).materialCost().divide(line.qty(), 2, RoundingMode.HALF_UP),
-                        tenantId, quotationId, line.id());
+        // Costing unavailable is a warning only — submission is allowed without a complete cost estimate.
+        if (costing.available()) {
+            if (costing.requiresApproval()) {
+                validateMarginOverride(context, note);
             }
-            jdbc.update("UPDATE quotations SET estimated_material_cost = ? WHERE tenant_id = ? AND id = ?",
-                    costing.materialCost(), tenantId, quotationId);
-            persistCostingSnapshot(tenantId, quotationId, costing);
+            if (refresh) {
+                for (int i = 0; i < draft.lines().size(); i++) {
+                    var line = draft.lines().get(i);
+                    jdbc.update("""
+                            UPDATE quotation_lines SET estimated_material_cost_per_unit = ?
+                            WHERE tenant_id = ? AND quotation_id = ? AND id = ?
+                            """, costing.lines().get(i).materialCost().divide(line.qty(), 2, RoundingMode.HALF_UP),
+                            tenantId, quotationId, line.id());
+                }
+                jdbc.update("UPDATE quotations SET estimated_material_cost = ? WHERE tenant_id = ? AND id = ?",
+                        costing.materialCost(), tenantId, quotationId);
+                persistCostingSnapshot(tenantId, quotationId, costing);
+            }
         }
         return costing;
     }
