@@ -11,7 +11,7 @@ import {
   History,
 } from "lucide-react";
 import { useCustomer } from "../auth/CustomerState";
-import { currentToken } from "../auth/session";
+import { authorizedFetch } from "../auth/api";
 import StatusChip from "../components/shared/StatusChip";
 import {
   getDispatch,
@@ -151,7 +151,7 @@ export default function DispatchDetailPage() {
       {/* Toast */}
       {toast && (
         <div
-          className={`fixed bottom-5 right-5 z-50 p-4 rounded-xl shadow-lg border text-sm max-w-sm transition-all ${
+          className={`fixed bottom-5 right-5 z-[9999] p-4 rounded-xl shadow-lg border text-sm max-w-sm transition-all ${
             toast.type === "success"
               ? "bg-[var(--surface)] border-green-500 text-green-700"
               : "bg-[var(--surface)] border-red-500 text-red-700"
@@ -266,7 +266,7 @@ export default function DispatchDetailPage() {
               <div>
                 <dt className="text-xs text-[var(--text-3)]">Quality Release</dt>
                 <dd className="text-sm mt-0.5">
-                  {dispatch.qualityReleaseStatus === "released" || dispatch.qualityInspectionResult === "passed" ? (
+                  {dispatch.qualityReleaseStatus === "issued" ? (
                     <Link
                       to={`/quality/inspection/${dispatch.qualityInspectionId}`}
                       className="text-[var(--success,#16A34A)] font-medium flex items-center gap-1 hover:underline"
@@ -384,10 +384,7 @@ export default function DispatchDetailPage() {
                   disabled={updating || isQCGateBlocked}
                   onClick={async () => {
                     const base = import.meta.env.VITE_CUSTOMER_API_URL ?? "http://127.0.0.1:8080";
-                    const headers: Record<string, string> = {};
-                    const token = currentToken();
-                    if (token) headers["Authorization"] = `Bearer ${token}`;
-                    const resp = await fetch(`${base}/api/v1/dispatches/${dispatch.id}/challan`, { headers });
+                    const resp = await authorizedFetch(`${base}/api/v1/dispatches/${dispatch.id}/challan`);
                     if (!resp.ok) return;
                     const blob = await resp.blob();
                     const url = URL.createObjectURL(blob);

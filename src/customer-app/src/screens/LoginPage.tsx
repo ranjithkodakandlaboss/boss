@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
-import { ApiError, firebaseSignIn } from "../auth/api";
+import { useNavigate } from "react-router-dom";
+import { ApiError, firebaseSignIn, validateBossAccount } from "../auth/api";
 import { signIn } from "../auth/session";
 import Button from "../components/shared/Button";
 import { TextField } from "../components/shared/Fields";
@@ -49,8 +49,9 @@ export default function LoginPage() {
     }
 
     try {
-      const token = await firebaseSignIn(email, password);
-      signIn(token);
+      const session = await firebaseSignIn(email, password);
+      await validateBossAccount(session.idToken);
+      signIn(session.idToken, session.refreshToken, session.expiresIn);
       navigate("/");
       window.location.reload();
     } catch (caught) {
@@ -93,7 +94,9 @@ export default function LoginPage() {
           </div>
         </div>
 
-        <p className="text-xs text-[var(--text-3)]">Have an invitation? <Link className="underline" to="/activate">Activate your account</Link></p>
+        <p className="text-center text-xs text-[var(--text-3)] pt-2">
+          New to BOSS? Contact your workspace administrator to be invited.
+        </p>
       </form>
     </main>
   );

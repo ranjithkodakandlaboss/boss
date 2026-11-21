@@ -34,6 +34,10 @@ class JobCostCalculatorTest {
         assertThatThrownBy(() -> JobStatusMachine.assertTransition("in_progress", "cancelled"))
                 .isInstanceOf(ResponseStatusException.class);
         StageStatusMachine.assertTransition("pending", "skipped");
+        assertThatThrownBy(() -> StageStatusMachine.assertTransition("pending", "completed"))
+                .isInstanceOf(ResponseStatusException.class);
+        assertThat(StageStatusMachine.allowed("pending", "in_progress")).isTrue();
+        assertThat(StageStatusMachine.allowed("in_progress", "completed")).isTrue();
         assertThat(StageStatusMachine.isClosed("completed")).isTrue();
         assertThatThrownBy(() -> StageStatusMachine.assertTransition("completed", "in_progress"))
                 .isInstanceOf(ResponseStatusException.class);

@@ -1,4 +1,3 @@
-// @ts-nocheck
 import React from 'react';
 import { AlertTriangle } from 'lucide-react';
 
@@ -9,12 +8,43 @@ interface Props {
   confirmLabel?: string;
   cancelLabel?: string;
   variant?: 'danger' | 'primary';
-  onConfirm: () => void;
+  loading?: boolean;
+  onConfirm: () => void | Promise<void>;
   onCancel: () => void;
 }
 
-export default function ConfirmModal({ open, title, body, confirmLabel = 'Confirm', cancelLabel = 'Cancel', variant = 'primary', onConfirm, onCancel }: Props) {
+export default function ConfirmModal({
+  open,
+  title,
+  body,
+  confirmLabel = 'Confirm',
+  cancelLabel = 'Cancel',
+  variant = 'primary',
+  loading,
+  onConfirm,
+  onCancel,
+}: Props) {
+  const [submitting, setSubmitting] = React.useState(false);
+
+  React.useEffect(() => {
+    if (open) setSubmitting(false);
+  }, [open]);
+
   if (!open) return null;
+
+  const isBusy = submitting || Boolean(loading);
+
+  const handleConfirm = async (e: React.MouseEvent) => {
+    e.preventDefault();
+    if (isBusy) return;
+    setSubmitting(true);
+    try {
+      await onConfirm();
+    } catch {
+      setSubmitting(false);
+    }
+  };
+
   return (
     <div data-overlay="center" className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
       <div className="bg-[var(--surface)] border border-[var(--border)] rounded-xl shadow-xl max-w-md w-full p-6">
@@ -28,14 +58,21 @@ export default function ConfirmModal({ open, title, body, confirmLabel = 'Confir
           </div>
         </div>
         <div className="flex gap-3 mt-6 justify-end">
-          <button onClick={onCancel} className="px-4 py-2 rounded-lg border border-[var(--border)] text-sm text-[var(--text-2)] hover:bg-[var(--surface-2)] transition-colors">
+          <button
+            type="button"
+            disabled={isBusy}
+            onClick={onCancel}
+            className="px-4 py-2 rounded-lg border border-[var(--border)] text-sm text-[var(--text-2)] hover:bg-[var(--surface-2)] transition-colors disabled:opacity-50"
+          >
             {cancelLabel}
           </button>
           <button
-            onClick={onConfirm}
-            className={`px-4 py-2 rounded-lg text-sm font-medium text-white transition-colors ${variant === 'danger' ? 'bg-[var(--error)] hover:opacity-90' : 'bg-[var(--brand-fill)] hover:bg-[var(--brand-700)]'}`}
+            type="button"
+            disabled={isBusy}
+            onClick={handleConfirm}
+            className={`px-4 py-2 rounded-lg text-sm font-medium text-white transition-colors disabled:opacity-50 ${variant === 'danger' ? 'bg-[var(--error)] hover:opacity-90' : 'bg-[var(--brand-fill)] hover:bg-[var(--brand-700)]'}`}
           >
-            {confirmLabel}
+            {isBusy ? 'Processing…' : confirmLabel}
           </button>
         </div>
       </div>

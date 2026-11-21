@@ -80,6 +80,74 @@ describe("customer app shell", () => {
     quoteView.unmount();
   });
 
+  it("keeps the maintenance events list behind the event detail side sheet", async () => {
+    const maintenanceAsset = {
+      id: "22222222-2222-4222-8222-222222222222", assetCode: "CNC-01", name: "CNC Lathe",
+      siteId: "11111111-1111-4111-8111-111111111111", criticality: "high", meterType: "hours",
+      status: "breakdown", openEvents: 1,
+    };
+    const maintenanceEvent = {
+      id: "ev1", eventNumber: "ME-1", assetId: maintenanceAsset.id, assetCode: "CNC-01",
+      assetName: "CNC Lathe", eventType: "Breakdown", status: "open", symptom: "Spindle failure",
+      technicianName: "Ravi", affectedJobs: [], affectedStages: [],
+    };
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo) => {
+      const url = String(input);
+      if (url.includes("/auth/me")) return json({ id: "1", tenantId: "t", email: "owner@example.test", displayName: "Owner", status: "active", roles: [{ role: "OWNER" }] });
+      if (url.includes("/tenant/info")) return json({ id: "t", name: "North Works", status: "active" });
+      if (url.includes("/onboarding")) return json({ industryType: "GENERAL_MANUFACTURING", completed: true, company: { sites: [], stores: [] } });
+      if (url.includes("/maintenance/lookups")) return json({ sites: [], technicians: [], jobs: [] });
+      if (url.includes("/maintenance/events/ev1/activity")) return json([]);
+      if (url.endsWith("/maintenance/events/ev1")) return json(maintenanceEvent);
+      if (url.endsWith("/maintenance/events")) return json([maintenanceEvent]);
+      if (url.includes("/maintenance/assets?")) return json([maintenanceAsset]);
+      if (url.includes("/config/options/")) return json([]);
+      return json({});
+    }));
+
+    renderAt("/assets/me/ev1");
+    const dialog = await screen.findByRole("dialog");
+    expect(await within(dialog).findByRole("heading", { name: "ME-1" })).toBeInTheDocument();
+    expect(await screen.findByRole("tab", { name: "Maintenance Events" })).toHaveAttribute("aria-selected", "true");
+    expect(await screen.findAllByText("ME-1")).toHaveLength(2);
+    expect(await screen.findAllByText(/CNC-01/)).toHaveLength(2);
+    expect(screen.queryByText("No records are available for this account.")).not.toBeInTheDocument();
+  });
+
+  it("keeps stage updates and their confirmation in a side sheet", async () => {
+    const jobId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const stageJob = {
+      id: jobId,
+      jobNumber: "JOB-100",
+      customerName: "North Works",
+      status: "released",
+      qty: 10,
+      uomSymbol: "ea",
+      stages: [{ id: "stage-1", seqNo: 1, stageName: "Cutting", status: "pending", requiresInspection: false, inspectionStatus: "not_required", isOptional: false, canSkip: false }],
+      materials: [],
+      movements: [],
+      inspections: [],
+    };
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/auth/me")) return json({ id: "1", tenantId: "t", email: "owner@example.test", displayName: "Owner", status: "active", roles: [{ role: "OWNER" }] });
+      if (url.includes("/tenant/info")) return json({ id: "t", name: "North Works", status: "active" });
+      if (url.includes("/onboarding")) return json({ industryType: "GENERAL_MANUFACTURING", completed: true, company: { sites: [], stores: [] } });
+      if (url.includes("/jobs/features")) return json({ "production.stage.transition": true });
+      if (url.endsWith(`/api/v1/jobs/${jobId}/stages/stage-1/start`) && init?.method === "POST") return json(stageJob);
+      if (url.endsWith(`/api/v1/jobs/${jobId}`)) return json(stageJob);
+      return json({});
+    }));
+
+    renderAt(`/jobs/${jobId}/stage/stage-1`);
+    const dialog = await screen.findByRole("dialog");
+    expect(screen.getByRole("heading", { name: "North Works" })).toBeInTheDocument();
+    expect(within(dialog).getByRole("heading", { name: "Stage Update" })).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: /complete/i })).toBeDisabled();
+    await userEvent.click(within(dialog).getByRole("button", { name: "Save Update" }));
+    expect(await within(dialog).findByRole("heading", { name: "Update Recorded" })).toBeInTheDocument();
+  });
+
   it("opens master-data configuration under Admin & Settings", async () => {
     renderAt("/admin?tab=master-data");
     expect(await screen.findByRole("heading", { name: "Master Data & Business Configuration" })).toBeInTheDocument();

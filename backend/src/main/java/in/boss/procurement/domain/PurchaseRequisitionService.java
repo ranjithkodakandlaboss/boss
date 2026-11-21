@@ -500,8 +500,9 @@ public class PurchaseRequisitionService {
                        est_unit_price, store_id, notes, required_date, ordered_qty)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
                     """,
+                    // required_date on lines is deprecated; the PR header's required_by_date is used instead.
                     lineId, tenantId, prId, lineNo++, line.itemId(), qty, line.uomId(),
-                    line.estUnitPrice(), line.storeId(), note, line.requiredDate());
+                    line.estUnitPrice(), line.storeId(), note, null);
         }
     }
 

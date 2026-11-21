@@ -95,6 +95,12 @@ public class MaintenanceController {
     @PreAuthorize(BossPermissions.MAINTENANCE_WRITE)
     public EventResponse start(@PathVariable UUID id) { return service.startEvent(id); }
 
+    @PutMapping("/events/{id}/affected-jobs")
+    @PreAuthorize(BossPermissions.MAINTENANCE_WRITE)
+    public EventResponse addAffectedJobs(@PathVariable UUID id, @RequestBody AddAffectedJobsRequest request) {
+        return service.addAffectedJobs(id, request);
+    }
+
     @PostMapping("/events/{id}/close")
     @PreAuthorize(BossPermissions.MAINTENANCE_WRITE)
     public EventResponse close(@PathVariable UUID id, @RequestBody CloseEventRequest request) {

@@ -173,6 +173,7 @@ export type ProductionJob = {
   materials?: MaterialRequirement[];
   movements?: MaterialMovement[];
   inspections?: Inspection[];
+  maintenanceActivity?: { action: string; eventNumber: string; at: string }[];
   estimatedCost?: CostSummary;
   actualCost?: CostSummary;
   variance?: number;

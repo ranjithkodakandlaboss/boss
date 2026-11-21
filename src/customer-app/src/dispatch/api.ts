@@ -19,7 +19,7 @@ export function createConfigOption(category: string, code: string, label: string
 }
 
 export type Site = { id: string; name: string; code: string };
-export type Store = { id: string; siteId: string; name: string; code: string };
+export type Store = { id: string; siteId: string; name: string; code: string; storeType?: string };
 
 export type Customer = {
   id: string;
@@ -31,10 +31,17 @@ export type Customer = {
 export type Job = {
   id: string;
   jobNumber: string;
+  cpoId?: string;
+  cpoLineId?: string;
+  cpoNumber?: string;
   customerId?: string;
   customerName?: string;
-  customerPoId?: string;
-  customerPoNumber?: string;
+  itemId?: string;
+  itemCode?: string;
+  itemName?: string;
+  qty?: number;
+  uomSymbol?: string;
+  siteId?: string;
   description?: string;
   status: string;
 };
@@ -47,6 +54,14 @@ export type QualityEligibility = {
   inspectionStatus?: string;
   clearanceCertificateStatus?: string;
   clearanceCertificateId?: string;
+};
+
+export type PoLineAvailability = {
+  cpoLineId: string;
+  orderedQty: number;
+  deliveredQty: number;
+  pendingQty: number;
+  remainingQty: number;
 };
 
 export type DispatchLine = {
@@ -262,6 +277,10 @@ export function deleteDispatch(id: string): Promise<void> {
 
 export function checkDispatchEligibility(jobId: string): Promise<QualityEligibility> {
   return api<QualityEligibility>(`/api/v1/quality/jobs/${jobId}/dispatch-eligibility`);
+}
+
+export function loadPoLineAvailability(cpoLineId: string): Promise<PoLineAvailability> {
+  return api<PoLineAvailability>(`/api/v1/dispatches/cpo-lines/${cpoLineId}/availability`);
 }
 
 export function loadCompanySitesAndStores(): Promise<{ sites: Site[]; stores: Store[] }> {

@@ -3,6 +3,7 @@ package in.boss.dispatch;
 import in.boss.dispatch.api.DispatchDtos.*;
 import in.boss.dispatch.domain.DispatchService;
 import in.boss.dispatch.domain.PackingSpecService;
+import in.boss.quality.api.QualityDtos.CreateClearanceCertificateRequest;
 import in.boss.masterdata.BaseMasterDataIntegrationTest;
 import in.boss.quality.domain.QualityService;
 import in.boss.shared.context.BossContext;
@@ -39,6 +40,7 @@ class DispatchModuleIntegrationTest extends BaseMasterDataIntegrationTest {
     private UUID customerId;
     private UUID siteId;
     private UUID storeId;
+    private UUID lotId;
     private UUID itemId;
     private UUID uomId;
     private UUID cpoId;
@@ -97,10 +99,28 @@ class DispatchModuleIntegrationTest extends BaseMasterDataIntegrationTest {
                 VALUES (?, ?, 1, ?, 100, ?, 500, 0) RETURNING id
                 """, tenantId, cpoId, itemId, uomId);
 
+        lotId = insert("""
+                INSERT INTO material_lots (tenant_id, item_id, store_id, lot_number, quantity, reserved_qty, status)
+                VALUES (?, ?, ?, 'FG-DISP-01', 100, 0, 'available') RETURNING id
+                """, tenantId, itemId, storeId);
+
         jobId = insert("""
-                INSERT INTO production_jobs (tenant_id, job_number, cpo_line_id, finished_item_id, site_id, quantity, uom_id, status, created_by)
-                VALUES (?, 'JOB-2026-99', ?, ?, ?, 100, ?, 'completed', ?) RETURNING id
-                """, tenantId, cpoLineId, itemId, siteId, uomId, userId);
+                INSERT INTO production_jobs (tenant_id, job_number, cpo_id, cpo_line_id, finished_item_id, site_id, quantity, uom_id, status, created_by)
+                VALUES (?, 'JOB-2026-99', ?, ?, ?, ?, 100, ?, 'completed', ?) RETURNING id
+                """, tenantId, cpoId, cpoLineId, itemId, siteId, uomId, userId);
+
+        jdbc.update("""
+                INSERT INTO quality_inspections (
+                  tenant_id, inspection_number, inspection_type, reference_type, reference_id,
+                  item_id, quantity_inspected, quantity_accepted, result, status, inspection_date, inspector_id
+                ) VALUES (?, 'INSP-2026-PASS', 'final', 'production_job', ?, ?, 100, 100,
+                          'pass', 'completed', CURRENT_DATE, ?)
+                """, tenantId, jobId, itemId, userId);
+        jdbc.update("""
+                INSERT INTO clearance_certificates
+                  (tenant_id, cert_number, job_id, customer_id, status, issued_at, issued_by)
+                VALUES (?, ?, ?, ?, 'issued', NOW(), ?)
+                """, tenantId, "CERT-DISP-" + UUID.randomUUID(), jobId, customerId, userId);
 
         dispatchMethodOptionId = createConfigOption(tenantId, "DISPATCH_METHOD", "ROAD", "Road Freight");
     }
@@ -128,7 +148,7 @@ class DispatchModuleIntegrationTest extends BaseMasterDataIntegrationTest {
                 customerId,
                 "Acme Aerospace",
                 cpoId,
-                null,
+                jobId,
                 siteId,
                 "Dispatch Factory",
                 storeId,
@@ -142,10 +162,25 @@ class DispatchModuleIntegrationTest extends BaseMasterDataIntegrationTest {
                 "Customer Dock 4",
                 "Fragile cargo",
                 List.of("JOB-2026-99"),
-                List.of(new CreateDispatchLineRequest(cpoLineId, jobId, itemId, new BigDecimal("25"), uomId, null, null, null)),
+                List.of(new CreateDispatchLineRequest(cpoLineId, jobId, itemId, new BigDecimal("25"), uomId, lotId, null, null)),
                 List.of(new CreateDispatchPackageRequest("PKG-01", "Wooden Crate", "Shaft Batch 1", new BigDecimal("25"), "pcs", new BigDecimal("45.5"), new BigDecimal("100"), new BigDecimal("50"), new BigDecimal("50"), "Handle with care")),
                 methodOptionId
         );
+    }
+
+    private CreateDispatchRequest withLine(
+            CreateDispatchRequest request, UUID lineLotId, BigDecimal quantity, UUID lineJobId) {
+        var line = request.lines().get(0);
+        UUID selectedJobId = lineJobId != null ? lineJobId : request.jobId();
+        return new CreateDispatchRequest(
+                request.customerId(), request.customerName(), request.cpoId(), selectedJobId,
+                request.sourceSiteId(), request.sourceSiteName(), request.sourceStoreId(),
+                request.sourceStoreName(), request.carrier(), request.vehicleNumber(),
+                request.driverName(), request.lrNumber(), request.dispatchDate(),
+                request.expectedDelivery(), request.destination(), request.notes(), request.jobs(),
+                List.of(new CreateDispatchLineRequest(line.cpoLineId(), selectedJobId, line.itemId(),
+                        quantity, line.uomId(), lineLotId, line.packingSpecId(), line.clearanceCertId())),
+                request.packages(), request.dispatchMethodOptionId());
     }
 
     @Test
@@ -244,7 +279,7 @@ class DispatchModuleIntegrationTest extends BaseMasterDataIntegrationTest {
                 customerId,
                 "Acme Aerospace",
                 cpoId,
-                null,
+                jobId,
                 siteId,
                 "Dispatch Factory",
                 storeId,
@@ -258,7 +293,7 @@ class DispatchModuleIntegrationTest extends BaseMasterDataIntegrationTest {
                 null,
                 null,
                 null,
-                List.of(new CreateDispatchLineRequest(cpoLineId, jobId, itemId, new BigDecimal("150"), uomId, null, null, null)),
+                List.of(new CreateDispatchLineRequest(cpoLineId, jobId, itemId, new BigDecimal("150"), uomId, lotId, null, null)),
                 null,
                 null
         );
@@ -269,15 +304,84 @@ class DispatchModuleIntegrationTest extends BaseMasterDataIntegrationTest {
     }
 
     @Test
+    void testDispatchRequiresPositiveQuantityAndEligibleFinishedGoodsLot() {
+        CreateDispatchRequest request = dispatchRequest(dispatchMethodOptionId);
+        assertThatThrownBy(() -> dispatchService.createDispatch(withLine(
+                request, null, new BigDecimal("25"), null)))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("finished-goods lot");
+
+        assertThatThrownBy(() -> dispatchService.createDispatch(withLine(
+                request, lotId, BigDecimal.ZERO, null)))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("greater than zero");
+    }
+
+    @Test
+    void testPendingDispatchesCannotReserveMoreThanAvailableLotOrPoQuantity() {
+        CreateDispatchRequest request = dispatchRequest(dispatchMethodOptionId);
+        dispatchService.createDispatch(withLine(request, lotId, new BigDecimal("60"), null));
+
+        assertThat(dispatchService.getPoLineAvailability(cpoLineId).remainingQty())
+                .isEqualByComparingTo("40");
+        assertThatThrownBy(() -> dispatchService.createDispatch(withLine(
+                request, lotId, new BigDecimal("50"), null)))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("eligible outstanding quantity");
+    }
+
+    @Test
+    void testDispatchCannotUseCustomerPoOnHold() {
+        jdbc.update("UPDATE cpos SET status = 'on_hold' WHERE tenant_id = ? AND id = ?", tenantId, cpoId);
+
+        assertThatThrownBy(() -> dispatchService.createDispatch(dispatchRequest(dispatchMethodOptionId)))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("cannot be dispatched");
+    }
+
+    @Test
+    void testMarkingDispatchReducesLotStockAndUpdatesCustomerPoLine() {
+        DispatchDetail created = dispatchService.createDispatch(dispatchRequest(dispatchMethodOptionId));
+
+        dispatchService.updateStatus(created.id(), new UpdateStatusRequest("dispatched", null));
+
+        assertThat(jdbc.queryForObject(
+                "SELECT quantity FROM material_lots WHERE tenant_id = ? AND id = ?", BigDecimal.class, tenantId, lotId))
+                .isEqualByComparingTo("75");
+        assertThat(jdbc.queryForObject(
+                "SELECT delivered_qty FROM cpo_lines WHERE tenant_id = ? AND id = ?", BigDecimal.class, tenantId, cpoLineId))
+                .isEqualByComparingTo("25");
+        assertThat(dispatchService.getPoLineAvailability(cpoLineId).remainingQty())
+                .isEqualByComparingTo("75");
+        assertThat(jdbc.queryForObject(
+                "SELECT COUNT(*) FROM stock_movements WHERE tenant_id = ? AND reference_type = 'DISPATCH' AND reference_id = ?",
+                Integer.class, tenantId, created.id()))
+                .isEqualTo(1);
+    }
+
+    @Test
+    void testQuarantinedLotCannotBeDispatched() {
+        UUID quarantineLotId = insert("""
+                INSERT INTO material_lots (tenant_id, item_id, store_id, lot_number, quantity, reserved_qty, status)
+                VALUES (?, ?, ?, 'FG-QUARANTINE', 20, 0, 'quarantine') RETURNING id
+                """, tenantId, itemId, storeId);
+
+        assertThatThrownBy(() -> dispatchService.createDispatch(withLine(
+                dispatchRequest(dispatchMethodOptionId), quarantineLotId, new BigDecimal("5"), null)))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("available finished-goods lot");
+    }
+
+    @Test
     void testQualityGateBlocksDispatchWhenInspectionFails() {
         // Record failed inspection
         insert("""
                 INSERT INTO quality_inspections (
                   tenant_id, inspection_number, inspection_type, reference_type, reference_id,
-                  item_id, quantity_inspected, result, status, inspection_date, inspector_id
+                  item_id, quantity_inspected, result, status, inspection_date, inspector_id, created_at
                 ) VALUES (
                   ?, 'INSP-2026-FAIL', 'final', 'production_job', ?,
-                  ?, 10, 'fail', 'completed', CURRENT_DATE, ?
+                  ?, 10, 'fail', 'completed', CURRENT_DATE, ?, NOW() + INTERVAL '1 second'
                 ) RETURNING id
                 """, tenantId, jobId, itemId, userId);
 
@@ -299,7 +403,7 @@ class DispatchModuleIntegrationTest extends BaseMasterDataIntegrationTest {
                 null,
                 null,
                 null,
-                List.of(new CreateDispatchLineRequest(cpoLineId, jobId, itemId, new BigDecimal("10"), uomId, null, null, null)),
+                List.of(new CreateDispatchLineRequest(cpoLineId, jobId, itemId, new BigDecimal("10"), uomId, lotId, null, null)),
                 null,
                 null
         );
@@ -310,17 +414,18 @@ class DispatchModuleIntegrationTest extends BaseMasterDataIntegrationTest {
     }
 
     @Test
-    void testQualityGateAllowsWhenPassed() {
+    void testQualityGateRequiresCertificateEvenWithPassedInspection() {
         // Record passed inspection
         insert("""
                 INSERT INTO quality_inspections (
                   tenant_id, inspection_number, inspection_type, reference_type, reference_id,
                   item_id, quantity_inspected, quantity_accepted, result, status, inspection_date, inspector_id
                 ) VALUES (
-                  ?, 'INSP-2026-PASS', 'final', 'production_job', ?,
+                  ?, ?, 'final', 'production_job', ?,
                   ?, 10, 10, 'pass', 'completed', CURRENT_DATE, ?
                 ) RETURNING id
-                """, tenantId, jobId, itemId, userId);
+                """, tenantId, "INSP-" + UUID.randomUUID(), jobId, itemId, userId);
+        jdbc.update("DELETE FROM clearance_certificates WHERE tenant_id = ? AND job_id = ?", tenantId, jobId);
 
         CreateDispatchRequest req = new CreateDispatchRequest(
                 customerId,
@@ -340,11 +445,20 @@ class DispatchModuleIntegrationTest extends BaseMasterDataIntegrationTest {
                 null,
                 null,
                 null,
-                List.of(new CreateDispatchLineRequest(cpoLineId, jobId, itemId, new BigDecimal("10"), uomId, null, null, null)),
+                List.of(new CreateDispatchLineRequest(cpoLineId, jobId, itemId, new BigDecimal("10"), uomId, lotId, null, null)),
                 null,
                 null
         );
 
+        assertThatThrownBy(() -> dispatchService.createDispatch(req))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("clearance certificate");
+
+        jdbc.update("""
+                INSERT INTO clearance_certificates
+                  (tenant_id, cert_number, job_id, customer_id, status, issued_at, issued_by)
+                VALUES (?, ?, ?, ?, 'issued', NOW(), ?)
+                """, tenantId, "CERT-DISP-" + UUID.randomUUID(), jobId, customerId, userId);
         DispatchDetail created = dispatchService.createDispatch(req);
         assertThat(created).isNotNull();
         assertThat(created.status()).isEqualTo("pending_docs");
@@ -356,11 +470,11 @@ class DispatchModuleIntegrationTest extends BaseMasterDataIntegrationTest {
                 customerId,
                 "Acme Aerospace",
                 cpoId,
-                null,
+                jobId,
                 siteId,
                 "Dispatch Factory",
-                null,
-                null,
+                storeId,
+                "Finished Goods Store",
                 "Carrier",
                 "VEH-01",
                 null,
@@ -370,7 +484,7 @@ class DispatchModuleIntegrationTest extends BaseMasterDataIntegrationTest {
                 null,
                 null,
                 null,
-                List.of(new CreateDispatchLineRequest(cpoLineId, jobId, itemId, new BigDecimal("10"), uomId, null, null, null)),
+                List.of(new CreateDispatchLineRequest(cpoLineId, jobId, itemId, new BigDecimal("10"), uomId, lotId, null, null)),
                 null,
                 null
         );
@@ -398,11 +512,11 @@ class DispatchModuleIntegrationTest extends BaseMasterDataIntegrationTest {
                 customerId,
                 "Acme Aerospace",
                 cpoId,
-                null,
+                jobId,
                 siteId,
                 "Dispatch Factory",
-                null,
-                null,
+                storeId,
+                "Finished Goods Store",
                 "Carrier",
                 "VEH-01",
                 null,
@@ -412,7 +526,7 @@ class DispatchModuleIntegrationTest extends BaseMasterDataIntegrationTest {
                 null,
                 null,
                 null,
-                List.of(new CreateDispatchLineRequest(cpoLineId, jobId, itemId, new BigDecimal("5"), uomId, null, null, null)),
+                List.of(new CreateDispatchLineRequest(cpoLineId, jobId, itemId, new BigDecimal("5"), uomId, lotId, null, null)),
                 null,
                 null
         );
@@ -458,11 +572,11 @@ class DispatchModuleIntegrationTest extends BaseMasterDataIntegrationTest {
                 customerId,
                 "Acme Aerospace",
                 cpoId,
-                null,
+                jobId,
                 siteId,
                 "Dispatch Factory",
-                null,
-                null,
+                storeId,
+                "Finished Goods Store",
                 "Carrier",
                 "VEH-01",
                 null,
@@ -472,7 +586,7 @@ class DispatchModuleIntegrationTest extends BaseMasterDataIntegrationTest {
                 null,
                 null,
                 null,
-                List.of(new CreateDispatchLineRequest(cpoLineId, jobId, itemId, new BigDecimal("5"), uomId, null, null, null)),
+                List.of(new CreateDispatchLineRequest(cpoLineId, jobId, itemId, new BigDecimal("5"), uomId, lotId, null, null)),
                 null,
                 null
         );
@@ -508,11 +622,11 @@ class DispatchModuleIntegrationTest extends BaseMasterDataIntegrationTest {
                 customerId,
                 "Acme Aerospace",
                 cpoId,
-                null,
+                jobId,
                 siteId,
                 "Dispatch Factory",
-                null,
-                null,
+                storeId,
+                "Finished Goods Store",
                 "Carrier",
                 "VEH-01",
                 null,
@@ -522,7 +636,7 @@ class DispatchModuleIntegrationTest extends BaseMasterDataIntegrationTest {
                 null,
                 null,
                 null,
-                List.of(new CreateDispatchLineRequest(cpoLineId, jobId, itemId, new BigDecimal("20"), uomId, null, null, null)),
+                List.of(new CreateDispatchLineRequest(cpoLineId, jobId, itemId, new BigDecimal("20"), uomId, lotId, null, null)),
                 null,
                 null
         );

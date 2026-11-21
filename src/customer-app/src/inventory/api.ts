@@ -17,6 +17,7 @@ export type Position = {
   reservedQty: number;
   availableQty: number;
   inTransitQty?: number;
+  valuationAmt?: number | null;
   reorderPoint: number | null;
   uomSymbol: string;
 };
@@ -33,6 +34,7 @@ export type Lot = {
   lotNumber?: string | null;
   grnLineId?: string | null;
   qty: number;
+  unitCost?: number | null;
   reservedQty: number;
   availableQty: number;
   uomSymbol: string;

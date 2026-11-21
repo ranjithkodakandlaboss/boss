@@ -33,10 +33,10 @@ describe("inventory prototype screens", () => {
     render(<MemoryRouter><ItemMaster /></MemoryRouter>);
     expect(await screen.findByText("Copper Wire")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Stock on hand" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Returns" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Site need" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Returns" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Site need" })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Cycle count" })).not.toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Bills of materials" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Bills of materials" })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Remnants" })).not.toBeInTheDocument();
   });
 

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft, CheckCircle, XCircle } from "lucide-react";
 import { useCustomer } from "../auth/CustomerState";
+import RecordSheet from "../components/shared/RecordSheet";
 import StatusChip from "../components/shared/StatusChip";
 import {
   getInspection, recordResult,
@@ -86,6 +87,11 @@ export default function InspectionDetailPage() {
 
   const isComplete = inspection.status === "completed";
   const canRecord = canWrite && !isComplete;
+  const hasOutOfRangeMeasurement = inspection.checklistResponses?.some((response) =>
+    response.responseType === "numeric"
+    && checklistInputs[response.checklistItemId]?.responseValue
+    && !withinSpecification(response, checklistInputs[response.checklistItemId].responseValue!),
+  ) ?? false;
 
   return (
     <div className="p-4 md:p-6 max-w-3xl mx-auto">
@@ -174,14 +180,18 @@ export default function InspectionDetailPage() {
 
       {/* Record result drawer */}
       {showResultForm && (
-        <div className="fixed inset-0 z-[70] bg-black/40 flex items-end md:items-center justify-center p-0 md:p-4">
-          <div
-            className="bg-[var(--bg)] rounded-t-2xl md:rounded-xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto p-6"
-            role="dialog"
-            aria-modal="true"
-          >
-            <h2 className="text-base font-semibold mb-4">Record Inspection Result</h2>
-            <form onSubmit={handleRecordResult} className="space-y-4">
+        <RecordSheet
+          title="Record Inspection Result"
+          width="lg"
+          onClose={() => setShowResultForm(false)}
+          secondary={{ label: "Cancel", onClick: () => setShowResultForm(false) }}
+          primary={{
+            label: saving ? "Saving…" : "Save Result",
+            onClick: () => document.querySelector<HTMLFormElement>("#inspection-result-form")?.requestSubmit(),
+            disabled: saving || (result === "pass" && hasOutOfRangeMeasurement),
+          }}
+        >
+            <form id="inspection-result-form" onSubmit={handleRecordResult} className="space-y-4">
               {/* Pass/Fail toggle */}
               <div>
                 <span className="block text-sm font-medium text-[var(--text-2)] mb-2">Result</span>
@@ -191,6 +201,7 @@ export default function InspectionDetailPage() {
                       key={r}
                       type="button"
                       onClick={() => setResult(r)}
+                      disabled={r === "pass" && hasOutOfRangeMeasurement}
                       className={`flex-1 flex items-center justify-center gap-1.5 rounded-lg border py-2 text-sm font-semibold transition-colors ${
                         result === r
                           ? r === "pass"
@@ -204,6 +215,11 @@ export default function InspectionDetailPage() {
                     </button>
                   ))}
                 </div>
+                {hasOutOfRangeMeasurement && (
+                  <p role="alert" className="mt-2 text-xs text-red-600">
+                    One or more measurements are outside the specified limits. Record this inspection as a failure.
+                  </p>
+                )}
               </div>
 
               <div className="grid grid-cols-2 gap-3">
@@ -264,26 +280,8 @@ export default function InspectionDetailPage() {
               </label>
 
               {saveError && <p className="text-xs text-red-600">{saveError}</p>}
-              <div className="flex justify-end gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setShowResultForm(false)}
-                  className="rounded-lg border px-4 py-2 text-sm font-medium"
-                  style={{ borderColor: "var(--border)" }}
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={saving}
-                  className="rounded-lg bg-[var(--brand-fill)] px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
-                >
-                  {saving ? "Saving…" : "Save Result"}
-                </button>
-              </div>
             </form>
-          </div>
-        </div>
+        </RecordSheet>
       )}
     </div>
   );
@@ -309,6 +307,11 @@ function ChecklistRow({ response }: { response: ChecklistResponse }) {
         <span className="text-sm">{response.itemDescription}</span>
         {response.isMandatory && <span className="text-xs text-red-500 shrink-0">Required</span>}
       </div>
+      {(response.unit || response.specMin != null || response.specMax != null) && (
+        <p className="mt-1 text-xs text-[var(--text-3)]">
+          Specification: {response.specMin ?? "—"} to {response.specMax ?? "—"} {response.unit ?? ""}
+        </p>
+      )}
       {answered && (
         <div className="mt-1.5 flex flex-wrap gap-3 text-xs text-[var(--text-2)]">
           {response.responsePass != null && (
@@ -339,6 +342,11 @@ function ChecklistInput({
         <span className="text-sm font-medium">{response.itemDescription}</span>
         {response.isMandatory && <span className="text-xs text-red-500">Required</span>}
       </div>
+      {(response.unit || response.specMin != null || response.specMax != null) && (
+        <p className="mb-2 text-xs text-[var(--text-3)]">
+          Specification: {response.specMin ?? "—"} to {response.specMax ?? "—"} {response.unit ?? ""}
+        </p>
+      )}
       {(response.responseType === "pass_fail" || response.responseType === "yes_no") && (
         <div className="flex gap-2">
           {["pass", "fail"].map((v) => (
@@ -380,4 +388,11 @@ function ChecklistInput({
       />
     </div>
   );
+}
+
+function withinSpecification(response: ChecklistResponse, value: string) {
+  const measurement = Number(value.trim());
+  return Number.isFinite(measurement)
+    && (response.specMin == null || measurement >= response.specMin)
+    && (response.specMax == null || measurement <= response.specMax);
 }

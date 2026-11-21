@@ -25,6 +25,7 @@ import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 import static in.boss.shared.security.BossPermissions.MAINTENANCE_VIEW;
@@ -101,7 +102,7 @@ public class MaintenanceService {
         BossContext ctx = context();
         String code = required(r.assetCode(), "Asset code");
         String name = required(r.name(), "Asset name");
-        required(r.manufacturer(), "Manufacturer");
+        String manufacturer = blankToNull(r.manufacturer());
         if (r.siteId() == null) throw bad("Site is required");
         requireSite(ctx, r.siteId());
         String category = option("ASSET_CATEGORY", r.category(), true);
@@ -124,7 +125,7 @@ public class MaintenanceService {
                   responsible_user_id, responsible_person, install_date, status)
                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'operational')
                 """, id, ctx.tenantId(), code.trim(), name.trim(), category, category, r.siteId(), workCentre,
-                r.manufacturer().trim(), r.model(), r.serialNumber(), criticality, meter, reading,
+                manufacturer, r.model(), r.serialNumber(), criticality, meter, reading,
                 r.lastServiceReading(), r.lastServiceDate(), r.nextServiceDate(), r.pmFrequencyMetric(),
                 r.pmFrequencyHours(), r.pmFrequencyDays(), r.responsibleUserId(), responsible, r.installDate());
         if (reading != null) {
@@ -140,7 +141,7 @@ public class MaintenanceService {
         AssetResponse current = loadAsset(id);
         if ("retired".equals(current.status())) throw conflict("Retired assets cannot be edited");
         String name = r.name() == null ? current.name() : required(r.name(), "Asset name");
-        String manufacturer = r.manufacturer() == null ? current.manufacturer() : required(r.manufacturer(), "Manufacturer");
+        String manufacturer = r.manufacturer() == null ? current.manufacturer() : blankToNull(r.manufacturer());
         UUID siteId = r.siteId() == null ? current.siteId() : r.siteId();
         requireSite(ctx, siteId);
         String category = r.category() == null ? current.category() : option("ASSET_CATEGORY", r.category(), true);
@@ -177,7 +178,7 @@ public class MaintenanceService {
                   pm_frequency_hours = ?, pm_frequency_days = ?, responsible_user_id = ?, responsible_person = ?,
                   install_date = ?, status = ?, updated_at = NOW()
                 WHERE tenant_id = ? AND id = ?
-                """, name.trim(), category, category, siteId, workCentre, manufacturer.trim(),
+                """, name.trim(), category, category, siteId, workCentre, manufacturer,
                 or(r.model(), current.model()), or(r.serialNumber(), current.serialNumber()), criticality, meter,
                 reading, or(r.lastServiceReading(), current.lastServiceReading()),
                 or(r.lastServiceDate(), current.lastServiceDate()), or(r.nextServiceDate(), current.nextServiceDate()),
@@ -316,10 +317,11 @@ public class MaintenanceService {
         if ("Breakdown".equals(type)) {
             jdbc.update("UPDATE assets SET status = 'breakdown', updated_at = NOW() WHERE tenant_id = ? AND id = ?",
                     ctx.tenantId(), asset.id());
+            recordMachineJobActivity(loadEvent(id), "MACHINE_BLOCK");
         }
         if (r.completionDate() != null) {
             closeInternal(ctx, id, new CloseEventRequest(r.completionDate(), r.rootCause(), r.workDone(),
-                    r.resolutionNotes(), r.correctiveAction(), r.partsUsed()));
+                    r.resolutionNotes(), r.correctiveAction(), r.partsUsed()), true);
         }
         EventResponse event = loadEvent(id);
         if ("Breakdown".equals(type) && !"closed".equals(event.status())) {
@@ -374,6 +376,39 @@ public class MaintenanceService {
     }
 
     @PreAuthorize(MAINTENANCE_WRITE)
+    public EventResponse addAffectedJobs(UUID id, AddAffectedJobsRequest request) {
+        BossContext ctx = context();
+        EventResponse event = loadEvent(id);
+        if (!"Breakdown".equals(event.eventType())) throw conflict("Affected production jobs apply to breakdown events only");
+        if ("closed".equals(event.status())) throw conflict("Cannot change affected jobs for a closed event");
+        List<UUID> jobs = request == null || request.affectedJobIds() == null ? List.of()
+                : request.affectedJobIds().stream().filter(java.util.Objects::nonNull).distinct().toList();
+        if (jobs.isEmpty()) throw bad("At least one affected production job is required");
+        validateJobs(ctx, jobs);
+        Integer openJobs = jdbc.queryForObject("""
+                SELECT count(*) FROM production_jobs
+                WHERE tenant_id = ? AND id = ANY(?::uuid[])
+                  AND status IN ('planned','released','in_progress','on_hold')
+                """, Integer.class, ctx.tenantId(), uuidArray(jobs));
+        if (openJobs == null || openJobs != jobs.size()) throw bad("Affected jobs must be open production jobs");
+        jdbc.update("""
+                UPDATE maintenance_events e
+                SET affected_job_ids = (
+                    SELECT array_agg(DISTINCT candidate ORDER BY candidate)
+                    FROM unnest(COALESCE(e.affected_job_ids, '{}'::uuid[]) || ?::uuid[]) AS candidates(candidate)
+                ), updated_at = NOW()
+                WHERE e.tenant_id = ? AND e.id = ?
+                """, uuidArray(jobs), ctx.tenantId(), id);
+        audit.record("maintenance_event", id, "AFFECTED_JOBS", null, "{\"addedCount\":" + jobs.size() + "}");
+        Set<UUID> alreadyAffected = event.affectedJobs().stream().map(AffectedJob::id).collect(java.util.stream.Collectors.toSet());
+        String details = "{\"eventNumber\":\"" + event.eventNumber() + "\",\"maintenanceEventId\":\"" + id + "\"}";
+        for (UUID job : jobs) {
+            if (!alreadyAffected.contains(job)) audit.record("production_job", job, "MACHINE_BLOCK", null, details);
+        }
+        return loadEvent(id);
+    }
+
+    @PreAuthorize(MAINTENANCE_WRITE)
     public EventResponse closeEvent(UUID id, CloseEventRequest r) {
         return closeInternal(context(), id, r);
     }
@@ -393,19 +428,23 @@ public class MaintenanceService {
                 """, (rs, i) -> rs.getObject("id", UUID.class), ctx.tenantId(), assetId);
         if (open.isEmpty()) throw conflict("This asset has no open breakdown to repair");
         return closeInternal(ctx, open.get(0), new CloseEventRequest(r.completionDate(),
-                r.rootCause(), r.workDone(), r.resolutionNotes(), null, null));
+                r.rootCause(), r.workDone(), r.resolutionNotes(), null, null), true);
     }
 
     private EventResponse closeInternal(BossContext ctx, UUID id, CloseEventRequest r) {
+        return closeInternal(ctx, id, r, false);
+    }
+
+    private EventResponse closeInternal(BossContext ctx, UUID id, CloseEventRequest r, boolean allowUnstarted) {
         EventResponse e = loadEvent(id);
         if ("closed".equals(e.status())) throw conflict("Event " + e.eventNumber() + " is already closed");
+        if (!"in_progress".equals(e.status()) && !allowUnstarted) {
+            throw conflict("Start work before closing event " + e.eventNumber());
+        }
         boolean noWork = (r.workDone() == null || r.workDone().isBlank())
                 && (r.resolutionNotes() == null || r.resolutionNotes().isBlank());
         if (noWork) throw bad("Work done or resolution notes are required to close the event");
-        Instant completion = r.completionDate() == null ? Instant.now() : r.completionDate();
-        if (e.downtimeStart() != null && completion.isBefore(e.downtimeStart())) {
-            throw bad("Completion cannot be earlier than downtime start");
-        }
+        Instant completion = resolveCompletion(e, r.completionDate());
         BigDecimal downtime = downtimeHours(e, completion);
         jdbc.update("""
                 UPDATE maintenance_events SET status = 'closed', completion_date = ?, downtime_end = COALESCE(downtime_end, ?),
@@ -415,16 +454,49 @@ public class MaintenanceService {
                 """, ts(completion), "Breakdown".equals(e.eventType()) ? ts(completion) : null, downtime,
                 r.rootCause(), r.workDone(), r.resolutionNotes(), r.correctiveAction(), r.partsUsed(),
                 ctx.userId(), ctx.tenantId(), id);
+        updateAssetAfterClose(ctx, e, id, completion);
+        String after = allowUnstarted && !"in_progress".equals(e.status())
+                ? "{\"status\":\"closed\",\"startSkipped\":true}" : "{\"status\":\"closed\"}";
+        audit.record("maintenance_event", id, "CLOSE", "{\"status\":\"" + e.status() + "\"}", after);
+        recordMachineJobActivity(e, "MACHINE_UNBLOCK");
+        return loadEvent(id);
+    }
+
+    private Instant resolveCompletion(EventResponse e, Instant requested) {
+        Instant completion = requested == null ? Instant.now() : requested;
+        if (completion.isAfter(Instant.now().plus(Duration.ofMinutes(5)))) {
+            throw bad("Completion cannot be in the future");
+        }
+        if (e.downtimeStart() != null && completion.isBefore(e.downtimeStart())) {
+            throw bad("Completion cannot be earlier than downtime start");
+        }
+        return completion;
+    }
+
+    private void updateAssetAfterClose(BossContext ctx, EventResponse e, UUID eventId, Instant completion) {
         AssetResponse asset = loadAsset(e.assetId());
         LocalDate completed = completion.atZone(ZoneOffset.UTC).toLocalDate();
-        LocalDate next = nextServiceDate(asset, completed);
-        jdbc.update("""
-                UPDATE assets SET last_service_date = ?, last_service_reading = COALESCE(current_reading, last_service_reading),
-                  next_service_date = ?, status = ?, updated_at = NOW() WHERE tenant_id = ? AND id = ?
-                """, completed, next, restoredStatus(ctx.tenantId(), e.assetId(), id, asset.status()),
-                ctx.tenantId(), e.assetId());
-        audit.record("maintenance_event", id, "CLOSE", "{\"status\":\"" + e.status() + "\"}", "{\"status\":\"closed\"}");
-        return loadEvent(id);
+        String restoredStatus = restoredStatus(ctx.tenantId(), e.assetId(), eventId, asset.status());
+        if ("Preventive".equals(e.eventType())) {
+            LocalDate next = nextServiceDate(asset, completed);
+            jdbc.update("""
+                    UPDATE assets SET last_service_date = ?,
+                      last_service_reading = COALESCE(current_reading, last_service_reading),
+                      next_service_date = ?, status = ?, updated_at = NOW()
+                    WHERE tenant_id = ? AND id = ?
+                    """, completed, next, restoredStatus, ctx.tenantId(), e.assetId());
+        } else {
+            jdbc.update("UPDATE assets SET status = ?, updated_at = NOW() WHERE tenant_id = ? AND id = ?",
+                    restoredStatus, ctx.tenantId(), e.assetId());
+        }
+    }
+
+    private void recordMachineJobActivity(EventResponse event, String action) {
+        if (!"Breakdown".equals(event.eventType())) return;
+        String details = "{\"eventNumber\":\"" + event.eventNumber() + "\",\"maintenanceEventId\":\"" + event.id() + "\"}";
+        for (AffectedJob job : event.affectedJobs()) {
+            audit.record("production_job", job.id(), action, null, details);
+        }
     }
 
     private static BigDecimal downtimeHours(EventResponse event, Instant completion) {

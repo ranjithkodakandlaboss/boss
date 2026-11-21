@@ -19,26 +19,31 @@ public class InventoryReservationRepository {
         this.jdbc = jdbc;
     }
 
-    public Optional<UUID> lockProductionJob(UUID tenantId, UUID jobId) {
-        List<UUID> sites = jdbc.query("""
-                SELECT site_id
+    public record JobLock(UUID siteId, String status) {}
+
+    public Optional<JobLock> lockProductionJob(UUID tenantId, UUID jobId) {
+        List<JobLock> rows = jdbc.query("""
+                SELECT site_id, status
                   FROM production_jobs
                  WHERE tenant_id = ? AND id = ?
                  FOR UPDATE
-                """, (rs, rowNum) -> rs.getObject("site_id", UUID.class), tenantId, jobId);
-        return sites.stream().findFirst();
+                """, (rs, rowNum) -> new JobLock(
+                rs.getObject("site_id", UUID.class),
+                rs.getString("status")), tenantId, jobId);
+        return rows.stream().findFirst();
     }
 
     public Optional<ProductionJobSnapshot> lockProductionJobSnapshot(UUID tenantId, UUID jobId) {
         List<ProductionJobSnapshot> rows = jdbc.query("""
-                SELECT site_id, finished_item_id, quantity
+                SELECT site_id, finished_item_id, quantity, status
                   FROM production_jobs
                  WHERE tenant_id = ? AND id = ?
                  FOR UPDATE
                 """, (rs, rowNum) -> new ProductionJobSnapshot(
                 rs.getObject("site_id", UUID.class),
                 rs.getObject("finished_item_id", UUID.class),
-                rs.getBigDecimal("quantity")), tenantId, jobId);
+                rs.getBigDecimal("quantity"),
+                rs.getString("status")), tenantId, jobId);
         return rows.stream().findFirst();
     }
 
@@ -388,7 +393,7 @@ public class InventoryReservationRepository {
 
     public record JobMaterialNeed(UUID itemId, BigDecimal remainingQty) {}
 
-    public record ProductionJobSnapshot(UUID siteId, UUID finishedItemId, BigDecimal quantity) {}
+    public record ProductionJobSnapshot(UUID siteId, UUID finishedItemId, BigDecimal quantity, String status) {}
 
     public record JobMaterialSnapshotLine(UUID itemId, BigDecimal requiredQty, UUID uomId) {}
 

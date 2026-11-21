@@ -5,6 +5,7 @@ import { beforeEach, expect, it, vi } from "vitest";
 import { CustomerProvider } from "../auth/CustomerState";
 import { signIn, signOut } from "../auth/session";
 import JobsPage from "./JobsPage";
+import StageUpdatePage from "./StageUpdatePage";
 import JobWorkspacePage from "./JobWorkspacePage";
 
 const jobId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
@@ -37,6 +38,10 @@ const job = {
   materials: [{ id: requirementId, itemId, itemCode: "PLATE", itemName: "Plate", requiredQty: 20, issuedQty: 0, returnedQty: 0, netIssuedQty: 0, uomSymbol: "ea", readiness: "available" }],
   movements: [],
   inspections: [],
+  maintenanceActivity: [
+    { action: "MACHINE_BLOCK", eventNumber: "ME-2026-001", at: "2026-11-20T08:00:00Z" },
+    { action: "MACHINE_UNBLOCK", eventNumber: "ME-2026-001", at: "2026-11-20T10:00:00Z" },
+  ],
   actualCost: { sellingPrice: 1000, totalCost: 0 },
   estimatedCost: { totalCost: 50 },
 };
@@ -119,6 +124,19 @@ it("opens a job from an eligible customer order and issues material", async () =
   expect(calls.some((url) => url.includes(`/inventory/reservations/lots?jobId=${jobId}`))).toBe(true);
 }, 15000);
 
+it("shows maintenance block and unblock history in job Updates", async () => {
+  render(
+    <MemoryRouter initialEntries={[`/jobs/${jobId}`]}>
+      <CustomerProvider>
+        <Routes><Route path="/jobs/:id" element={<JobWorkspacePage />} /></Routes>
+      </CustomerProvider>
+    </MemoryRouter>,
+  );
+  await userEvent.click(await screen.findByRole("button", { name: "Updates" }));
+  expect(await screen.findByText(/Machine blocked by ME-2026-001/)).toBeInTheDocument();
+  expect(screen.getByText(/Machine block cleared by ME-2026-001/)).toBeInTheDocument();
+});
+
 it("issues a lot reserved to this job and hides a lot reserved to another job", async () => {
   const ownReserved = "22222222-2222-4222-8222-222222222222";
   const otherReserved = "33333333-3333-4333-8333-333333333333";
@@ -162,6 +180,37 @@ it("issues a lot reserved to this job and hides a lot reserved to another job", 
   await userEvent.type(screen.getByLabelText("Issue quantity for PLATE"), "5");
   await userEvent.click(screen.getByRole("button", { name: "Issue" }));
   expect(await screen.findByText("Material issued")).toBeInTheDocument();
+});
+
+it("uses the completion action for an in-progress stage and disables Continue", async () => {
+  const requests: string[] = [];
+  const runningJob = { ...job, status: "in_progress", stages: [{ ...job.stages![0], status: "in_progress" }] };
+  vi.stubGlobal("fetch", vi.fn((input: RequestInfo) => {
+    const url = String(input);
+    if (url.includes("/auth/me")) return Promise.resolve(json({ id: "1", tenantId: "t", email: "owner@example.test", displayName: "Owner", status: "active", roles: [{ role: "OWNER" }] }));
+    if (url.includes("/tenant/info")) return Promise.resolve(json({ id: "t", name: "North Works", status: "active" }));
+    if (url.includes("/onboarding")) return Promise.resolve(json({ industryType: "GENERAL_MANUFACTURING", completed: true, company: { sites: [], stores: [] } }));
+    if (url.includes("/jobs/features")) return Promise.resolve(json({ "production.stage.transition": true }));
+    if (url.endsWith(`/api/v1/jobs/${jobId}/stages/stage-1/complete`) || url.endsWith(`/api/v1/jobs/${jobId}/stages/stage-1/start`)) {
+      requests.push(url);
+      return Promise.resolve(json(runningJob));
+    }
+    if (url.endsWith(`/api/v1/jobs/${jobId}`)) return Promise.resolve(json(runningJob));
+    return Promise.resolve(json({}));
+  }));
+  render(
+    <MemoryRouter initialEntries={[`/jobs/${jobId}/stage/stage-1`]}>
+      <CustomerProvider>
+        <Routes><Route path="/jobs/:id/stage/:stageId" element={<StageUpdatePage />} /></Routes>
+      </CustomerProvider>
+    </MemoryRouter>,
+  );
+
+  expect(await screen.findByRole("button", { name: /continue/i })).toBeDisabled();
+  expect(screen.getByRole("button", { name: /complete/i })).toHaveAttribute("aria-pressed", "true");
+  await userEvent.click(screen.getByRole("button", { name: "Save Update" }));
+  expect(await screen.findByText("Update Recorded")).toBeInTheDocument();
+  expect(requests.map((url) => new URL(url).pathname)).toEqual([`/api/v1/jobs/${jobId}/stages/stage-1/complete`]);
 });
 
 it("adds a workflow when none is active and does not add a priority", async () => {

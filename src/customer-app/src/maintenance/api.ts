@@ -138,6 +138,8 @@ export const markRepaired = (id: string, body: { completionDate: string; rootCau
 export const listEvents = (assetId?: string) => api<MaintenanceEvent[]>(`${base}/events${assetId ? `?assetId=${assetId}` : ""}`);
 export const getEvent = (id: string) => api<MaintenanceEvent>(`${base}/events/${id}`);
 export const createEvent = (input: EventInput) => send<MaintenanceEvent>("POST", `${base}/events`, input);
+export const addAffectedJobs = (id: string, affectedJobIds: string[]) =>
+  send<MaintenanceEvent>("PUT", `${base}/events/${id}/affected-jobs`, { affectedJobIds });
 export const startEvent = (id: string) => send<MaintenanceEvent>("POST", `${base}/events/${id}/start`);
 export const closeEvent = (id: string, body: {
   completionDate?: string; rootCause?: string; workDone?: string; resolutionNotes?: string;

@@ -8,7 +8,12 @@ vi.mock("../runtime", () => ({
   useStore: () => ({ showToast, companyConfig: {}, currentUser: {}, quotations: [] }),
 }));
 
-vi.mock("../../../auth/session", () => ({ currentToken: () => "test-token" }));
+vi.mock("../../../auth/session", () => ({
+  currentToken: () => "test-token",
+  currentRefreshToken: () => null,
+  currentTokenExpiresAt: () => null,
+  storeRefreshedToken: vi.fn(),
+}));
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -30,10 +35,9 @@ it("downloads the authenticated Customer PO PDF instead of printing local draft 
   fireEvent.click(screen.getByRole("button", { name: "PDF / Print" }));
 
   await waitFor(() => expect(download).toHaveBeenCalledOnce());
-  expect(fetchPdf).toHaveBeenCalledWith(
-    expect.stringMatching(/\/api\/v1\/cpos\/po-1\/document$/),
-    expect.objectContaining({ headers: expect.objectContaining({ Authorization: "Bearer test-token" }) }),
-  );
+  const [pdfUrl, pdfInit] = fetchPdf.mock.calls[0];
+  expect(pdfUrl).toMatch(/\/api\/v1\/cpos\/po-1\/document$/);
+  expect(new Headers(pdfInit?.headers).get("Authorization")).toBe("Bearer test-token");
   expect(createObjectURL).toHaveBeenCalledWith(expect.objectContaining({ type: "application/pdf" }));
   expect(download.mock.contexts[0]).toHaveProperty("download", "CPO-1.pdf");
   expect(printWindow).not.toHaveBeenCalled();
@@ -44,7 +48,8 @@ it("downloads the authenticated Customer PO PDF instead of printing local draft 
   fireEvent.click(screen.getByRole("button", { name: "Download PDF" }));
   await waitFor(() => expect(download).toHaveBeenCalledTimes(2));
   expect(fetchPdf).toHaveBeenCalledTimes(2);
-  expect(fetchPdf.mock.calls[1]).toEqual(fetchPdf.mock.calls[0]);
+  expect(fetchPdf.mock.calls[1][0]).toBe(pdfUrl);
+  expect(new Headers(fetchPdf.mock.calls[1][1]?.headers).get("Authorization")).toBe("Bearer test-token");
 });
 
 it("shows the missing-tax-context error without falling back to an incorrect printable copy", async () => {

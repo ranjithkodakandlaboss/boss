@@ -20,6 +20,8 @@ import in.boss.masterdata.persistence.CustomerRepository;
 import in.boss.shared.audit.AuditService;
 import in.boss.shared.context.BossContextHolder;
 import jakarta.persistence.criteria.Predicate;
+import org.hibernate.exception.ConstraintViolationException;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
@@ -79,12 +81,14 @@ public class CustomerServiceImpl implements CustomerService {
     public CustomerDto createCustomer(CreateCustomerRequest request) {
         UUID tenantId = getTenantId();
         String code = request.getCode().trim();
+        String gstin = normalizeGstin(request.getGstin());
 
         if (customerRepository.existsByTenantIdAndCode(tenantId, code)) {
             throw new DuplicateEntityException("Customer code already exists: " + code);
         }
 
-        validateGstinAndPan(request.getGstin(), request.getPan());
+        validateGstinAndPan(gstin, request.getPan());
+        ensureGstinAvailable(tenantId, gstin, null);
         validateRating(request.getRating());
 
         Instant now = Instant.now();
@@ -96,7 +100,7 @@ public class CustomerServiceImpl implements CustomerService {
                 .code(code)
                 .name(request.getName().trim())
                 .legalName(request.getLegalName())
-                .gstin(cleanStr(request.getGstin()))
+                .gstin(gstin)
                 .pan(cleanStr(request.getPan()))
                 .customerType("business")
                 .billingAddress(toJson(request.getAddress()))
@@ -109,7 +113,7 @@ public class CustomerServiceImpl implements CustomerService {
                 .updatedAt(now)
                 .build();
 
-        CustomerEntity saved = customerRepository.save(entity);
+        CustomerEntity saved = saveCustomer(entity, gstin);
 
         List<CustomerContactEntity> savedContacts = new ArrayList<>();
         if (request.getContacts() != null) {
@@ -165,9 +169,12 @@ public class CustomerServiceImpl implements CustomerService {
             entity.setRating(request.getRating());
         }
 
+        String updatedGstin = request.getGstin() != null
+                ? normalizeGstin(request.getGstin())
+                : entity.getGstin();
         if (request.getGstin() != null || request.getPan() != null) {
             validateGstinAndPan(
-                    request.getGstin() != null ? request.getGstin() : entity.getGstin(),
+                    updatedGstin,
                     request.getPan() != null ? request.getPan() : entity.getPan()
             );
         }
@@ -179,7 +186,8 @@ public class CustomerServiceImpl implements CustomerService {
             entity.setLegalName(request.getLegalName().trim());
         }
         if (request.getGstin() != null) {
-            entity.setGstin(cleanStr(request.getGstin()));
+            ensureGstinAvailable(tenantId, updatedGstin, id);
+            entity.setGstin(updatedGstin);
         }
         if (request.getPan() != null) {
             entity.setPan(cleanStr(request.getPan()));
@@ -199,7 +207,7 @@ public class CustomerServiceImpl implements CustomerService {
         }
 
         entity.setUpdatedAt(Instant.now());
-        CustomerEntity saved = customerRepository.save(entity);
+        CustomerEntity saved = saveCustomer(entity, entity.getGstin());
 
         List<CustomerContactEntity> updatedContacts = currentContacts;
         if (request.getContacts() != null) {
@@ -327,6 +335,43 @@ public class CustomerServiceImpl implements CustomerService {
                 throw new ValidationException("Invalid PAN format: " + pan);
             }
         }
+    }
+
+    private String normalizeGstin(String gstin) {
+        String cleaned = cleanStr(gstin);
+        return cleaned == null ? null : cleaned.toUpperCase(Locale.ROOT);
+    }
+
+    private void ensureGstinAvailable(UUID tenantId, String gstin, UUID customerId) {
+        if (gstin == null) return;
+        boolean exists = customerId == null
+                ? customerRepository.existsByTenantIdAndGstinIgnoreCase(tenantId, gstin)
+                : customerRepository.existsByTenantIdAndGstinIgnoreCaseAndIdNot(tenantId, gstin, customerId);
+        if (exists) {
+            throw new DuplicateEntityException("GSTIN already exists for a customer in this tenant: " + gstin);
+        }
+    }
+
+    private CustomerEntity saveCustomer(CustomerEntity entity, String gstin) {
+        try {
+            return customerRepository.saveAndFlush(entity);
+        } catch (DataIntegrityViolationException exception) {
+            if (isGstinUniqueConstraintViolation(exception)) {
+                throw new DuplicateEntityException(
+                        "GSTIN already exists for a customer in this tenant: " + gstin);
+            }
+            throw exception;
+        }
+    }
+
+    private boolean isGstinUniqueConstraintViolation(DataIntegrityViolationException exception) {
+        for (Throwable cause = exception; cause != null; cause = cause.getCause()) {
+            if (cause instanceof ConstraintViolationException violation
+                    && "uq_customers_tenant_gstin".equals(violation.getConstraintName())) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private String cleanStr(String s) {

@@ -79,6 +79,56 @@ public class QualityService {
 
     @Transactional(readOnly = true)
     @PreAuthorize(BossPermissions.QUALITY_ACCESS)
+    public List<InspectionReferenceOption> listInspectionReferences(String referenceType) {
+        BossContext ctx = requireContext();
+        String sql = switch (referenceType) {
+            case "production_job" -> """
+                    SELECT pj.id, CONCAT(pj.job_number, ' | ', i.code, ' | ', i.name) AS label,
+                           pj.finished_item_id AS item_id, i.code AS item_code, i.name AS item_name,
+                           pj.quantity, pj.status
+                    FROM production_jobs pj
+                    JOIN items i ON i.id = pj.finished_item_id AND i.tenant_id = pj.tenant_id
+                    WHERE pj.tenant_id = ? AND pj.status <> 'cancelled'
+                    ORDER BY pj.created_at DESC
+                    LIMIT 500
+                    """;
+            case "job_stage" -> """
+                    SELECT js.id, CONCAT(pj.job_number, ' | ', js.name, ' | ', i.code, ' | ', i.name) AS label,
+                           pj.finished_item_id AS item_id, i.code AS item_code, i.name AS item_name,
+                           pj.quantity, js.status
+                    FROM job_stages js
+                    JOIN production_jobs pj ON pj.id = js.job_id AND pj.tenant_id = js.tenant_id
+                    JOIN items i ON i.id = pj.finished_item_id AND i.tenant_id = pj.tenant_id
+                    WHERE js.tenant_id = ? AND js.status IN ('pending', 'in_progress')
+                      AND pj.status NOT IN ('completed', 'cancelled')
+                    ORDER BY pj.created_at DESC, js.seq_no
+                    LIMIT 500
+                    """;
+            case "grn" -> """
+                    SELECT g.id, CONCAT(g.grn_number, ' | ', i.code, ' | ', i.name) AS label,
+                           l.item_id, i.code AS item_code, i.name AS item_name,
+                           l.received_qty AS quantity, g.status
+                    FROM grns g
+                    JOIN grn_lines l ON l.grn_id = g.id AND l.tenant_id = g.tenant_id
+                    JOIN items i ON i.id = l.item_id AND i.tenant_id = g.tenant_id
+                    WHERE g.tenant_id = ? AND g.status NOT IN ('rejected', 'closed')
+                    ORDER BY g.created_at DESC, l.line_no
+                    LIMIT 500
+                    """;
+            default -> throw badRequest("Unknown inspection reference type: " + referenceType);
+        };
+        return jdbc.query(sql, (rs, row) -> new InspectionReferenceOption(
+                rs.getObject("id", UUID.class),
+                rs.getString("label"),
+                rs.getObject("item_id", UUID.class),
+                rs.getString("item_code"),
+                rs.getString("item_name"),
+                rs.getBigDecimal("quantity"),
+                rs.getString("status")), ctx.tenantId());
+    }
+
+    @Transactional(readOnly = true)
+    @PreAuthorize(BossPermissions.QUALITY_ACCESS)
     public InspectionDetail getInspection(UUID inspectionId) {
         BossContext ctx = requireContext();
         List<InspectionDetail> rows = jdbc.query("""
@@ -201,7 +251,8 @@ public class QualityService {
         String newStatus = result != null ? "completed" : "in_progress";
 
         if (request.checklistResponses() != null) {
-            saveChecklistResponses(ctx, inspectionId, request.checklistResponses());
+            saveChecklistResponses(ctx, inspectionId, request.checklistResponses(),
+                    current.checklistResponses());
         }
 
         jdbc.update("""
@@ -218,6 +269,15 @@ public class QualityService {
                 LocalDate.now(),
                 request.notes(),
                 ctx.tenantId(), inspectionId);
+
+        if ("pass".equals(result)) {
+            jdbc.update("""
+                    UPDATE ncrs
+                    SET status = 'resolved', resolution = COALESCE(resolution, 'Reinspection passed'),
+                        resolved_by = ?, resolved_at = NOW(), updated_at = NOW()
+                    WHERE tenant_id = ? AND rework_inspection_id = ? AND status = 'rework'
+                    """, ctx.userId(), ctx.tenantId(), inspectionId);
+        }
 
         if ("fail".equals(result) && listNcrsForInspection(ctx.tenantId(), inspectionId).isEmpty()) {
             createNcrForFailedInspection(ctx, current, rejected);
@@ -246,6 +306,7 @@ public class QualityService {
         }
         if (!current.checklistResponses().isEmpty()) {
             validateMandatoryResponses(tenantId, inspectionId, request.checklistResponses());
+            validateNumericMeasurements(current.checklistResponses(), request);
         }
     }
 
@@ -258,30 +319,47 @@ public class QualityService {
         return jdbc.query("""
                 SELECT n.id, n.ncr_number, n.inspection_id, n.item_id,
                        i.code AS item_code, i.name AS item_name,
-                       n.lot_id, n.job_id, n.defect_category_id,
+                       COALESCE(n.lot_id, qi.lot_id) AS lot_id,
+                       COALESCE(n.job_id, ref_job.id) AS job_id,
+                       COALESCE(stored_job.job_number, ref_job.job_number) AS job_number,
+                       js.id AS stage_id, js.name AS stage_name, ml.lot_number,
+                       qi.inspection_number,
+                       n.defect_category_id,
                        COALESCE(n.defect_category_label_snapshot, co.label) AS defect_category_label,
                        n.defect_description, n.severity, n.quantity, n.status, n.disposition,
                        n.raised_by, au.display_name AS raised_by_name,
                        n.created_at,
                        c.status AS concession_status
                 FROM ncrs n
+                LEFT JOIN quality_inspections qi ON qi.id = n.inspection_id AND qi.tenant_id = n.tenant_id
                 LEFT JOIN items i ON i.id = n.item_id AND i.tenant_id = n.tenant_id
                 LEFT JOIN app_users au ON au.id = n.raised_by
                 LEFT JOIN tenant_config_options co ON co.id = n.defect_category_id AND co.tenant_id = n.tenant_id
                 LEFT JOIN concessions c ON c.ncr_id = n.id AND c.tenant_id = n.tenant_id
+                LEFT JOIN job_stages js ON js.id = qi.reference_id AND js.tenant_id = qi.tenant_id
+                     AND qi.reference_type = 'job_stage'
+                LEFT JOIN production_jobs ref_job ON ref_job.id = CASE
+                     WHEN qi.reference_type = 'production_job' THEN qi.reference_id
+                     WHEN qi.reference_type = 'job_stage' THEN js.job_id END
+                     AND ref_job.tenant_id = qi.tenant_id
+                LEFT JOIN production_jobs stored_job ON stored_job.id = n.job_id AND stored_job.tenant_id = n.tenant_id
+                LEFT JOIN material_lots ml ON ml.id = COALESCE(n.lot_id, qi.lot_id) AND ml.tenant_id = n.tenant_id
                 WHERE n.tenant_id = ?
                   AND (CAST(? AS text) IS NULL OR n.status = CAST(? AS text))
                   AND (CAST(? AS text) IS NULL OR n.ncr_number ILIKE '%' || CAST(? AS text) || '%'
                        OR i.name ILIKE '%' || CAST(? AS text) || '%'
                        OR i.code ILIKE '%' || CAST(? AS text) || '%'
-                       OR n.defect_description ILIKE '%' || CAST(? AS text) || '%')
+                       OR n.defect_description ILIKE '%' || CAST(? AS text) || '%'
+                       OR COALESCE(stored_job.job_number, ref_job.job_number) ILIKE '%' || CAST(? AS text) || '%'
+                       OR js.name ILIKE '%' || CAST(? AS text) || '%'
+                       OR qi.inspection_number ILIKE '%' || CAST(? AS text) || '%')
                 ORDER BY n.created_at DESC
                 LIMIT 500
                 """,
                 (rs, row) -> mapNcrSummary(rs),
                 ctx.tenantId(),
                 status, status,
-                q, q, q, q, q);
+                q, q, q, q, q, q, q, q);
     }
 
     @Transactional(readOnly = true)
@@ -290,22 +368,36 @@ public class QualityService {
         BossContext ctx = requireContext();
         List<NcrDetail> rows = jdbc.query("""
                 SELECT n.id, n.ncr_number, n.inspection_id, qi.inspection_number,
+                       qi.inspection_type, qi.result AS inspection_result,
+                       qi.reference_type, qi.reference_id,
                        n.item_id, i.code AS item_code, i.name AS item_name,
-                       n.lot_id, n.job_id, pj.job_number,
+                       COALESCE(n.lot_id, qi.lot_id) AS lot_id, ml.lot_number,
+                       COALESCE(n.job_id, ref_job.id) AS job_id,
+                       COALESCE(stored_job.job_number, ref_job.job_number) AS job_number,
+                       js.id AS stage_id, js.name AS stage_name,
                        n.defect_category_id,
                        COALESCE(n.defect_category_label_snapshot, co.label) AS defect_category_label,
                        n.defect_description, n.severity, n.quantity,
                        n.root_cause, n.status, n.disposition, n.resolution,
                        n.raised_by, ru.display_name AS raised_by_name,
                        n.resolved_by, rv.display_name AS resolved_by_name,
-                       n.resolved_at, n.created_at, n.updated_at
+                       n.resolved_at, n.rework_inspection_id, rqi.inspection_number AS rework_inspection_number,
+                       n.created_at, n.updated_at
                 FROM ncrs n
                 LEFT JOIN quality_inspections qi ON qi.id = n.inspection_id AND qi.tenant_id = n.tenant_id
                 LEFT JOIN items i ON i.id = n.item_id AND i.tenant_id = n.tenant_id
-                LEFT JOIN production_jobs pj ON pj.id = n.job_id AND pj.tenant_id = n.tenant_id
+                LEFT JOIN job_stages js ON js.id = qi.reference_id AND js.tenant_id = qi.tenant_id
+                     AND qi.reference_type = 'job_stage'
+                LEFT JOIN production_jobs ref_job ON ref_job.id = CASE
+                     WHEN qi.reference_type = 'production_job' THEN qi.reference_id
+                     WHEN qi.reference_type = 'job_stage' THEN js.job_id END
+                     AND ref_job.tenant_id = qi.tenant_id
+                LEFT JOIN production_jobs stored_job ON stored_job.id = n.job_id AND stored_job.tenant_id = n.tenant_id
+                LEFT JOIN material_lots ml ON ml.id = COALESCE(n.lot_id, qi.lot_id) AND ml.tenant_id = n.tenant_id
                 LEFT JOIN tenant_config_options co ON co.id = n.defect_category_id AND co.tenant_id = n.tenant_id
                 LEFT JOIN app_users ru ON ru.id = n.raised_by
                 LEFT JOIN app_users rv ON rv.id = n.resolved_by
+                LEFT JOIN quality_inspections rqi ON rqi.id = n.rework_inspection_id AND rqi.tenant_id = n.tenant_id
                 WHERE n.tenant_id = ? AND n.id = ?
                 """,
                 (rs, row) -> {
@@ -315,11 +407,18 @@ public class QualityService {
                             id, rs.getString("ncr_number"),
                             rs.getObject("inspection_id", UUID.class),
                             rs.getString("inspection_number"),
+                            rs.getString("inspection_type"),
+                            rs.getString("inspection_result"),
+                            rs.getString("reference_type"),
+                            rs.getObject("reference_id", UUID.class),
                             rs.getObject("item_id", UUID.class),
                             rs.getString("item_code"), rs.getString("item_name"),
                             rs.getObject("lot_id", UUID.class),
+                            rs.getString("lot_number"),
                             rs.getObject("job_id", UUID.class),
                             rs.getString("job_number"),
+                            rs.getObject("stage_id", UUID.class),
+                            rs.getString("stage_name"),
                             rs.getObject("defect_category_id", UUID.class),
                             rs.getString("defect_category_label"),
                             rs.getString("defect_description"),
@@ -330,6 +429,8 @@ public class QualityService {
                             rs.getObject("resolved_by", UUID.class), rs.getString("resolved_by_name"),
                             instant(rs, "resolved_at"),
                             concessions,
+                            rs.getObject("rework_inspection_id", UUID.class),
+                            rs.getString("rework_inspection_number"),
                             instant(rs, "created_at"),
                             instant(rs, "updated_at"));
                 },
@@ -357,11 +458,9 @@ public class QualityService {
         if (inspFound == null || inspFound == 0) {
             throw notFound("Inspection not found");
         }
-        validateItem(ctx.tenantId(), request.itemId());
-        if (request.severity() != null
-                && !List.of("critical", "major", "medium", "minor").contains(request.severity())) {
-            throw badRequest("Invalid NCR severity");
-        }
+        InspectionDetail inspection = getInspection(request.inspectionId());
+        UUID jobId = validateNcrTarget(ctx, request, inspection);
+        UUID lotId = request.lotId() != null ? request.lotId() : inspection.lotId();
         ConfigOption defectCategory = resolveConfigOption(
                 ctx.tenantId(), request.defectCategoryId(), "DEFECT_CATEGORY");
 
@@ -377,7 +476,7 @@ public class QualityService {
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?)
                 """,
                 id, ctx.tenantId(), number,
-                request.inspectionId(), request.itemId(), request.lotId(), request.jobId(),
+                request.inspectionId(), request.itemId(), lotId, jobId,
                 request.quantity() != null ? request.quantity() : BigDecimal.ONE,
                 defectCategory == null ? null : defectCategory.id(),
                 defectCategory == null ? null : defectCategory.label(),
@@ -390,6 +489,27 @@ public class QualityService {
         return getNcr(id);
     }
 
+    private UUID validateNcrTarget(BossContext ctx, CreateNcrRequest request, InspectionDetail inspection) {
+        validateItem(ctx.tenantId(), request.itemId());
+        if (inspection.itemId() != null && !inspection.itemId().equals(request.itemId())) {
+            throw badRequest("NCR item must match the linked inspection");
+        }
+        UUID inspectionJobId = jobIdForInspection(ctx.tenantId(), inspection);
+        if (request.jobId() != null && inspectionJobId != null
+                && !request.jobId().equals(inspectionJobId)) {
+            throw badRequest("NCR job must match the linked inspection");
+        }
+        UUID jobId = inspectionJobId != null ? inspectionJobId : request.jobId();
+        if (jobId != null) {
+            requireExists("production_jobs", ctx.tenantId(), jobId, "Production job not found");
+        }
+        if (request.severity() != null
+                && !List.of("critical", "major", "medium", "minor").contains(request.severity())) {
+            throw badRequest("Invalid NCR severity");
+        }
+        return jobId;
+    }
+
     @PreAuthorize(BossPermissions.QUALITY_WRITE)
     public NcrDetail updateNcr(UUID ncrId, UpdateNcrRequest request) {
         BossContext ctx = requireContext();
@@ -399,25 +519,102 @@ public class QualityService {
             throw conflict("NCR is already " + current.status());
         }
 
+        String nextStatus = request.status() == null ? current.status() : request.status();
+        if (!List.of("open", "under_review", "resolved", "closed", "scrapped", "rework")
+                .contains(nextStatus)) {
+            throw badRequest("Invalid NCR status");
+        }
+        String nextDisposition = resolveNcrDisposition(nextStatus, request.disposition(), current.disposition());
+
         jdbc.update("""
                 UPDATE ncrs
                 SET status = COALESCE(?, status),
-                    disposition = COALESCE(?, disposition),
+                    disposition = ?,
                     root_cause = COALESCE(?, root_cause),
                     resolution = COALESCE(?, resolution),
-                    resolved_by = CASE WHEN ? IN ('closed','scrapped') THEN ? ELSE resolved_by END,
-                    resolved_at = CASE WHEN ? IN ('closed','scrapped') THEN NOW() ELSE resolved_at END,
+                    resolved_by = CASE WHEN ? IN ('resolved','closed','scrapped') THEN ? ELSE resolved_by END,
+                    resolved_at = CASE WHEN ? IN ('resolved','closed','scrapped') THEN NOW() ELSE resolved_at END,
                     updated_at = NOW()
                 WHERE tenant_id = ? AND id = ?
                 """,
-                request.status(), request.disposition(), request.rootCause(), request.resolution(),
-                request.status(), ctx.userId(),
-                request.status(),
+                nextStatus, nextDisposition, request.rootCause(), request.resolution(),
+                nextStatus, ctx.userId(),
+                nextStatus,
                 ctx.tenantId(), ncrId);
 
         audit.record("ncrs", ncrId, "UPDATE",
                 "{\"status\":\"" + current.status() + "\"}",
                 "{\"status\":\"" + request.status() + "\"}");
+        return getNcr(ncrId);
+    }
+
+    private String resolveNcrDisposition(String nextStatus, String requestDisposition, String currentDisposition) {
+        String nextDisposition = requestDisposition == null ? currentDisposition : requestDisposition;
+        if ("rework".equals(nextStatus)) {
+            if (nextDisposition != null && !"rework".equals(nextDisposition)) {
+                throw badRequest("Rework status requires rework disposition");
+            }
+            return "rework";
+        }
+        if ("scrapped".equals(nextStatus)) {
+            if (nextDisposition != null && !"scrap".equals(nextDisposition)) {
+                throw badRequest("Scrapped status requires scrap disposition");
+            }
+            return "scrap";
+        }
+        return nextDisposition;
+    }
+
+    @PreAuthorize(BossPermissions.QUALITY_WRITE)
+    public NcrDetail startNcrReinspection(UUID ncrId) {
+        BossContext ctx = requireContext();
+        NcrDetail ncr = getNcr(ncrId);
+        if (!"rework".equals(ncr.status()) || !"rework".equals(ncr.disposition())) {
+            throw conflict("A reinspection can only be started for an NCR in rework");
+        }
+
+        UUID existingInspectionId = jdbc.queryForObject("""
+                SELECT rework_inspection_id FROM ncrs
+                WHERE tenant_id = ? AND id = ?
+                FOR UPDATE
+                """, UUID.class, ctx.tenantId(), ncrId);
+        if (existingInspectionId != null) {
+            return getNcr(ncrId);
+        }
+
+        InspectionDetail source = getInspection(ncr.inspectionId());
+        UUID inspectionId = UUID.randomUUID();
+        String number = "INSP-" + LocalDate.now().toString().replace("-", "")
+                + "-" + inspectionId.toString().substring(0, 6).toUpperCase(Locale.ROOT);
+        jdbc.update("""
+                INSERT INTO quality_inspections
+                  (id, tenant_id, inspection_number, inspection_type, inspection_type_option_id,
+                   inspection_type_label_snapshot, reference_type, reference_id, item_id, lot_id,
+                   quantity_inspected, status, inspector_id, inspection_date, notes, inspection_template_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)
+                """,
+                inspectionId, ctx.tenantId(), number,
+                source.inspectionType(), source.inspectionTypeOptionId(), source.inspectionTypeLabel(),
+                source.referenceType(), source.referenceId(), source.itemId(), source.lotId(),
+                source.quantityInspected(), ctx.userId(), LocalDate.now(),
+                "Reinspection for " + ncr.ncrNumber() + " after " + source.inspectionNumber(),
+                source.templateId());
+        jdbc.update("""
+                INSERT INTO inspection_checklist_responses
+                  (id, tenant_id, inspection_id, checklist_item_id, item_description_snapshot,
+                   response_type, is_mandatory, unit_snapshot, spec_min_snapshot, spec_max_snapshot)
+                SELECT gen_random_uuid(), tenant_id, ?, checklist_item_id, item_description_snapshot,
+                       response_type, is_mandatory, unit_snapshot, spec_min_snapshot, spec_max_snapshot
+                FROM inspection_checklist_responses
+                WHERE tenant_id = ? AND inspection_id = ?
+                """, inspectionId, ctx.tenantId(), source.id());
+        jdbc.update("""
+                UPDATE ncrs
+                SET rework_inspection_id = ?, updated_at = NOW()
+                WHERE tenant_id = ? AND id = ?
+                """, inspectionId, ctx.tenantId(), ncrId);
+        audit.record("ncrs", ncrId, "START_REINSPECTION", null,
+                "{\"inspectionId\":\"" + inspectionId + "\"}");
         return getNcr(ncrId);
     }
 
@@ -521,7 +718,18 @@ public class QualityService {
     @PreAuthorize(BossPermissions.QUALITY_ACCESS)
     public DispatchEligibilityResponse checkDispatchEligibility(UUID jobId) {
         BossContext ctx = requireContext();
-        return computeEligibility(ctx.tenantId(), jobId);
+        DispatchEligibilityResponse eligibility = computeEligibility(ctx.tenantId(), jobId);
+        if (eligibility.eligible()
+                && (eligibility.clearanceCertificateId() == null
+                || !"issued".equals(eligibility.clearanceCertificateStatus()))) {
+            List<String> blockers = new ArrayList<>(eligibility.blockers());
+            blockers.add("Customer clearance certificate has not been issued.");
+            return new DispatchEligibilityResponse(jobId, false,
+                    "Customer clearance certificate has not been issued",
+                    blockers, eligibility.inspectionStatus(),
+                    eligibility.clearanceCertificateStatus(), eligibility.clearanceCertificateId());
+        }
+        return eligibility;
     }
 
     public DispatchEligibilityResponse computeEligibility(UUID tenantId, UUID jobId) {
@@ -575,7 +783,7 @@ public class QualityService {
     // ===== CHECKLIST TEMPLATE ADMIN =====
 
     @Transactional(readOnly = true)
-    @PreAuthorize(BossPermissions.OWNER_OR_OPS)
+    @PreAuthorize(BossPermissions.QUALITY_ACCESS)
     public List<ChecklistTemplateDto> listTemplates(String scope, String inspectionType, Boolean activeOnly) {
         BossContext ctx = requireContext();
         return jdbc.query("""
@@ -683,7 +891,9 @@ public class QualityService {
     private List<ChecklistResponseDto> listChecklistResponses(UUID tenantId, UUID inspectionId) {
         return jdbc.query("""
                 SELECT id, checklist_item_id, item_description_snapshot AS item_description,
-                       response_type, is_mandatory, response_value, response_pass, observation,
+                       response_type, is_mandatory, unit_snapshot AS unit,
+                       spec_min_snapshot AS spec_min, spec_max_snapshot AS spec_max,
+                       response_value, response_pass, observation,
                        responded_at IS NOT NULL AS answered
                 FROM inspection_checklist_responses
                 WHERE tenant_id = ? AND inspection_id = ?
@@ -695,6 +905,9 @@ public class QualityService {
                         rs.getString("item_description"),
                         rs.getString("response_type"),
                         rs.getBoolean("is_mandatory"),
+                        rs.getString("unit"),
+                        rs.getBigDecimal("spec_min"),
+                        rs.getBigDecimal("spec_max"),
                         rs.getString("response_value"),
                         (Boolean) rs.getObject("response_pass"),
                         rs.getString("observation"),
@@ -704,19 +917,32 @@ public class QualityService {
 
     private List<NcrSummary> listNcrsForInspection(UUID tenantId, UUID inspectionId) {
         return jdbc.query("""
-                SELECT n.id, n.ncr_number, n.inspection_id, n.item_id,
+                SELECT n.id, n.ncr_number, n.inspection_id, qi.inspection_number, n.item_id,
                        i.code AS item_code, i.name AS item_name,
-                       n.lot_id, n.job_id, n.defect_category_id,
+                       COALESCE(n.lot_id, qi.lot_id) AS lot_id,
+                       COALESCE(n.job_id, ref_job.id) AS job_id,
+                       COALESCE(stored_job.job_number, ref_job.job_number) AS job_number,
+                       js.id AS stage_id, js.name AS stage_name, ml.lot_number,
+                       n.defect_category_id,
                        COALESCE(n.defect_category_label_snapshot, co.label) AS defect_category_label,
                        n.defect_description, n.severity, n.quantity, n.status, n.disposition,
                        n.raised_by, au.display_name AS raised_by_name,
                        n.created_at,
                        c.status AS concession_status
                 FROM ncrs n
+                LEFT JOIN quality_inspections qi ON qi.id = n.inspection_id AND qi.tenant_id = n.tenant_id
                 LEFT JOIN items i ON i.id = n.item_id AND i.tenant_id = n.tenant_id
                 LEFT JOIN app_users au ON au.id = n.raised_by
                 LEFT JOIN tenant_config_options co ON co.id = n.defect_category_id AND co.tenant_id = n.tenant_id
                 LEFT JOIN concessions c ON c.ncr_id = n.id AND c.tenant_id = n.tenant_id
+                LEFT JOIN job_stages js ON js.id = qi.reference_id AND js.tenant_id = qi.tenant_id
+                     AND qi.reference_type = 'job_stage'
+                LEFT JOIN production_jobs ref_job ON ref_job.id = CASE
+                     WHEN qi.reference_type = 'production_job' THEN qi.reference_id
+                     WHEN qi.reference_type = 'job_stage' THEN js.job_id END
+                     AND ref_job.tenant_id = qi.tenant_id
+                LEFT JOIN production_jobs stored_job ON stored_job.id = n.job_id AND stored_job.tenant_id = n.tenant_id
+                LEFT JOIN material_lots ml ON ml.id = COALESCE(n.lot_id, qi.lot_id) AND ml.tenant_id = n.tenant_id
                 WHERE n.tenant_id = ? AND n.inspection_id = ?
                 ORDER BY n.created_at
                 """,
@@ -783,46 +1009,37 @@ public class QualityService {
     }
 
     private String determineFinalInspectionStatus(UUID tenantId, UUID jobId) {
-        // Look for completed final or dispatch_readiness inspection with pass result
-        Integer passed = jdbc.queryForObject("""
-                SELECT COUNT(*) FROM quality_inspections
+        List<FinalInspectionState> inspections = jdbc.query("""
+                SELECT id, status, result
+                  FROM quality_inspections
                 WHERE tenant_id = ? AND reference_type = 'production_job' AND reference_id = ?
                   AND inspection_type IN ('final','dispatch_readiness')
-                  AND status = 'completed' AND result = 'pass'
-                """, Integer.class, tenantId, jobId);
-        if (passed != null && passed > 0) return "passed";
+                ORDER BY created_at DESC, id DESC
+                LIMIT 1
+                """, (rs, row) -> new FinalInspectionState(
+                rs.getObject("id", UUID.class), rs.getString("status"), rs.getString("result")),
+                tenantId, jobId);
+        if (inspections.isEmpty()) return "not_started";
 
-        // Check for concession on a failed final inspection
-        Integer conceded = jdbc.queryForObject("""
-                SELECT COUNT(*) FROM concessions c
-                JOIN ncrs n ON n.id = c.ncr_id AND n.tenant_id = c.tenant_id
-                JOIN quality_inspections q ON q.id = n.inspection_id AND q.tenant_id = n.tenant_id
-                WHERE c.tenant_id = ? AND c.status = 'approved'
-                  AND q.reference_type = 'production_job' AND q.reference_id = ?
-                  AND q.inspection_type IN ('final','dispatch_readiness')
-                """, Integer.class, tenantId, jobId);
-        if (conceded != null && conceded > 0) return "concession_granted";
-
-        // Check if there's a pending/in_progress inspection
-        Integer pending = jdbc.queryForObject("""
-                SELECT COUNT(*) FROM quality_inspections
-                WHERE tenant_id = ? AND reference_type = 'production_job' AND reference_id = ?
-                  AND inspection_type IN ('final','dispatch_readiness')
-                  AND status IN ('pending','in_progress')
-                """, Integer.class, tenantId, jobId);
-        if (pending != null && pending > 0) return "in_progress";
-
-        // Check for failed
-        Integer failed = jdbc.queryForObject("""
-                SELECT COUNT(*) FROM quality_inspections
-                WHERE tenant_id = ? AND reference_type = 'production_job' AND reference_id = ?
-                  AND inspection_type IN ('final','dispatch_readiness')
-                  AND status = 'completed' AND result = 'fail'
-                """, Integer.class, tenantId, jobId);
-        if (failed != null && failed > 0) return "failed";
-
+        FinalInspectionState latest = inspections.get(0);
+        if (!"completed".equals(latest.status())) return "in_progress";
+        if ("pass".equals(latest.result())) return "passed";
+        if ("fail".equals(latest.result())) {
+            Boolean conceded = jdbc.queryForObject("""
+                    SELECT EXISTS (
+                        SELECT 1
+                          FROM concessions c
+                          JOIN ncrs n ON n.id = c.ncr_id AND n.tenant_id = c.tenant_id
+                         WHERE c.tenant_id = ? AND c.status = 'approved'
+                           AND n.inspection_id = ?
+                    )
+                    """, Boolean.class, tenantId, latest.id());
+            return Boolean.TRUE.equals(conceded) ? "concession_granted" : "failed";
+        }
         return "not_started";
     }
+
+    private record FinalInspectionState(UUID id, String status, String result) {}
 
     private record ClearanceCertStatus(UUID id, String status) {}
 
@@ -843,13 +1060,47 @@ public class QualityService {
         List<ChecklistResponseDto> existing = listChecklistResponses(tenantId, inspectionId);
         for (ChecklistResponseDto item : existing) {
             if (!item.isMandatory()) continue;
-            boolean answered = incoming != null && item.checklistItemId() != null && incoming.stream()
-                    .anyMatch(r -> item.checklistItemId().equals(r.checklistItemId())
-                            && (r.responseValue() != null || r.responsePass() != null));
-            if (!answered && !item.answered()) {
+            ChecklistResponseInput submitted = incoming == null || item.checklistItemId() == null ? null
+                    : incoming.stream()
+                            .filter(r -> item.checklistItemId().equals(r.checklistItemId()))
+                            .findFirst().orElse(null);
+            boolean answered = submitted == null
+                    ? item.answered()
+                    : (submitted.responseValue() != null && !submitted.responseValue().isBlank())
+                            || submitted.responsePass() != null;
+            if (!answered) {
                 throw badRequest("Mandatory checklist item not answered: " + item.itemDescription());
             }
         }
+    }
+
+    private void validateNumericMeasurements(List<ChecklistResponseDto> existing,
+                                               RecordResultRequest request) {
+        for (ChecklistResponseDto item : existing) {
+            if (!"numeric".equals(item.responseType())) continue;
+            ChecklistResponseInput submitted = request.checklistResponses() == null ? null
+                    : request.checklistResponses().stream()
+                            .filter(r -> item.checklistItemId() != null
+                                    && item.checklistItemId().equals(r.checklistItemId()))
+                            .findFirst().orElse(null);
+            String value = submitted == null ? item.responseValue() : submitted.responseValue();
+            if (value == null || value.isBlank()) continue;
+            BigDecimal measurement;
+            try {
+                measurement = new BigDecimal(value.trim());
+            } catch (NumberFormatException exception) {
+                throw badRequest("Numeric measurement must be a valid number: " + item.itemDescription());
+            }
+            if (!withinSpecification(measurement, item.specMin(), item.specMax())
+                    && "pass".equals(request.result())) {
+                throw badRequest("Numeric measurement outside specification: " + item.itemDescription());
+            }
+        }
+    }
+
+    private boolean withinSpecification(BigDecimal measurement, BigDecimal minimum, BigDecimal maximum) {
+        return (minimum == null || measurement.compareTo(minimum) >= 0)
+                && (maximum == null || measurement.compareTo(maximum) <= 0);
     }
 
     private void snapshotChecklistItems(BossContext ctx, UUID inspectionId, UUID templateId) {
@@ -858,25 +1109,43 @@ public class QualityService {
             jdbc.update("""
                     INSERT INTO inspection_checklist_responses
                       (id, tenant_id, inspection_id, checklist_item_id,
-                       item_description_snapshot, response_type, is_mandatory)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                       item_description_snapshot, response_type, is_mandatory,
+                       unit_snapshot, spec_min_snapshot, spec_max_snapshot)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     UUID.randomUUID(), ctx.tenantId(), inspectionId, item.id(),
-                    item.description(), item.responseType(), item.isMandatory());
+                    item.description(), item.responseType(), item.isMandatory(),
+                    item.unit(), item.specMin(), item.specMax());
         }
     }
 
     private void saveChecklistResponses(BossContext ctx, UUID inspectionId,
-                                         List<ChecklistResponseInput> responses) {
+                                         List<ChecklistResponseInput> responses,
+                                         List<ChecklistResponseDto> snapshots) {
         if (responses == null) return;
         for (ChecklistResponseInput r : responses) {
+            ChecklistResponseDto snapshot = snapshots.stream()
+                    .filter(item -> item.checklistItemId() != null
+                            && item.checklistItemId().equals(r.checklistItemId()))
+                    .findFirst().orElse(null);
+            Boolean responsePass = r.responsePass();
+            if (snapshot != null && "numeric".equals(snapshot.responseType())
+                    && r.responseValue() != null && !r.responseValue().isBlank()) {
+                BigDecimal measurement;
+                try {
+                    measurement = new BigDecimal(r.responseValue().trim());
+                } catch (NumberFormatException exception) {
+                    throw badRequest("Numeric measurement must be a valid number: " + snapshot.itemDescription());
+                }
+                responsePass = withinSpecification(measurement, snapshot.specMin(), snapshot.specMax());
+            }
             jdbc.update("""
                     UPDATE inspection_checklist_responses
                     SET response_value = ?, response_pass = ?, observation = ?,
                         responded_at = NOW(), updated_at = NOW()
                     WHERE tenant_id = ? AND inspection_id = ? AND checklist_item_id = ?
                     """,
-                    r.responseValue(), r.responsePass(), r.observation(),
+                    r.responseValue(), responsePass, r.observation(),
                     ctx.tenantId(), inspectionId, r.checklistItemId());
         }
     }
@@ -987,16 +1256,35 @@ public class QualityService {
         String ncrNumber = "NCR-" + ncrId.toString().substring(0, 8).toUpperCase(Locale.ROOT);
         BigDecimal qty = rejected != null && rejected.signum() > 0 ? rejected
                 : (inspection.quantityInspected() != null ? inspection.quantityInspected() : BigDecimal.ONE);
+        String inspectionLabel = switch (inspection.inspectionType()) {
+            case "incoming" -> "Incoming";
+            case "in_process" -> "In-process";
+            case "final" -> "Final";
+            case "customer" -> "Customer";
+            case "dispatch_readiness" -> "Dispatch readiness";
+            default -> "Quality";
+        };
+        UUID jobId = jobIdForInspection(ctx.tenantId(), inspection);
         jdbc.update("""
                 INSERT INTO ncrs
-                  (id, tenant_id, ncr_number, inspection_id, item_id, lot_id,
+                  (id, tenant_id, ncr_number, inspection_id, item_id, lot_id, job_id,
                    quantity, defect_description, severity, status, raised_by)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'major', 'open', ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'major', 'open', ?)
                 """,
                 ncrId, ctx.tenantId(), ncrNumber,
-                inspection.id(), inspection.itemId(), inspection.lotId(),
-                qty, "In-process inspection failed", ctx.userId());
+                inspection.id(), inspection.itemId(), inspection.lotId(), jobId,
+                qty, inspectionLabel + " inspection failed", ctx.userId());
         audit.record("ncrs", ncrId, "CREATE", null, "{\"auto\":true}");
+    }
+
+    private UUID jobIdForInspection(UUID tenantId, InspectionDetail inspection) {
+        return switch (inspection.referenceType()) {
+            case "production_job" -> inspection.referenceId();
+            case "job_stage" -> jdbc.queryForObject("""
+                    SELECT job_id FROM job_stages WHERE tenant_id = ? AND id = ?
+                    """, UUID.class, tenantId, inspection.referenceId());
+            default -> null;
+        };
     }
 
     private InspectionSummary mapSummary(ResultSet rs) throws SQLException {
@@ -1032,11 +1320,16 @@ public class QualityService {
                 rs.getObject("id", UUID.class),
                 rs.getString("ncr_number"),
                 rs.getObject("inspection_id", UUID.class),
+                rs.getString("inspection_number"),
                 rs.getObject("item_id", UUID.class),
                 rs.getString("item_code"),
                 rs.getString("item_name"),
                 rs.getObject("lot_id", UUID.class),
                 rs.getObject("job_id", UUID.class),
+                rs.getString("job_number"),
+                rs.getObject("stage_id", UUID.class),
+                rs.getString("stage_name"),
+                rs.getString("lot_number"),
                 rs.getObject("defect_category_id", UUID.class),
                 rs.getString("defect_category_label"),
                 rs.getString("defect_description"),

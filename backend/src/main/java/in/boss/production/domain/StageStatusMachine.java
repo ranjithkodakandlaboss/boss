@@ -24,7 +24,7 @@ public final class StageStatusMachine {
 
     public static boolean allowed(String from, String to) {
         return switch (from) {
-            case PENDING -> IN_PROGRESS.equals(to) || COMPLETED.equals(to) || SKIPPED.equals(to);
+            case PENDING -> IN_PROGRESS.equals(to) || SKIPPED.equals(to);
             case IN_PROGRESS -> COMPLETED.equals(to);
             default -> false;
         };

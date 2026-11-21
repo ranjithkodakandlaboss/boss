@@ -16,7 +16,7 @@ export default function SupplierPODetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const {
-    supplierPos, supplierPoLines, supplierQuotations, supplierInvitations, purchaseReqs, suppliers, grns, poAmendments,
+    supplierPos, supplierPoLines, supplierQuotations, supplierInvitations, purchaseReqs, suppliers, sites, grns, poAmendments,
     supplierBills, supplierPayments, supplierPaymentAllocations,
     setSupplierPoStatus, confirmAndIssueSPO, notifyNonSelectedSuppliers, recordSupplierPOConfirmation,
     resolvePoAmendment, currentUser, showToast,
@@ -48,6 +48,20 @@ export default function SupplierPODetail() {
   const canApprove = ['owner', 'buyer'].includes(currentUser.role);
   const pr = purchaseReqs.find(p => p.id === po.prId);
   const selectedQuotation = supplierQuotations.find(q => q.id === po.supplierQuotationId || (po.supplierQuotationRef && q.quoteNumber === po.supplierQuotationRef));
+  const supplier = suppliers.find(s => s.id === po.supplierId);
+  const site = sites.find(s => s.id === po.deliverToSiteId);
+  const isInterState = Boolean(site?.state && supplier?.state && site.state.trim().toLowerCase() !== supplier.state.trim().toLowerCase());
+  const taxableValue = lines.reduce((sum, l) => sum + (l.value || 0), 0);
+  const effectiveGstRate = lines.find(l => l.gstRate != null)?.gstRate ?? (taxableValue && po.taxAmount ? Math.round((po.taxAmount / taxableValue) * 100) : 18);
+  const totalTax = po.taxAmount != null && po.taxAmount > 0
+    ? po.taxAmount
+    : Math.round(taxableValue * (Number(effectiveGstRate) / 100) * 100) / 100;
+  const grandTotal = po.totalValue != null && po.totalValue > 0
+    ? po.totalValue
+    : Math.round((taxableValue + totalTax + (po.freightAmount || 0)) * 100) / 100;
+  const cgstAmount = isInterState ? 0 : Math.round((totalTax / 2) * 100) / 100;
+  const sgstAmount = isInterState ? 0 : Math.round((totalTax - cgstAmount) * 100) / 100;
+  const igstAmount = isInterState ? totalTax : 0;
   const prInvitations = pr ? supplierInvitations.filter(i => i.prId === pr.id) : [];
   const amendments = poAmendments.filter(a => a.entityType === 'supplier_po' && a.poId === po.id);
   const pendingAmendment = amendments.find(a => a.status === 'pending_approval');
@@ -474,6 +488,52 @@ export default function SupplierPODetail() {
                   ))}
                 </tbody>
               </table>
+            </div>
+
+            {/* GST Breakdown */}
+            <div className="p-4 border-t border-[var(--border)] bg-[var(--surface-2)] flex justify-end">
+              <div className="w-full max-w-sm space-y-2">
+                <h4 className="text-xs font-bold uppercase tracking-wider text-[var(--text-3)] mb-2">GST Breakdown</h4>
+                <div className="flex justify-between text-xs text-[var(--text-2)]">
+                  <span>Taxable Value</span>
+                  <span className="font-mono font-medium text-[var(--text)]">₹{taxableValue.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                </div>
+                <div className="flex justify-between text-xs text-[var(--text-2)]">
+                  <span>GST Rate</span>
+                  <span className="font-mono font-medium text-[var(--text)]">{effectiveGstRate}%</span>
+                </div>
+                {isInterState ? (
+                  <div className="flex justify-between text-xs text-[var(--text-2)]">
+                    <span>IGST ({effectiveGstRate}%)</span>
+                    <span className="font-mono font-medium text-[var(--text)]">₹{igstAmount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                  </div>
+                ) : (
+                  <>
+                    <div className="flex justify-between text-xs text-[var(--text-2)]">
+                      <span>CGST ({Number(effectiveGstRate) / 2}%)</span>
+                      <span className="font-mono font-medium text-[var(--text)]">₹{cgstAmount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                    </div>
+                    <div className="flex justify-between text-xs text-[var(--text-2)]">
+                      <span>SGST ({Number(effectiveGstRate) / 2}%)</span>
+                      <span className="font-mono font-medium text-[var(--text)]">₹{sgstAmount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                    </div>
+                  </>
+                )}
+                {Boolean(po.freightAmount) && (
+                  <div className="flex justify-between text-xs text-[var(--text-2)]">
+                    <span>Freight / Shipping</span>
+                    <span className="font-mono font-medium text-[var(--text)]">₹{Number(po.freightAmount).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                  </div>
+                )}
+                <div className="border-t border-[var(--border)] pt-2 flex justify-between text-xs font-semibold text-[var(--text)]">
+                  <span>Total Tax Amount</span>
+                  <span className="font-mono">₹{totalTax.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                </div>
+                <div className="border-t border-[var(--border)] pt-2 flex justify-between text-sm font-bold text-[var(--brand)]">
+                  <span>Final PO Total</span>
+                  <span className="font-mono">₹{grandTotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                </div>
+              </div>
             </div>
           </div>
 

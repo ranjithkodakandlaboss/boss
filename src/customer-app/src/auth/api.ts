@@ -1,6 +1,14 @@
-import { currentToken } from "./session";
+import {
+  currentRefreshToken,
+  currentToken,
+  currentTokenExpiresAt,
+  signOut,
+  storeRefreshedToken,
+} from "./session";
 
 const base = import.meta.env.VITE_CUSTOMER_API_URL ?? "http://127.0.0.1:8080";
+const TOKEN_REFRESH_WINDOW_MS = 5 * 60 * 1000;
+let refreshInProgress: { refreshToken: string; promise: Promise<string> } | null = null;
 
 export class ApiError extends Error {
   constructor(readonly status: number, message: string) {
@@ -24,14 +32,113 @@ export function safeRandomUUID(): string {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
+async function refreshFirebaseToken(refreshToken: string): Promise<string> {
+  const apiKey = import.meta.env.VITE_FIREBASE_API_KEY;
+  if (!apiKey) throw new ApiError(401, "Session refresh is not configured. Please sign in again.");
+
+  const response = await fetch(`https://securetoken.googleapis.com/v1/token?key=${encodeURIComponent(apiKey)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ grant_type: "refresh_token", refresh_token: refreshToken }),
+  });
+  const text = await response.text();
+  let body: { id_token?: string; refresh_token?: string; expires_in?: string; error?: { message?: string } } = {};
+  if (text) {
+    try {
+      body = JSON.parse(text);
+    } catch {
+      body = {};
+    }
+  }
+  const expiresIn = Number(body.expires_in);
+  if (!response.ok || !body.id_token || !Number.isFinite(expiresIn) || expiresIn <= 0) {
+    throw new ApiError(401, body.error?.message || "Your session has expired. Please sign in again.");
+  }
+  if (currentRefreshToken() !== refreshToken) {
+    throw new ApiError(401, "Your session changed. Please retry the request.");
+  }
+
+  storeRefreshedToken(body.id_token, body.refresh_token || refreshToken, expiresIn);
+  return body.id_token;
+}
+
+export async function getAccessToken(forceRefresh = false): Promise<string | null> {
+  const token = currentToken();
+  const refreshToken = currentRefreshToken();
+  if (!token || !refreshToken) return token;
+
+  const expiresAt = currentTokenExpiresAt();
+  if (!forceRefresh && expiresAt !== null && expiresAt - Date.now() > TOKEN_REFRESH_WINDOW_MS) {
+    return token;
+  }
+
+  if (!refreshInProgress || refreshInProgress.refreshToken !== refreshToken) {
+    const promise = refreshFirebaseToken(refreshToken).finally(() => {
+      if (refreshInProgress?.promise === promise) refreshInProgress = null;
+    });
+    refreshInProgress = { refreshToken, promise };
+  }
+  return refreshInProgress.promise;
+}
+
+function triggerSessionExpiry() {
+  signOut();
+  try { sessionStorage.setItem("boss.session.expired", "1"); } catch { /* ignore */ }
+  if (typeof window !== "undefined" && !window.location.pathname.startsWith("/login") && !window.location.pathname.startsWith("/activate")) {
+    window.location.href = "/";
+  }
+}
+
+export async function authorizedFetch(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
+  const headers = new Headers(init.headers);
+  let token: string | null = null;
+  try {
+    token = await getAccessToken();
+  } catch {
+    triggerSessionExpiry();
+    return new Response(JSON.stringify({ error: "Session expired" }), {
+      status: 401,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+
+  const request = { ...init, headers };
+  const response = await fetch(input, request);
+  if (response.status !== 401 || !currentRefreshToken()) return response;
+
+  let refreshedToken: string | null = null;
+  try {
+    refreshedToken = await getAccessToken(true);
+  } catch {
+    // Firebase refresh token is expired or the account was disabled — log out immediately.
+    triggerSessionExpiry();
+    return response;
+  }
+
+  if (refreshedToken) headers.set("Authorization", `Bearer ${refreshedToken}`);
+  const retryResponse = await fetch(input, { ...init, headers });
+  if (retryResponse.status === 401) {
+    // The refreshed token was also rejected — the session is irrecoverable.
+    triggerSessionExpiry();
+  }
+  return retryResponse;
+}
+
 export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers);
   if (init.body && !(init.body instanceof FormData) && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
   }
-  const token = currentToken();
-  if (token && path !== "/api/v1/auth/activate") headers.set("Authorization", `Bearer ${token}`);
-  const response = await fetch(`${base}${path}`, { ...init, headers });
+  if (path === "/api/v1/auth/activate") {
+    const response = await fetch(`${base}${path}`, { ...init, headers });
+    return parseApiResponse<T>(response);
+  }
+  const response = await authorizedFetch(`${base}${path}`, { ...init, headers });
+  return parseApiResponse<T>(response);
+}
+
+async function parseApiResponse<T>(response: Response): Promise<T> {
   if (response.status === 204) return undefined as T;
   const text = await response.text();
   let body: { detail?: string; message?: string; error?: string } = {};
@@ -46,15 +153,44 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   return body as T;
 }
 
-export async function firebaseSignIn(email: string, password: string): Promise<string> {
+/**
+ * Validates that the given Firebase ID token is associated with an active BOSS account.
+ * Throws ApiError(401) if the token is valid Firebase-wise but has no BOSS tenant membership.
+ * Must be called BEFORE storing the session client-side.
+ */
+export async function validateBossAccount(idToken: string): Promise<void> {
+  const response = await fetch(`${base}/api/v1/auth/me`, {
+    headers: {
+      "Authorization": `Bearer ${idToken}`,
+      "Content-Type": "application/json",
+    },
+  });
+  if (response.status === 401) {
+    throw new ApiError(401, "This account is not registered with BOSS. Please use your invitation link to activate your account.");
+  }
+  if (response.status === 403) {
+    const text = await response.text().catch(() => "");
+    let detail = "Your account has been suspended or deactivated.";
+    try { detail = JSON.parse(text).detail || detail; } catch { /* ignore */ }
+    throw new ApiError(403, detail);
+  }
+  if (!response.ok) {
+    throw new ApiError(response.status, "Sign-in failed. Please try again.");
+  }
+}
+
+export async function firebaseSignIn(email: string, password: string): Promise<{ idToken: string; refreshToken: string; expiresIn: string }> {
   const apiKey = import.meta.env.VITE_FIREBASE_API_KEY;
   if (!apiKey) throw new Error("Customer sign-in is not configured. Set VITE_FIREBASE_API_KEY.");
-  const response = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${apiKey}`, {
+  const response = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${encodeURIComponent(apiKey)}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email, password, returnSecureToken: true }),
   });
-  const body = await response.json() as { idToken?: string; error?: { message?: string } };
-  if (!response.ok || !body.idToken) throw new Error(body.error?.message || "Sign-in failed");
-  return body.idToken;
+  const body = await response.json() as { idToken?: string; refreshToken?: string; expiresIn?: string; error?: { message?: string } };
+  const expiresIn = Number(body.expiresIn);
+  if (!response.ok || !body.idToken || !body.refreshToken || !Number.isFinite(expiresIn) || expiresIn <= 0) {
+    throw new Error(body.error?.message || "Sign-in failed");
+  }
+  return { idToken: body.idToken, refreshToken: body.refreshToken, expiresIn: String(expiresIn) };
 }

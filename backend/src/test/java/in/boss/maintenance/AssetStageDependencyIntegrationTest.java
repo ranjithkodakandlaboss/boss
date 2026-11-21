@@ -2,6 +2,7 @@ package in.boss.maintenance;
 
 import in.boss.maintenance.api.MaintenanceDtos.AssetRequest;
 import in.boss.maintenance.api.MaintenanceDtos.AssetResponse;
+import in.boss.maintenance.api.MaintenanceDtos.AddAffectedJobsRequest;
 import in.boss.maintenance.api.MaintenanceDtos.AffectedStage;
 import in.boss.maintenance.api.MaintenanceDtos.CloseEventRequest;
 import in.boss.maintenance.api.MaintenanceDtos.EventRequest;
@@ -11,6 +12,7 @@ import in.boss.masterdata.BaseMasterDataIntegrationTest;
 import in.boss.production.api.ProductionApiDtos.CreateRoutingTemplateRequest;
 import in.boss.production.api.ProductionApiDtos.RoutingStageRequest;
 import in.boss.production.domain.ProductionJobService;
+import in.boss.production.domain.ProductionQueryService;
 import in.boss.shared.context.BossContext;
 import in.boss.shared.context.BossContextHolder;
 import org.junit.jupiter.api.BeforeEach;
@@ -35,6 +37,7 @@ class AssetStageDependencyIntegrationTest extends BaseMasterDataIntegrationTest 
 
     @Autowired private MaintenanceService maintenance;
     @Autowired private ProductionJobService jobs;
+    @Autowired private ProductionQueryService jobQueries;
 
     private UUID tenantId;
     private UUID otherTenant;
@@ -116,6 +119,7 @@ class AssetStageDependencyIntegrationTest extends BaseMasterDataIntegrationTest 
         UUID jobB = job("JOB-B", lathe.id());
         UUID otherAssetJob = job("JOB-C", spare.id());
         UUID unrelated = job("JOB-D", mill.id());
+        UUID manuallyAffected = unassignedJob("JOB-MANUAL");
         jdbc.update("UPDATE production_jobs SET cpo_id = ? WHERE tenant_id = ? AND id = ?", cpoId, tenantId, jobA);
         UUID stageA = stage(jobA);
         UUID stageB = stage(jobB);
@@ -124,6 +128,19 @@ class AssetStageDependencyIntegrationTest extends BaseMasterDataIntegrationTest 
 
         EventResponse event = maintenance.createEvent(new EventRequest(lathe.id(), "Breakdown", "High", "Spindle",
                 userId, null, null, null, Instant.now().minus(2, ChronoUnit.HOURS), null, null, List.of(), null));
+        UUID createdDuringBreakdown = job("JOB-AFTER", lathe.id());
+        assertThat(maintenance.getEvent(event.id()).affectedJobs()).extracting(j -> j.id()).contains(createdDuringBreakdown);
+        assertThat(jobQueries.get(createdDuringBreakdown).maintenanceActivity())
+                .extracting(activity -> activity.action()).contains("MACHINE_BLOCK");
+        assertJobActivity(jobA, "MACHINE_BLOCK");
+        assertJobActivity(jobB, "MACHINE_BLOCK");
+        assertThat(jobQueries.get(jobA).maintenanceActivity()).extracting(activity -> activity.action())
+                .contains("MACHINE_BLOCK");
+        EventResponse updatedEvent = maintenance.addAffectedJobs(event.id(), new AddAffectedJobsRequest(List.of(manuallyAffected)));
+        assertThat(updatedEvent.affectedJobs()).extracting(j -> j.id()).contains(manuallyAffected);
+        assertThat(maintenance.machineBlocker(tenantId, manuallyAffected, stage(manuallyAffected), "CNC Bay"))
+                .contains(event.eventNumber());
+        assertJobActivity(manuallyAffected, "MACHINE_BLOCK");
         assertThat(jdbc.queryForObject("""
                 SELECT COUNT(*) FROM notifications
                 WHERE tenant_id = ? AND user_id = ? AND notification_type = 'maintenance_asset_impact'
@@ -161,12 +178,20 @@ class AssetStageDependencyIntegrationTest extends BaseMasterDataIntegrationTest 
                 .hasMessageContaining("not a configured activity for this tenant");
         assertThat(maintenance.getAsset(lathe.id()).capabilities()).hasSize(2);
 
+        maintenance.startEvent(event.id());
         EventResponse closed = maintenance.closeEvent(event.id(),
                 new CloseEventRequest(null, "Belt", "Replaced belt", null, null, "Belt"));
+        assertJobActivity(jobA, "MACHINE_UNBLOCK");
+        assertJobActivity(jobB, "MACHINE_UNBLOCK");
+        assertThat(jobQueries.get(createdDuringBreakdown).maintenanceActivity())
+                .extracting(activity -> activity.action()).contains("MACHINE_BLOCK", "MACHINE_UNBLOCK");
+        assertThat(jobQueries.get(jobA).maintenanceActivity()).extracting(activity -> activity.action())
+                .contains("MACHINE_BLOCK", "MACHINE_UNBLOCK");
         assertThat(closed.downtimeHours()).isNotNull();
         assertThat(maintenance.getAsset(lathe.id()).status()).isEqualTo("operational");
         assertThat(maintenance.machineBlocker(tenantId, jobA, stageA, "CNC Bay")).isNull();
         assertThat(jdbc.queryForObject("SELECT status FROM job_stages WHERE id = ?", String.class, stageA)).isEqualTo("pending");
+        assertJobActivity(manuallyAffected, "MACHINE_UNBLOCK");
 
         BossContextHolder.set(new BossContext(otherTenant, userId, Set.of("OWNER"), null, null));
         assertThatThrownBy(() -> maintenance.getAsset(lathe.id())).isInstanceOf(ResponseStatusException.class);
@@ -185,8 +210,28 @@ class AssetStageDependencyIntegrationTest extends BaseMasterDataIntegrationTest 
         return job;
     }
 
+    private UUID unassignedJob(String number) {
+        UUID job = id("""
+                INSERT INTO production_jobs (tenant_id, job_number, finished_item_id, site_id, quantity, uom_id, status, created_by)
+                VALUES (?, ?, ?, ?, 5, ?, 'released', ?) RETURNING id
+                """, tenantId, number, itemId, siteId, uomId, userId);
+        jdbc.update("""
+                INSERT INTO job_stages (tenant_id, job_id, seq_no, name, stage_config_option_id, stage_label_snapshot,
+                                        work_centre, status)
+                VALUES (?, ?, 1, 'Cutting', ?, 'Cutting', 'CNC Bay', 'pending')
+                """, tenantId, job, cuttingId);
+        return job;
+    }
+
     private UUID stage(UUID jobId) {
         return jdbc.queryForObject("SELECT id FROM job_stages WHERE job_id = ?", UUID.class, jobId);
+    }
+
+    private void assertJobActivity(UUID jobId, String action) {
+        assertThat(jdbc.queryForObject("""
+                SELECT count(*) FROM audit_events
+                WHERE tenant_id = ? AND entity_type = 'production_job' AND entity_id = ? AND action = ?
+                """, Integer.class, tenantId, jobId, action)).isGreaterThan(0);
     }
 
     private UUID id(String sql, Object... args) {

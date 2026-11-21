@@ -308,8 +308,11 @@ public final class ProductionApiDtos {
             CostSummary estimatedCost,
             CostSummary actualCost,
             BigDecimal variance,
-            Instant createdAt
+            Instant createdAt,
+            List<MaintenanceActivity> maintenanceActivity
     ) {}
+
+    public record MaintenanceActivity(String action, String eventNumber, Instant at) {}
 
     public record EligibleCpoLine(
             UUID cpoId,

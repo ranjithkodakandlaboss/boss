@@ -903,6 +903,8 @@ function Updates({ job }: { job: ProductionJob }) {
   const rows = [
     ...(job.stages ?? []).filter((stage) => stage.actualStartAt || stage.actualEndAt).map((stage) => `${stage.stageName} ${stage.status} ${displayDate(stage.actualEndAt || stage.actualStartAt)}`),
     ...(job.movements ?? []).map((movement) => `${movement.issueType} ${movement.quantity} on ${displayDate(movement.createdAt)}`),
+    ...(job.maintenanceActivity ?? []).map((activity) =>
+      `${activity.action === "MACHINE_BLOCK" ? "Machine blocked by" : "Machine block cleared by"} ${activity.eventNumber} · ${displayDate(activity.at)}`),
   ];
   if (rows.length === 0) return <p className="text-sm" style={{ color: "var(--text-3)" }}>No stage or material updates yet.</p>;
   return <ul className="space-y-1 text-sm">{rows.map((row) => <li key={row}>{row}</li>)}</ul>;

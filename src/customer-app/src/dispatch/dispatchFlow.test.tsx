@@ -116,7 +116,7 @@ const mockDetail = {
 
 const mockCompany = {
   sites: [{ id: "site-1", name: "Main Plant", code: "MP-01" }],
-  stores: [{ id: "store-1", siteId: "site-1", name: "FG Store", code: "FGS" }],
+  stores: [{ id: "store-1", siteId: "site-1", name: "FG Store", code: "FGS", storeType: "finished_goods" }],
 };
 
 const mockCustomers = [
@@ -125,16 +125,33 @@ const mockCustomers = [
 ];
 
 const mockJobs = [
-  { id: "job-1", jobNumber: "JOB-101", customerId: "cust-1", customerName: "Tata Motors", status: "completed" },
+  {
+    id: "job-1",
+    jobNumber: "JOB-101",
+    cpoId: "cpo-1",
+    cpoLineId: "cpo-line-1",
+    cpoNumber: "PO-9901",
+    customerId: "cust-1",
+    customerName: "Tata Motors",
+    itemId: "item-1",
+    itemCode: "SH-01",
+    itemName: "Shaft",
+    qty: 10,
+    uomSymbol: "pcs",
+    siteId: "site-1",
+    status: "completed",
+  },
 ];
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
 let postedReqs: { url: string; body: any }[] = [];
 let dispatchMethodsFail = false;
+let qualityReleaseMissing = false;
 
 beforeEach(() => {
   postedReqs = [];
   dispatchMethodsFail = false;
+  qualityReleaseMissing = false;
   signIn("test-session");
   vi.stubGlobal(
     "fetch",
@@ -167,6 +184,26 @@ beforeEach(() => {
       if (url.includes("/api/v1/jobs")) {
         return Promise.resolve(json(mockJobs));
       }
+      if (url.includes("/api/v1/inventory/lots")) {
+        return Promise.resolve(json({
+          content: [{
+            id: "lot-1",
+            itemId: "item-1",
+            itemCode: "SH-01",
+            itemName: "Shaft",
+            storeId: "store-1",
+            storeName: "FG Store",
+            siteId: "site-1",
+            lotNumber: "FG-LOT-1",
+            qty: 10,
+            reservedQty: 0,
+            availableQty: 10,
+            uomSymbol: "pcs",
+            status: "available",
+          }],
+          totalElements: 1,
+        }));
+      }
       if (url.includes("/api/v1/config/options/CARRIER")) {
         if (init?.method === "POST") {
           const body = JSON.parse(String(init.body));
@@ -186,11 +223,31 @@ beforeEach(() => {
         return Promise.resolve(
           json({
             jobId: "job-1",
-            eligible: true,
-            reason: "All quality conditions satisfied",
-            blockers: [],
+            eligible: !qualityReleaseMissing,
+            reason: qualityReleaseMissing
+              ? "Customer clearance certificate has not been issued"
+              : "All quality conditions satisfied",
+            blockers: qualityReleaseMissing ? ["Customer clearance certificate has not been issued."] : [],
+            inspectionStatus: "passed",
+            clearanceCertificateId: qualityReleaseMissing ? undefined : "cert-1",
+            clearanceCertificateStatus: qualityReleaseMissing ? "not_required" : "issued",
           })
         );
+      }
+      if (url.includes("/api/v1/dispatches/cpo-lines/cpo-line-1/availability")) {
+        return Promise.resolve(json({
+          cpoLineId: "cpo-line-1",
+          orderedQty: 20,
+          deliveredQty: 0,
+          pendingQty: 0,
+          remainingQty: 20,
+        }));
+      }
+      if (url.endsWith("/api/v1/quality/clearance-certificates") && init?.method === "POST") {
+        const body = JSON.parse(String(init.body));
+        postedReqs.push({ url, body });
+        qualityReleaseMissing = false;
+        return Promise.resolve(json({ id: "cert-1", jobId: body.jobId, status: "issued" }, 201));
       }
       if (url.endsWith("/api/v1/dispatches") && init?.method === "POST") {
         const body = JSON.parse(String(init.body));
@@ -253,6 +310,8 @@ it("renders dispatch landing page with KPI pills and table rows", async () => {
   expect(screen.getAllByText("Tata Motors").length).toBeGreaterThan(0);
   expect(screen.getAllByText("Mahindra & Mahindra").length).toBeGreaterThan(0);
   expect(screen.getByText("Road Freight (historical)")).toBeInTheDocument();
+  expect(screen.getByRole("columnheader", { name: /Ship from/i })).toBeInTheDocument();
+  expect(screen.getByRole("columnheader", { name: "Customer" })).toBeInTheDocument();
 
   // KPI buttons
   expect(screen.getByText("1 pending docs")).toBeInTheDocument();
@@ -296,8 +355,11 @@ it("opens New Dispatch modal and creates dispatch", async () => {
   });
 
   // Select customer
-  const custSelect = screen.getByRole("combobox", { name: /Customer/i });
+  const custSelect = screen.getByRole("combobox", { name: /^Customer$/i });
   await user.selectOptions(custSelect, "cust-1");
+  await user.selectOptions(screen.getByRole("combobox", { name: /Customer PO/i }), "cpo-1");
+  await user.selectOptions(screen.getByRole("combobox", { name: /PO line/i }), "job-1");
+  await user.selectOptions(screen.getByRole("combobox", { name: /Finished-goods lot/i }), "lot-1");
   await user.selectOptions(
     screen.getByRole("combobox", { name: /Dispatch Method/i }),
     "method-1"
@@ -305,13 +367,56 @@ it("opens New Dispatch modal and creates dispatch", async () => {
 
   // Create dispatch
   const createBtn = screen.getByRole("button", { name: "Create Dispatch" });
+  expect(await screen.findByText("Remaining Customer PO quantity: 20 pcs")).toBeInTheDocument();
+  expect(createBtn).toBeVisible();
+  expect(screen.getByRole("spinbutton", { name: /Quantity/i })).toHaveValue(10);
   await user.click(createBtn);
 
   await waitFor(() => {
     expect(postedReqs.some((r) => r.url.endsWith("/api/v1/dispatches"))).toBe(true);
   });
-  expect(postedReqs.find((r) => r.url.endsWith("/api/v1/dispatches"))?.body.dispatchMethodOptionId)
-    .toBe("method-1");
+  const body = postedReqs.find((r) => r.url.endsWith("/api/v1/dispatches"))?.body;
+  expect(body?.dispatchMethodOptionId).toBe("method-1");
+  expect(body?.cpoId).toBe("cpo-1");
+  expect(body?.lines).toEqual([{
+    cpoLineId: "cpo-line-1",
+    jobId: "job-1",
+    itemId: "item-1",
+    quantity: 10,
+    lotId: "lot-1",
+  }]);
+});
+
+it("requires a Customer PO line, finished-goods lot, and explicit quantity", async () => {
+  const user = userEvent.setup();
+  renderWithCustomer(<DispatchPage />);
+
+  await user.click(await screen.findByText("New Dispatch"));
+
+  expect(await screen.findByRole("combobox", { name: /Customer PO/i })).toBeInTheDocument();
+  expect(screen.getByRole("combobox", { name: /PO line/i })).toBeInTheDocument();
+  expect(screen.getByRole("combobox", { name: /Finished-goods lot/i })).toBeInTheDocument();
+  expect(screen.getByRole("spinbutton", { name: /Quantity/i })).toBeInTheDocument();
+});
+
+it("issues a quality release after a passed final inspection", async () => {
+  qualityReleaseMissing = true;
+  const user = userEvent.setup();
+  renderWithCustomer(<DispatchPage />);
+
+  await user.click(await screen.findByText("New Dispatch"));
+  await user.selectOptions(await screen.findByRole("combobox", { name: /^Customer$/i }), "cust-1");
+  await user.selectOptions(screen.getByRole("combobox", { name: /Customer PO/i }), "cpo-1");
+  await user.selectOptions(screen.getByRole("combobox", { name: /PO line/i }), "job-1");
+
+  await user.click(await screen.findByRole("button", { name: "Issue quality release" }));
+
+  await waitFor(() => {
+    expect(postedReqs.some((request) =>
+      request.url.endsWith("/api/v1/quality/clearance-certificates")
+    )).toBe(true);
+  });
+  expect(await screen.findByText(/Dispatch-eligible/)).toBeInTheDocument();
 });
 
 it("renders Dispatch Detail page with details, shipment summary and packages", async () => {

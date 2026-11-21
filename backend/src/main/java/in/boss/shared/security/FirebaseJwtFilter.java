@@ -88,6 +88,16 @@ public class FirebaseJwtFilter extends OncePerRequestFilter {
                                 "{\"title\":\"Forbidden\",\"status\":403,"
                                 + "\"detail\":\"User is suspended or deactivated\"}");
                         return;
+                    } else {
+                        // Firebase token is valid but this UID has no BOSS tenant association.
+                        // Deny access explicitly — Firebase authentication alone is not sufficient.
+                        log.debug("Firebase UID {} is not associated with any BOSS tenant", uid);
+                        response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+                        response.setContentType("application/json");
+                        response.getWriter().write(
+                                "{\"title\":\"Unauthorized\",\"status\":401,"
+                                + "\"detail\":\"No BOSS account is associated with this identity\"}");
+                        return;
                     }
                 } catch (Exception ex) {
                     log.debug("JWT validation failed: {}", ex.getMessage());

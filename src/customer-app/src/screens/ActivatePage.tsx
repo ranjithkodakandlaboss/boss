@@ -23,7 +23,8 @@ export default function ActivatePage() {
         headers: { "Idempotency-Key": safeRandomUUID() },
         body: JSON.stringify({ token, password, displayName: String(data.get("displayName") ?? "") }),
       });
-      signIn(await firebaseSignIn(user.email, password));
+      const session = await firebaseSignIn(user.email, password);
+      signIn(session.idToken, session.refreshToken, session.expiresIn);
       window.location.assign("/onboarding");
     } catch (caught) {
       const msg = caught instanceof ApiError || caught instanceof Error ? caught.message : "Activation failed";
