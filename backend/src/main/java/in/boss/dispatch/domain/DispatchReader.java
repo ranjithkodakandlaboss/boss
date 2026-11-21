@@ -295,6 +295,7 @@ final class DispatchReader {
                         FROM quality_inspections qi
                         LEFT JOIN app_users u ON u.id = qi.inspector_id
                         WHERE qi.tenant_id = ? AND qi.reference_id = ?
+                          AND qi.inspection_type IN ('final', 'dispatch_readiness')
                         ORDER BY qi.created_at DESC LIMIT 1
                         """, tenantId, base.jobId());
                 qualityInspectionId = (UUID) insp.get("id");
