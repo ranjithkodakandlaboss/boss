@@ -28,7 +28,15 @@ public class BossSecurityConfig {
     @Bean
     CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
-        configuration.setAllowedOrigins(List.of("http://127.0.0.1:5173", "http://localhost:5173"));
+        java.util.List<String> allowedOrigins = new java.util.ArrayList<>(List.of("http://127.0.0.1:5173", "http://localhost:5173"));
+        String extraOriginsEnv = System.getenv("CORS_ALLOWED_ORIGINS");
+        if (extraOriginsEnv != null && !extraOriginsEnv.isBlank()) {
+            for (String origin : extraOriginsEnv.split(",")) {
+                String trimmed = origin.trim();
+                if (!trimmed.isEmpty()) allowedOrigins.add(trimmed);
+            }
+        }
+        configuration.setAllowedOrigins(allowedOrigins);
         configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
         configuration.setAllowedHeaders(List.of("*"));
         configuration.setAllowCredentials(false);

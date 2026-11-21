@@ -461,14 +461,6 @@ public class SalesService {
 
     private QuotationCostingSnapshot validateQuotationSubmission(BossContext context, UUID tenantId,
                                              UUID quotationId, String note, QuotationResponse draft) {
-        Integer missingDrawing = jdbc.queryForObject("""
-                SELECT COUNT(*) FROM quotation_lines
-                WHERE tenant_id = ? AND quotation_id = ?
-                  AND (drawing_number IS NULL OR btrim(drawing_number) = '')
-                """, Integer.class, tenantId, quotationId);
-        if (missingDrawing != null && missingDrawing > 0) {
-            throw badRequest("Drawing number is required on every line before the quotation is submitted");
-        }
         QuotationCostingSnapshot costing = draft.costing();
         boolean refresh = costing == null || !costing.available();
         if (refresh) {
@@ -479,7 +471,7 @@ public class SalesService {
                     draft.discountAmount());
         }
         if (!costing.available()) {
-            throw conflict("A complete quotation cost estimate is required before submission: "
+            throw conflict("A complete cost estimate is required before submission. Missing: "
                     + String.join("; ", costing.unavailableReasons()));
         }
         if (costing.requiresApproval()) {

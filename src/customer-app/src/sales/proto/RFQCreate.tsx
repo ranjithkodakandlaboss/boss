@@ -22,7 +22,6 @@ interface RFQLine {
   quantity: number;
   uom: string;
   targetPrice: number | '';
-  requiredBy: string;
   notes: string;
 }
 
@@ -39,7 +38,7 @@ interface TechReqs {
 const DEMO_NOW = new Date().toISOString().slice(0, 10);
 
 function newLine(n: number): RFQLine {
-  return { id: `line-${Date.now()}-${n}`, lineNumber: n, itemId: '', drawingNumber: '', drawingRevision: 'A', description: '', material: '', quantity: 1, uom: '', targetPrice: '', requiredBy: '', notes: '' };
+  return { id: `line-${Date.now()}-${n}`, lineNumber: n, itemId: '', drawingNumber: '', drawingRevision: 'A', description: '', material: '', quantity: 1, uom: '', targetPrice: '', notes: '' };
 }
 
 export default function RFQCreate() {
@@ -78,7 +77,6 @@ export default function RFQCreate() {
         quantity: l.qty ?? 1,
         uom: l.uom ?? '',
         targetPrice: l.targetPrice ?? '',
-        requiredBy: l.requiredDate ?? '',
         notes: l.technicalNotes ?? '',
       }));
     }
@@ -360,7 +358,7 @@ export default function RFQCreate() {
                         {catalog.map(item => <option key={item.id} value={item.id}>{item.code} · {item.name}</option>)}
                       </select>
                     </Field>
-                    <Field label="Drawing Number *">
+                    <Field label="Drawing Number">
                       <input value={l.drawingNumber} onChange={e => updateLine(l.id, 'drawingNumber', e.target.value)} className="eoss-input" placeholder="DWG-TC-001" />
                     </Field>
                     <Field label="Revision">
@@ -371,9 +369,6 @@ export default function RFQCreate() {
                     </Field>
                     <Field label="Description *" className="md:col-span-2">
                       <input value={l.description} onChange={e => updateLine(l.id, 'description', e.target.value)} className="eoss-input" placeholder="Part description" />
-                    </Field>
-                    <Field label="Required By">
-                      <input type="date" value={l.requiredBy} onChange={e => updateLine(l.id, 'requiredBy', e.target.value)} className="eoss-input" />
                     </Field>
                     <Field label="Qty *">
                       <input type="number" min={1} value={l.quantity} onChange={e => updateLine(l.id, 'quantity', parseInt(e.target.value) || 1)} className="eoss-input" />

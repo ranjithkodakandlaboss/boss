@@ -21,7 +21,6 @@ interface PRLineForm {
   notes: string;
 }
 
-const UOM_OPTIONS = ['kg', 'nos', 'mtr', 'pcs', 'sheets', 'ltrs', 'sets', 'rolls', 'cyl'];
 const DEPARTMENT_OPTIONS = ['Production', 'Machining & Assembly', 'Stores', 'Maintenance', 'Quality', 'Engineering'];
 const TODAY = new Date().toISOString().slice(0, 10);
 
@@ -77,7 +76,7 @@ export default function PRCreate() {
       materialCode: searchParams.get('code') ?? '',
       description: prefillName,
       grade: searchParams.get('grade') ?? '',
-      uom: searchParams.get('uom') || 'kg',
+      uom: searchParams.get('uom') || '',
       requiredQty: Number(searchParams.get('qty') || 0),
       targetRate: 0,
       notes: prefillName ? 'Raised from stock shortage' : '',
@@ -106,7 +105,7 @@ export default function PRCreate() {
         materialCode: l.materialCode || '',
         description: l.description || l.materialName || '',
         grade: l.grade || '',
-        uom: l.uom || 'kg',
+        uom: l.uom || '',
         requiredQty: l.requiredQty || 0,
         targetRate: l.estimatedPrice ?? 0,
         notes: l.notes || l.justification || '',
@@ -130,7 +129,7 @@ export default function PRCreate() {
       materialCode: '',
       description: '',
       grade: '',
-      uom: 'kg',
+      uom: '',
       requiredQty: 0,
       targetRate: 0,
       notes: '',
@@ -183,7 +182,6 @@ export default function PRCreate() {
       grade: l.grade.trim() || undefined,
       requiredQty: l.requiredQty,
       uom: l.uom,
-      requiredDate: header.requiredBy,
       estimatedPrice: l.targetRate || undefined,
       notes: l.notes.trim() || undefined,
       justification: l.notes.trim() || undefined,
@@ -414,10 +412,11 @@ export default function PRCreate() {
                         disabled={Boolean(line.materialItemId)}
                         onChange={e => setLine(line.id, { uom: e.target.value })}
                       >
-                        {(uoms && uoms.length > 0 ? uoms.map(u => u.symbol) : UOM_OPTIONS).map(u => (
-                          <option key={u} value={u}>{u}</option>
+                        <option value="">Select…</option>
+                        {uoms.map(u => (
+                          <option key={u.id} value={u.symbol}>{u.symbol}</option>
                         ))}
-                        {line.uom && !(uoms && uoms.length > 0 ? uoms.map(u => u.symbol) : UOM_OPTIONS).includes(line.uom) && (
+                        {line.uom && !uoms.some(u => u.symbol === line.uom) && (
                           <option value={line.uom}>{line.uom}</option>
                         )}
                       </select>

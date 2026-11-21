@@ -163,8 +163,8 @@ function Guard() {
           <Route path="suppliers" element={<SupplierDirectory />} />
           <Route path="suppliers/:id" element={<SheetLayout><SupplierRecord /></SheetLayout>} />
           <Route path="procurement" element={<ProcurementHome />} />
-          <Route path="procurement/pr/new" element={<PrCreatePage />} />
-          <Route path="procurement/pr/:id/edit" element={<PrCreatePage />} />
+          <Route path="procurement/pr/new" element={<SheetLayout><PrCreatePage /></SheetLayout>} />
+          <Route path="procurement/pr/:id/edit" element={<SheetLayout><PrCreatePage /></SheetLayout>} />
           <Route path="procurement/pr/:id" element={<SheetLayout><PrRecordPage /></SheetLayout>} />
           <Route path="procurement/supplier-rfq/new" element={<SheetLayout><SupplierRfqPage /></SheetLayout>} />
           <Route path="procurement/quote/:id" element={<SheetLayout><SupplierQuotePage /></SheetLayout>} />

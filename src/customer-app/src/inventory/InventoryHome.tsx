@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { ArrowRightLeft, ExternalLink, Plus, ShieldAlert, SlidersHorizontal } from "lucide-react";
+import { ArrowRightLeft, ExternalLink, Plus, ShieldAlert, SlidersHorizontal, Trash2 } from "lucide-react";
 import ErrorState from "../components/shared/ErrorState";
 import LoadingState from "../components/shared/LoadingState";
 import RecordSheet from "../components/shared/RecordSheet";
@@ -31,6 +31,7 @@ export default function InventoryHome() {
   const [error, setError] = useState("");
   const [storeWarning, setStoreWarning] = useState("");
   const [adjustRow, setAdjustRow] = useState<StockRow | null>(null);
+  const [showAddStock, setShowAddStock] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -167,6 +168,9 @@ export default function InventoryHome() {
         <button type="button" onClick={() => navigate("/inventory/transfer")} className="inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold" style={{ borderColor: "var(--border)", color: "var(--text-2)" }}>
           <ArrowRightLeft size={13} /> Transfer
         </button>
+        <button type="button" onClick={() => setShowAddStock(true)} className="inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold" style={{ borderColor: "var(--border)", color: "var(--text-2)" }}>
+          <Plus size={13} /> Add Stock
+        </button>
         <Link to="/procurement/pr/new" className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold text-white" style={{ background: "var(--brand-fill)" }}>
           <Plus size={13} /> Create Purchase Requisition
         </Link>
@@ -210,6 +214,7 @@ export default function InventoryHome() {
         ))}
       </footer>
       {adjustRow && <AdjustStockSheet row={adjustRow} onClose={() => setAdjustRow(null)} onDone={() => { setAdjustRow(null); window.location.reload(); }} />}
+      {showAddStock && <AddStockModal onClose={() => setShowAddStock(false)} onDone={() => { setShowAddStock(false); window.location.reload(); }} />}
     </div>
   );
 }
@@ -426,6 +431,118 @@ function StoreTile({ label, detail, selected, alert, onClick }: { label: string;
       </div>
       <div className="mt-0.5 text-xs font-semibold">{detail}</div>
     </button>
+  );
+}
+
+function AddStockModal({ onClose, onDone }: { onClose: () => void; onDone: () => void }) {
+  const [items, setItems] = useState<{ id: string; code: string; name: string }[]>([]);
+  const [stores, setStores] = useState<Store[]>([]);
+  const [lines, setLines] = useState([{ id: `l-${Date.now()}`, itemId: "", storeId: "", qty: "", unitCost: "", batchRef: "" }]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    import("../auth/api").then(({ api }) => {
+      Promise.all([
+        api<{ content?: { id: string; code: string; name: string }[] }>("/api/v1/items?status=active&page=0&size=500"),
+        loadStores(),
+      ]).then(([itemPage, storeList]) => {
+        setItems(itemPage.content ?? []);
+        setStores(storeList);
+      }).catch(() => setError("Could not load items or stores.")).finally(() => setLoading(false));
+    });
+  }, []);
+
+  const updateLine = (id: string, field: string, value: string) =>
+    setLines(ls => ls.map(l => l.id === id ? { ...l, [field]: value } : l));
+
+  const save = async () => {
+    setError("");
+    for (const l of lines) {
+      if (!l.itemId) return setError("Select an item for every line.");
+      if (!l.storeId) return setError("Select a store for every line.");
+      if (!l.qty || Number(l.qty) <= 0) return setError("Enter a quantity greater than zero for every line.");
+    }
+    setSaving(true);
+    try {
+      for (const l of lines) {
+        await mutate("/api/v1/inventory/lots", "POST", {
+          itemId: l.itemId,
+          storeId: l.storeId,
+          qty: Number(l.qty),
+          unitCost: l.unitCost ? Number(l.unitCost) : null,
+          batchRef: l.batchRef || null,
+        });
+      }
+      onDone();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Could not save stock.");
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/40 z-50 flex items-end sm:items-center justify-center">
+      <div className="bg-[var(--surface)] w-full max-w-3xl rounded-t-2xl sm:rounded-2xl border border-[var(--border)] shadow-2xl flex flex-col max-h-[90vh]">
+        <div className="flex items-center justify-between px-5 py-4 border-b" style={{ borderColor: "var(--border)" }}>
+          <div>
+            <h2 className="text-base font-bold text-[var(--text)]">Add Stock</h2>
+            <p className="text-xs text-[var(--text-2)]">Record stock directly — no GRN or approval required.</p>
+          </div>
+          <button type="button" onClick={onClose} className="p-1.5 rounded-lg hover:bg-[var(--surface-2)] text-[var(--text-2)]">✕</button>
+        </div>
+        <div className="flex-1 overflow-auto p-5">
+          {loading ? <div className="text-sm text-[var(--text-2)]">Loading items and stores…</div> : (
+            <div className="space-y-3">
+              {lines.map((line, idx) => (
+                <div key={line.id} className="rounded-xl border p-4 relative" style={{ borderColor: "var(--border)", background: "var(--surface-2)" }}>
+                  <div className="text-xs font-semibold text-[var(--text-3)] mb-3">Line {idx + 1}</div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                    <label className="text-xs font-medium text-[var(--text-2)]">Item *
+                      <select value={line.itemId} onChange={e => updateLine(line.id, "itemId", e.target.value)} className="eoss-input w-full mt-1 text-sm">
+                        <option value="">Select item…</option>
+                        {items.map(item => <option key={item.id} value={item.id}>{item.code} · {item.name}</option>)}
+                      </select>
+                    </label>
+                    <label className="text-xs font-medium text-[var(--text-2)]">Store / Location *
+                      <select value={line.storeId} onChange={e => updateLine(line.id, "storeId", e.target.value)} className="eoss-input w-full mt-1 text-sm">
+                        <option value="">Select store…</option>
+                        {stores.map(store => <option key={store.id} value={store.id}>{store.siteCode ? `${store.siteCode} · ` : ""}{store.name}</option>)}
+                      </select>
+                    </label>
+                    <label className="text-xs font-medium text-[var(--text-2)]">Quantity *
+                      <input type="number" min="0.001" step="any" value={line.qty} onChange={e => updateLine(line.id, "qty", e.target.value)} className="eoss-input w-full mt-1 text-sm" placeholder="e.g. 100" />
+                    </label>
+                    <label className="text-xs font-medium text-[var(--text-2)]">Unit Cost (₹)
+                      <input type="number" min="0" step="any" value={line.unitCost} onChange={e => updateLine(line.id, "unitCost", e.target.value)} className="eoss-input w-full mt-1 text-sm" placeholder="e.g. 250.00" />
+                    </label>
+                    <label className="text-xs font-medium text-[var(--text-2)]">Batch / Lot Reference
+                      <input type="text" value={line.batchRef} onChange={e => updateLine(line.id, "batchRef", e.target.value)} className="eoss-input w-full mt-1 text-sm" placeholder="e.g. BATCH-001" />
+                    </label>
+                  </div>
+                  {lines.length > 1 && (
+                    <button type="button" onClick={() => setLines(ls => ls.filter(l => l.id !== line.id))} className="absolute top-3 right-3 p-1 rounded hover:bg-[var(--surface-2)]">
+                      <Trash2 size={14} className="text-[var(--text-3)]" />
+                    </button>
+                  )}
+                </div>
+              ))}
+              <button type="button" onClick={() => setLines(ls => [...ls, { id: `l-${Date.now()}`, itemId: "", storeId: "", qty: "", unitCost: "", batchRef: "" }])} className="inline-flex items-center gap-1.5 text-sm font-medium text-[var(--brand)] hover:underline">
+                <Plus size={14} /> Add another line
+              </button>
+              {error && <p className="text-sm text-[var(--error)]">{error}</p>}
+            </div>
+          )}
+        </div>
+        <div className="flex justify-between items-center px-5 py-3 border-t" style={{ borderColor: "var(--border)", background: "var(--surface)" }}>
+          <button type="button" onClick={onClose} className="px-4 py-2 rounded-lg border text-sm" style={{ borderColor: "var(--border)", color: "var(--text-2)" }}>Cancel</button>
+          <button type="button" onClick={save} disabled={saving || loading} className="px-5 py-2 rounded-lg text-sm font-semibold text-white disabled:opacity-50" style={{ background: "var(--brand-fill)" }}>
+            {saving ? "Saving…" : `Save ${lines.length} lot${lines.length === 1 ? "" : "s"}`}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
