@@ -19,6 +19,22 @@ import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 @EnableMethodSecurity
 public class BossSecurityConfig {
 
+    private static final List<String> DEFAULT_ORIGIN_PATTERNS = List.of(
+            "http://127.0.0.1:*",
+            "http://localhost:*",
+            "http://127.0.0.1",
+            "http://localhost",
+            "https://*.run.app",
+            "http://*.nip.io",
+            "https://*.nip.io",
+            "http://*.nip.io:*",
+            "https://*.nip.io:*",
+            "http://*.*.nip.io",
+            "https://*.*.nip.io",
+            "http://*.*.nip.io:*",
+            "https://*.*.nip.io:*"
+    );
+
     private final FirebaseJwtFilter firebaseJwtFilter;
 
     public BossSecurityConfig(FirebaseJwtFilter firebaseJwtFilter) {
@@ -29,29 +45,28 @@ public class BossSecurityConfig {
     CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
 
-        // Exact origins (always include localhost for dev)
-        java.util.List<String> allowedOrigins = new java.util.ArrayList<>(
-                List.of("http://127.0.0.1:5173", "http://localhost:5173"));
-        String extraOriginsEnv = System.getenv("CORS_ALLOWED_ORIGINS");
-        if (extraOriginsEnv != null && !extraOriginsEnv.isBlank()) {
-            for (String origin : extraOriginsEnv.split(",")) {
-                String trimmed = origin.trim();
-                if (!trimmed.isEmpty()) allowedOrigins.add(trimmed);
-            }
-        }
-        configuration.setAllowedOrigins(allowedOrigins);
+        List<String> originPatterns = new java.util.ArrayList<>(DEFAULT_ORIGIN_PATTERNS);
 
-        // Wildcard patterns (e.g. "http://*.34.54.120.120.nip.io" for multi-tenant subdomains)
         String patternsEnv = System.getenv("CORS_ALLOWED_ORIGIN_PATTERNS");
         if (patternsEnv != null && !patternsEnv.isBlank()) {
             for (String pattern : patternsEnv.split(",")) {
                 String trimmed = pattern.trim();
-                if (!trimmed.isEmpty()) configuration.addAllowedOriginPattern(trimmed);
+                if (!trimmed.isEmpty()) originPatterns.add(trimmed);
             }
         }
 
+        String extraOriginsEnv = System.getenv("CORS_ALLOWED_ORIGINS");
+        if (extraOriginsEnv != null && !extraOriginsEnv.isBlank()) {
+            for (String origin : extraOriginsEnv.split(",")) {
+                String trimmed = origin.trim();
+                if (!trimmed.isEmpty()) originPatterns.add(trimmed);
+            }
+        }
+
+        configuration.setAllowedOriginPatterns(originPatterns);
         configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
         configuration.setAllowedHeaders(List.of("*"));
+        configuration.setExposedHeaders(List.of("Authorization", "Idempotency-Key", "X-Correlation-ID", "Content-Disposition"));
         configuration.setAllowCredentials(false);
 
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
