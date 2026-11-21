@@ -443,22 +443,26 @@ class SalesApiIntegrationTest extends BaseMasterDataIntegrationTest {
     @Test
     void submitRechecksIncompleteDraftCostAfterInventoryIsValued() throws Exception {
         BossContext context = BossContextHolder.get();
+        // Missing inventory valuation: costing unavailable — submission is now warn-only (not blocked)
         jdbc.update("UPDATE material_lots SET unit_cost = NULL WHERE tenant_id = ?", tenantId);
-        var draft = draftQuotation(null);
-        assertThat(draft.costing().available()).isFalse();
-        mockMvc.perform(patch("/api/v1/quotations/{id}/status", draft.id())
+        var draftNoCosting = draftQuotation(null);
+        assertThat(draftNoCosting.costing().available()).isFalse();
+        mockMvc.perform(patch("/api/v1/quotations/{id}/status", draftNoCosting.id())
                         .header("Idempotency-Key", UUID.randomUUID().toString())
                         .contentType(MediaType.APPLICATION_JSON).content("{\"status\":\"sent\"}"))
-                .andExpect(status().isConflict());
+                .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("sent"));
+        BossContextHolder.set(context);
+        // With valued inventory, submission on a fresh draft recalculates and persists costing
         jdbc.update("UPDATE material_lots SET unit_cost = 2.50 WHERE tenant_id = ?", tenantId);
         BossContextHolder.set(context);
-        mockMvc.perform(patch("/api/v1/quotations/{id}/status", draft.id())
+        var draftWithCosting = draftQuotation(null);
+        mockMvc.perform(patch("/api/v1/quotations/{id}/status", draftWithCosting.id())
                         .header("Idempotency-Key", UUID.randomUUID().toString())
                         .contentType(MediaType.APPLICATION_JSON).content("{\"status\":\"sent\"}"))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("sent"))
                 .andExpect(jsonPath("$.costing.available").value(true));
         BossContextHolder.set(context);
-        mockMvc.perform(get("/api/v1/quotations/{id}", draft.id()))
+        mockMvc.perform(get("/api/v1/quotations/{id}", draftWithCosting.id()))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("sent"));
     }
 
