@@ -361,7 +361,7 @@ export default function DispatchDetailPage() {
               <button
                 disabled={updating || isQCGateBlocked}
                 onClick={() => handleStatusChange("pending_docs")}
-                className="w-full py-2.5 bg-[var(--brand-fill, #7048F5)] text-white rounded-lg text-sm font-medium disabled:opacity-40 shadow-sm"
+                className="w-full py-2.5 bg-[var(--brand-fill)] text-white rounded-lg text-sm font-medium disabled:opacity-40 shadow-sm"
               >
                 Prepare Documents
               </button>
@@ -376,7 +376,7 @@ export default function DispatchDetailPage() {
                 <button
                   disabled={updating || isQCGateBlocked}
                   onClick={() => handleStatusChange("dispatched")}
-                  className="w-full py-2.5 bg-[var(--brand-fill, #7048F5)] text-white rounded-lg text-sm font-medium flex items-center justify-center gap-2 disabled:opacity-40 shadow-sm"
+                  className="w-full py-2.5 bg-[var(--brand-fill)] text-white rounded-lg text-sm font-medium flex items-center justify-center gap-2 disabled:opacity-40 shadow-sm"
                 >
                   <Truck size={14} /> Mark Dispatched
                 </button>
@@ -567,7 +567,7 @@ export default function DispatchDetailPage() {
               {dispatch.cpoId && (
                 <Link
                   to={`/finance/invoice/new?poId=${dispatch.cpoId}&dispatchId=${dispatch.id}`}
-                  className="inline-flex items-center gap-1 px-2.5 py-1 bg-[var(--brand-fill, #7048F5)] text-white rounded-lg text-xs font-semibold hover:opacity-90"
+                  className="inline-flex items-center gap-1 px-2.5 py-1 bg-[var(--brand-fill)] text-white rounded-lg text-xs font-semibold hover:opacity-90"
                 >
                   <Plus size={12} /> Create Invoice
                 </Link>

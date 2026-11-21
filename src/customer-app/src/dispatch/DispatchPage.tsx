@@ -1166,7 +1166,7 @@ function PodModal({
                 notes: form.notes.trim() || undefined,
               });
             }}
-            className="flex-1 py-2.5 bg-[var(--brand-fill, #7048F5)] text-white rounded-xl text-sm font-medium disabled:opacity-40"
+            className="flex-1 py-2.5 bg-[var(--brand-fill)] text-white rounded-xl text-sm font-medium disabled:opacity-40"
           >
             Confirm PoD
           </button>
