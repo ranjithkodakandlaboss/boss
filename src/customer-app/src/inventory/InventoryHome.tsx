@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { ArrowRightLeft, ExternalLink, Plus, ShieldAlert, SlidersHorizontal } from "lucide-react";
+import { ArrowRightLeft, ExternalLink, Plus, ShieldAlert, SlidersHorizontal, Trash2 } from "lucide-react";
 import ErrorState from "../components/shared/ErrorState";
 import LoadingState from "../components/shared/LoadingState";
 import RecordSheet from "../components/shared/RecordSheet";
@@ -31,6 +31,7 @@ export default function InventoryHome() {
   const [error, setError] = useState("");
   const [storeWarning, setStoreWarning] = useState("");
   const [adjustRow, setAdjustRow] = useState<StockRow | null>(null);
+  const [showAddStock, setShowAddStock] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -167,6 +168,9 @@ export default function InventoryHome() {
         <button type="button" onClick={() => navigate("/inventory/transfer")} className="inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold" style={{ borderColor: "var(--border)", color: "var(--text-2)" }}>
           <ArrowRightLeft size={13} /> Transfer
         </button>
+        <button type="button" onClick={() => setShowAddStock(true)} className="inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold" style={{ borderColor: "var(--border)", color: "var(--text-2)" }}>
+          <Plus size={13} /> Add Stock
+        </button>
         <Link to="/procurement/pr/new" className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold text-white" style={{ background: "var(--brand-fill)" }}>
           <Plus size={13} /> Create Purchase Requisition
         </Link>
@@ -210,6 +214,7 @@ export default function InventoryHome() {
         ))}
       </footer>
       {adjustRow && <AdjustStockSheet row={adjustRow} onClose={() => setAdjustRow(null)} onDone={() => { setAdjustRow(null); window.location.reload(); }} />}
+      {showAddStock && <AddStockModal onClose={() => setShowAddStock(false)} onDone={() => { setShowAddStock(false); window.location.reload(); }} />}
     </div>
   );
 }
