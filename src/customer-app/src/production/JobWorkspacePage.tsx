@@ -9,8 +9,8 @@ import StatusChip from "../components/shared/StatusChip";
 import { createLot, lotFields } from "../inventory/inlineCreate";
 import { createInspection as createQualityInspection, recordResult as recordQualityInspectionResult } from "../quality/api";
 import {
-  addCost, cancelJob, completeJob, completeStage, concede, displayDate, featureFlags, getJob, getJobCosting, holdJob, issueMaterial, loadOperators, money, openInspection, overrideMaterialPrice, previewPlanForJob,
-  progressStage, readinessLabel, recordInspection, releaseHold, returnMaterial, savePlan, skipStage, usableLots,
+  addCost, allocateJobMaterials, cancelJob, completeJob, completeStage, concede, displayDate, featureFlags, getJob, getJobCosting, holdJob, issueMaterial, loadOperators, money, openInspection, overrideMaterialPrice, previewPlanForJob,
+  progressStage, readinessLabel, recordInspection, releaseHold, releaseJobMaterials, returnMaterial, savePlan, skipStage, usableLots,
   type JobCosting, type LotOption, type OperatorOption, type ProductionJob,
 } from "./api";
 
@@ -166,7 +166,19 @@ export default function JobWorkspacePage() {
       {tab === "Overview" && <Overview job={job} onUpdate={(stageId) => setUpdateStageId(stageId)} />}
       {tab === "Stages" && <Stages job={job} canWrite={canWrite && flags["production.stage.transition"] !== false} onSkip={(stageId, reason) => act(() => skipStage(job.id, stageId, reason), "Stage skipped")} onUpdate={(stageId) => setUpdateStageId(stageId)} />}
       {tab === "Plan" && <PlanTab job={job} canWrite={canWrite} onSaved={() => { setNotice("Production plan saved"); void load(); }} />}
-      {tab === "Materials" && <Materials job={job} canIssue={canWrite && flags["production.material.issue"] !== false} canReturn={canWrite && flags["production.material.return"] !== false} canEditCost={canEditCost} onIssue={(requirementId, lotId, qty, note) => act(() => issueMaterial(job.id, requirementId, lotId, qty, note), "Material issued")} onReturn={(issueId, qty, note) => act(() => returnMaterial(job.id, issueId, qty, note), "Material returned")} onPriceOverride={(issueId, unitCost, reason) => act(() => overrideMaterialPrice(job.id, issueId, unitCost, reason), "Price overridden")} />}
+      {tab === "Materials" && (
+        <Materials
+          job={job}
+          canIssue={canWrite && flags["production.material.issue"] !== false}
+          canReturn={canWrite && flags["production.material.return"] !== false}
+          canEditCost={canEditCost}
+          onAllocate={() => act(() => allocateJobMaterials(job.id), "Stock allocated & reserved for job")}
+          onRelease={() => act(() => releaseJobMaterials(job.id), "Job reservations released")}
+          onIssue={(requirementId, lotId, qty, note) => act(() => issueMaterial(job.id, requirementId, lotId, qty, note), "Material issued")}
+          onReturn={(issueId, qty, note) => act(() => returnMaterial(job.id, issueId, qty, note), "Material returned")}
+          onPriceOverride={(issueId, unitCost, reason) => act(() => overrideMaterialPrice(job.id, issueId, unitCost, reason), "Price overridden")}
+        />
+      )}
       {tab === "Quality" && <Quality
         job={job}
         enabled={flags["production.inspection.gate"] !== false}
@@ -557,15 +569,18 @@ function PlanTab({ job, canWrite, onSaved }: { job: ProductionJob; canWrite: boo
     setGenerating(true);
     try {
       const preview = await previewPlanForJob(job.id, deliveryDate);
-      setRows(preview.map((s) => ({
-        stageId: s.stageId,
-        stageName: s.stageName,
-        workCentre: stages.find((st) => st.id === s.stageId)?.workCentre,
-        estimatedDurationMin: s.estimatedDurationMin,
-        plannedStart: s.plannedStart,
-        plannedEnd: s.plannedEnd,
-        operatorId: stages.find((st) => st.id === s.stageId)?.operatorId,
-      })));
+      setRows(preview.map((s) => {
+        const existing = stages.find((st) => st.id === s.stageId);
+        return {
+          stageId: s.stageId,
+          stageName: s.stageName,
+          workCentre: existing?.workCentre || "",
+          estimatedDurationMin: s.estimatedDurationMin || existing?.estimatedDurationMin || 0,
+          plannedStart: s.plannedStart,
+          plannedEnd: s.plannedEnd,
+          operatorId: existing?.operatorId,
+        };
+      }));
     } catch (cause) {
       setErr(cause instanceof Error ? cause.message : "Could not generate schedule");
     } finally {
@@ -573,7 +588,7 @@ function PlanTab({ job, canWrite, onSaved }: { job: ProductionJob; canWrite: boo
     }
   }
 
-  function updateRow(idx: number, field: "plannedStart" | "plannedEnd" | "operatorId", value: string | undefined) {
+  function updateRow<K extends keyof PlanRow>(idx: number, field: K, value: PlanRow[K]) {
     setRows((prev) => prev.map((r, i) => i === idx ? { ...r, [field]: value } : r));
   }
 
@@ -670,22 +685,42 @@ function PlanTab({ job, canWrite, onSaved }: { job: ProductionJob; canWrite: boo
           <table className="w-full text-xs">
             <thead style={{ background: "var(--surface-2)" }}>
               <tr>
-                {["Stage", "Work Centre", "Est. Duration", "Assigned Operator", "Planned Start", "Planned End"].map((h) => (
-                  <th key={h} className="text-left px-3 py-2 font-semibold" style={{ color: "var(--text-3)" }}>{h}</th>
+                {["Stage", "Work Centre", "Est. Duration (h)", "Assigned Operator", "Planned Start", "Planned End"].map((h) => (
+                  <th key={h} className="text-left px-3 py-2 font-semibold whitespace-nowrap" style={{ color: "var(--text-3)" }}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {rows.map((row, idx) => (
                 <tr key={row.stageId} className="border-t" style={{ borderColor: "var(--border)" }}>
-                  <td className="px-3 py-2 font-medium">{idx + 1}. {row.stageName}</td>
-                  <td className="px-3 py-2" style={{ color: "var(--text-3)" }}>{row.workCentre || "—"}</td>
-                  <td className="px-3 py-2">{row.estimatedDurationMin != null ? `${(row.estimatedDurationMin / 60).toFixed(1)}h` : "—"}</td>
-                  <td className="px-2 py-1.5">
+                  <td className="px-3 py-2 font-medium whitespace-nowrap">{idx + 1}. {row.stageName}</td>
+                  <td className="px-2 py-1.5 min-w-[130px]">
+                    <input
+                      className="eoss-input w-full text-xs"
+                      value={row.workCentre || ""}
+                      onChange={(e) => updateRow(idx, "workCentre", e.target.value)}
+                      placeholder="Work Centre"
+                      aria-label={`Work Centre for ${row.stageName}`}
+                    />
+                  </td>
+                  <td className="px-2 py-1.5 w-24">
+                    <input
+                      className="eoss-input w-full text-xs"
+                      type="number"
+                      min="0"
+                      step="0.5"
+                      value={row.estimatedDurationMin != null ? Number((row.estimatedDurationMin / 60).toFixed(2)) : ""}
+                      onChange={(e) => updateRow(idx, "estimatedDurationMin", e.target.value ? Math.round(Number(e.target.value) * 60) : 0)}
+                      placeholder="Hours"
+                      aria-label={`Duration for ${row.stageName}`}
+                    />
+                  </td>
+                  <td className="px-2 py-1.5 min-w-[150px]">
                     <select
-                      className="eoss-input w-full"
+                      className="eoss-input w-full text-xs"
                       value={row.operatorId ?? ""}
                       onChange={(e) => updateRow(idx, "operatorId", e.target.value || undefined)}
+                      aria-label={`Assigned Operator for ${row.stageName}`}
                     >
                       <option value="">-- Unassigned --</option>
                       {(Array.isArray(operators) ? operators : []).map((op) => (
@@ -693,8 +728,8 @@ function PlanTab({ job, canWrite, onSaved }: { job: ProductionJob; canWrite: boo
                       ))}
                     </select>
                   </td>
-                  <td className="px-2 py-1.5"><input type="date" className="eoss-input w-full" value={row.plannedStart} onChange={(e) => updateRow(idx, "plannedStart", e.target.value)} /></td>
-                  <td className="px-2 py-1.5"><input type="date" className="eoss-input w-full" value={row.plannedEnd} onChange={(e) => updateRow(idx, "plannedEnd", e.target.value)} /></td>
+                  <td className="px-2 py-1.5 min-w-[130px]"><input type="date" className="eoss-input w-full text-xs" value={row.plannedStart} onChange={(e) => updateRow(idx, "plannedStart", e.target.value)} /></td>
+                  <td className="px-2 py-1.5 min-w-[130px]"><input type="date" className="eoss-input w-full text-xs" value={row.plannedEnd} onChange={(e) => updateRow(idx, "plannedEnd", e.target.value)} /></td>
                 </tr>
               ))}
             </tbody>
@@ -718,33 +753,215 @@ function PlanTab({ job, canWrite, onSaved }: { job: ProductionJob; canWrite: boo
   );
 }
 
-function Materials({ job, canIssue, canReturn, canEditCost, onIssue, onReturn, onPriceOverride }: {
-  job: ProductionJob; canIssue: boolean; canReturn: boolean; canEditCost: boolean;
+function Materials({
+  job,
+  canIssue,
+  canReturn,
+  canEditCost,
+  onAllocate,
+  onRelease,
+  onIssue,
+  onReturn,
+  onPriceOverride,
+}: {
+  job: ProductionJob;
+  canIssue: boolean;
+  canReturn: boolean;
+  canEditCost: boolean;
+  onAllocate?: () => void;
+  onRelease?: () => void;
   onIssue: (requirementId: string, lotId: string, qty: number, note: string) => void;
   onReturn: (issueId: string, qty: number, note: string) => void;
   onPriceOverride: (issueId: string, unitCost: number, reason: string) => Promise<boolean>;
 }) {
+  const materials = job.materials ?? [];
+  const movements = job.movements ?? [];
+  const [allocating, setAllocating] = useState(false);
+  const [releasing, setReleasing] = useState(false);
+
+  const totalEstCost = materials.reduce(
+    (sum, m) => sum + (m.estimatedTotalCost ?? (m.requiredQty * (m.estimatedUnitCost ?? 0))),
+    0
+  );
+  const totalActCost = materials.reduce(
+    (sum, m) => sum + (m.actualTotalCost ?? (m.netIssuedQty * (m.actualUnitCost ?? 0))),
+    0
+  );
+  const totalCostVar = totalActCost - totalEstCost;
+
   return (
-    <div className="space-y-3">
-      {(job.materials ?? []).map((row) => <MaterialRow key={row.id} job={job} row={row} canIssue={canIssue} onIssue={onIssue} />)}
-      <h3 className="text-sm font-bold">Issues and returns</h3>
-      <table className="w-full text-xs">
-        <thead><tr><th className="text-left py-1">Type</th><th className="text-left">Qty</th><th className="text-left">Unit cost</th><th className="text-left">Lot</th><th /></tr></thead>
-        <tbody>
-          {(job.movements ?? []).map((movement) => (
-            <tr key={movement.id}>
-              <td className="py-1">{movement.issueType}</td>
-              <td>{movement.quantity}</td>
-              <td className="font-mono">{movement.unitCost != null ? money(movement.unitCost) : "—"}</td>
-              <td className="font-mono">{movement.lotId?.slice(0, 8)}</td>
-              <td className="flex gap-2 py-1">
-                {canReturn && movement.issueType === "issue" && <ReturnControl movementId={movement.id} max={movement.quantity} onReturn={onReturn} />}
-                {canEditCost && movement.issueType === "issue" && <PriceOverrideControl movementId={movement.id} onOverride={onPriceOverride} />}
-              </td>
-            </tr>
+    <div className="space-y-4">
+      {/* Material Allocation & Reservation Action Header */}
+      <section className="rounded-xl border p-4 space-y-3" style={{ borderColor: "var(--border)", background: "var(--surface-2)" }}>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2">
+              <h3 className="text-sm font-bold">Material Allocation &amp; Reservation</h3>
+              <StatusChip status={job.materialReadiness || "pending"} label={readinessLabel(job.materialReadiness)} size="sm" />
+            </div>
+            <p className="text-xs mt-1" style={{ color: "var(--text-3)" }}>
+              Reserve available warehouse stock lots for this job's material requirements to ensure readiness before execution.
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            {onAllocate && (
+              <button
+                type="button"
+                className="px-3.5 py-2 rounded-lg text-xs font-semibold text-white disabled:opacity-50"
+                style={{ background: "var(--brand-fill)" }}
+                disabled={allocating || job.status === "completed" || job.status === "cancelled"}
+                onClick={async () => {
+                  setAllocating(true);
+                  try {
+                    await onAllocate();
+                  } finally {
+                    setAllocating(false);
+                  }
+                }}
+              >
+                {allocating ? "Allocating…" : "Allocate Material (Reserve Stock)"}
+              </button>
+            )}
+            {onRelease && (
+              <button
+                type="button"
+                className="px-3 py-2 rounded-lg text-xs font-semibold border disabled:opacity-50"
+                style={{ borderColor: "var(--border)", color: "var(--text-2)" }}
+                disabled={releasing || job.status === "completed" || job.status === "cancelled"}
+                onClick={async () => {
+                  setReleasing(true);
+                  try {
+                    await onRelease();
+                  } finally {
+                    setReleasing(false);
+                  }
+                }}
+              >
+                {releasing ? "Releasing…" : "Release Reservations"}
+              </button>
+            )}
+          </div>
+        </div>
+      </section>
+
+      {/* Material Requirements: Estimated vs Actual Tracking */}
+      <section className="space-y-2">
+        <h3 className="text-sm font-bold">Material Requirements: Estimated vs Actual Tracking</h3>
+        <div className="rounded-xl border overflow-x-auto" style={{ borderColor: "var(--border)" }}>
+          <table className="w-full text-xs">
+            <thead style={{ background: "var(--surface-2)" }}>
+              <tr>
+                {["Component Item", "UOM", "Required (Est)", "Issued (Act)", "Returned", "Net Consumed", "Qty Var", "Est. Unit Cost", "Act. Unit Cost", "Est. Total Cost", "Act. Total Cost", "Cost Var", "Status"].map((h) => (
+                  <th key={h} className="text-left px-3 py-2 font-semibold whitespace-nowrap" style={{ color: "var(--text-3)" }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {materials.map((m) => {
+                const estTot = m.estimatedTotalCost ?? (m.requiredQty * (m.estimatedUnitCost ?? 0));
+                const actTot = m.actualTotalCost ?? (m.netIssuedQty * (m.actualUnitCost ?? 0));
+                const qtyVar = m.netIssuedQty - m.requiredQty;
+                const costVar = actTot - estTot;
+                return (
+                  <tr key={m.id} className="border-t hover:bg-[var(--surface-2)]" style={{ borderColor: "var(--border)" }}>
+                    <td className="px-3 py-2 font-medium whitespace-nowrap">
+                      <div>{m.itemCode}</div>
+                      <div className="text-[10px] text-[var(--text-3)]">{m.itemName}</div>
+                    </td>
+                    <td className="px-3 py-2 whitespace-nowrap">{m.uomSymbol || "—"}</td>
+                    <td className="px-3 py-2 whitespace-nowrap font-semibold">{m.requiredQty}</td>
+                    <td className="px-3 py-2 whitespace-nowrap text-[var(--success)]">{m.issuedQty}</td>
+                    <td className="px-3 py-2 whitespace-nowrap text-[var(--text-2)]">{m.returnedQty}</td>
+                    <td className="px-3 py-2 whitespace-nowrap font-semibold">{m.netIssuedQty}</td>
+                    <td className="px-3 py-2 whitespace-nowrap font-mono" style={{ color: qtyVar === 0 ? "var(--text-3)" : qtyVar > 0 ? "var(--error)" : "var(--success)" }}>
+                      {qtyVar > 0 ? `+${qtyVar}` : qtyVar}
+                    </td>
+                    <td className="px-3 py-2 whitespace-nowrap font-mono">{m.estimatedUnitCost != null ? money(m.estimatedUnitCost) : "—"}</td>
+                    <td className="px-3 py-2 whitespace-nowrap font-mono">{m.actualUnitCost != null ? money(m.actualUnitCost) : "—"}</td>
+                    <td className="px-3 py-2 whitespace-nowrap font-mono">{estTot > 0 ? money(estTot) : "—"}</td>
+                    <td className="px-3 py-2 whitespace-nowrap font-mono">{actTot > 0 ? money(actTot) : "—"}</td>
+                    <td className="px-3 py-2 whitespace-nowrap font-mono" style={{ color: costVar === 0 ? "var(--text-3)" : costVar > 0 ? "var(--error)" : "var(--success)" }}>
+                      {costVar > 0 ? `+${money(costVar)}` : money(costVar)}
+                    </td>
+                    <td className="px-3 py-2 whitespace-nowrap">
+                      <StatusChip status={m.readiness} label={readinessLabel(m.readiness)} size="sm" />
+                    </td>
+                  </tr>
+                );
+              })}
+              {materials.length === 0 && (
+                <tr>
+                  <td colSpan={13} className="px-3 py-4 text-center text-xs" style={{ color: "var(--text-3)" }}>
+                    No material requirements configured for this job.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+            {materials.length > 0 && (
+              <tfoot style={{ background: "var(--surface-2)" }}>
+                <tr className="border-t font-semibold" style={{ borderColor: "var(--border)" }}>
+                  <td colSpan={9} className="px-3 py-2 text-right">Total Material Cost:</td>
+                  <td className="px-3 py-2 font-mono">{money(totalEstCost)}</td>
+                  <td className="px-3 py-2 font-mono">{money(totalActCost)}</td>
+                  <td className="px-3 py-2 font-mono" style={{ color: totalCostVar <= 0 ? "var(--success)" : "var(--error)" }}>
+                    {totalCostVar > 0 ? `+${money(totalCostVar)}` : money(totalCostVar)}
+                  </td>
+                  <td />
+                </tr>
+              </tfoot>
+            )}
+          </table>
+        </div>
+      </section>
+
+      {/* Issue Material from Usable Lots */}
+      <section className="space-y-2">
+        <h3 className="text-sm font-bold">Issue Material from Usable Lots</h3>
+        <div className="space-y-3">
+          {materials.map((row) => (
+            <MaterialRow key={row.id} job={job} row={row} canIssue={canIssue} onIssue={onIssue} />
           ))}
-        </tbody>
-      </table>
+        </div>
+      </section>
+
+      {/* Issues and returns log */}
+      <section className="space-y-2">
+        <h3 className="text-sm font-bold">Issues and Returns Log</h3>
+        <div className="rounded-xl border overflow-x-auto" style={{ borderColor: "var(--border)" }}>
+          <table className="w-full text-xs">
+            <thead style={{ background: "var(--surface-2)" }}>
+              <tr>
+                {["Type", "Qty", "Unit Cost", "Lot", "Actions"].map((h) => (
+                  <th key={h} className="text-left px-3 py-2 font-semibold" style={{ color: "var(--text-3)" }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {movements.map((movement) => (
+                <tr key={movement.id} className="border-t" style={{ borderColor: "var(--border)" }}>
+                  <td className="px-3 py-2 capitalize font-medium">{movement.issueType}</td>
+                  <td className="px-3 py-2 font-semibold">{movement.quantity}</td>
+                  <td className="px-3 py-2 font-mono">{movement.unitCost != null ? money(movement.unitCost) : "—"}</td>
+                  <td className="px-3 py-2 font-mono">{movement.lotId?.slice(0, 8)}</td>
+                  <td className="px-3 py-2">
+                    <div className="flex gap-2">
+                      {canReturn && movement.issueType === "issue" && <ReturnControl movementId={movement.id} max={movement.quantity} onReturn={onReturn} />}
+                      {canEditCost && movement.issueType === "issue" && <PriceOverrideControl movementId={movement.id} onOverride={onPriceOverride} />}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+              {movements.length === 0 && (
+                <tr>
+                  <td colSpan={5} className="px-3 py-3 text-center text-xs" style={{ color: "var(--text-3)" }}>
+                    No material issues or returns recorded yet.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
     </div>
   );
 }
@@ -967,6 +1184,23 @@ function CostingTab({ job, canViewCost, canEditCost, onCost }: {
 
   if (!canViewCost) return <p className="text-sm" style={{ color: "var(--text-3)" }}>You do not have permission to view costing for this job.</p>;
 
+  const otherActual = (costing?.entries ?? [])
+    .filter((e) => !e.estimated && (e.entryType === "OTHER" || e.entryType === "MISC"))
+    .reduce((sum, e) => sum + Number(e.amount || 0), 0);
+  const otherEstimated = (costing?.entries ?? [])
+    .filter((e) => e.estimated && (e.entryType === "OTHER" || e.entryType === "MISC"))
+    .reduce((sum, e) => sum + Number(e.amount || 0), 0);
+
+  const actMat = Number(costing?.actualCost.materialCost || 0);
+  const actLab = Number(costing?.actualCost.labourCost || 0);
+  const actOvh = Number(costing?.actualCost.overheadCost || 0);
+  const runningActualTotal = actMat + actLab + actOvh;
+  const actualTotal = costing?.actualCost.totalCost ?? (runningActualTotal > 0 ? runningActualTotal : undefined);
+
+  const sellingPrice = costing?.actualCost.sellingPrice ?? costing?.estimatedCost.sellingPrice;
+  const actualProfit = costing?.actualProfit ?? (sellingPrice != null && actualTotal != null ? sellingPrice - actualTotal : undefined);
+  const actualMarginPct = costing?.actualCost.marginPct ?? (sellingPrice && actualTotal != null ? Math.round(((sellingPrice - actualTotal) / sellingPrice) * 100) : undefined);
+
   return (
     <div className="space-y-4">
       {costLoading && <p className="text-sm" style={{ color: "var(--text-3)" }}>Loading costing…</p>}
@@ -975,7 +1209,7 @@ function CostingTab({ job, canViewCost, canEditCost, onCost }: {
         <>
           <p className="text-xs" style={{ color: "var(--text-2)" }}>{costing.estimatedCostBasis}</p>
 
-          {/* Estimated vs Actual comparison table */}
+          {/* Component Estimated vs Actual comparison table */}
           <section className="rounded-xl border overflow-x-auto" style={{ borderColor: "var(--border)" }}>
             <table className="w-full text-xs">
               <thead style={{ background: "var(--surface-2)" }}>
@@ -991,9 +1225,12 @@ function CostingTab({ job, canViewCost, canEditCost, onCost }: {
                   { label: "Material", est: costing.estimatedCost.materialCost, act: costing.actualCost.materialCost, estStatus: costing.estimatedCost.materialStatus, actStatus: costing.actualCost.materialStatus },
                   { label: "Labour", est: costing.estimatedCost.labourCost, act: costing.actualCost.labourCost, estStatus: costing.estimatedCost.labourStatus, actStatus: costing.actualCost.labourStatus },
                   { label: "Overhead", est: costing.estimatedCost.overheadCost, act: costing.actualCost.overheadCost, estStatus: costing.estimatedCost.overheadStatus, actStatus: costing.actualCost.overheadStatus },
-                  { label: "Total Cost", est: costing.estimatedCost.totalCost, act: costing.actualCost.totalCost },
-                  { label: "Profit", est: costing.estimatedProfit, act: costing.actualProfit },
-                  { label: "Margin", est: costing.estimatedCost.marginPct != null ? `${costing.estimatedCost.marginPct}%` : undefined, act: costing.actualCost.marginPct != null ? `${costing.actualCost.marginPct}%` : undefined, raw: true },
+                  ...(otherActual > 0 || otherEstimated > 0 ? [
+                    { label: "Miscellaneous / Other", est: otherEstimated > 0 ? otherEstimated : undefined, act: otherActual > 0 ? otherActual : undefined }
+                  ] : []),
+                  { label: "Total Cost", est: costing.estimatedCost.totalCost, act: actualTotal },
+                  { label: "Profit", est: costing.estimatedProfit, act: actualProfit },
+                  { label: "Margin", est: costing.estimatedCost.marginPct != null ? `${costing.estimatedCost.marginPct}%` : undefined, act: actualMarginPct != null ? `${actualMarginPct}%` : undefined, raw: true },
                 ].map(({ label, est, act, estStatus, actStatus, raw }) => {
                   const estAmt = raw ? undefined : (est as number | undefined);
                   const actAmt = raw ? undefined : (act as number | undefined);
@@ -1019,37 +1256,52 @@ function CostingTab({ job, canViewCost, canEditCost, onCost }: {
             </table>
           </section>
 
-          {/* Historical reference */}
-          <section className="rounded-xl border p-4 space-y-1 text-sm" style={{ borderColor: "var(--border)" }}>
-            <h3 className="font-bold text-sm">Historical reference</h3>
-            {!costing.historicalReference || costing.historicalReference.completedOrderCount === 0
-              ? <p className="text-xs" style={{ color: "var(--text-3)" }}>No fully costed earlier jobs match this item and routing.</p>
-              : <p className="text-xs">{costing.historicalReference.completedOrderCount} completed jobs · {money(costing.historicalReference.totalActualCost)} / {costing.historicalReference.totalQuantity} units = weighted avg cost/unit <strong>{money(costing.historicalReference.weightedAverageUnitCost)}</strong></p>}
-            {costing.historicalReference && <p className="text-xs" style={{ color: "var(--text-2)" }}>{costing.historicalReference.basis}</p>}
-          </section>
-
-          {/* Cost entries */}
-          {costing.entries.length > 0 && (
-            <section className="rounded-xl border overflow-x-auto" style={{ borderColor: "var(--border)" }}>
-              <table className="w-full text-xs">
-                <caption className="text-left font-semibold px-3 py-2">Cost entries</caption>
-                <thead style={{ background: "var(--surface-2)" }}>
-                  <tr>{["Type", "Description", "Amount", "Kind", "Date"].map((h) => <th key={h} className="text-left px-3 py-2 font-semibold" style={{ color: "var(--text-3)" }}>{h}</th>)}</tr>
-                </thead>
-                <tbody>
-                  {costing.entries.map((entry) => (
-                    <tr key={entry.id} className="border-t" style={{ borderColor: "var(--border)" }}>
-                      <td className="px-3 py-2">{entry.entryType}</td>
-                      <td className="px-3 py-2">{entry.description}</td>
-                      <td className="px-3 py-2 font-mono">{money(entry.amount)}</td>
-                      <td className="px-3 py-2">{entry.estimated ? "Estimate" : "Actual"}</td>
-                      <td className="px-3 py-2">{displayDate(entry.createdAt)}</td>
-                    </tr>
+          {/* Cost entries — Displayed with Component, Estimated, Actual, Variance */}
+          <section className="rounded-xl border overflow-x-auto space-y-1" style={{ borderColor: "var(--border)" }}>
+            <div className="flex items-center justify-between px-3 pt-2.5 pb-1">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-[var(--text-2)]">Cost Entries Breakdown</h3>
+              <span className="text-[11px] text-[var(--text-3)]">{costing.entries.length} recorded</span>
+            </div>
+            <table className="w-full text-xs">
+              <thead style={{ background: "var(--surface-2)" }}>
+                <tr>
+                  {["Component / Description", "Category", "Estimated", "Actual", "Variance", "Date"].map((h) => (
+                    <th key={h} className="text-left px-3 py-2 font-semibold" style={{ color: "var(--text-3)" }}>{h}</th>
                   ))}
-                </tbody>
-              </table>
-            </section>
-          )}
+                </tr>
+              </thead>
+              <tbody>
+                {costing.entries.map((entry) => {
+                  const est = entry.estimated ? entry.amount : undefined;
+                  const act = !entry.estimated ? entry.amount : undefined;
+                  const variance = est != null && act != null ? act - est : act != null ? act : est != null ? -est : undefined;
+                  return (
+                    <tr key={entry.id} className="border-t hover:bg-[var(--surface-2)]" style={{ borderColor: "var(--border)" }}>
+                      <td className="px-3 py-2 font-medium">{entry.description}</td>
+                      <td className="px-3 py-2">
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase bg-[var(--surface-2)] text-[var(--text-2)]">
+                          {entry.entryType}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2 font-mono">{est != null ? money(est) : "—"}</td>
+                      <td className="px-3 py-2 font-mono font-semibold">{act != null ? money(act) : "—"}</td>
+                      <td className="px-3 py-2 font-mono" style={{ color: variance == null ? "var(--text-3)" : variance > 0 ? "var(--error)" : "var(--success)" }}>
+                        {variance != null ? `${variance > 0 ? "+" : ""}${money(variance)}` : "—"}
+                      </td>
+                      <td className="px-3 py-2 text-[var(--text-3)]">{displayDate(entry.createdAt)}</td>
+                    </tr>
+                  );
+                })}
+                {costing.entries.length === 0 && (
+                  <tr>
+                    <td colSpan={6} className="px-3 py-4 text-center text-xs text-[var(--text-3)]">
+                      No additional actual cost entries added yet. Use the form below to record labour, overhead or miscellaneous actual costs.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </section>
         </>
       )}
 

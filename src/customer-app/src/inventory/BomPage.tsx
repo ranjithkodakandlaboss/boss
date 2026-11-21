@@ -439,6 +439,10 @@ function BomForm({ items, uoms, onClose, onSaved }: { items: Item[]; uoms: Uom[]
       setError("Each component needs an item, a positive fixed quantity or a formula, and a unit.");
       return;
     }
+    if (lines.some((line) => line.scrapFactor != null && (Number(line.scrapFactor) < 0 || Number(line.scrapFactor) > 100))) {
+      setError("Scrap % must be between 0 and 100.");
+      return;
+    }
     setSaving(true);
     try {
       await api(`/api/v1/items/${itemId}/bom`, {
@@ -452,7 +456,7 @@ function BomForm({ items, uoms, onClose, onSaved }: { items: Item[]; uoms: Uom[]
             componentItemId: line.componentItemId,
             qty: line.quantityFormula?.trim() ? (Number(line.qty) || 1) : Number(line.qty),
             uomId: line.uomId,
-            scrapFactor: Number(line.scrapFactor || 0),
+            scrapFactor: Math.min(100, Math.max(0, Number(line.scrapFactor || 0))),
             quantityFormula: line.quantityFormula?.trim() || null,
             unitCost: line.unitCost !== "" && line.unitCost != null ? Number(line.unitCost) : null,
           })),
@@ -472,7 +476,7 @@ function BomForm({ items, uoms, onClose, onSaved }: { items: Item[]; uoms: Uom[]
       onClose={onClose}
       primary={{ label: saving ? "Saving…" : "Save and approve", onClick: () => void submit({ preventDefault: () => {} } as FormEvent), disabled: saving }}
       secondary={{ label: "Cancel", onClick: onClose }}
-      width="lg"
+      width="xl"
     >
       {error && <p role="alert" className="mb-3 text-sm text-[var(--error)]">{error}</p>}
       <label className="flex flex-col gap-1 text-sm font-medium text-[var(--text)]">
@@ -501,37 +505,67 @@ function BomForm({ items, uoms, onClose, onSaved }: { items: Item[]; uoms: Uom[]
 
       <div className="mt-4 space-y-2">
         <div className="flex items-center justify-between">
-          <p className="text-xs font-semibold text-[var(--text-2)] uppercase tracking-wider">Required Materials &amp; Consumables</p>
-          <span className="text-xs text-[var(--text-3)]">Items categorized as Consumable appear under consumables</span>
+          <p className="text-xs font-bold text-[var(--text-2)] uppercase tracking-wider">Required Materials &amp; Consumables</p>
+          <span className="text-xs text-[var(--text-3)]">Add components required to manufacture 1 finished unit</span>
         </div>
-        {lines.map((line, index) => (
-          <div key={index} className="grid gap-2 sm:grid-cols-[2.2fr_1fr_1fr_1.1fr_1fr_1.8fr_auto] items-center rounded-lg border border-[var(--border)] p-2">
-            <div>
-              <select aria-label={`Component ${index + 1}`} className="eoss-input w-full text-xs" value={line.componentItemId} onChange={(event) => pickComponent(index, event.target.value)}>
-                <option value="">Select component</option>
-                {items.filter((item) => item.id !== itemId && isBomComponent(item.itemType)).map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.code} — {item.name}
-                  </option>
-                ))}
-              </select>
-              {line.componentItemType && (
-                <span className="mt-1 inline-block text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded" style={{ background: line.componentItemType === "CONSUMABLE" ? "var(--warning)" : "var(--brand)", color: "#fff" }}>
-                  {line.componentItemType === "CONSUMABLE" ? "Consumable" : "Raw Material"}
-                </span>
-              )}
-            </div>
-            <input aria-label={`Quantity ${index + 1}`} className="eoss-input text-xs" inputMode="decimal" value={line.qty} onChange={(event) => update(index, { qty: event.target.value })} placeholder="Fixed qty" />
-            <select aria-label={`Unit ${index + 1}`} className="eoss-input text-xs" value={line.uomId} onChange={(event) => update(index, { uomId: event.target.value })}>
-              {uoms.map((uom) => <option key={uom.id} value={uom.id}>{uom.symbol}</option>)}
-            </select>
-            <input aria-label={`Unit cost ${index + 1}`} className="eoss-input text-xs" inputMode="decimal" value={line.unitCost ?? ""} onChange={(event) => update(index, { unitCost: event.target.value })} placeholder="Unit cost ₹" />
-            <input aria-label={`Scrap % ${index + 1}`} className="eoss-input text-xs" inputMode="decimal" value={line.scrapFactor} onChange={(event) => update(index, { scrapFactor: event.target.value })} placeholder="Scrap %" />
-            <input aria-label={`Formula ${index + 1}`} className="eoss-input text-xs" value={line.quantityFormula ?? ""} onChange={(event) => update(index, { quantityFormula: event.target.value })} placeholder="Formula: length * width" />
-            <button type="button" className="text-[var(--error)] font-bold px-1.5" onClick={() => setLines((current) => current.filter((_, i) => i !== index))}>✕</button>
-          </div>
-        ))}
-        <button type="button" className="text-xs font-semibold text-[var(--brand)]" onClick={() => setLines((current) => [...current, { componentItemId: "", qty: "", uomId: uoms[0]?.id ?? "", scrapFactor: 0, unitCost: "" }])}>+ Add component</button>
+
+        <div className="overflow-x-auto rounded-xl border border-[var(--border)]">
+          <table className="w-full text-xs text-left">
+            <thead style={{ background: "var(--surface-2)" }}>
+              <tr className="text-[var(--text-3)] font-semibold border-b border-[var(--border)]">
+                <th className="px-3 py-2 min-w-[200px]">Component Item *</th>
+                <th className="px-2 py-2 min-w-[70px]">Qty *</th>
+                <th className="px-2 py-2 min-w-[70px]">UOM *</th>
+                <th className="px-2 py-2 min-w-[90px]">Unit Cost (₹)</th>
+                <th className="px-2 py-2 min-w-[75px]">Scrap %</th>
+                <th className="px-2 py-2 min-w-[140px]">Formula (Optional)</th>
+                <th className="px-2 py-2 w-8"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {lines.map((line, index) => (
+                <tr key={index} className="border-t border-[var(--border)] hover:bg-[var(--surface-2)]">
+                  <td className="p-2">
+                    <select aria-label={`Component ${index + 1}`} className="eoss-input w-full text-xs" value={line.componentItemId} onChange={(event) => pickComponent(index, event.target.value)}>
+                      <option value="">Select component</option>
+                      {items.filter((item) => item.id !== itemId && isBomComponent(item.itemType)).map((item) => (
+                        <option key={item.id} value={item.id}>
+                          {item.code} — {item.name}
+                        </option>
+                      ))}
+                    </select>
+                    {line.componentItemType && (
+                      <span className="mt-1 inline-block text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded" style={{ background: line.componentItemType === "CONSUMABLE" ? "var(--warning)" : "var(--brand)", color: "#fff" }}>
+                        {line.componentItemType === "CONSUMABLE" ? "Consumable" : "Raw Material"}
+                      </span>
+                    )}
+                  </td>
+                  <td className="p-2">
+                    <input aria-label={`Quantity ${index + 1}`} className="eoss-input text-xs w-full" inputMode="decimal" value={line.qty} onChange={(event) => update(index, { qty: event.target.value })} placeholder="1.00" />
+                  </td>
+                  <td className="p-2">
+                    <select aria-label={`Unit ${index + 1}`} className="eoss-input text-xs w-full" value={line.uomId} onChange={(event) => update(index, { uomId: event.target.value })}>
+                      {uoms.map((uom) => <option key={uom.id} value={uom.id}>{uom.symbol}</option>)}
+                    </select>
+                  </td>
+                  <td className="p-2">
+                    <input aria-label={`Unit cost ${index + 1}`} className="eoss-input text-xs w-full" inputMode="decimal" value={line.unitCost ?? ""} onChange={(event) => update(index, { unitCost: event.target.value })} placeholder="Cost ₹" />
+                  </td>
+                  <td className="p-2">
+                    <input aria-label={`Scrap % ${index + 1}`} className="eoss-input text-xs w-full" type="number" min="0" max="100" step="0.1" inputMode="decimal" value={line.scrapFactor} onChange={(event) => update(index, { scrapFactor: event.target.value })} placeholder="0" />
+                  </td>
+                  <td className="p-2">
+                    <input aria-label={`Formula ${index + 1}`} className="eoss-input text-xs w-full" value={line.quantityFormula ?? ""} onChange={(event) => update(index, { quantityFormula: event.target.value })} placeholder="e.g. length * width" />
+                  </td>
+                  <td className="p-2 text-center">
+                    <button type="button" className="text-[var(--error)] font-bold text-sm hover:opacity-80 p-1" title="Remove component" onClick={() => setLines((current) => current.filter((_, i) => i !== index))}>✕</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <button type="button" className="text-xs font-semibold text-[var(--brand)] hover:underline mt-2 inline-flex items-center gap-1" onClick={() => setLines((current) => [...current, { componentItemId: "", qty: "", uomId: uoms[0]?.id ?? "", scrapFactor: 0, unitCost: "" }])}>+ Add component</button>
       </div>
     </RecordSheet>
   );

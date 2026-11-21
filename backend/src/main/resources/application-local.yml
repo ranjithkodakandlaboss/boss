@@ -7,6 +7,9 @@ spring:
   jpa:
     show-sql: false
 
+  flyway:
+    out-of-order: true
+
 logging:
   level:
     in.boss: DEBUG

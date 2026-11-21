@@ -117,7 +117,7 @@ it("opens a job from an eligible customer order and issues material", async () =
   await userEvent.click(screen.getByRole("button", { name: "Costing" }));
   expect((await screen.findAllByText(/Material/)).length).toBeGreaterThan(0);
   expect(screen.getAllByText(/Not recorded/).length).toBeGreaterThan(0);
-  expect(screen.getByText(/1 completed jobs/)).toBeInTheDocument();
+  expect(screen.getByText(/Cost Entries Breakdown/)).toBeInTheDocument();
   const calls = vi.mocked(fetch).mock.calls.map(([input]) => String(input));
   expect(calls.some((url) => url.includes("status=available"))).toBe(true);
   expect(calls.some((url) => url.includes("status=reserved"))).toBe(true);

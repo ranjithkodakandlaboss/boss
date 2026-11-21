@@ -368,7 +368,8 @@ public class ProductionJobService {
         if (versioned != null && versioned > 0) {
             return jdbc.query("""
                     SELECT s.seq_no, s.name, s.requires_inspection, s.inspection_template_id, s.is_optional,
-                           s.stage_config_id, s.work_centre, s.asset_id, o.code, o.label
+                           s.stage_config_id, s.work_centre, s.asset_id, o.code, o.label,
+                           COALESCE(s.estimated_duration_min, 0) AS estimated_duration_min
                     FROM routing_template_stages s
                     LEFT JOIN tenant_config_options o
                       ON o.id = s.stage_config_id AND o.tenant_id = s.tenant_id
@@ -380,7 +381,8 @@ public class ProductionJobService {
                 return new StageSeed(rs.getInt("seq_no"), name, rs.getString("code"),
                         rs.getObject("stage_config_id", UUID.class), rs.getBoolean("requires_inspection"),
                         rs.getObject("inspection_template_id", UUID.class), rs.getBoolean("is_optional"),
-                        rs.getString("work_centre"), rs.getObject("asset_id", UUID.class));
+                        rs.getString("work_centre"), rs.getObject("asset_id", UUID.class),
+                        rs.getInt("estimated_duration_min"));
             }, tenantId, routingId);
         }
         return jdbc.query("""
@@ -388,7 +390,7 @@ public class ProductionJobService {
                 FROM routing_operations WHERE tenant_id = ? AND routing_id = ? ORDER BY seq_no
                 """, (rs, row) -> new StageSeed(rs.getInt("seq_no"), rs.getString("name"), null, null,
                 rs.getBoolean("requires_inspection"), null, rs.getBoolean("is_optional"),
-                rs.getString("work_centre"), null), tenantId, routingId);
+                rs.getString("work_centre"), null, 0), tenantId, routingId);
     }
 
     private void insertStages(UUID tenantId, UUID jobId, List<StageSeed> stages) {
@@ -397,11 +399,11 @@ public class ProductionJobService {
                     INSERT INTO job_stages
                       (id, tenant_id, job_id, seq_no, name, stage_code, stage_config_option_id,
                        stage_label_snapshot, status, requires_inspection, inspection_template_id,
-                       is_optional, work_centre, asset_id)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)
+                       is_optional, work_centre, asset_id, estimated_duration_min)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?)
                     """, UUID.randomUUID(), tenantId, jobId, stage.seq(), stage.name(), stage.code(),
                     stage.configId(), stage.name(), stage.inspection(), stage.templateId(),
-                    stage.optional(), stage.workCentre(), stage.assetId());
+                    stage.optional(), stage.workCentre(), stage.assetId(), stage.estimatedDurationMin());
         }
     }
 
@@ -542,7 +544,8 @@ public class ProductionJobService {
                                    boolean isDefault, String status, int revisionNumber) {}
 
     private record StageSeed(int seq, String name, String code, UUID configId, boolean inspection,
-                             UUID templateId, boolean optional, String workCentre, UUID assetId) {}
+                             UUID templateId, boolean optional, String workCentre, UUID assetId,
+                             Integer estimatedDurationMin) {}
 
     private record StageOption(UUID id, String label) {}
 

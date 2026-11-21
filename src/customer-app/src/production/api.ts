@@ -254,6 +254,10 @@ function post<T>(path: string, body: unknown) {
   });
 }
 
+function del<T>(path: string) {
+  return api<T>(path, { method: "DELETE" });
+}
+
 export function listJobs() {
   return api<Page<ProductionJob>>("/api/v1/jobs?page=0&size=200");
 }
@@ -352,8 +356,26 @@ export function listSites(): Promise<{ id: string; name: string }[]> {
     .catch(() => []);
 }
 
-export function savePlan(jobId: string, stages: Array<{ stageId: string; plannedStart: string; plannedEnd: string; operatorId?: string }>) {
+export function savePlan(jobId: string, stages: Array<{
+  stageId: string;
+  plannedStart: string;
+  plannedEnd: string;
+  operatorId?: string;
+  workCentre?: string;
+  estimatedDurationMin?: number;
+}>) {
   return post<ProductionJob>(`/api/v1/jobs/${jobId}/plan`, { stages });
+}
+
+export function allocateJobMaterials(jobId: string, partial = true) {
+  return post<{ jobId: string; status: string; lines?: Array<{ itemId: string; requested: number; reserved: number; shortfall: number }> }>(
+    `/api/v1/inventory/reservations/${encodeURIComponent(jobId)}/requirements?partial=${partial}`,
+    {}
+  );
+}
+
+export function releaseJobMaterials(jobId: string) {
+  return del<void>(`/api/v1/inventory/reservations/${encodeURIComponent(jobId)}`);
 }
 
 export type BackendPlanPreviewStage = {

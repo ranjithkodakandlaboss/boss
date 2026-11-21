@@ -110,7 +110,7 @@ class ProductionJobView {
                        s.status, s.requires_inspection, s.is_optional, s.work_centre, s.asset_id,
                        a.asset_number, s.actual_start, s.actual_end, s.completed_by,
                        s.planned_start, s.planned_end, s.completed_qty, s.blocked_qty,
-                       COALESCE(rts.estimated_duration_min, 0) AS estimated_duration_min,
+                       COALESCE(NULLIF(s.estimated_duration_min, 0), rts.estimated_duration_min, 0) AS estimated_duration_min,
                        s.operator_id, u.display_name AS operator_name
                 FROM job_stages s
                 LEFT JOIN assets a ON a.id = s.asset_id AND a.tenant_id = s.tenant_id

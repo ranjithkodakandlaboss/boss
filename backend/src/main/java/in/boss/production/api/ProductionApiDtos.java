@@ -56,10 +56,15 @@ public final class ProductionApiDtos {
             @NotNull UUID stageId,
             @NotNull LocalDate plannedStart,
             @NotNull LocalDate plannedEnd,
-            UUID operatorId
+            UUID operatorId,
+            String workCentre,
+            Integer estimatedDurationMin
     ) {
         public StagePlanEntry(UUID stageId, LocalDate plannedStart, LocalDate plannedEnd) {
-            this(stageId, plannedStart, plannedEnd, null);
+            this(stageId, plannedStart, plannedEnd, null, null, null);
+        }
+        public StagePlanEntry(UUID stageId, LocalDate plannedStart, LocalDate plannedEnd, UUID operatorId) {
+            this(stageId, plannedStart, plannedEnd, operatorId, null, null);
         }
     }
 
