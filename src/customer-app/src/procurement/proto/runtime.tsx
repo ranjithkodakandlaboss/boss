@@ -507,27 +507,49 @@ export function ProcurementProvider({ children }: { children?: ReactNode }) {
   }, []);
 
   const value = useMemo(() => {
-    const requested = (dataRef.current.quotes as any[] | undefined)?.filter(
-        (quote) => quote.status === "requested" || (quote.deliveryStatus && quote.deliveryStatus !== "not_sent")
-      ) ?? [];
-    const supplierInvitations = requested.map((quote) => ({
-      id: quote.id,
-      prId: quote.prId,
-      prNumber: quote.prNumber,
-      supplierId: quote.supplierId,
-      supplierName: quote.supplierName,
-      channel: "email",
-      requestedLineIds: (quote.lines ?? []).map((line: any) => line.prLineId),
-      createdAt: "",
-      sentDate: quote.deliveryStatus === "sent" ? "Sent" : "",
-      responseDueDate: quote.validUntil,
-      status: "awaiting_quotation",
-      quotationId: undefined,
-      deliveryStatus: quote.deliveryStatus,
-      deliveryRecipient: quote.deliveryRecipient,
-      deliveryError: quote.deliveryError,
-      contactEmail: quote.deliveryRecipient,
-    }));
+    const allQuotes = (dataRef.current.quotes as any[] | undefined) ?? [];
+    const receivedQuotes = allQuotes.filter((quote) => quote.status !== "requested");
+    const requested = allQuotes.filter(
+      (quote) => quote.status === "requested" || (quote.deliveryStatus && quote.deliveryStatus !== "not_sent")
+    );
+    const invitationMap = new Map<string, any>();
+    for (const quote of requested) {
+      const isFulfilled = quote.status !== "requested";
+      const matchingQuote = isFulfilled
+        ? quote
+        : receivedQuotes.find(
+            (rq) => (rq.invitationId && rq.invitationId === quote.id) || (rq.id === quote.id)
+          );
+      const quotationId = matchingQuote?.id ?? (isFulfilled ? quote.id : undefined);
+      const effectiveStatus = matchingQuote
+        ? (matchingQuote.status === "selected" ? "selected" : "quotation_received")
+        : (isFulfilled ? (quote.status === "selected" ? "selected" : "quotation_received") : "awaiting_quotation");
+
+      const invObj = {
+        id: quote.id,
+        prId: quote.prId,
+        prNumber: quote.prNumber,
+        supplierId: quote.supplierId,
+        supplierName: quote.supplierName,
+        channel: "email" as const,
+        requestedLineIds: (quote.lines ?? []).map((line: any) => line.prLineId),
+        createdAt: "",
+        sentDate: quote.deliveryStatus === "sent" ? "Sent" : "",
+        responseDueDate: quote.validUntil,
+        status: effectiveStatus,
+        quotationId,
+        deliveryStatus: quote.deliveryStatus,
+        deliveryRecipient: quote.deliveryRecipient,
+        deliveryError: quote.deliveryError,
+        contactEmail: quote.deliveryRecipient,
+      };
+
+      const key = `${quote.prId}_${quote.supplierId}`;
+      if (!invitationMap.has(key) || quotationId) {
+        invitationMap.set(key, invObj);
+      }
+    }
+    const supplierInvitations = Array.from(invitationMap.values());
     const approvalRequests = purchaseReqs
       .filter((pr) => pr.apiStatus === "submitted" || pr.status === "pending")
       .map((pr) => ({
@@ -559,6 +581,7 @@ export function ProcurementProvider({ children }: { children?: ReactNode }) {
       materials,
       sites,
       storeLocations,
+      uoms,
       documents: [],
       auditEvents: [],
       supplierBills: [],

@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { ArrowDown, ArrowUp, LockKeyhole, Pencil, Plus, RotateCcw } from "lucide-react";
+import { ArrowDown, ArrowUp, LockKeyhole, MapPin, Pencil, Plus, RotateCcw } from "lucide-react";
 import { ApiError } from "../auth/api";
 import { useCustomer } from "../auth/CustomerState";
 import Button from "../components/shared/Button";
 import ConfirmDialog from "../components/shared/ConfirmDialog";
 import RecordSheet from "../components/shared/RecordSheet";
+import UomAdmin from "./UomAdmin";
 import {
   createConfigOption,
   listConfigCategories,
@@ -15,6 +16,137 @@ import {
   type ConfigCategory,
   type ConfigOption,
 } from "./api";
+
+const UOM_CATEGORY: ConfigCategory = {
+  code: "UNITS_OF_MEASURE",
+  name: "Units of Measure (UOM)",
+  scope: "tenant",
+  supportsOrdering: false,
+  tenantEditable: true,
+};
+
+const REFERENCE_DATA_USAGE: Record<string, { screen: string; field: string; description?: string }> = {
+  UNITS_OF_MEASURE: {
+    screen: "Product Master, BOM, Quotation, PO, & Production Jobs",
+    field: "Unit of Measure (UOM)",
+    description: "Standard measurement units used across inventory stock, bills of materials, purchase orders, and job consumption.",
+  },
+  PAYMENT_MODES: {
+    screen: "Sales Quotations & Customer Invoicing",
+    field: "Payment Mode / Terms",
+    description: "Supported customer payment methods such as NEFT, RTGS, Cheque, and UPI.",
+  },
+  CUSTOMER_TYPES: {
+    screen: "Sales & Orders ➔ Customer Directory",
+    field: "Customer Type / Category",
+    description: "Segment and classify customers (OEM, Tier 1, Distributor, Retail, etc.).",
+  },
+  SUPPLIER_TYPES: {
+    screen: "Suppliers & Procurement",
+    field: "Supplier Category / Type",
+    description: "Classify vendor relationships (Raw Material Supplier, Job Worker, Consumables Vendor, etc.).",
+  },
+  ITEM_CATEGORY: {
+    screen: "Product & Material Master",
+    field: "Item Category",
+    description: "Grouping and catalog classification for materials, sub-assemblies, and finished goods.",
+  },
+  PRODUCTION_STAGES: {
+    screen: "Manufacturing Routes & Production Jobs",
+    field: "Stage Name / Operation",
+    description: "Defines shop-floor operations and manufacturing steps (e.g. Cutting, CNC Machining, Welding, Assembly).",
+  },
+  WORK_CENTRE: {
+    screen: "Manufacturing Routes & Production Jobs",
+    field: "Work Centre / Machine Cell",
+    description: "Workstations, machine bays, and shop-floor centers assigned to routing operations.",
+  },
+  STORE_TYPES: {
+    screen: "Sites & Stores",
+    field: "Store Type",
+    description: "Location types inside plants and warehouses (Raw Materials, Finished Goods, WIP, Quarantine, etc.).",
+  },
+  INSPECTION_TYPES: {
+    screen: "Quality Management & Production Jobs",
+    field: "Inspection Checklist Type",
+    description: "Quality gates for incoming goods, in-process routing stages, and final dispatch inspection.",
+  },
+  DEFECT_CATEGORY: {
+    screen: "Quality Management & Non-Conformance (NCR)",
+    field: "Defect Category",
+    description: "Classifies quality defects (Dimensional, Surface finish, Material flaw, Packaging defect).",
+  },
+  REJECTION_REASONS: {
+    screen: "Quality & Material Returns / NCR",
+    field: "Rejection / Scrap Reason",
+    description: "Standard reasons for rejecting received material, failed stages, or damaged stock.",
+  },
+  DISPATCH_METHOD: {
+    screen: "Dispatch & Shipping",
+    field: "Dispatch Method / Mode",
+    description: "Transport mode for shipping deliveries (Road Transport, Express Courier, Air Cargo, Dedicated Vehicle).",
+  },
+  CARRIER: {
+    screen: "Dispatch & Outbound Logistics",
+    field: "Transporter / Carrier Name",
+    description: "Logistics companies and transport partners used on Delivery Challans.",
+  },
+  VEHICLE: {
+    screen: "Dispatch & Delivery Challan",
+    field: "Vehicle / Truck Number",
+    description: "Registered transport vehicle numbers used for goods movement.",
+  },
+  DRIVER: {
+    screen: "Dispatch & Delivery Challan",
+    field: "Assigned Driver",
+    description: "Designated commercial drivers and phone contacts for delivery transit.",
+  },
+  PACKAGE_TYPE: {
+    screen: "Dispatch & Packaging",
+    field: "Package Type",
+    description: "Outer packing containers (Wooden Box, Corrugated Carton, Pallet, Steel Drum).",
+  },
+  ASSET_CATEGORY: {
+    screen: "Maintenance & Plant Assets",
+    field: "Asset Category",
+    description: "Categorization of machines and equipment (CNC Lathe, Milling, Overhead Crane, Compressor).",
+  },
+  ASSET_CRITICALITY: {
+    screen: "Maintenance & Plant Assets",
+    field: "Machine Criticality",
+    description: "Production impact rating (Low, Medium, High, Production Critical bottleneck).",
+  },
+  ASSET_STATUS: {
+    screen: "Maintenance & Plant Assets",
+    field: "Operational Status",
+    description: "Live state of shop floor machinery (Operating, Idle, Under Maintenance, Breakdown).",
+  },
+  MAINTENANCE_EVENT_TYPE: {
+    screen: "Maintenance & Work Orders",
+    field: "Maintenance Event Type",
+    description: "Type of maintenance activity (Preventive Maintenance, Breakdown Repair, Calibration, Inspection).",
+  },
+  MAINTENANCE_EVENT_STATUS: {
+    screen: "Maintenance & Work Orders",
+    field: "Event / Work Order Status",
+    description: "Lifecycle status of maintenance jobs (Scheduled, In Progress, Awaiting Spares, Completed).",
+  },
+  MAINTENANCE_SEVERITY: {
+    screen: "Maintenance & Work Orders",
+    field: "Issue Severity",
+    description: "Urgency of machine breakdown or servicing need.",
+  },
+  METER_TYPE: {
+    screen: "Maintenance & Plant Assets",
+    field: "Run Meter / Gauge Type",
+    description: "Asset usage tracking units (Operating Hours, Stroke Cycles, Kilometers).",
+  },
+  UNIT_TYPES: {
+    screen: "Units of Measure (UOM)",
+    field: "UOM Classification / Dimension",
+    description: "Physical dimension categories for units (Weight, Count, Length, Volume, Area).",
+  },
+};
 
 export default function ConfigOptionsAdmin() {
   const { user } = useCustomer();
@@ -46,7 +178,7 @@ export default function ConfigOptionsAdmin() {
 
   async function loadOptions(codeToLoad: string) {
     const generation = ++requestGeneration.current;
-    if (!codeToLoad) {
+    if (!codeToLoad || codeToLoad === "UNITS_OF_MEASURE") {
       setOptions([]);
       return;
     }
@@ -70,8 +202,9 @@ export default function ConfigOptionsAdmin() {
     setCategoryError("");
     listConfigCategories()
       .then((items) => {
-        setCategories(items);
-        setCategoryCode((current) => current || items[0]?.code || "");
+        const allCategories = [...items, UOM_CATEGORY];
+        setCategories(allCategories);
+        setCategoryCode((current) => current || items[0]?.code || UOM_CATEGORY.code || "");
       })
       .catch((reason: unknown) => setCategoryError(messageFor(reason, "Configuration categories could not be loaded.")))
       .finally(() => setLoadingCategories(false));
@@ -231,7 +364,29 @@ export default function ConfigOptionsAdmin() {
         </label>
       </div>
 
-      {!category ? (
+      {REFERENCE_DATA_USAGE[categoryCode] && (
+        <div className="flex items-start gap-2.5 p-3.5 bg-indigo-50/70 dark:bg-indigo-950/30 border border-indigo-200 dark:border-indigo-800/60 rounded-xl text-xs max-w-2xl">
+          <MapPin className="text-indigo-600 dark:text-indigo-400 flex-shrink-0 mt-0.5" size={16} />
+          <div>
+            <div className="flex flex-wrap items-center gap-1.5 font-medium text-[var(--text)]">
+              <span className="text-[var(--text-3)] font-semibold">Used in Screen:</span>
+              <span className="font-semibold text-indigo-700 dark:text-indigo-300">{REFERENCE_DATA_USAGE[categoryCode].screen}</span>
+              <span className="text-[var(--text-3)] mx-1">➔</span>
+              <span className="text-[var(--text-3)] font-semibold">Field:</span>
+              <span className="font-semibold text-indigo-700 dark:text-indigo-300">{REFERENCE_DATA_USAGE[categoryCode].field}</span>
+            </div>
+            {REFERENCE_DATA_USAGE[categoryCode].description && (
+              <p className="text-[var(--text-2)] mt-1">{REFERENCE_DATA_USAGE[categoryCode].description}</p>
+            )}
+          </div>
+        </div>
+      )}
+
+      {categoryCode === "UNITS_OF_MEASURE" ? (
+        <div className="pt-2">
+          <UomAdmin />
+        </div>
+      ) : !category ? (
         <p className="text-sm text-[var(--text-2)]">No configuration categories are available.</p>
       ) : (
         <>

@@ -57,11 +57,18 @@ export default function QuotationCreate() {
   const { rfqId } = useParams<{ rfqId: string }>();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { rfqs, customers, addCustomer, addQuotation, createDirectQuotation, currentUser, catalog, uoms, reload, showToast } = useStore();
+  const { rfqs, quotations, quotationLines, customers, addCustomer, addQuotation, createDirectQuotation, updateQuotation, reviseQuotation, currentUser, catalog, uoms, reload, showToast } = useStore();
 
-  const rfq = rfqs.find(r => r.id === rfqId) as (typeof rfqs[0] & Record<string, any>) | undefined;
+  const editId = searchParams.get('edit');
+  const reviseId = searchParams.get('revise');
+  const targetQuoteId = editId || reviseId;
+  const isEditing = Boolean(editId);
+  const isRevising = Boolean(reviseId);
+  const targetQuote = targetQuoteId ? quotations.find(q => q.id === targetQuoteId) : undefined;
+
+  const rfq = rfqs.find(r => r.id === (rfqId || targetQuote?.rfqId)) as (typeof rfqs[0] & Record<string, any>) | undefined;
   const rfqLines: any[] = rfq?.lines ?? [];
-  const isDirect = !rfqId;
+  const isDirect = !rfqId && !targetQuote?.rfqId;
 
   const [customerId, setCustomerId] = useState(() => searchParams.get('customer') ?? '');
   const [validDays, setValidDays] = useState('30');
@@ -70,6 +77,8 @@ export default function QuotationCreate() {
   const [discountAmount, setDiscountAmount] = useState(0);
   const [taxRatePct, setTaxRatePct] = useState(18);
   const [notes, setNotes] = useState('');
+  const [revisionReason, setRevisionReason] = useState('');
+  const [loadedFromTarget, setLoadedFromTarget] = useState(false);
   const [files, setFiles] = useState<File[]>([]);
   const [costingConfig, setCostingConfig] = useState<QuotationCostingConfig>();
   const [costConfigMessage, setCostConfigMessage] = useState('');
@@ -88,6 +97,76 @@ export default function QuotationCreate() {
   }>>({});
   const [expandedBom, setExpandedBom] = useState<Record<string, boolean>>({});
   const canConfigureCosting = ['owner', 'OWNER'].includes(currentUser.role);
+
+  useEffect(() => {
+    if (!targetQuoteId || loadedFromTarget) return;
+    const q = quotations.find(item => item.id === targetQuoteId);
+    if (!q) {
+      salesApi.quotation(targetQuoteId).then((apiQ: any) => {
+        if (apiQ) {
+          if (apiQ.customerId) setCustomerId(apiQ.customerId);
+          if (apiQ.paymentTerms) setPaymentTerms(apiQ.paymentTerms);
+          if (apiQ.deliveryTerms) setDeliveryTerms(apiQ.deliveryTerms);
+          if (apiQ.discountAmount != null) setDiscountAmount(Number(apiQ.discountAmount));
+          if (apiQ.taxRatePct != null) setTaxRatePct(Number(apiQ.taxRatePct));
+          if (apiQ.notes) setNotes(apiQ.notes);
+          if (apiQ.validUntil) {
+            const diffDays = Math.round((new Date(apiQ.validUntil).getTime() - Date.now()) / 86400000);
+            setValidDays(String(Math.max(1, diffDays)));
+          }
+          if (apiQ.lines && apiQ.lines.length > 0) {
+            setLines(apiQ.lines.map((l: any, i: number) => ({
+              id: l.id || `ql-${Date.now()}-${i + 1}`,
+              itemId: l.productId || '',
+              drawingNumber: l.drawingNumber || '',
+              drawingRevision: l.drawingRevision || 'A',
+              productName: l.productName || '',
+              orderedQty: Number(l.orderedQty) || 1,
+              uom: l.uom || 'Nos',
+              unitPrice: l.unitPrice != null ? Number(l.unitPrice) : undefined,
+              requiredDate: l.requiredDate || '',
+              labourHours: l.labourHours || {},
+              machineHours: l.machineHours || {},
+              rfqLineId: l.rfqLineId,
+              specificationValues: l.specificationValues || {},
+            })));
+          }
+          setLoadedFromTarget(true);
+        }
+      }).catch(() => {});
+      return;
+    }
+
+    if (q.customerId) setCustomerId(q.customerId);
+    if (q.paymentTerms) setPaymentTerms(q.paymentTerms);
+    if (q.deliveryTerms) setDeliveryTerms(q.deliveryTerms);
+    if (q.discountAmount != null) setDiscountAmount(Number(q.discountAmount));
+    if (q.taxRatePct != null) setTaxRatePct(Number(q.taxRatePct));
+    if (q.notes) setNotes(q.notes);
+    if (q.validUntil) {
+      const diffDays = Math.round((new Date(q.validUntil).getTime() - Date.now()) / 86400000);
+      setValidDays(String(Math.max(1, diffDays)));
+    }
+    const qLines = quotationLines.filter(l => l.quotationId === targetQuoteId);
+    if (qLines.length > 0) {
+      setLines(qLines.map((l, i) => ({
+        id: l.id || `ql-${Date.now()}-${i + 1}`,
+        itemId: l.productId || '',
+        drawingNumber: l.drawingNumber || '',
+        drawingRevision: l.drawingRevision || 'A',
+        productName: l.productName || '',
+        orderedQty: Number(l.orderedQty) || 1,
+        uom: l.uom || 'Nos',
+        unitPrice: l.unitPrice != null ? Number(l.unitPrice) : undefined,
+        requiredDate: l.requiredDate || '',
+        labourHours: l.labourHours || {},
+        machineHours: l.machineHours || {},
+        rfqLineId: l.rfqLineId,
+        specificationValues: l.specificationValues || {},
+      })));
+    }
+    setLoadedFromTarget(true);
+  }, [targetQuoteId, quotations, quotationLines, loadedFromTarget]);
 
   const loadBomForLine = async (lineId: string, itemId: string) => {
     if (!itemId) return;
@@ -172,6 +251,16 @@ export default function QuotationCreate() {
   const fmtMoney = (n: number) => `₹${n.toLocaleString('en-IN')}`;
   const validUntil = addDays(DEMO_NOW, parseInt(validDays) || 30);
 
+  const totalEstimatedBomCost = lines.reduce((sum, l) => {
+    const unitCost = bomBreakups[l.id]?.totalCost;
+    return unitCost != null ? sum + (unitCost * l.orderedQty) : sum;
+  }, 0);
+  const hasBomCosting = lines.some(l => bomBreakups[l.id] != null);
+  const grossProfit = taxable - totalEstimatedBomCost;
+  const overallGrossMarginPct = taxable > 0 && hasBomCosting
+    ? ((taxable - totalEstimatedBomCost) / taxable) * 100
+    : 0;
+
   const updateHours = (id: string, field: 'labourHours' | 'machineHours', name: string, value: string) => {
     const hours = value === '' ? 0 : Math.max(0, Number(value) || 0);
     setLines(current => current.map(line => line.id === id
@@ -184,18 +273,24 @@ export default function QuotationCreate() {
   const handleSubmit = async () => {
     if (saving) return;
     setFormError('');
+
+    if (isRevising && !revisionReason.trim()) {
+      setFormError('Revision reason is mandatory to issue a new quotation revision.');
+      return;
+    }
+
     const quotation: CustomerQuotation = {
-      id: '',
-      quotationNumber: '',
+      id: targetQuoteId || '',
+      quotationNumber: targetQuote?.quotationNumber || '',
       rfqId: rfq?.id,
       rfqNumber: rfq?.rfqNumber,
       isDirectQuotation: isDirect,
       customerId: activeCustomerId,
       customerName: activeCustomerName,
-      quotationDate: DEMO_NOW,
+      quotationDate: targetQuote?.quotationDate || DEMO_NOW,
       validUntil,
       currency: 'INR',
-      status: 'draft',
+      status: isEditing ? (targetQuote?.status || 'draft') : 'draft',
       subtotal,
       discountAmount: discountAmount || 0,
       taxRatePct: taxRatePct || 0,
@@ -203,13 +298,13 @@ export default function QuotationCreate() {
       totalValue,
       paymentTerms,
       deliveryTerms,
-      revision: 1,
+      revision: isRevising ? ((targetQuote?.revision ?? 1) + 1) : (targetQuote?.revision ?? 1),
       owner: currentUser.name,
-      notes,
+      notes: isRevising ? revisionReason.trim() : notes,
     };
 
     const qLines: CustomerQuotationLine[] = lines.map((l, i) => ({
-      id: `${quotation.id}-l${i + 1}`,
+      id: l.id || `${quotation.id}-l${i + 1}`,
       quotationId: quotation.id,
       productId: l.itemId,
       productName: l.productName,
@@ -229,16 +324,33 @@ export default function QuotationCreate() {
 
     setSaving(true);
     try {
-      const saved = isDirect ? await createDirectQuotation(quotation, qLines) : await addQuotation(quotation, qLines);
-      if (saved) {
-        try {
-          for (const file of files) await uploadLinkedDocument(file, { type: 'Quotation', id: saved.id, ref: saved.quotationNumber });
-        } catch (error) {
-          showToast({ type: 'error', title: 'Quotation saved; not all documents attached', body: `${error instanceof Error ? error.message : 'Upload failed.'} Attach the remaining files from the quotation view.` });
+      if (isRevising) {
+        const saved = await reviseQuotation(targetQuoteId, quotation, qLines);
+        if (saved) {
+          navigate(`/sales/quotation/${saved.id}`);
+        } else {
+          setFormError('Quotation revision could not be created.');
         }
-        navigate(`/sales/quotation/${saved.id}`, { state: { from: rfq ? `/sales/rfq/${rfq.id}` : '/sales?tab=rfqs' } });
+      } else if (isEditing) {
+        const saved = await updateQuotation(targetQuoteId, { ...quotation, lines: qLines });
+        if (saved) {
+          navigate(`/sales/quotation/${saved.id || targetQuoteId}`);
+        } else {
+          setFormError('Quotation changes could not be saved.');
+        }
+      } else {
+        const saved = isDirect ? await createDirectQuotation(quotation, qLines) : await addQuotation(quotation, qLines);
+        if (saved) {
+          try {
+            for (const file of files) await uploadLinkedDocument(file, { type: 'Quotation', id: saved.id, ref: saved.quotationNumber });
+          } catch (error) {
+            showToast({ type: 'error', title: 'Quotation saved; not all documents attached', body: `${error instanceof Error ? error.message : 'Upload failed.'} Attach the remaining files from the quotation view.` });
+          }
+          navigate(`/sales/quotation/${saved.id}`, { state: { from: rfq ? `/sales/rfq/${rfq.id}` : '/sales?tab=rfqs' } });
+        } else {
+          setFormError('Quotation could not be saved. Please try again.');
+        }
       }
-      else setFormError('Quotation could not be saved. Please try again.');
     } catch (err: unknown) {
       setFormError(err instanceof Error ? err.message : 'Quotation could not be saved.');
     } finally {
@@ -246,7 +358,22 @@ export default function QuotationCreate() {
     }
   };
 
-  const backTarget = rfqId ? `/sales/rfq/${rfqId}` : '/sales?tab=rfqs';
+  const backTarget = targetQuoteId ? `/sales/quotation/${targetQuoteId}` : rfqId ? `/sales/rfq/${rfqId}` : '/sales?tab=quotations';
+  const pageTitle = isRevising
+    ? `Revise Quotation ${targetQuote?.quotationNumber || ''}`
+    : isEditing
+    ? `Edit Quotation ${targetQuote?.quotationNumber || ''}`
+    : isDirect
+    ? 'New Direct Quotation'
+    : 'New Quotation';
+
+  const pageSubtitle = isRevising
+    ? `Creates revision ${((targetQuote?.revision ?? 1) + 1)} · Existing quote will be marked superseded`
+    : isEditing
+    ? `Editing draft quotation · Changes will be saved directly`
+    : rfq
+    ? `Against ${rfq.rfqNumber} · ${rfq.customerName}`
+    : 'Direct Quotation (standalone, no prior RFQ required)';
 
   return (
     <div className="flex flex-col h-full overflow-auto">
@@ -256,16 +383,33 @@ export default function QuotationCreate() {
         </button>
         <div>
           <h1 className="text-lg font-bold text-[var(--text)]">
-            {isDirect ? 'New Direct Quotation' : 'New Quotation'}
+            {pageTitle}
           </h1>
           <p className="text-xs text-[var(--text-2)]">
-            {rfq ? `Against ${rfq.rfqNumber} · ${rfq.customerName}` : 'Direct Quotation (standalone, no prior RFQ required)'}
+            {pageSubtitle}
           </p>
         </div>
       </div>
 
       <div className="flex-1 overflow-auto p-6">
         <div className="max-w-3xl mx-auto space-y-5">
+
+          {isRevising && (
+            <div className="p-4 rounded-xl border border-purple-200 dark:border-purple-800 bg-purple-50/70 dark:bg-purple-950/30 text-xs space-y-2">
+              <span className="font-bold text-sm text-purple-900 dark:text-purple-200 block">Quotation Revision Reason *</span>
+              <p className="text-purple-800 dark:text-purple-300">
+                Please enter why this quotation is being revised. This reason will be recorded on the revision audit log.
+              </p>
+              <textarea
+                required
+                rows={2}
+                value={revisionReason}
+                onChange={e => setRevisionReason(e.target.value)}
+                className="eoss-input w-full mt-1"
+                placeholder="e.g. Scope modified, revised pricing per customer negotiation, updated drawing rev…"
+              />
+            </div>
+          )}
 
           {/* Header */}
           <Card title="Quotation Details">
@@ -397,14 +541,11 @@ export default function QuotationCreate() {
                       {catalog.map(item => <option key={item.id} value={item.id}>{item.code} · {item.name}</option>)}
                     </select>
                   </Field>
-                  <Field label="Drawing No. *">
+                  <Field label="Drawing No. *" className="md:col-span-2">
                     <input value={l.drawingNumber} onChange={e => updateLine(l.id, 'drawingNumber', e.target.value)} className="eoss-input" />
                   </Field>
                   <Field label="Rev">
                     <input value={l.drawingRevision} onChange={e => updateLine(l.id, 'drawingRevision', e.target.value)} className="eoss-input" />
-                  </Field>
-                  <Field label="Required By">
-                    <input type="date" value={l.requiredDate} onChange={e => updateLine(l.id, 'requiredDate', e.target.value)} className="eoss-input" />
                   </Field>
                   <Field label="Description" className="md:col-span-2">
                     <input value={l.productName} onChange={e => updateLine(l.id, 'productName', e.target.value)} className="eoss-input" />
@@ -419,10 +560,42 @@ export default function QuotationCreate() {
                     <input type="number" min={1} value={l.orderedQty} onChange={e => updateLine(l.id, 'orderedQty', parseInt(e.target.value) || 1)} className="eoss-input" />
                   </Field>
                   <Field label="Unit Price (₹)">
-                    <input type="number" min={0} value={l.unitPrice ?? ''} onChange={e => updateLine(l.id, 'unitPrice', e.target.value === '' ? undefined : parseFloat(e.target.value) || 0)} className="eoss-input" />
+                    <input type="number" min={0} value={l.unitPrice ?? ''} onChange={e => updateLine(l.id, 'unitPrice', e.target.value === '' ? undefined : parseFloat(e.target.value) || 0)} className="eoss-input w-full" />
+                    {bomBreakups[l.id] && (() => {
+                      const bomCost = bomBreakups[l.id].totalCost;
+                      const quoted = l.unitPrice ?? 0;
+                      const marginPct = quoted > 0 ? ((quoted - bomCost) / quoted) * 100 : (quoted === bomCost ? 0 : -100);
+                      const isZeroMargin = Math.abs(quoted - bomCost) < 0.01;
+                      return (
+                        <div className="flex items-center gap-1.5 mt-1 text-[11px]">
+                          <span className="text-[var(--text-3)]">BOM: ₹{bomCost.toLocaleString('en-IN')}</span>
+                          <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold border ${
+                            isZeroMargin
+                              ? 'bg-gray-100 text-gray-700 border-gray-300'
+                              : marginPct > 0
+                              ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                              : 'bg-rose-50 text-rose-700 border-rose-200'
+                          }`}>
+                            {isZeroMargin ? '0.0% margin' : `${marginPct > 0 ? '+' : ''}${marginPct.toFixed(1)}% margin`}
+                          </span>
+                        </div>
+                      );
+                    })()}
                   </Field>
                   <Field label="Line Value">
-                    <input value={l.unitPrice != null ? fmtMoney(l.orderedQty * l.unitPrice) : '—'} disabled className="eoss-input opacity-60 cursor-not-allowed font-mono" />
+                    <input value={l.unitPrice != null ? fmtMoney(l.orderedQty * l.unitPrice) : '—'} disabled className="eoss-input opacity-60 cursor-not-allowed font-mono w-full" />
+                    {bomBreakups[l.id] && l.unitPrice != null && (() => {
+                      const lineEstCost = bomBreakups[l.id].totalCost * l.orderedQty;
+                      const lineVal = l.orderedQty * l.unitPrice;
+                      const lineProfit = lineVal - lineEstCost;
+                      return (
+                        <div className="mt-1 text-[11px] font-mono text-[var(--text-3)]">
+                          Est. Profit: <span style={{ color: lineProfit > 0 ? 'var(--success, #16a34a)' : lineProfit === 0 ? 'var(--text-2)' : 'var(--error, #dc2626)' }}>
+                            {lineProfit >= 0 ? '+' : ''}₹{Math.round(lineProfit).toLocaleString('en-IN')}
+                          </span>
+                        </div>
+                      );
+                    })()}
                   </Field>
                   {bomBreakups[l.id] && (
                     <div className="md:col-span-3 mt-1 pt-1">
@@ -476,22 +649,6 @@ export default function QuotationCreate() {
                     </div>
                   )}
                 </div>
-                {(costingConfig?.labourRates.length || costingConfig?.machineRates.length) ? (
-                  <div className="grid md:grid-cols-2 gap-3 mt-3">
-                    {costingConfig.labourRates.map((rate) => (
-                      <Field key={`labour-${rate.name}`} label={`${rate.name} hours`}>
-                        <input type="number" min={0} step="0.1" value={l.labourHours[rate.name] ?? 0}
-                          onChange={(event) => updateHours(l.id, 'labourHours', rate.name, event.target.value)} className="eoss-input w-full" />
-                      </Field>
-                    ))}
-                    {costingConfig.machineRates.map((rate) => (
-                      <Field key={`machine-${rate.name}`} label={`${rate.name} machine hours`}>
-                        <input type="number" min={0} step="0.1" value={l.machineHours[rate.name] ?? 0}
-                          onChange={(event) => updateHours(l.id, 'machineHours', rate.name, event.target.value)} className="eoss-input w-full" />
-                      </Field>
-                    ))}
-                  </div>
-                ) : null}
               </div>
             ))}
 
@@ -503,20 +660,52 @@ export default function QuotationCreate() {
             </div>
           </Card>
 
-          <Card title="Estimated Costing">
-            <p className="text-xs text-[var(--text-2)]">
-              BOSS calculates the estimate from the approved BOM, weighted-average on-hand inventory valuation,
-              configured rates, and the hours entered for each activity. The saved estimate and margin appear on
-              the quotation before it can be submitted.
-            </p>
-            {costConfigMessage && <p role="alert" className="mt-2 text-xs text-[var(--error)]">{costConfigMessage}</p>}
-            {canConfigureCosting && costingConfig && (
-              <details className="mt-4 border-t pt-3" style={{ borderColor: 'var(--border)' }}>
-                <summary className="cursor-pointer text-xs font-semibold text-[var(--brand)]">Configure costing and margin controls</summary>
-                <div className="mt-3"><CostingConfigEditor initialConfig={costingConfig} onSaved={setCostingConfig} /></div>
-              </details>
-            )}
-          </Card>
+          {hasBomCosting && (
+            <Card title="Estimated Cost & Gross Margin">
+              <p className="text-xs text-[var(--text-2)] mb-4">
+                Derived directly from the approved BOM per finished unit and quoted prices. When quoted price matches BOM cost, margin is 0%.
+              </p>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                <div className="p-3 rounded-xl border bg-[var(--surface-2)]" style={{ borderColor: 'var(--border)' }}>
+                  <span className="text-[10px] text-[var(--text-3)] block uppercase tracking-wider font-medium">Quoted Revenue (Ex. Tax)</span>
+                  <span className="text-base font-bold font-mono text-[var(--text)] mt-1 block">{fmtMoney(taxable)}</span>
+                  <span className="text-[10px] text-[var(--text-3)] mt-0.5 block">Subtotal less discount</span>
+                </div>
+                <div className="p-3 rounded-xl border bg-[var(--surface-2)]" style={{ borderColor: 'var(--border)' }}>
+                  <span className="text-[10px] text-[var(--text-3)] block uppercase tracking-wider font-medium">Estimated BOM Cost</span>
+                  <span className="text-base font-bold font-mono text-[var(--text)] mt-1 block">{fmtMoney(Math.round(totalEstimatedBomCost))}</span>
+                  <span className="text-[10px] text-[var(--text-3)] mt-0.5 block">Standard BOM manufacturing cost</span>
+                </div>
+                <div className="p-3 rounded-xl border bg-[var(--surface-2)]" style={{ borderColor: 'var(--border)' }}>
+                  <span className="text-[10px] text-[var(--text-3)] block uppercase tracking-wider font-medium">Estimated Gross Profit</span>
+                  <span className="text-base font-bold font-mono mt-1 block" style={{ color: grossProfit > 0 ? 'var(--success, #16a34a)' : grossProfit === 0 ? 'var(--text-2)' : 'var(--error, #dc2626)' }}>
+                    {grossProfit >= 0 ? '+' : ''}{fmtMoney(Math.round(grossProfit))}
+                  </span>
+                  <span className="text-[10px] text-[var(--text-3)] mt-0.5 block">Revenue − BOM cost</span>
+                </div>
+                <div className="p-3 rounded-xl border bg-[var(--surface-2)]" style={{ borderColor: 'var(--border)' }}>
+                  <span className="text-[10px] text-[var(--text-3)] block uppercase tracking-wider font-medium">Gross Margin</span>
+                  <div className="flex items-center gap-2 mt-1">
+                    <span className="text-base font-bold font-mono" style={{ color: overallGrossMarginPct > 0 ? 'var(--success, #16a34a)' : overallGrossMarginPct === 0 ? 'var(--text-2)' : 'var(--error, #dc2626)' }}>
+                      {Math.abs(overallGrossMarginPct) < 0.01 ? '0.0%' : `${overallGrossMarginPct > 0 ? '+' : ''}${overallGrossMarginPct.toFixed(1)}%`}
+                    </span>
+                    <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${
+                      overallGrossMarginPct > 0
+                        ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                        : Math.abs(overallGrossMarginPct) < 0.01
+                        ? 'bg-gray-100 text-gray-700 border-gray-300'
+                        : 'bg-rose-50 text-rose-700 border-rose-200'
+                    }`}>
+                      {overallGrossMarginPct > 0 ? 'Profitable' : Math.abs(overallGrossMarginPct) < 0.01 ? '0% Margin (At Cost)' : 'Below Cost'}
+                    </span>
+                  </div>
+                  <span className="text-[10px] text-[var(--text-3)] mt-0.5 block">
+                    {Math.abs(overallGrossMarginPct) < 0.01 ? 'Quoted at standard BOM cost' : `${overallGrossMarginPct > 0 ? '+' : ''}${overallGrossMarginPct.toFixed(1)}% margin`}
+                  </span>
+                </div>
+              </div>
+            </Card>
+          )}
 
           {/* Notes */}
           <Card title="Notes to Customer">
@@ -546,7 +735,7 @@ export default function QuotationCreate() {
             className="flex items-center gap-1.5 px-5 py-2 rounded-lg text-sm font-semibold text-white disabled:opacity-40"
             style={{ background: 'var(--brand-fill)' }}
           >
-            <Check size={15} /> {saving ? 'Saving…' : 'Save Quotation'}
+            <Check size={15} /> {saving ? 'Saving…' : isRevising ? 'Issue Revised Quotation' : isEditing ? 'Save Changes' : 'Save Quotation'}
           </button>
         </div>
       </div>

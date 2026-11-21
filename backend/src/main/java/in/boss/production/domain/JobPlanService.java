@@ -58,7 +58,7 @@ public class JobPlanService {
         BossContext context = support.requireContext();
 
         List<StageDuration> stageDurations = jdbc.query("""
-                SELECT id, seq_no, name AS stage_name,
+                SELECT id, seq_no, name AS stage_name, work_centre,
                        COALESCE(NULLIF(estimated_duration_min, 0), COALESCE(setup_time_min, 0) + COALESCE(run_time_min, 0), 0) AS estimated_duration_min
                 FROM routing_template_stages
                 WHERE tenant_id = ? AND routing_id = ?
@@ -67,7 +67,8 @@ public class JobPlanService {
                         rs.getObject("id", UUID.class),
                         rs.getString("stage_name"),
                         rs.getInt("seq_no"),
-                        rs.getInt("estimated_duration_min")),
+                        rs.getInt("estimated_duration_min"),
+                        rs.getString("work_centre")),
                 context.tenantId(), routingTemplateId);
 
         if (stageDurations.isEmpty()) {
@@ -111,6 +112,7 @@ public class JobPlanService {
     private List<StageDuration> loadStageDurations(UUID tenantId, UUID jobId) {
         return jdbc.query("""
                 SELECT s.id, s.seq_no, s.name AS stage_name,
+                       COALESCE(s.work_centre, rts.work_centre) AS work_centre,
                        COALESCE(NULLIF(s.estimated_duration_min, 0), NULLIF(rts.estimated_duration_min, 0), COALESCE(rts.setup_time_min, 0) + COALESCE(rts.run_time_min, 0), 0) AS estimated_duration_min
                 FROM job_stages s
                 LEFT JOIN routing_template_stages rts
@@ -124,7 +126,8 @@ public class JobPlanService {
                         rs.getObject("id", UUID.class),
                         rs.getString("stage_name"),
                         rs.getInt("seq_no"),
-                        rs.getInt("estimated_duration_min")),
+                        rs.getInt("estimated_duration_min"),
+                        rs.getString("work_centre")),
                 tenantId, jobId);
     }
 
@@ -146,9 +149,25 @@ public class JobPlanService {
             LocalDate start = subtractWorkingDays(cursor, days[i] - 1);
             result.add(0, new PlanPreviewStage(
                     stages.get(i).id(), stages.get(i).stageName(), stages.get(i).seqNo(),
-                    stages.get(i).estimatedDurationMin(), start, end));
+                    stages.get(i).estimatedDurationMin(), start, end, stages.get(i).workCentre()));
             cursor = subtractWorkingDays(start, 1); // 1 day gap before prior stage
         }
+
+        LocalDate today = LocalDate.now();
+        if (!result.isEmpty() && result.get(0).plannedStart().isBefore(today) && !deliveryDate.isBefore(today)) {
+            LocalDate fCursor = skipWeekendForward(today);
+            List<PlanPreviewStage> forwardShifted = new ArrayList<>(stages.size());
+            for (int i = 0; i < stages.size(); i++) {
+                LocalDate start = fCursor;
+                LocalDate end = addWorkingDays(start, days[i] - 1);
+                forwardShifted.add(new PlanPreviewStage(
+                        stages.get(i).id(), stages.get(i).stageName(), stages.get(i).seqNo(),
+                        stages.get(i).estimatedDurationMin(), start, end, stages.get(i).workCentre()));
+                fCursor = addWorkingDays(end, 1);
+            }
+            result = forwardShifted;
+        }
+
         return result;
     }
 
@@ -156,6 +175,24 @@ public class JobPlanService {
         if (date.getDayOfWeek() == DayOfWeek.SATURDAY) return date.minusDays(1);
         if (date.getDayOfWeek() == DayOfWeek.SUNDAY) return date.minusDays(2);
         return date;
+    }
+
+    private static LocalDate skipWeekendForward(LocalDate date) {
+        if (date.getDayOfWeek() == DayOfWeek.SATURDAY) return date.plusDays(2);
+        if (date.getDayOfWeek() == DayOfWeek.SUNDAY) return date.plusDays(1);
+        return date;
+    }
+
+    private static LocalDate addWorkingDays(LocalDate from, int workingDays) {
+        LocalDate d = from;
+        int remaining = workingDays;
+        while (remaining > 0) {
+            d = d.plusDays(1);
+            if (d.getDayOfWeek() != DayOfWeek.SATURDAY && d.getDayOfWeek() != DayOfWeek.SUNDAY) {
+                remaining--;
+            }
+        }
+        return d;
     }
 
     private static LocalDate subtractWorkingDays(LocalDate from, int workingDays) {
@@ -170,5 +207,5 @@ public class JobPlanService {
         return d;
     }
 
-    private record StageDuration(UUID id, String stageName, int seqNo, int estimatedDurationMin) {}
+    private record StageDuration(UUID id, String stageName, int seqNo, int estimatedDurationMin, String workCentre) {}
 }

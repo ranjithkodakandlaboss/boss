@@ -127,14 +127,44 @@ export default function InventoryHome() {
   }, [visible]);
 
   const columns: RecordColumn<StockRow>[] = [
-    { key: "itemCode", label: "Code", value: (row) => row.itemCode, render: (row) => <span className="font-semibold text-[var(--brand)]">{row.itemCode}</span> },
     {
-      key: "itemName", label: "Material / Specification", value: (row) => row.itemName, render: (row) => (
+      key: "itemCode",
+      label: "Code",
+      value: (row) => row.itemCode,
+      render: (row) => (
+        <Link
+          to={`/inventory/item/${row.itemId}`}
+          className="font-semibold text-[var(--brand)] hover:underline"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {row.itemCode}
+        </Link>
+      ),
+    },
+    {
+      key: "itemName",
+      label: "Material / Specification",
+      value: (row) => row.itemName,
+      render: (row) => (
         <div>
-          <div>{row.itemName}</div>
-          {row.lotCount > 0 && <div className="mt-0.5 text-[11px] text-[var(--text-3)]">{row.lotCount} lot{row.lotCount === 1 ? "" : "s"}</div>}
+          <Link
+            to={`/inventory/item/${row.itemId}`}
+            className="hover:underline font-medium text-[var(--text)]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {row.itemName}
+          </Link>
+          {row.lotCount > 0 && (
+            <Link
+              to={`/inventory/item/${row.itemId}#lots`}
+              className="mt-0.5 text-[11px] text-[var(--brand)] hover:underline block"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {row.lotCount} lot{row.lotCount === 1 ? "" : "s"} · View lots
+            </Link>
+          )}
         </div>
-      )
+      ),
     },
     { key: "storeName", label: "Location", value: (row) => row.storeName, render: (row) => row.storeName },
     { key: "totalQty", label: "On Hand", align: "right", value: (row) => row.totalQty, render: (row) => quantity(row.totalQty, row.uomSymbol) },
@@ -199,6 +229,7 @@ export default function InventoryHome() {
               rows={visible}
               columns={columns}
               empty="No stock positions"
+              onRow={(row) => navigate(`/inventory/item/${row.itemId}`)}
               trailing={(row) => <RowActions row={row} rows={rows} onAdjust={() => setAdjustRow(row)} />}
             />}
       </div>
@@ -224,6 +255,15 @@ function RowActions({ row, rows, onAdjust }: { row: StockRow; rows: StockRow[]; 
   const pr = new URLSearchParams({ code: row.itemCode, materialId: row.itemId, name: row.itemName, uom: row.uomSymbol, qty: String(qty) });
   return (
     <div className="flex items-center justify-end gap-2">
+      <Link
+        to={`/inventory/item/${row.itemId}`}
+        title="View stock and lot details"
+        className="rounded-lg border px-2.5 py-1 text-xs font-semibold hover:bg-[var(--surface-2)]"
+        style={{ borderColor: "var(--border)", color: "var(--text)" }}
+        onClick={(event) => event.stopPropagation()}
+      >
+        View
+      </Link>
       <button type="button" title="Adjust stock quantity/value" className="text-[var(--text-3)] hover:text-[var(--text)] p-1 rounded" onClick={(event) => { event.stopPropagation(); onAdjust(); }}>
         <SlidersHorizontal size={13} />
       </button>

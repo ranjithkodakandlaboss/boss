@@ -12,6 +12,8 @@ import in.boss.production.api.ProductionApiDtos.ReasonRequest;
 import in.boss.shared.audit.AuditService;
 import in.boss.shared.context.BossContext;
 import in.boss.shared.outbox.OutboxPublisher;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.stereotype.Service;
@@ -30,6 +32,8 @@ import static in.boss.shared.security.BossPermissions.PRODUCTION_WRITE;
 @Service
 @Transactional
 public class ProductionJobService {
+
+    private static final Logger log = LoggerFactory.getLogger(ProductionJobService.class);
 
     private final JdbcTemplate jdbc;
     private final ProductionSupport support;
@@ -249,13 +253,9 @@ public class ProductionJobService {
                 routing.id(), routing.version(), request.siteId(), request.quantity(), uomId,
                 request.scheduledEnd(), priority, context.userId());
         insertStages(context.tenantId(), jobId, stages);
-        // No BOM explosion for standalone — materials can be added manually
-        UUID costingId = UUID.randomUUID();
-        jdbc.update("""
-                INSERT INTO job_costing_headers
-                  (id, tenant_id, job_id, est_material_cost, selling_price, status)
-                VALUES (?, ?, ?, 0, 0, 'estimated')
-                """, costingId, context.tenantId(), jobId);
+        MaterialEstimate estimated = tryInsertMaterials(context, jobId, request.itemId(), request.quantity());
+        BomRates bomRates = loadBomRates(context.tenantId(), request.itemId());
+        insertCostHeader(context.tenantId(), jobId, estimated, BigDecimal.ZERO, request.quantity(), bomRates);
         audit.record("production_job", jobId, "CREATE", null, "{\"status\":\"planned\",\"mode\":\"standalone\"}");
         outbox.publish("production_job", jobId, "production.job.created",
                 "{\"jobId\":\"" + jobId + "\",\"status\":\"planned\"}");
@@ -288,7 +288,7 @@ public class ProductionJobService {
                 routing.id(), routing.version(), line.siteId(), quantity, line.uomId(),
                 request.scheduledStart(), plannedEnd, priority, selling, context.userId());
         insertStages(context.tenantId(), jobId, stages);
-        MaterialEstimate estimated = insertMaterials(context, jobId, line, quantity);
+        MaterialEstimate estimated = insertMaterials(context, jobId, line.itemId(), quantity);
         BomRates bomRates = loadBomRates(context.tenantId(), line.itemId());
         insertCostHeader(context.tenantId(), jobId, estimated, selling, quantity, bomRates);
         audit.record("production_job", jobId, "CREATE", null, "{\"status\":\"planned\"}");
@@ -407,8 +407,17 @@ public class ProductionJobService {
         }
     }
 
-    private MaterialEstimate insertMaterials(BossContext context, UUID jobId, CpoLine line, BigDecimal quantity) {
-        var exploded = explosion.explodeBOM(line.itemId(), quantity);
+    private MaterialEstimate tryInsertMaterials(BossContext context, UUID jobId, UUID itemId, BigDecimal quantity) {
+        try {
+            return insertMaterials(context, jobId, itemId, quantity);
+        } catch (Exception ex) {
+            log.info("No approved BOM or error exploding BOM for standalone job item {}: {}", itemId, ex.getMessage());
+            return new MaterialEstimate(BigDecimal.ZERO, false);
+        }
+    }
+
+    private MaterialEstimate insertMaterials(BossContext context, UUID jobId, UUID itemId, BigDecimal quantity) {
+        var exploded = explosion.explodeBOM(itemId, quantity);
         if (exploded.getFlatMaterials() == null || exploded.getFlatMaterials().isEmpty()) {
             throw ProductionSupport.badRequest("An approved BOM is required to create a production job");
         }
@@ -479,21 +488,21 @@ public class ProductionJobService {
             jdbc.update("""
                     INSERT INTO job_costing_lines
                       (id, tenant_id, costing_id, cost_type, description, quantity, unit_cost, amount, is_estimated)
-                    VALUES (?, ?, ?, 'LABOUR', 'BOM labour cost per unit × quantity', ?, ?, ?, TRUE)
+                    VALUES (?, ?, ?, 'labour', 'BOM labour cost per unit × quantity', ?, ?, ?, TRUE)
                     """, UUID.randomUUID(), tenantId, costingId, quantity, rates.labourCostPerUnit(), estLabour);
         }
         if (estMachine.signum() > 0) {
             jdbc.update("""
                     INSERT INTO job_costing_lines
                       (id, tenant_id, costing_id, cost_type, description, quantity, unit_cost, amount, is_estimated)
-                    VALUES (?, ?, ?, 'OVERHEAD', 'BOM machine cost per unit × quantity', ?, ?, ?, TRUE)
+                    VALUES (?, ?, ?, 'overhead', 'BOM machine cost per unit × quantity', ?, ?, ?, TRUE)
                     """, UUID.randomUUID(), tenantId, costingId, quantity, rates.machineCostPerUnit(), estMachine);
         }
         if (estOther.signum() > 0) {
             jdbc.update("""
                     INSERT INTO job_costing_lines
                       (id, tenant_id, costing_id, cost_type, description, quantity, unit_cost, amount, is_estimated)
-                    VALUES (?, ?, ?, 'OTHER', 'BOM other manufacturing cost per unit × quantity', ?, ?, ?, TRUE)
+                    VALUES (?, ?, ?, 'other', 'BOM other manufacturing cost per unit × quantity', ?, ?, ?, TRUE)
                     """, UUID.randomUUID(), tenantId, costingId, quantity, rates.otherCostPerUnit(), estOther);
         }
     }
@@ -568,13 +577,22 @@ public class ProductionJobService {
             int setupMin = stage.setupTimeMin() == null ? 0 : stage.setupTimeMin();
             int runMin = stage.runTimeMin() == null ? 0 : stage.runTimeMin();
             int estDuration = setupMin + runMin;
+            String resolvedStageType = stage.stageType();
+            if (resolvedStageType == null || resolvedStageType.isBlank()) {
+                resolvedStageType = "production";
+            } else {
+                resolvedStageType = resolvedStageType.trim().toLowerCase();
+                if (!List.of("production", "inspection", "rework", "hold").contains(resolvedStageType)) {
+                    resolvedStageType = "production";
+                }
+            }
             jdbc.update("""
                     INSERT INTO routing_template_stages
                       (tenant_id, routing_id, stage_config_id, seq_no, name, stage_type, work_centre,
                        asset_id, requires_inspection, inspection_template_id, is_optional, setup_time_min, run_time_min, estimated_duration_min)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, tenantId, routingId, option.id(), seq++, option.label(),
-                    stage.stageType() == null ? "production" : stage.stageType(), stage.workCentre(),
+                    resolvedStageType, stage.workCentre(),
                     stage.assetId(), Boolean.TRUE.equals(stage.requiresInspection()) || stage.inspectionTemplateId() != null,
                     stage.inspectionTemplateId(), Boolean.TRUE.equals(stage.isOptional()),
                     setupMin, runMin, estDuration);
@@ -588,10 +606,9 @@ public class ProductionJobService {
             throw ProductionSupport.badRequest("Every routing template needs stages with names");
         }
         if (stages.stream().anyMatch(stage ->
-                (stage.stageType() != null && !List.of("production", "inspection", "rework", "hold").contains(stage.stageType()))
-                        || (stage.setupTimeMin() != null && stage.setupTimeMin() < 0)
+                (stage.setupTimeMin() != null && stage.setupTimeMin() < 0)
                         || (stage.runTimeMin() != null && stage.runTimeMin() < 0))) {
-            throw ProductionSupport.badRequest("Invalid routing stage type or duration");
+            throw ProductionSupport.badRequest("Invalid routing stage duration");
         }
     }
 

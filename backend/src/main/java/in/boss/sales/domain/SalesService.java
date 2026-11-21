@@ -62,6 +62,8 @@ import java.util.UUID;
 @PreAuthorize(BossPermissions.SALES_ACCESS)
 public class SalesService {
 
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(SalesService.class);
+
     private static final Set<String> RFQ_STATUSES = Set.of("draft", "sent", "closed", "cancelled");
     private static final Set<String> QUOTATION_STATUSES_NOT_REVISABLE =
             Set.of("accepted", "superseded", "expired", "cancelled");
@@ -470,24 +472,25 @@ public class SalesService {
             costing = quotationCostingService.calculate(tenantId, loadCostingInputs(tenantId, quotationId),
                     draft.discountAmount());
         }
-        // Costing unavailable is a warning only — submission is allowed without a complete cost estimate.
-        if (costing.available()) {
-            if (costing.requiresApproval()) {
-                validateMarginOverride(context, note);
+        if (!costing.available()) {
+            throw conflict("A complete cost estimate is required before submission. Missing: "
+                    + String.join("; ", costing.unavailableReasons()));
+        }
+        if (costing.requiresApproval()) {
+            validateMarginOverride(context, note);
+        }
+        if (refresh) {
+            for (int i = 0; i < draft.lines().size(); i++) {
+                var line = draft.lines().get(i);
+                jdbc.update("""
+                        UPDATE quotation_lines SET estimated_material_cost_per_unit = ?
+                        WHERE tenant_id = ? AND quotation_id = ? AND id = ?
+                        """, costing.lines().get(i).materialCost().divide(line.qty(), 2, RoundingMode.HALF_UP),
+                        tenantId, quotationId, line.id());
             }
-            if (refresh) {
-                for (int i = 0; i < draft.lines().size(); i++) {
-                    var line = draft.lines().get(i);
-                    jdbc.update("""
-                            UPDATE quotation_lines SET estimated_material_cost_per_unit = ?
-                            WHERE tenant_id = ? AND quotation_id = ? AND id = ?
-                            """, costing.lines().get(i).materialCost().divide(line.qty(), 2, RoundingMode.HALF_UP),
-                            tenantId, quotationId, line.id());
-                }
-                jdbc.update("UPDATE quotations SET estimated_material_cost = ? WHERE tenant_id = ? AND id = ?",
-                        costing.materialCost(), tenantId, quotationId);
-                persistCostingSnapshot(tenantId, quotationId, costing);
-            }
+            jdbc.update("UPDATE quotations SET estimated_material_cost = ? WHERE tenant_id = ? AND id = ?",
+                    costing.materialCost(), tenantId, quotationId);
+            persistCostingSnapshot(tenantId, quotationId, costing);
         }
         return costing;
     }
@@ -916,8 +919,12 @@ public class SalesService {
         QuotationCostingSnapshot costing = parseCostingSnapshot(header.costingSnapshot());
         if (previewDraftCost && "draft".equals(header.status()) && (costing == null || !costing.available())
                 && !lines.isEmpty()) {
-            costing = quotationCostingService.preview(tenantId, loadCostingInputs(tenantId, quotationId),
-                    header.discountAmount());
+            try {
+                costing = quotationCostingService.preview(tenantId, loadCostingInputs(tenantId, quotationId),
+                        header.discountAmount());
+            } catch (Exception ex) {
+                log.warn("Failed to preview draft quotation costing for quotation {}: {}", quotationId, ex.getMessage());
+            }
         }
         return new QuotationResponse(header.id(), header.quotationNumber(), header.rfqId(),
                 header.customerId(), customer.getName(), header.revision(), header.status(),

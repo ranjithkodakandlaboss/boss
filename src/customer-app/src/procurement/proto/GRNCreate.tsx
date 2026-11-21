@@ -462,9 +462,9 @@ export default function GRNCreate() {
                                   </button>
                                 )}
                               </div>
-                              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2.5">
+                              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
                                 <div>
-                                  <label className="block text-[11px] text-[var(--text-3)] mb-1">Lot Number *</label>
+                                  <label className="block text-[11px] font-medium text-[var(--text-3)] mb-1">Lot Number *</label>
                                   <input
                                     className="eoss-input w-full text-xs font-mono"
                                     value={lot.lotNumber}
@@ -473,7 +473,7 @@ export default function GRNCreate() {
                                   />
                                 </div>
                                 <div>
-                                  <label className="block text-[11px] text-[var(--text-3)] mb-1">Supplier Lot / Heat Ref</label>
+                                  <label className="block text-[11px] font-medium text-[var(--text-3)] mb-1">Supplier Lot / Heat Ref</label>
                                   <input
                                     className="eoss-input w-full text-xs font-mono"
                                     value={lot.supplierLotRef}
@@ -482,26 +482,27 @@ export default function GRNCreate() {
                                   />
                                 </div>
                                 <div>
-                                  <label className="block text-[11px] text-[var(--text-3)] mb-1">Grade</label>
+                                  <label className="block text-[11px] font-medium text-[var(--text-3)] mb-1">Grade</label>
                                   <input
                                     className="eoss-input w-full text-xs"
                                     value={lot.grade}
                                     onChange={e => updateLotRow(line.id, lot.id, { grade: e.target.value })}
+                                    placeholder="e.g. 304, CRCA"
                                   />
                                 </div>
                                 <div>
-                                  <label className="block text-[11px] text-[var(--text-3)] mb-1">Qty ({line.uom}) *</label>
+                                  <label className="block text-[11px] font-medium text-[var(--text-3)] mb-1">Qty ({line.uom}) *</label>
                                   <input
                                     type="number"
                                     min="0.01"
                                     step="any"
-                                    className="eoss-input w-full text-xs font-mono text-right font-semibold"
+                                    className="eoss-input w-full text-xs font-mono font-semibold"
                                     value={lot.qty}
                                     onChange={e => updateLotRow(line.id, lot.id, { qty: e.target.value })}
                                   />
                                 </div>
                                 <div>
-                                  <label className="block text-[11px] text-[var(--text-3)] mb-1">Mfg Date</label>
+                                  <label className="block text-[11px] font-medium text-[var(--text-3)] mb-1">Mfg Date</label>
                                   <input
                                     type="date"
                                     className="eoss-input w-full text-xs"
@@ -510,7 +511,7 @@ export default function GRNCreate() {
                                   />
                                 </div>
                                 <div>
-                                  <label className="block text-[11px] text-[var(--text-3)] mb-1">Expiry Date</label>
+                                  <label className="block text-[11px] font-medium text-[var(--text-3)] mb-1">Expiry Date</label>
                                   <input
                                     type="date"
                                     className="eoss-input w-full text-xs"

@@ -399,6 +399,9 @@ export default function Procurement() {
             setSelectedQuoteIds(prev => (prev.includes(id) ? prev.filter(x => x !== id) : prev.length >= 3 ? prev : [...prev, id]));
 
           const prFilteredInvs = supplierInvitations.filter(inv => {
+            if (inv.quotationId || ['received', 'selected', 'quotation_received'].includes(inv.status)) {
+              return false;
+            }
             if (!search.trim()) return true;
             const s = search.toLowerCase();
             return (
@@ -603,7 +606,7 @@ export default function Procurement() {
                             {inv.deliveryError && <div className="text-[11px] text-[var(--danger)]">{inv.deliveryError}</div>}
                           </td>
                           <td className="text-right space-x-1.5">
-                            {inv.deliveryStatus === 'failed' && (
+                            {inv.deliveryStatus === 'failed' && !inv.quotationId && (
                               <button type="button" onClick={() => retryQuotationDelivery(inv.id)} className="text-xs px-2 py-1 rounded-lg border border-[var(--border)] text-[var(--text)]">
                                 Retry email
                               </button>
@@ -639,7 +642,7 @@ export default function Procurement() {
                         </tr>
                       ))}
                       {prFilteredInvs.length === 0 && (
-                        <tr><td colSpan={7} className="text-center py-6 text-xs text-[var(--text-3)]">No supplier invitations sent yet.</td></tr>
+                        <tr><td colSpan={7} className="text-center py-6 text-xs text-[var(--text-3)]">No pending quotation invitations.</td></tr>
                       )}
                     </tbody>
                   </table>

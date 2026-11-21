@@ -250,10 +250,11 @@ export default function RoutingTemplatesAdmin() {
                   <label className="flex flex-col gap-1 text-xs font-medium text-[var(--text)]">
                     Stage type
                     <select className="eoss-input" value={stage.stageType ?? ""} disabled={saving} onChange={(e) => updateStage(setStages, index, { stageType: e.target.value || null })}>
-                      <option value="">Not set</option>
+                      <option value="">Default (Production)</option>
                       <option value="production">Production</option>
                       <option value="inspection">Inspection</option>
-                      <option value="setup">Setup</option>
+                      <option value="rework">Rework</option>
+                      <option value="hold">Hold</option>
                     </select>
                   </label>
                   <label className="flex flex-col gap-1 text-xs font-medium text-[var(--text)]">

@@ -329,6 +329,7 @@ function NewJob({ onClose, onCreated }: { onClose: () => void; onCreated: (job: 
       loadTemplates(line.itemId);
     } else {
       if (!itemId) { setTemplates([]); setTemplateId(""); return; }
+      setQuantity((current) => current || "1");
       setTemplateId("");
       loadTemplates(itemId);
     }
@@ -336,8 +337,16 @@ function NewJob({ onClose, onCreated }: { onClose: () => void; onCreated: (job: 
 
   async function previewPlanStep() {
     const qty = Number(quantity);
-    if (!templateId || !plannedEnd || !(qty > 0)) {
-      setError("Production workflow, quantity and planned delivery date are required to preview the plan.");
+    if (!templateId) {
+      setError("Please select a production workflow (routing template).");
+      return;
+    }
+    if (!(qty > 0)) {
+      setError("Please enter a valid production quantity (greater than 0).");
+      return;
+    }
+    if (!plannedEnd) {
+      setError("Please select a planned delivery date.");
       return;
     }
     setError("");

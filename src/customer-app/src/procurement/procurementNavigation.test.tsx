@@ -34,6 +34,7 @@ const grnLineId = "56565656-5656-4565-8565-565656565656";
 const lotId = "57575757-5757-4575-8575-575757575757";
 const inspectionId = "58585858-5858-4585-8585-585858585858";
 let requestDeliveryStatus = "sent";
+let mockQuotes: any[] = [];
 
 const suppliers = [
   { id: supplierId, code: "STEEL", name: "Steel House", legalName: "Steel House Pvt Ltd", status: "active", address: { city: "Pune", state: "MH", category: "Steel" }, paymentTerms: 30, contacts: [{ name: "Asha", email: "asha@steel.test", phone: "999", isPrimary: true }] },
@@ -86,7 +87,7 @@ function installFetch() {
       deliveryStatus: requestDeliveryStatus,
       deliveryError: requestDeliveryStatus === "failed" ? "Mail provider is not configured" : undefined,
     }, 201));
-    if (url.includes("/supplier-quotations")) return Promise.resolve(json(JSON.parse(page([requested, received]))));
+    if (url.includes("/supplier-quotations")) return Promise.resolve(json(JSON.parse(page(mockQuotes))));
     if (url.includes("/amendments")) return Promise.resolve(json([]));
     if (url.includes("/inspections")) return Promise.resolve(json([{ id: inspectionId, inspectionNumber: "IN-1", grnId, lotId, itemId, quantityInspected: 4, status: "pending" }]));
     if (url.includes("/grns")) return Promise.resolve(json(JSON.parse(page([grn]))));
@@ -107,6 +108,7 @@ beforeEach(() => {
   requestDeliveryStatus = "sent";
   spoRecord = { ...spo, status: "draft" };
   issuedSpoRequest = undefined;
+  mockQuotes = [requested, received];
   installFetch();
   return () => signOut();
 });
@@ -234,4 +236,27 @@ it("opens every procurement list, including a purchase requisition waiting for a
   await userEvent.click(screen.getByRole("button", { name: /Approvals/ }));
   expect(screen.getByRole("button", { name: "PR-200" })).toBeInTheDocument();
   expect(screen.getByText("Purchase Requisition")).toBeInTheDocument();
+});
+
+it("updates invitation status and links View Quote once quotation is recorded, moving it from pending invitations on the quotes tab", async () => {
+  // When requested has been answered by received quote
+  const answeredRequest = {
+    ...requested,
+    status: "received",
+    supplierQuoteRef: "QT-9",
+    deliveryStatus: "failed",
+    lines: received.lines,
+  };
+  mockQuotes = [answeredRequest];
+
+  const view = show(`/procurement/pr/${prId}`, <PRDetail />);
+  expect(await screen.findByRole("link", { name: "View Quote" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Record Quote" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Retry email" })).not.toBeInTheDocument();
+  view.unmount();
+
+  show("/procurement?tab=quotes", <ProcurementHome />);
+  await userEvent.click(await screen.findByRole("button", { name: /Supplier Quotations/ }));
+  expect((await screen.findAllByText("QT-9")).length).toBeGreaterThan(0);
+  expect(screen.getByText("No pending quotation invitations.")).toBeInTheDocument();
 });

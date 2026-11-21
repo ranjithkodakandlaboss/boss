@@ -514,51 +514,55 @@ function BomForm({ items, uoms, onClose, onSaved }: { items: Item[]; uoms: Uom[]
           <table className="w-full text-xs text-left">
             <thead style={{ background: "var(--surface-2)" }}>
               <tr className="text-[var(--text-3)] font-semibold border-b border-[var(--border)]">
-                <th className="px-3 py-2 min-w-[200px]">Component Item *</th>
-                <th className="px-2 py-2 min-w-[70px]">Qty *</th>
-                <th className="px-2 py-2 min-w-[70px]">UOM *</th>
-                <th className="px-2 py-2 min-w-[90px]">Unit Cost (₹)</th>
-                <th className="px-2 py-2 min-w-[75px]">Scrap %</th>
-                <th className="px-2 py-2 min-w-[140px]">Formula (Optional)</th>
+                <th className="px-3 py-2 min-w-[300px]">Component Item *</th>
+                <th className="px-2 py-2 min-w-[90px]">Qty *</th>
+                <th className="px-2 py-2 min-w-[90px]">UOM *</th>
+                <th className="px-2 py-2 min-w-[110px]">Unit Cost (₹)</th>
+                <th className="px-2 py-2 min-w-[90px]">Scrap %</th>
+                <th className="px-2 py-2 min-w-[160px]">Formula (Optional)</th>
                 <th className="px-2 py-2 w-8"></th>
               </tr>
             </thead>
             <tbody>
               {lines.map((line, index) => (
                 <tr key={index} className="border-t border-[var(--border)] hover:bg-[var(--surface-2)]">
-                  <td className="p-2">
-                    <select aria-label={`Component ${index + 1}`} className="eoss-input w-full text-xs" value={line.componentItemId} onChange={(event) => pickComponent(index, event.target.value)}>
-                      <option value="">Select component</option>
-                      {items.filter((item) => item.id !== itemId && isBomComponent(item.itemType)).map((item) => (
-                        <option key={item.id} value={item.id}>
-                          {item.code} — {item.name}
-                        </option>
-                      ))}
-                    </select>
-                    {line.componentItemType && (
-                      <span className="mt-1 inline-block text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded" style={{ background: line.componentItemType === "CONSUMABLE" ? "var(--warning)" : "var(--brand)", color: "#fff" }}>
-                        {line.componentItemType === "CONSUMABLE" ? "Consumable" : "Raw Material"}
-                      </span>
-                    )}
+                  <td className="p-2 min-w-[300px] align-top">
+                    <div className="flex flex-col gap-1.5">
+                      <select aria-label={`Component ${index + 1}`} className="eoss-input w-full text-xs" value={line.componentItemId} onChange={(event) => pickComponent(index, event.target.value)}>
+                        <option value="">Select component</option>
+                        {items.filter((item) => item.id !== itemId && isBomComponent(item.itemType)).map((item) => (
+                          <option key={item.id} value={item.id}>
+                            {item.code} — {item.name}
+                          </option>
+                        ))}
+                      </select>
+                      {line.componentItemType && (
+                        <div>
+                          <span className="inline-block text-[10px] font-semibold uppercase px-2 py-0.5 rounded" style={{ background: line.componentItemType === "CONSUMABLE" ? "var(--warning)" : "var(--brand)", color: "#fff" }}>
+                            {line.componentItemType === "CONSUMABLE" ? "Consumable" : "Raw Material"}
+                          </span>
+                        </div>
+                      )}
+                    </div>
                   </td>
-                  <td className="p-2">
+                  <td className="p-2 min-w-[90px] align-top">
                     <input aria-label={`Quantity ${index + 1}`} className="eoss-input text-xs w-full" inputMode="decimal" value={line.qty} onChange={(event) => update(index, { qty: event.target.value })} placeholder="1.00" />
                   </td>
-                  <td className="p-2">
+                  <td className="p-2 min-w-[90px] align-top">
                     <select aria-label={`Unit ${index + 1}`} className="eoss-input text-xs w-full" value={line.uomId} onChange={(event) => update(index, { uomId: event.target.value })}>
                       {uoms.map((uom) => <option key={uom.id} value={uom.id}>{uom.symbol}</option>)}
                     </select>
                   </td>
-                  <td className="p-2">
+                  <td className="p-2 min-w-[110px] align-top">
                     <input aria-label={`Unit cost ${index + 1}`} className="eoss-input text-xs w-full" inputMode="decimal" value={line.unitCost ?? ""} onChange={(event) => update(index, { unitCost: event.target.value })} placeholder="Cost ₹" />
                   </td>
-                  <td className="p-2">
+                  <td className="p-2 min-w-[90px] align-top">
                     <input aria-label={`Scrap % ${index + 1}`} className="eoss-input text-xs w-full" type="number" min="0" max="100" step="0.1" inputMode="decimal" value={line.scrapFactor} onChange={(event) => update(index, { scrapFactor: event.target.value })} placeholder="0" />
                   </td>
-                  <td className="p-2">
+                  <td className="p-2 min-w-[160px] align-top">
                     <input aria-label={`Formula ${index + 1}`} className="eoss-input text-xs w-full" value={line.quantityFormula ?? ""} onChange={(event) => update(index, { quantityFormula: event.target.value })} placeholder="e.g. length * width" />
                   </td>
-                  <td className="p-2 text-center">
+                  <td className="p-2 text-center align-top pt-2.5">
                     <button type="button" className="text-[var(--error)] font-bold text-sm hover:opacity-80 p-1" title="Remove component" onClick={() => setLines((current) => current.filter((_, i) => i !== index))}>✕</button>
                   </td>
                 </tr>

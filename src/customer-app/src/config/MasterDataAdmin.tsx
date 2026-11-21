@@ -9,17 +9,15 @@ import UomAdmin from "./UomAdmin";
 
 const sections = [
   { id: "reference-data", label: "Dropdown & Reference Data" },
-  { id: "uoms", label: "Units of Measure" },
   { id: "items", label: "Product & Material Master" },
   { id: "bom", label: "Bill of Materials" },
   { id: "routes", label: "Manufacturing Routes" },
-  { id: "costing", label: "Costing & Pricing" },
 ];
 
 export default function MasterDataAdmin() {
   const [params, setParams] = useSearchParams();
   const requested = params.get("section");
-  const active = sections.some((section) => section.id === requested) ? requested! : "reference-data";
+  const active = (sections.some((section) => section.id === requested) || requested === "costing") ? requested! : "reference-data";
 
   function changeSection(section: string) {
     const next = new URLSearchParams(params);

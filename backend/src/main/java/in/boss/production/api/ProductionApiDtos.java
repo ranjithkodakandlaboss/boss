@@ -78,8 +78,13 @@ public final class ProductionApiDtos {
             int seqNo,
             int estimatedDurationMin,
             LocalDate plannedStart,
-            LocalDate plannedEnd
-    ) {}
+            LocalDate plannedEnd,
+            String workCentre
+    ) {
+        public PlanPreviewStage(UUID stageId, String stageName, int seqNo, int estimatedDurationMin, LocalDate plannedStart, LocalDate plannedEnd) {
+            this(stageId, stageName, seqNo, estimatedDurationMin, plannedStart, plannedEnd, null);
+        }
+    }
 
     public record PlanPreviewResponse(List<PlanPreviewStage> stages) {}
 
@@ -360,7 +365,7 @@ public final class ProductionApiDtos {
             UUID inspectionTemplateId,
             Boolean requiresInspection,
             Boolean isOptional,
-            @Pattern(regexp = "production|inspection|rework|hold") String stageType,
+            String stageType,
             @Min(0) Integer setupTimeMin,
             @Min(0) Integer runTimeMin
     ) {

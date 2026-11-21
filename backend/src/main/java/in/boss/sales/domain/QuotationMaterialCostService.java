@@ -81,24 +81,8 @@ public class QuotationMaterialCostService {
                        AND quantity > 0
                     """, rs -> rs.next() ? rs.getBigDecimal(1) : null, tenantId, material.getItemId());
             if (averageCost == null) {
-                if (bomSnapshot.getBomHeaderId() != null) {
-                    BigDecimal bomLineCost = jdbc.query("""
-                            SELECT unit_cost FROM bom_lines
-                             WHERE bom_header_id = ? AND item_id = ? AND unit_cost IS NOT NULL AND unit_cost > 0
-                             LIMIT 1
-                            """, rs -> rs.next() ? rs.getBigDecimal(1) : null, bomSnapshot.getBomHeaderId(), material.getItemId());
-                    if (bomLineCost != null && bomLineCost.compareTo(BigDecimal.ZERO) > 0) {
-                        averageCost = bomLineCost;
-                    }
-                }
-            }
-            if (averageCost == null) {
-                if (item.getStandardCost() != null && item.getStandardCost().compareTo(BigDecimal.ZERO) > 0) {
-                    averageCost = item.getStandardCost();
-                } else {
-                    return new MaterialCostResult(null, bomSnapshot,
-                            "needs fully valued on-hand inventory or configured cost for " + item.getCode());
-                }
+                return new MaterialCostResult(null, bomSnapshot,
+                        "needs fully valued on-hand inventory for " + item.getCode());
             }
             total = total.add(material.getQty().multiply(averageCost));
         }

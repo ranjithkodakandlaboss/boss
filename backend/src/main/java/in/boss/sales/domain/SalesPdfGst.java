@@ -30,7 +30,10 @@ final class SalesPdfGst {
             Map.entry("puducherry", "34"), Map.entry("andaman and nicobar islands", "35"),
             Map.entry("telangana", "36"), Map.entry("andhra pradesh", "37"), Map.entry("ladakh", "38"),
             Map.entry("new delhi", "07"), Map.entry("orissa", "21"), Map.entry("pondicherry", "34"),
-            Map.entry("dadra and nagar haveli", "26"), Map.entry("daman and diu", "26"));
+            Map.entry("dadra and nagar haveli", "26"), Map.entry("daman and diu", "26"),
+            Map.entry("hyderabad", "36"), Map.entry("bangalore", "29"), Map.entry("bengaluru", "29"),
+            Map.entry("mumbai", "27"), Map.entry("pune", "27"), Map.entry("chennai", "33"),
+            Map.entry("kolkata", "19"), Map.entry("ahmedabad", "24"));
     private static final Set<String> UTGST = Set.of("04", "26", "31", "35", "38");
 
     record Line(BigDecimal amount, BigDecimal rate) {}
