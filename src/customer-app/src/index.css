@@ -146,6 +146,7 @@
 :root {
   /* Brand */
   --brand: #3B82F6;
+  --brand-fill: #2563EB;
   --brand-hover: #60A5FA;
   --brand-muted: rgba(59,130,246,0.15);
   --brand-50: rgba(59,130,246,0.08);
@@ -228,6 +229,7 @@
 /* ── Light theme override ── */
 [data-theme="light"] {
   --brand: #1849A9;
+  --brand-fill: #1D4ED8;
   --brand-hover: #1A56DB;
   --brand-muted: #DBEAFE;
   --brand-50: #EFF6FF;
@@ -287,6 +289,7 @@
 @media (prefers-color-scheme: light) {
   :root:not([data-theme="dark"]) {
     --brand: #1849A9;
+    --brand-fill: #1D4ED8;
     --brand-hover: #1A56DB;
     --brand-muted: #DBEAFE;
     --brand-50: #EFF6FF;
