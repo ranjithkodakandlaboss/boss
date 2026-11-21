@@ -76,12 +76,12 @@ export function archiveDocument(id: string, reason: string): Promise<VaultDocume
 }
 
 export function downloadDocumentUrl(id: string, version?: number): string {
-  const base = import.meta.env.VITE_CUSTOMER_API_URL ?? "http://127.0.0.1:8080";
+  const base = import.meta.env.VITE_CUSTOMER_API_URL ?? (import.meta.env.DEV ? "http://127.0.0.1:8080" : "");
   return `${base}/api/v1/documents/${id}/download${version ? `?version=${version}` : ''}`;
 }
 
 export async function downloadDocument(id: string, fileName?: string, version?: number): Promise<void> {
-  const base = import.meta.env.VITE_CUSTOMER_API_URL ?? "http://127.0.0.1:8080";
+  const base = import.meta.env.VITE_CUSTOMER_API_URL ?? (import.meta.env.DEV ? "http://127.0.0.1:8080" : "");
   const qs = version ? `?version=${version}` : '';
   const headers: Record<string, string> = {};
   const tenantId = sessionStorage.getItem('boss.tenant');
