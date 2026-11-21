@@ -298,15 +298,14 @@ public class PurchaseRequisitionService {
             throw badRequest("Purchase requisition must contain at least one line item before submission");
         }
 
-        // Approval is not required: submission finalises the PR directly.
         jdbc.update("""
                 UPDATE purchase_requisitions
-                SET status = 'approved', approved_by = ?, approved_at = NOW(), updated_at = NOW()
+                SET status = 'submitted', updated_at = NOW()
                 WHERE tenant_id = ? AND id = ?
-                """, context.userId(), tenantId, prId);
+                """, tenantId, prId);
 
         PurchaseRequisitionResponse updated = getPr(prId);
-        auditService.record("purchase_requisitions", prId, "SUBMITTED_AND_APPROVED", toJson(existing), toJson(updated));
+        auditService.record("purchase_requisitions", prId, "SUBMITTED", toJson(existing), toJson(updated));
         return updated;
     }
 
