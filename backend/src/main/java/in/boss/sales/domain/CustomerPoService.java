@@ -2,8 +2,10 @@ package in.boss.sales.domain;
 
 import in.boss.sales.api.SalesApiDtos.AcceptQuotationRequest;
 import in.boss.sales.api.SalesApiDtos.CreateDirectCpoRequest;
+import in.boss.sales.api.SalesApiDtos.CreateQuotationLineRequest;
 import in.boss.sales.api.SalesApiDtos.CpoResponse;
 import in.boss.sales.api.SalesApiDtos.PageResponse;
+import in.boss.sales.api.SalesApiDtos.QuotationCostingSnapshot;
 import in.boss.sales.api.SalesApiDtos.RecordMaterialAvailabilityRequest;
 import in.boss.sales.api.SalesApiDtos.UpdateCpoRequest;
 import in.boss.inventory.api.InventoryApiDtos.FeasibilityResponse;
@@ -45,19 +47,22 @@ public class CustomerPoService {
     private final ObjectMapper objectMapper;
     private final InventoryService inventoryService;
     private final SalesCustomerGuard customerGuard;
+    private final QuotationCostingService quotationCostingService;
 
     public CustomerPoService(JdbcTemplate jdbc,
                              CpoLookup cpoLookup,
                              AuditService auditService,
                              ObjectMapper objectMapper,
                              InventoryService inventoryService,
-                             SalesCustomerGuard customerGuard) {
+                             SalesCustomerGuard customerGuard,
+                             QuotationCostingService quotationCostingService) {
         this.jdbc = jdbc;
         this.cpoLookup = cpoLookup;
         this.auditService = auditService;
         this.objectMapper = objectMapper;
         this.inventoryService = inventoryService;
         this.customerGuard = customerGuard;
+        this.quotationCostingService = quotationCostingService;
     }
 
     public record AcceptResult(CpoResponse cpo, boolean created) {}
@@ -278,6 +283,17 @@ public class CustomerPoService {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                         "Direct Customer PO lines must use an active finished, traded, service, or semi-finished item: " + line.itemId());
             }
+        }
+        List<CreateQuotationLineRequest> costingInputs = request.lines().stream()
+                .map(l -> new CreateQuotationLineRequest(l.itemId(), l.quantity(), l.uomId(),
+                        l.unitPrice(), null, l.gstRate(), null, null, null, null, null,
+                        java.util.Map.of(), java.util.Map.of(), null, java.util.Map.of()))
+                .toList();
+        QuotationCostingSnapshot costing = quotationCostingService.calculate(tenantId, costingInputs, BigDecimal.ZERO);
+        if (!costing.available()) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "A complete cost estimate is required before creating a direct order. Missing: "
+                    + String.join("; ", costing.unavailableReasons()));
         }
         UUID cpoId = UUID.randomUUID();
         String cpoNumber = "CPO-" + LocalDate.now().format(DateTimeFormatter.BASIC_ISO_DATE)
