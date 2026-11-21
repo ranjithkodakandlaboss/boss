@@ -443,6 +443,7 @@ class SalesApiIntegrationTest extends BaseMasterDataIntegrationTest {
     @Test
     void submitRechecksIncompleteDraftCostAfterInventoryIsValued() throws Exception {
         BossContext context = BossContextHolder.get();
+        SecurityContext authentication = SecurityContextHolder.getContext();
         // Missing inventory valuation: costing unavailable — submission is now warn-only (not blocked)
         jdbc.update("UPDATE material_lots SET unit_cost = NULL WHERE tenant_id = ?", tenantId);
         var draftNoCosting = draftQuotation(null);
@@ -452,9 +453,9 @@ class SalesApiIntegrationTest extends BaseMasterDataIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON).content("{\"status\":\"sent\"}"))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("sent"));
         BossContextHolder.set(context);
+        SecurityContextHolder.setContext(authentication);
         // With valued inventory, submission on a fresh draft recalculates and persists costing
         jdbc.update("UPDATE material_lots SET unit_cost = 2.50 WHERE tenant_id = ?", tenantId);
-        BossContextHolder.set(context);
         var draftWithCosting = draftQuotation(null);
         mockMvc.perform(patch("/api/v1/quotations/{id}/status", draftWithCosting.id())
                         .header("Idempotency-Key", UUID.randomUUID().toString())
