@@ -59,6 +59,9 @@ public class BossSecurityConfig {
         return source;
     }
 
+    @edu.umd.cs.findbugs.annotations.SuppressFBWarnings(
+            value = "SPRING_CSRF_PROTECTION_DISABLED",
+            justification = "Stateless JWT API — no session cookies, so CSRF does not apply")
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
         http

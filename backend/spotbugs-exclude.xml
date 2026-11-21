@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<FindBugsFilter>
+  <!--
+    CSRF is intentionally disabled: this is a stateless REST API authenticated
+    with Firebase JWT bearer tokens. No session cookies are issued, so CSRF
+    is not applicable. See BossSecurityConfig.filterChain().
+  -->
+  <Match>
+    <Bug pattern="SPRING_CSRF_PROTECTION_DISABLED"/>
+    <Class name="in.boss.shared.security.BossSecurityConfig"/>
+  </Match>
+</FindBugsFilter>
