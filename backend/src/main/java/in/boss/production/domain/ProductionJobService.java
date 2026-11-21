@@ -197,11 +197,11 @@ public class ProductionJobService {
         String priority = request.priority() == null ? "normal" : request.priority();
         jdbc.update("""
                 INSERT INTO production_jobs
-                  (id, tenant_id, job_number, customer_id, finished_item_id, routing_id,
+                  (id, tenant_id, job_number, finished_item_id, routing_id,
                    routing_version, site_id, quantity, uom_id, status, planned_end,
                    priority, created_by)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'planned', ?, ?, ?)
-                """, jobId, context.tenantId(), jobNumber, request.customerId(), request.itemId(),
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'planned', ?, ?, ?)
+                """, jobId, context.tenantId(), jobNumber, request.itemId(),
                 resolved.routing().id(), resolved.routing().version(), request.siteId(), request.quantity(), uomId,
                 request.scheduledEnd(), priority, context.userId());
         insertStages(context.tenantId(), jobId, resolved.stages());
