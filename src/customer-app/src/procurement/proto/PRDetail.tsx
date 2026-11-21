@@ -380,7 +380,7 @@ export default function PRDetail() {
                             Retry email
                           </button>
                         )}
-                        {!isPrBlocked && !linkedSpo && ['sent', 'awaiting_quotation'].includes(inv.status) && (
+                        {!isPrBlocked && !inv.quotationId && ['sent', 'awaiting_quotation'].includes(inv.status) && (
                           <>
                             <button
                               type="button"
@@ -551,7 +551,7 @@ export default function PRDetail() {
                         {!isQuoteRejected && !isPrBlocked && q.status !== 'selected' && !linkedSpo && canApprove && (
                           <>
                             <button type="button" onClick={() => handleSelectQuote(q.id)} className="px-2.5 py-1 rounded border text-xs font-semibold border-[var(--brand)] text-[var(--brand)] hover:bg-[var(--brand)] hover:text-white transition-colors">
-                              Approve Winner
+                              Select Winner
                             </button>
                             <button type="button" onClick={() => { setRejectQuoteModal(q); setQuoteRejectReason(''); }} className="px-2 py-1 rounded border text-xs border-[var(--border)] text-[var(--text-2)] hover:text-red-600">
                               Reject

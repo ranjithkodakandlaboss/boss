@@ -361,7 +361,7 @@ export default function DocumentsPage() {
       )}
 
       {toast && (
-        <div className="fixed bottom-20 md:bottom-6 right-4 z-50 pointer-events-none">
+        <div className="fixed bottom-20 md:bottom-6 right-4 z-[9999] pointer-events-none">
           <div className="pointer-events-auto flex items-start gap-3 bg-[var(--surface)] border border-[var(--border)] rounded-xl shadow-xl px-4 py-3 max-w-sm">
             {toast.type === 'success' && <CheckCircle size={16} className="text-[var(--success,#16A34A)]" />}
             {toast.type === 'error' && <XCircle size={16} className="text-[var(--error,#DC2626)]" />}

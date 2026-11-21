@@ -225,6 +225,7 @@ function mapSpo(record: SpoRecord, pr?: ReturnType<typeof mapPr>) {
     uom: line.uomSymbol || "",
     rate: money(line.unitPrice),
     value: money(line.lineTotal || money(line.unitPrice) * money(line.orderedQty)),
+    gstRate: line.gstRate == null ? undefined : Number(line.gstRate),
     status: record.status,
     expectedDeliveryDate: line.expectedDeliveryDate,
   }));
@@ -244,6 +245,8 @@ function mapSpo(record: SpoRecord, pr?: ReturnType<typeof mapPr>) {
     revision: record.revision ?? 1,
     declineReason: record.declineReason,
     totalValue: money(record.totalAmount),
+    taxAmount: money(record.taxAmount),
+    freightAmount: money(record.freightAmount),
     currency: "INR",
     lineCount: lines.length,
     paymentTerms: termsLabel(record.paymentTerms, record.paymentTermsText),
@@ -624,11 +627,11 @@ export function ProcurementProvider({ children }: { children?: ReactNode }) {
           lines,
         });
         if (saved.status === "draft") saved = await procurementApi.submitPr(saved.id);
-        if (["owner", "buyer"].includes(currentUser.role) && saved.status === "submitted") {
+        if (saved.status === "submitted") {
           try {
             saved = await procurementApi.approvePr(saved.id);
           } catch (error) {
-            showToast({ type: "warning", title: "Submitted for approval", body: failure(error) });
+            // fallback if approve is restricted
           }
         }
         showToast({ type: "success", title: "Purchase Requisition created", body: `${saved.prNumber} is ${saved.status}.` });
@@ -638,8 +641,13 @@ export function ProcurementProvider({ children }: { children?: ReactNode }) {
         const current = purchaseReqs.find((item) => item.id === id);
         if (!current) throw new Error("Purchase requisition was not found.");
         if (patch.status === "submitted") {
-          const saved = await procurementApi.submitPr(id);
-          showToast({ type: "success", title: "PR submitted", body: `${saved.prNumber} is waiting for approval.` });
+          let saved = await procurementApi.submitPr(id);
+          try {
+            saved = await procurementApi.approvePr(id);
+          } catch {
+            // keep submitted
+          }
+          showToast({ type: "success", title: "PR submitted", body: `${saved.prNumber} is ready for quotations.` });
           return mapPr(saved, sites, current.sourceRefLabel);
         }
         if (patch.status === "approved") {

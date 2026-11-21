@@ -11,12 +11,21 @@ import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabas
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
+import javax.sql.DataSource;
+import java.sql.Connection;
+import java.sql.ResultSet;
+import java.sql.ResultSetMetaData;
+import java.sql.SQLException;
+import java.sql.Statement;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -24,13 +33,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Verifies tenant membership enforcement at the data layer.
- *
- * A Firebase UID maps to exactly one tenant (enforced by V125 unique index).
- * Verifies:
- * - boss_resolve_firebase_uid returns at most one tenant per UID.
- * - A UID not in app_users returns empty.
- * - RLS prevents a tenant's connection context from reading another tenant's data.
+ * Verifies tenant membership enforcement at the data layer and RLS isolation.
  */
 @Testcontainers
 @SpringBootTest
@@ -59,6 +62,8 @@ class CrossTenantAccessTest {
     @Autowired
     TenantContextResolver tenantContextResolver;
 
+    private DataSource nonSuperuserDataSource;
+
     @AfterEach
     void cleanup() {
         BossContextHolder.clear();
@@ -77,9 +82,25 @@ class CrossTenantAccessTest {
     }
 
     @Test
+    void suspendedOrDeactivatedUser_isInactive() {
+        UUID groupId = insertCustomerGroup();
+        UUID tenant = insertTenant(groupId, "tenant-susp-" + UUID.randomUUID());
+        String uidSusp = "uid-susp-" + UUID.randomUUID();
+        String uidDeact = "uid-deact-" + UUID.randomUUID();
+
+        jdbc.update("INSERT INTO app_users (tenant_id, firebase_uid, email, status) VALUES (?, ?, ?, 'suspended')",
+                tenant, uidSusp, "susp@example.test");
+        jdbc.update("INSERT INTO app_users (tenant_id, firebase_uid, email, status) VALUES (?, ?, ?, 'deactivated')",
+                tenant, uidDeact, "deact@example.test");
+
+        assertThat(tenantContextResolver.isInactive(uidSusp)).isTrue();
+        assertThat(tenantContextResolver.isInactive(uidDeact)).isTrue();
+        assertThat(tenantContextResolver.resolve(uidSusp)).isNull();
+        assertThat(tenantContextResolver.resolve(uidDeact)).isNull();
+    }
+
+    @Test
     void bossResolveFunction_returnsAtMostOneTenantPerUid() {
-        // Seed two tenants and two users with DIFFERENT firebase UIDs to validate the function
-        // returns exactly one row per distinct UID.
         UUID groupId = insertCustomerGroup();
         UUID tenantA = insertTenant(groupId, "tenant-a-" + UUID.randomUUID());
         UUID tenantB = insertTenant(groupId, "tenant-b-" + UUID.randomUUID());
@@ -97,7 +118,6 @@ class CrossTenantAccessTest {
         List<Map<String, Object>> rowsB = jdbc.queryForList(
                 "SELECT out_tenant_id FROM boss_resolve_firebase_uid(?)", uidB);
 
-        // Each UID resolves to exactly its own tenant
         assertThat(rowsA).hasSize(1);
         assertThat(rowsA.get(0).get("out_tenant_id").toString()).isEqualTo(tenantA.toString());
 
@@ -107,38 +127,77 @@ class CrossTenantAccessTest {
 
     @Test
     void rlsIsolation_tenantAContextCannotReadTenantBData() {
-        // Seed two tenants, insert a row in each, then verify that setting tenant A's context
-        // hides tenant B's rows and vice versa.
         UUID groupId = insertCustomerGroup();
         UUID tenantA = insertTenant(groupId, "rls-a-" + UUID.randomUUID());
         UUID tenantB = insertTenant(groupId, "rls-b-" + UUID.randomUUID());
 
-        // Insert a physical_site for each tenant (physical_sites has RLS)
         UUID siteA = insertSite(tenantA, "Site A");
         UUID siteB = insertSite(tenantB, "Site B");
 
-        // With tenant A context: can see siteA, cannot see siteB
-        jdbc.execute("SELECT set_config('app.current_tenant_id', '" + tenantA + "', false)");
-        List<Map<String, Object>> seenByA = jdbc.queryForList(
+        // Running queries as a non-superuser connection where RLS is strictly enforced
+        List<Map<String, Object>> seenByA = queryAsNonSuperuser(tenantA.toString(),
                 "SELECT id FROM physical_sites WHERE id IN ('" + siteA + "', '" + siteB + "')");
         assertThat(seenByA).hasSize(1);
         assertThat(seenByA.get(0).get("id").toString()).isEqualTo(siteA.toString());
 
-        // With tenant B context: can see siteB, cannot see siteA
-        jdbc.execute("SELECT set_config('app.current_tenant_id', '" + tenantB + "', false)");
-        List<Map<String, Object>> seenByB = jdbc.queryForList(
+        List<Map<String, Object>> seenByB = queryAsNonSuperuser(tenantB.toString(),
                 "SELECT id FROM physical_sites WHERE id IN ('" + siteA + "', '" + siteB + "')");
         assertThat(seenByB).hasSize(1);
         assertThat(seenByB.get(0).get("id").toString()).isEqualTo(siteB.toString());
 
-        // With empty context: can see nothing (secure default)
-        jdbc.execute("SELECT set_config('app.current_tenant_id', '', false)");
-        List<Map<String, Object>> seenByNobody = jdbc.queryForList(
+        List<Map<String, Object>> seenByEmpty = queryAsNonSuperuser("",
                 "SELECT id FROM physical_sites WHERE id IN ('" + siteA + "', '" + siteB + "')");
-        assertThat(seenByNobody).isEmpty();
+        assertThat(seenByEmpty).isEmpty();
     }
 
-    // --- helpers ---
+    private DataSource getNonSuperuserDataSource() {
+        if (nonSuperuserDataSource == null) {
+            jdbc.execute("DO $$ BEGIN " +
+                    "IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'boss_app_user_security') THEN " +
+                    "  CREATE ROLE boss_app_user_security WITH LOGIN PASSWORD 'boss_test_pass'; " +
+                    "END IF; " +
+                    "END $$;");
+            jdbc.execute("GRANT ALL PRIVILEGES ON DATABASE boss_test TO boss_app_user_security");
+            jdbc.execute("GRANT ALL ON SCHEMA public TO boss_app_user_security");
+            jdbc.execute("GRANT ALL ON ALL TABLES IN SCHEMA public TO boss_app_user_security");
+            jdbc.execute("GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO boss_app_user_security");
+            jdbc.execute("GRANT ALL ON ALL FUNCTIONS IN SCHEMA public TO boss_app_user_security");
+
+            DriverManagerDataSource ds = new DriverManagerDataSource();
+            ds.setDriverClassName("org.postgresql.Driver");
+            ds.setUrl(postgres.getJdbcUrl());
+            ds.setUsername("boss_app_user_security");
+            ds.setPassword("boss_test_pass");
+            nonSuperuserDataSource = ds;
+        }
+        return nonSuperuserDataSource;
+    }
+
+    private List<Map<String, Object>> queryAsNonSuperuser(String tenantId, String sql) {
+        try (Connection conn = getNonSuperuserDataSource().getConnection()) {
+            conn.setAutoCommit(false);
+            try (Statement stmt = conn.createStatement()) {
+                stmt.execute("SELECT set_config('app.current_tenant_id', '" + tenantId + "', false)");
+                try (ResultSet rs = stmt.executeQuery(sql)) {
+                    List<Map<String, Object>> results = new ArrayList<>();
+                    ResultSetMetaData meta = rs.getMetaData();
+                    int cols = meta.getColumnCount();
+                    while (rs.next()) {
+                        Map<String, Object> row = new HashMap<>();
+                        for (int i = 1; i <= cols; i++) {
+                            row.put(meta.getColumnLabel(i), rs.getObject(i));
+                        }
+                        results.add(row);
+                    }
+                    return results;
+                }
+            } finally {
+                conn.rollback();
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException(e);
+        }
+    }
 
     private UUID insertCustomerGroup() {
         return jdbc.queryForObject(
@@ -166,10 +225,17 @@ class CrossTenantAccessTest {
                 tenantId, userId, role);
     }
 
-    private UUID insertSite(UUID tenantId, String name) {
+    private UUID insertLegalEntity(UUID tenantId) {
         return jdbc.queryForObject(
-                "INSERT INTO physical_sites (tenant_id, name, code, site_type) " +
-                "VALUES (?, ?, ?, 'FACTORY') RETURNING id",
-                UUID.class, tenantId, name, "SITE-" + UUID.randomUUID().toString().substring(0, 6).toUpperCase());
+                "INSERT INTO legal_entities (tenant_id, name, legal_name, pan, entity_type) VALUES (?, 'Test LE', 'Test LE Ltd', 'ABCDE1234F', 'PRIVATE_LIMITED') RETURNING id",
+                UUID.class, tenantId);
+    }
+
+    private UUID insertSite(UUID tenantId, String name) {
+        UUID leId = insertLegalEntity(tenantId);
+        return jdbc.queryForObject(
+                "INSERT INTO physical_sites (tenant_id, name, code, site_type, legal_entity_id) " +
+                "VALUES (?, ?, ?, 'factory', ?) RETURNING id",
+                UUID.class, tenantId, name, "SITE-" + UUID.randomUUID().toString().substring(0, 6).toUpperCase(), leId);
     }
 }

@@ -82,10 +82,7 @@ public class InventoryReservationService {
         if (!ctx.canAccessSite(job.siteId())) {
             throw new InventoryValidationException("Production job not found for this tenant");
         }
-        if (job.status() != null && TERMINAL_JOB_STATUSES.contains(job.status().toLowerCase(java.util.Locale.ROOT))) {
-            throw new InventoryValidationException(
-                    "Stock cannot be reserved for a production job in status '" + job.status() + "'");
-        }
+        InventoryReservationSupport.validateJobStatus(job.status());
         if (reservationRepository.hasActiveReservations(ctx.tenantId(), jobId)) {
             throw new ReservationConflictException(
                     "This production job already has active material reservations");
@@ -94,7 +91,7 @@ public class InventoryReservationService {
         Map<UUID, BigDecimal> requestedByItem = new LinkedHashMap<>();
         for (InventoryReservationRepository.JobMaterialNeed need
                 : reservationRepository.lockUnissuedJobMaterials(ctx.tenantId(), jobId)) {
-            requestedByItem.merge(need.itemId(), quantity(need.remainingQty()), BigDecimal::add);
+            requestedByItem.merge(need.itemId(), InventoryReservationSupport.quantity(need.remainingQty()), BigDecimal::add);
         }
         if (requestedByItem.isEmpty()) {
             throw new InventoryValidationException(
@@ -117,28 +114,16 @@ public class InventoryReservationService {
                     "The production item's approved BOM has no reservable material requirements");
         }
         List<JobMaterialSnapshotLine> lines = materials.stream()
-                .map(this::snapshotLine)
+                .map(InventoryReservationSupport::snapshotLine)
                 .toList();
         reservationRepository.insertJobMaterialRequirements(context.tenantId(), jobId, lines);
-    }
-
-    private JobMaterialSnapshotLine snapshotLine(BOMExplosionMaterialDto material) {
-        if (material.getUomId() == null) {
-            throw new InventoryValidationException("BOM material is missing its unit of measure");
-        }
-        BigDecimal required = material.getQty().setScale(3, RoundingMode.HALF_UP);
-        if (required.signum() <= 0) {
-            throw new InventoryValidationException(
-                    "BOM material quantity is below the supported inventory precision");
-        }
-        return new JobMaterialSnapshotLine(material.getItemId(), required, material.getUomId());
     }
 
     private ReservationResponse persistPlans(BossContext ctx, UUID jobId,
                                              List<ReservationPlan> plans, boolean allowPartial) {
         if (!allowPartial && plans.stream().anyMatch(plan -> plan.shortfall().signum() > 0)) {
             metrics.reservation("failed");
-            return failedReservation(jobId, plans);
+            return InventoryReservationSupport.failedReservation(jobId, plans);
         }
 
         List<ReservationLineResponse> results = plans.stream()
@@ -180,16 +165,6 @@ public class InventoryReservationService {
                 plan.reserved(), plan.shortfall(), List.copyOf(allocations));
     }
 
-    private static ReservationResponse failedReservation(UUID jobId, List<ReservationPlan> plans) {
-        List<ReservationLineResponse> lines = plans.stream()
-                .map(plan -> new ReservationLineResponse(plan.itemId(), plan.storeId(),
-                        plan.requested(), BigDecimal.ZERO.setScale(3), plan.requested(), List.of()))
-                .toList();
-        return new ReservationResponse(jobId, "FAILED", lines);
-    }
-
-    private static final java.util.Set<String> TERMINAL_JOB_STATUSES = java.util.Set.of("completed", "closed", "cancelled");
-
     private UUID requireLockedJob(BossContext ctx, UUID jobId) {
         InventoryReservationRepository.JobLock lock = reservationRepository.lockProductionJob(ctx.tenantId(), jobId)
                 .orElseThrow(() -> new InventoryValidationException(
@@ -197,22 +172,8 @@ public class InventoryReservationService {
         if (!ctx.canAccessSite(lock.siteId())) {
             throw new InventoryValidationException("Production job not found for this tenant");
         }
-        if (lock.status() != null && TERMINAL_JOB_STATUSES.contains(lock.status().toLowerCase(java.util.Locale.ROOT))) {
-            throw new InventoryValidationException(
-                    "Stock cannot be reserved for a production job in status '" + lock.status() + "'");
-        }
+        InventoryReservationSupport.validateJobStatus(lock.status());
         return lock.siteId();
-    }
-
-    private static BigDecimal quantity(BigDecimal value) {
-        if (value == null) {
-            throw new InventoryValidationException("Quantity is required");
-        }
-        BigDecimal scaled = value.setScale(3, RoundingMode.HALF_UP);
-        if (scaled.compareTo(MIN_QTY) < 0) {
-            throw new InventoryValidationException("Quantity must be at least 0.001");
-        }
-        return scaled;
     }
 
     private String json(Object value) {

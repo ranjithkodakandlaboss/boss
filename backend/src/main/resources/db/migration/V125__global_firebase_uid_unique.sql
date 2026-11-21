@@ -9,5 +9,5 @@
 -- this migration will fail — that is intentional: the duplicate must be resolved
 -- before the constraint can be enforced.
 
-CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS uidx_app_users_firebase_uid
+CREATE UNIQUE INDEX IF NOT EXISTS uidx_app_users_firebase_uid
   ON app_users (firebase_uid);

@@ -6,6 +6,7 @@ import { useStore } from './runtime';
 import AddIfEmpty from './AddIfEmpty';
 import { saveSite } from './quickMasters';
 import StatusChip from '../../components/shared/StatusChip';
+import ConfirmDialog from '../../components/shared/ConfirmDialog';
 import clsx from 'clsx';
 import DocumentActions from './workflow/DocumentActions';
 import WorkflowTimeline from './workflow/WorkflowTimeline';
@@ -24,11 +25,13 @@ export default function PODetail() {
   const {
     customers, customerPos, poLines, poAmendments, jobs, jobMaterialReqs, quotations, rfqs,
     purchaseReqs, supplierInvitations, supplierQuotations, grns, dispatches, invoices,
-    payments, paymentAllocations,
+    payments, paymentAllocations, companyConfig,
     materials, lots, storeLocations, sites, supplierPos, supplierPoLines,
     currentUser, updateCustomerPo, resolvePoAmendment, assessAndAllocateCustomerPO, showToast, reload,
   } = useStore();
   const { goBack, originUrl } = useReturnNavigation('/sales?tab=pos');
+  const [confirmCancel, setConfirmCancel] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
   const [allocResultMsg, setAllocResultMsg] = useState<{ status: string; message: string; prId?: string; prNumber?: string } | null>(null);
   const [availabilityOverride, setAvailabilityOverride] = useState<string | null>(null);
   const [confirmReserve, setConfirmReserve] = useState(false);
@@ -59,6 +62,20 @@ export default function PODetail() {
         value: po.totalValue,
         status: 'pending' as const,
       }];
+
+  const customer = customers.find(c => c.id === po.customerId);
+  const isInterState = Boolean(companyConfig?.state && customer?.state && companyConfig.state.trim().toLowerCase() !== customer.state.trim().toLowerCase());
+  const taxableValue = displayLines.reduce((sum, line) => sum + (line.value || 0), 0);
+  const effectiveGstRate = displayLines.find(l => l.gstRate != null)?.gstRate ?? (taxableValue && po.taxAmount ? Math.round((po.taxAmount / taxableValue) * 100) : 18);
+  const totalTax = po.taxAmount != null && po.taxAmount > 0
+    ? po.taxAmount
+    : Math.round(taxableValue * (Number(effectiveGstRate) / 100) * 100) / 100;
+  const grandTotal = po.totalValue != null && po.totalValue > 0
+    ? po.totalValue
+    : Math.round((taxableValue + totalTax) * 100) / 100;
+  const cgstAmount = isInterState ? 0 : Math.round((totalTax / 2) * 100) / 100;
+  const sgstAmount = isInterState ? 0 : Math.round((totalTax - cgstAmount) * 100) / 100;
+  const igstAmount = isInterState ? totalTax : 0;
   const quotation = quotations.find(q => q.id === po.quotationId || q.quotationNumber === po.quotationRef);
   const originatingRfq = rfqs.find(r => r.id === po.rfqId) ?? (quotation ? rfqs.find(r => r.id === quotation.rfqId) : undefined);
   const linkedJobs = jobs.filter(j => j.customerPoId === po.id || j.customerPoNumber === po.poNumber);
@@ -294,7 +311,7 @@ export default function PODetail() {
               <button type="button" onClick={() => updateCustomerPo(po.id, { status: 'active' })} className="px-3 py-1.5 rounded-lg border text-sm font-medium" style={{ borderColor: 'var(--border)', color: 'var(--text-2)' }}>Release</button>
             )}
             {canCancel && (
-              <button onClick={() => updateCustomerPo(po.id, { status: 'cancelled' })} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-sm font-medium" style={{ borderColor: 'var(--error,#DC2626)', color: 'var(--error,#DC2626)' }}><Ban size={14} /> Cancel PO</button>
+              <button type="button" onClick={() => setConfirmCancel(true)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-sm font-medium" style={{ borderColor: 'var(--error,#DC2626)', color: 'var(--error,#DC2626)' }}><Ban size={14} /> Cancel PO</button>
             )}
             {canAmend && (
               <>
@@ -752,13 +769,53 @@ export default function PODetail() {
                     </tr>
                   ))}
                   <tr style={{ background: 'var(--surface-2)' }}>
-                    <td colSpan={5} className="px-4 py-3 text-sm font-bold text-right" style={{ color: 'var(--text)' }}>Total</td>
+                    <td colSpan={5} className="px-4 py-3 text-sm font-bold text-right" style={{ color: 'var(--text)' }}>Subtotal</td>
                     <td className="px-4 py-3 font-mono text-sm font-bold" style={{ color: 'var(--brand)' }}>
-                      ₹{po.totalValue.toLocaleString('en-IN')}
+                      ₹{taxableValue.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </td>
                   </tr>
                 </tbody>
               </table>
+            </div>
+
+            {/* GST Breakdown Card */}
+            <div className="mt-4 flex justify-end">
+              <div className="w-full max-w-sm rounded-xl border p-4 space-y-2 bg-[var(--surface-2)]" style={{ borderColor: 'var(--border)' }}>
+                <h4 className="text-xs font-bold uppercase tracking-wider text-[var(--text-3)] mb-2">GST Breakdown</h4>
+                <div className="flex justify-between text-xs text-[var(--text-2)]">
+                  <span>Taxable Value</span>
+                  <span className="font-mono font-medium text-[var(--text)]">₹{taxableValue.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                </div>
+                <div className="flex justify-between text-xs text-[var(--text-2)]">
+                  <span>GST Rate</span>
+                  <span className="font-mono font-medium text-[var(--text)]">{effectiveGstRate}%</span>
+                </div>
+                {isInterState ? (
+                  <div className="flex justify-between text-xs text-[var(--text-2)]">
+                    <span>IGST ({effectiveGstRate}%)</span>
+                    <span className="font-mono font-medium text-[var(--text)]">₹{igstAmount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                  </div>
+                ) : (
+                  <>
+                    <div className="flex justify-between text-xs text-[var(--text-2)]">
+                      <span>CGST ({Number(effectiveGstRate) / 2}%)</span>
+                      <span className="font-mono font-medium text-[var(--text)]">₹{cgstAmount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                    </div>
+                    <div className="flex justify-between text-xs text-[var(--text-2)]">
+                      <span>SGST ({Number(effectiveGstRate) / 2}%)</span>
+                      <span className="font-mono font-medium text-[var(--text)]">₹{sgstAmount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                    </div>
+                  </>
+                )}
+                <div className="border-t pt-2 flex justify-between text-xs font-semibold text-[var(--text)]" style={{ borderColor: 'var(--border)' }}>
+                  <span>Total Tax Amount</span>
+                  <span className="font-mono">₹{totalTax.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                </div>
+                <div className="border-t pt-2 flex justify-between text-sm font-bold" style={{ borderColor: 'var(--border)', color: 'var(--brand)' }}>
+                  <span>Final PO Total</span>
+                  <span className="font-mono">₹{grandTotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                </div>
+              </div>
             </div>
           </div>
         )}
@@ -895,6 +952,30 @@ export default function PODetail() {
         </div>
       </div>
     )}
+
+    <ConfirmDialog
+      open={confirmCancel}
+      title="Cancel Customer PO?"
+      body={`Are you sure you want to cancel Customer PO ${po.poNumber}? All progress on this order will be cancelled. This action cannot be undone.`}
+      confirmLabel="Confirm Cancel"
+      cancelLabel="Go Back"
+      variant="danger"
+      loading={cancelling}
+      onCancel={() => setConfirmCancel(false)}
+      onConfirm={async () => {
+        setCancelling(true);
+        try {
+          await updateCustomerPo(po.id, { status: 'cancelled' });
+          showToast({ type: 'info', title: 'Customer PO cancelled', body: `${po.poNumber} has been cancelled.` });
+          setConfirmCancel(false);
+          reload();
+        } catch (e: unknown) {
+          showToast({ type: 'error', title: 'Cancellation failed', body: e instanceof Error ? e.message : 'Could not cancel Customer PO' });
+        } finally {
+          setCancelling(false);
+        }
+      }}
+    />
     </>
   );
 }

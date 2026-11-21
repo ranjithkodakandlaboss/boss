@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { AlertTriangle } from 'lucide-react';
 
 interface Props {
@@ -8,22 +8,40 @@ interface Props {
   confirmLabel?: string;
   cancelLabel?: string;
   variant?: 'danger' | 'primary';
+  loading?: boolean;
   onConfirm: () => void | Promise<void>;
   onCancel: () => void;
 }
 
-export default function ConfirmModal({ open, title, body, confirmLabel = 'Confirm', cancelLabel = 'Cancel', variant = 'primary', onConfirm, onCancel }: Props) {
-  const [busy, setBusy] = useState(false);
+export default function ConfirmModal({
+  open,
+  title,
+  body,
+  confirmLabel = 'Confirm',
+  cancelLabel = 'Cancel',
+  variant = 'primary',
+  loading,
+  onConfirm,
+  onCancel,
+}: Props) {
+  const [submitting, setSubmitting] = React.useState(false);
+
+  React.useEffect(() => {
+    if (open) setSubmitting(false);
+  }, [open]);
 
   if (!open) return null;
 
-  const handleConfirm = async () => {
-    if (busy) return;
-    setBusy(true);
+  const isBusy = submitting || Boolean(loading);
+
+  const handleConfirm = async (e: React.MouseEvent) => {
+    e.preventDefault();
+    if (isBusy) return;
+    setSubmitting(true);
     try {
       await onConfirm();
-    } finally {
-      setBusy(false);
+    } catch {
+      setSubmitting(false);
     }
   };
 
@@ -40,15 +58,21 @@ export default function ConfirmModal({ open, title, body, confirmLabel = 'Confir
           </div>
         </div>
         <div className="flex gap-3 mt-6 justify-end">
-          <button onClick={onCancel} disabled={busy} className="px-4 py-2 rounded-lg border border-[var(--border)] text-sm text-[var(--text-2)] hover:bg-[var(--surface-2)] transition-colors disabled:opacity-50">
+          <button
+            type="button"
+            disabled={isBusy}
+            onClick={onCancel}
+            className="px-4 py-2 rounded-lg border border-[var(--border)] text-sm text-[var(--text-2)] hover:bg-[var(--surface-2)] transition-colors disabled:opacity-50"
+          >
             {cancelLabel}
           </button>
           <button
+            type="button"
+            disabled={isBusy}
             onClick={handleConfirm}
-            disabled={busy}
             className={`px-4 py-2 rounded-lg text-sm font-medium text-white transition-colors disabled:opacity-50 ${variant === 'danger' ? 'bg-[var(--error)] hover:opacity-90' : 'bg-[var(--brand-fill)] hover:bg-[var(--brand-700)]'}`}
           >
-            {busy ? 'Working…' : confirmLabel}
+            {isBusy ? 'Processing…' : confirmLabel}
           </button>
         </div>
       </div>

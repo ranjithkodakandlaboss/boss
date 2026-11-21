@@ -91,7 +91,16 @@ function triggerSessionExpiry() {
 
 export async function authorizedFetch(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
   const headers = new Headers(init.headers);
-  const token = await getAccessToken();
+  let token: string | null = null;
+  try {
+    token = await getAccessToken();
+  } catch {
+    triggerSessionExpiry();
+    return new Response(JSON.stringify({ error: "Session expired" }), {
+      status: 401,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
   if (token) headers.set("Authorization", `Bearer ${token}`);
 
   const request = { ...init, headers };

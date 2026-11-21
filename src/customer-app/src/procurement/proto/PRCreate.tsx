@@ -32,7 +32,7 @@ export default function PRCreate() {
   const { id: editId } = useParams<{ id: string }>();
   const [searchParams] = useSearchParams();
   const prefillName = searchParams.get('name') ?? '';
-  const { currentUser, purchaseReqs, materials, sites, storeLocations, addPurchaseReq, updatePurchaseReq, showToast } = useStore();
+  const { currentUser, purchaseReqs, materials, sites, storeLocations, addPurchaseReq, updatePurchaseReq, showToast, uoms } = useStore();
 
   const editingPr = editId ? purchaseReqs.find(p => p.id === editId) : undefined;
   const isEditing = Boolean(editId && editingPr);
@@ -408,8 +408,18 @@ export default function PRCreate() {
                     </div>
                     <div>
                       <label className="block text-xs text-[var(--text-3)] mb-1">UOM</label>
-                      <select className="eoss-input w-full" value={line.uom} onChange={e => setLine(line.id, { uom: e.target.value })}>
-                        {UOM_OPTIONS.map(u => <option key={u} value={u}>{u}</option>)}
+                      <select
+                        className="eoss-input w-full"
+                        value={line.uom}
+                        disabled={Boolean(line.materialItemId)}
+                        onChange={e => setLine(line.id, { uom: e.target.value })}
+                      >
+                        {(uoms && uoms.length > 0 ? uoms.map(u => u.symbol) : UOM_OPTIONS).map(u => (
+                          <option key={u} value={u}>{u}</option>
+                        ))}
+                        {line.uom && !(uoms && uoms.length > 0 ? uoms.map(u => u.symbol) : UOM_OPTIONS).includes(line.uom) && (
+                          <option value={line.uom}>{line.uom}</option>
+                        )}
                       </select>
                     </div>
                     <div>
