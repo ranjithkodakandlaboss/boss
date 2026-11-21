@@ -89,10 +89,10 @@ public class InventoryReservationReleaseService {
     }
 
     private void requireLockedJob(BossContext ctx, UUID jobId) {
-        UUID siteId = reservationRepository.lockProductionJob(ctx.tenantId(), jobId)
+        InventoryReservationRepository.JobLock lock = reservationRepository.lockProductionJob(ctx.tenantId(), jobId)
                 .orElseThrow(() -> new InventoryValidationException(
                         "Production job not found for this tenant"));
-        if (!ctx.canAccessSite(siteId)) {
+        if (!ctx.canAccessSite(lock.siteId())) {
             throw new InventoryValidationException("Production job not found for this tenant");
         }
     }

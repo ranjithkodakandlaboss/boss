@@ -142,6 +142,7 @@ export default function InventoryHome() {
     { key: "inTransit", label: "In Transit", align: "right", value: (row) => row.inTransitQty ?? 0, render: (row) => quantity(row.inTransitQty ?? 0, row.uomSymbol) },
     { key: "availableQty", label: "Available", align: "right", value: (row) => row.availableQty, render: (row) => <span className="font-semibold">{quantity(row.availableQty, row.uomSymbol)}</span> },
     { key: "reorderPoint", label: "Reorder Pt", align: "right", value: (row) => row.reorderPoint ?? -1, render: (row) => row.reorderPoint == null ? "—" : quantity(row.reorderPoint, row.uomSymbol) },
+    { key: "valuationAmt", label: "Stock Value", align: "right", value: (row) => (row as StockRow).valuationAmt ?? 0, render: (row) => (row as StockRow).valuationAmt ? `₹${Number((row as StockRow).valuationAmt).toLocaleString("en-IN", { maximumFractionDigits: 0 })}` : "—" },
     { key: "status", label: "Status", value: (row) => row.status, render: (row) => <span className="rounded-full px-2 py-1 text-xs font-medium" style={chipStyle(row.status)}>{row.status}</span> },
   ];
 
@@ -236,9 +237,27 @@ function RowActions({ row, rows, onAdjust }: { row: StockRow; rows: StockRow[]; 
 function AdjustStockSheet({ row, onClose, onDone }: { row: StockRow; onClose: () => void; onDone: () => void }) {
   const [direction, setDirection] = useState<"add" | "reduce">("add");
   const [qty, setQty] = useState("");
+  const [unitCost, setUnitCost] = useState("");
   const [reason, setReason] = useState("");
+  const [availableLots, setAvailableLots] = useState<Lot[]>([]);
+  const [selectedLotId, setSelectedLotId] = useState("");
+  const [loadingLots, setLoadingLots] = useState(true);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
+
+  useEffect(() => {
+    loadLots(`itemId=${row.itemId}&storeId=${row.storeId}&status=available`)
+      .then((lots) => {
+        setAvailableLots(lots);
+        if (lots.length > 0) {
+          setSelectedLotId(lots[0].id);
+        }
+      })
+      .catch(() => {})
+      .finally(() => setLoadingLots(false));
+  }, [row.itemId, row.storeId]);
+
+  const selectedLot = availableLots.find((l) => l.id === selectedLotId) || availableLots[0];
 
   const handleSave = async () => {
     const q = Number(qty);
@@ -247,21 +266,32 @@ function AdjustStockSheet({ row, onClose, onDone }: { row: StockRow; onClose: ()
     setSaving(true);
     setErr("");
     try {
-      // Find an available lot for this item+store to post the movement against
-      const lots = await loadLots(`itemId=${row.itemId}&storeId=${row.storeId}&status=available`);
-      const lot = lots[0];
-      if (!lot && direction === "reduce") { setErr("No available lot found to reduce."); setSaving(false); return; }
-      if (!lot && direction === "add") {
-        // For positive adjustments with no existing lot, we still need a lot — post as a new lot via /api/v1/inventory/lots
-        // For now, tell the user to use Opening Stock if no lot exists
-        setErr("No available lot exists for this item+store. Use Opening Stock to add new stock."); setSaving(false); return;
+      if (direction === "add") {
+        await mutate("/api/v1/inventory/lots", "POST", {
+          itemId: row.itemId,
+          storeId: row.storeId,
+          qty: q,
+          unitCost: unitCost ? Number(unitCost) : null,
+          batchRef: reason ? `ADJ: ${reason.slice(0, 30)}` : "ADJUSTMENT-ADD",
+        });
+      } else {
+        if (!selectedLot) {
+          setErr("No available lot found to reduce.");
+          setSaving(false);
+          return;
+        }
+        if (q > (selectedLot.availableQty ?? selectedLot.qty)) {
+          setErr(`Quantity exceeds available lot quantity (${selectedLot.availableQty ?? selectedLot.qty} ${row.uomSymbol}).`);
+          setSaving(false);
+          return;
+        }
+        await mutate(`/api/v1/inventory/lots/${selectedLot.id}/movements`, "POST", {
+          movementType: "adjustment_reduce",
+          qty: q,
+          referenceType: "manual_adjustment",
+          note: reason.trim(),
+        });
       }
-      await mutate(`/api/v1/inventory/lots/${lot.id}/movements`, "POST", {
-        movementType: direction === "add" ? "adjustment_add" : "adjustment_reduce",
-        qty: q,
-        referenceType: "manual_adjustment",
-        note: reason.trim(),
-      });
       onDone();
     } catch (e: unknown) {
       setErr(e instanceof Error ? e.message : "Adjustment failed.");
@@ -270,7 +300,13 @@ function AdjustStockSheet({ row, onClose, onDone }: { row: StockRow; onClose: ()
   };
 
   return (
-    <RecordSheet title={`Adjust Stock — ${row.itemCode}`} subtitle={`${row.itemName} · ${row.storeName}`} onClose={onClose} primary={{ label: saving ? "Saving…" : "Save Adjustment", onClick: handleSave, disabled: saving }} secondary={{ label: "Cancel", onClick: onClose }}>
+    <RecordSheet
+      title={`Adjust Stock — ${row.itemCode}`}
+      subtitle={`${row.itemName} · ${row.storeName}`}
+      onClose={onClose}
+      primary={{ label: saving ? "Saving…" : "Save Adjustment", onClick: handleSave, disabled: saving }}
+      secondary={{ label: "Cancel", onClick: onClose }}
+    >
       <div className="space-y-4 text-sm">
         <div className="grid grid-cols-2 gap-3">
           <div>
@@ -285,17 +321,95 @@ function AdjustStockSheet({ row, onClose, onDone }: { row: StockRow; onClose: ()
         <div>
           <label className="block text-xs text-[var(--text-3)] mb-1">Direction</label>
           <div className="flex gap-2">
-            <button type="button" onClick={() => setDirection("add")} className={`flex-1 rounded-lg border py-2 text-xs font-semibold ${direction === "add" ? "border-[var(--success)] text-[var(--success)] bg-[var(--success-bg)]" : "border-[var(--border)] text-[var(--text-2)]"}`}>+ Add</button>
-            <button type="button" onClick={() => setDirection("reduce")} className={`flex-1 rounded-lg border py-2 text-xs font-semibold ${direction === "reduce" ? "border-[var(--error)] text-[var(--error)] bg-[var(--error-bg)]" : "border-[var(--border)] text-[var(--text-2)]"}`}>− Reduce</button>
+            <button
+              type="button"
+              onClick={() => setDirection("add")}
+              className={`flex-1 rounded-lg border py-2 text-xs font-semibold ${
+                direction === "add"
+                  ? "border-[var(--success)] text-[var(--success)] bg-[var(--success-bg)]"
+                  : "border-[var(--border)] text-[var(--text-2)]"
+              }`}
+            >
+              + Add
+            </button>
+            <button
+              type="button"
+              onClick={() => setDirection("reduce")}
+              className={`flex-1 rounded-lg border py-2 text-xs font-semibold ${
+                direction === "reduce"
+                  ? "border-[var(--error)] text-[var(--error)] bg-[var(--error-bg)]"
+                  : "border-[var(--border)] text-[var(--text-2)]"
+              }`}
+            >
+              − Reduce
+            </button>
           </div>
         </div>
+
+        {direction === "add" ? (
+          <div>
+            <label className="block text-xs text-[var(--text-3)] mb-1">Unit Cost / Purchase Price (₹)</label>
+            <input
+              type="number"
+              min="0"
+              step="any"
+              className="eoss-input w-full font-mono"
+              value={unitCost}
+              onChange={(e) => setUnitCost(e.target.value)}
+              placeholder="0.00"
+            />
+            <p className="text-[11px] text-[var(--text-3)] mt-1">This cost will be retained for this specific addition in the item valuation.</p>
+          </div>
+        ) : (
+          <div>
+            <label className="block text-xs text-[var(--text-3)] mb-1">Select Lot to Reduce</label>
+            {loadingLots ? (
+              <div className="text-xs text-[var(--text-3)]">Loading available lots…</div>
+            ) : availableLots.length === 0 ? (
+              <div className="text-xs text-[var(--error)]">No lots available for reduction.</div>
+            ) : (
+              <select
+                className="eoss-input w-full text-xs font-mono"
+                value={selectedLotId}
+                onChange={(e) => setSelectedLotId(e.target.value)}
+              >
+                {availableLots.map((l) => (
+                  <option key={l.id} value={l.id}>
+                    {l.lotNumber || l.id.slice(0, 8)} ({quantity(l.availableQty ?? l.qty, row.uomSymbol)}) — ₹
+                    {l.unitCost != null ? Number(l.unitCost).toFixed(2) : "0.00"} / {row.uomSymbol}
+                  </option>
+                ))}
+              </select>
+            )}
+            {selectedLot && (
+              <div className="mt-1 text-[11px] text-[var(--text-2)] flex justify-between">
+                <span>Applicable unit cost: <strong>₹{selectedLot.unitCost != null ? Number(selectedLot.unitCost).toFixed(2) : "0.00"}</strong></span>
+                <span>Max reducible: <strong>{quantity(selectedLot.availableQty ?? selectedLot.qty, row.uomSymbol)}</strong></span>
+              </div>
+            )}
+          </div>
+        )}
+
         <div>
           <label className="block text-xs text-[var(--text-3)] mb-1">Quantity ({row.uomSymbol}) *</label>
-          <input type="number" min="0.001" step="any" className="eoss-input w-full font-mono" value={qty} onChange={(e) => setQty(e.target.value)} placeholder="0.000" />
+          <input
+            type="number"
+            min="0.001"
+            step="any"
+            className="eoss-input w-full font-mono"
+            value={qty}
+            onChange={(e) => setQty(e.target.value)}
+            placeholder="0.000"
+          />
         </div>
         <div>
           <label className="block text-xs text-[var(--text-3)] mb-1">Reason *</label>
-          <input className="eoss-input w-full" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Physical count correction, damaged stock write-off…" />
+          <input
+            className="eoss-input w-full"
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            placeholder="e.g. Physical count correction, damaged stock write-off…"
+          />
         </div>
         {err && <p className="text-xs text-[var(--error)]">{err}</p>}
       </div>

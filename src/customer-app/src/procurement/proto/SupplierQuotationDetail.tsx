@@ -143,7 +143,7 @@ export default function SupplierQuotationDetail() {
                         }}
                         className="btn-primary text-xs inline-flex items-center gap-1"
                       >
-                        <CheckCircle2 size={13} /> Approve & Finalize
+                        <CheckCircle2 size={13} /> Select Winner
                       </button>
                       <button
                         type="button"

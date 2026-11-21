@@ -73,10 +73,10 @@ export default function OpeningStockPage() {
         <StockNav />
         <div className="flex flex-col items-center justify-center flex-1 gap-4 p-8 text-center">
           <div className="text-4xl">✓</div>
-          <p className="text-base font-semibold text-[var(--text)]">Opening stock recorded</p>
+          <p className="text-base font-semibold text-[var(--text)]">Stock added</p>
           <p className="text-sm text-[var(--text-2)]">{lines.length} lot{lines.length === 1 ? "" : "s"} added to inventory.</p>
           <div className="flex gap-3 mt-2">
-            <button onClick={() => { setLines([newLine()]); setDone(false); }} className="px-4 py-2 rounded-lg border text-sm" style={{ borderColor: "var(--border)", color: "var(--text-2)" }}>Add more</button>
+            <button onClick={() => { setLines([newLine()]); setDone(false); }} className="px-4 py-2 rounded-lg border text-sm" style={{ borderColor: "var(--border)", color: "var(--text-2)" }}>Add more stock</button>
             <button onClick={() => navigate("/inventory")} className="px-4 py-2 rounded-lg text-sm font-semibold text-white" style={{ background: "var(--brand-fill)" }}>View stock</button>
           </div>
         </div>
@@ -92,8 +92,8 @@ export default function OpeningStockPage() {
           <ArrowLeft size={18} className="text-[var(--text-2)]" />
         </button>
         <div>
-          <h1 className="text-base font-bold text-[var(--text)]">Opening Stock Entry</h1>
-          <p className="text-xs text-[var(--text-2)]">Record initial stock directly — no GRN or approval required.</p>
+          <h1 className="text-base font-bold text-[var(--text)]">Add Stock</h1>
+          <p className="text-xs text-[var(--text-2)]">Record stock directly — no GRN or approval required.</p>
         </div>
       </header>
 

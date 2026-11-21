@@ -2,6 +2,7 @@ import {
   currentRefreshToken,
   currentToken,
   currentTokenExpiresAt,
+  signOut,
   storeRefreshedToken,
 } from "./session";
 
@@ -80,18 +81,48 @@ export async function getAccessToken(forceRefresh = false): Promise<string | nul
   return refreshInProgress.promise;
 }
 
+function triggerSessionExpiry() {
+  signOut();
+  try { sessionStorage.setItem("boss.session.expired", "1"); } catch { /* ignore */ }
+  if (typeof window !== "undefined" && !window.location.pathname.startsWith("/login") && !window.location.pathname.startsWith("/activate")) {
+    window.location.href = "/";
+  }
+}
+
 export async function authorizedFetch(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
   const headers = new Headers(init.headers);
-  const token = await getAccessToken();
+  let token: string | null = null;
+  try {
+    token = await getAccessToken();
+  } catch {
+    triggerSessionExpiry();
+    return new Response(JSON.stringify({ error: "Session expired" }), {
+      status: 401,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
   if (token) headers.set("Authorization", `Bearer ${token}`);
 
   const request = { ...init, headers };
   const response = await fetch(input, request);
   if (response.status !== 401 || !currentRefreshToken()) return response;
 
-  const refreshedToken = await getAccessToken(true);
+  let refreshedToken: string | null = null;
+  try {
+    refreshedToken = await getAccessToken(true);
+  } catch {
+    // Firebase refresh token is expired or the account was disabled — log out immediately.
+    triggerSessionExpiry();
+    return response;
+  }
+
   if (refreshedToken) headers.set("Authorization", `Bearer ${refreshedToken}`);
-  return fetch(input, request);
+  const retryResponse = await fetch(input, { ...init, headers });
+  if (retryResponse.status === 401) {
+    // The refreshed token was also rejected — the session is irrecoverable.
+    triggerSessionExpiry();
+  }
+  return retryResponse;
 }
 
 export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -120,6 +151,32 @@ async function parseApiResponse<T>(response: Response): Promise<T> {
   }
   if (!response.ok) throw new ApiError(response.status, body.detail || body.message || body.error || response.statusText || "The request was rejected");
   return body as T;
+}
+
+/**
+ * Validates that the given Firebase ID token is associated with an active BOSS account.
+ * Throws ApiError(401) if the token is valid Firebase-wise but has no BOSS tenant membership.
+ * Must be called BEFORE storing the session client-side.
+ */
+export async function validateBossAccount(idToken: string): Promise<void> {
+  const response = await fetch(`${base}/api/v1/auth/me`, {
+    headers: {
+      "Authorization": `Bearer ${idToken}`,
+      "Content-Type": "application/json",
+    },
+  });
+  if (response.status === 401) {
+    throw new ApiError(401, "This account is not registered with BOSS. Please use your invitation link to activate your account.");
+  }
+  if (response.status === 403) {
+    const text = await response.text().catch(() => "");
+    let detail = "Your account has been suspended or deactivated.";
+    try { detail = JSON.parse(text).detail || detail; } catch { /* ignore */ }
+    throw new ApiError(403, detail);
+  }
+  if (!response.ok) {
+    throw new ApiError(response.status, "Sign-in failed. Please try again.");
+  }
 }
 
 export async function firebaseSignIn(email: string, password: string): Promise<{ idToken: string; refreshToken: string; expiresIn: string }> {

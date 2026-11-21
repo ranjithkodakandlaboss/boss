@@ -298,14 +298,15 @@ public class PurchaseRequisitionService {
             throw badRequest("Purchase requisition must contain at least one line item before submission");
         }
 
+        // Approval is not required: submission finalises the PR directly.
         jdbc.update("""
                 UPDATE purchase_requisitions
-                SET status = 'submitted', updated_at = NOW()
+                SET status = 'approved', approved_by = ?, approved_at = NOW(), updated_at = NOW()
                 WHERE tenant_id = ? AND id = ?
-                """, tenantId, prId);
+                """, context.userId(), tenantId, prId);
 
         PurchaseRequisitionResponse updated = getPr(prId);
-        auditService.record("purchase_requisitions", prId, "SUBMITTED", toJson(existing), toJson(updated));
+        auditService.record("purchase_requisitions", prId, "SUBMITTED_AND_APPROVED", toJson(existing), toJson(updated));
         return updated;
     }
 
@@ -500,8 +501,9 @@ public class PurchaseRequisitionService {
                        est_unit_price, store_id, notes, required_date, ordered_qty)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
                     """,
+                    // required_date on lines is deprecated; the PR header's required_by_date is used instead.
                     lineId, tenantId, prId, lineNo++, line.itemId(), qty, line.uomId(),
-                    line.estUnitPrice(), line.storeId(), note, line.requiredDate());
+                    line.estUnitPrice(), line.storeId(), note, null);
         }
     }
 

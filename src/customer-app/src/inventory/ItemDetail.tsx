@@ -103,6 +103,8 @@ export default function ItemDetail() {
     }
   }
 
+  const totalValuation = positions.reduce((acc, p) => acc + (p.valuationAmt || 0), 0);
+
   return (
     <div className="p-4 md:p-6 max-w-5xl mx-auto space-y-5">
       <div className="flex items-start gap-3">
@@ -136,11 +138,12 @@ export default function ItemDetail() {
           <h3 className="text-sm font-semibold">Stock summary</h3>
           <Link to="/inventory" className="text-xs font-semibold text-[var(--brand)]">Open Stock on Hand →</Link>
         </div>
-        <div className="grid gap-3 sm:grid-cols-4">
+        <div className="grid gap-3 sm:grid-cols-5">
           <Fact label="On hand" value={quantity(onHand, uom)} />
           <Fact label="Available" value={quantity(available, uom)} />
           <Fact label="Reserved" value={quantity(reserved, uom)} />
           <Fact label="Quality hold" value={quantity(qcHold, uom)} />
+          <Fact label="Stock value" value={totalValuation ? `₹${totalValuation.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "—"} />
         </div>
       </section>
 
@@ -210,15 +213,16 @@ export default function ItemDetail() {
       <section className="overflow-hidden rounded-xl border" style={{ borderColor: "var(--border)" }}>
         <h2 className="border-b px-4 py-3 text-sm font-bold" style={{ borderColor: "var(--border)" }}>Lot and location</h2>
         <table className="w-full text-sm">
-          <thead><tr>{["Lot", "Supplier Lot / Heat", "Grade", "Quantity", "Location", "Status", "Inspection", ""].map((label) => <th key={label} className="px-3 py-2 text-left text-xs">{label}</th>)}</tr></thead>
+          <thead><tr>{["Lot", "Supplier Lot / Heat", "Quantity", "Unit Cost", "Total Value", "Location", "Status", "Inspection", ""].map((label) => <th key={label} className="px-3 py-2 text-left text-xs">{label}</th>)}</tr></thead>
           <tbody>
-            {lots.length === 0 && <tr><td colSpan={8} className="px-3 py-6 text-center text-sm text-[var(--text-3)]">No lots recorded for this item.</td></tr>}
+            {lots.length === 0 && <tr><td colSpan={9} className="px-3 py-6 text-center text-sm text-[var(--text-3)]">No lots recorded for this item.</td></tr>}
             {lots.map((lot) => (
               <tr key={lot.id}>
                 <td className="px-3 py-2 font-mono text-xs">{lot.lotNumber || lot.id.slice(0, 8)}</td>
                 <td className="px-3 py-2 text-xs">{lot.batchRef || "—"}</td>
-                <td className="px-3 py-2 text-xs">{(lot as { grade?: string }).grade || "—"}</td>
                 <td className="px-3 py-2 font-mono text-xs">{quantity(lot.qty, lot.uomSymbol)}</td>
+                <td className="px-3 py-2 font-mono text-xs">{lot.unitCost != null ? `₹${Number(lot.unitCost).toFixed(2)}` : "—"}</td>
+                <td className="px-3 py-2 font-mono text-xs">{lot.unitCost != null ? `₹${(Number(lot.unitCost) * lot.qty).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "—"}</td>
                 <td className="px-3 py-2 text-xs">{lot.storeName}</td>
                 <td className="px-3 py-2 text-xs">{lot.status}</td>
                 <td className="px-3 py-2 text-xs">{(lot as { inspectionResult?: string }).inspectionResult || "—"}</td>

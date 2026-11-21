@@ -468,7 +468,7 @@ export default function DispatchPage() {
       {/* Toast */}
       {toast && (
         <div
-          className={`fixed bottom-5 right-5 z-50 p-4 rounded-xl shadow-lg border text-sm max-w-sm transition-all ${
+          className={`fixed bottom-5 right-5 z-[9999] p-4 rounded-xl shadow-lg border text-sm max-w-sm transition-all ${
             toast.type === "success"
               ? "bg-[var(--surface)] border-green-500 text-green-700"
               : "bg-[var(--surface)] border-red-500 text-red-700"

@@ -119,4 +119,11 @@ describe("master data administration", () => {
     await waitFor(() => expect(screen.getByText("Only owners can edit costing configuration.")).toBeInTheDocument());
     expect(screen.queryByRole("button", { name: "Save costing controls" })).not.toBeInTheDocument();
   });
+
+  it("renders units of measure tab and displays available units", async () => {
+    renderAdmin("uoms");
+    expect(await screen.findByRole("heading", { name: "Units of Measure" })).toBeInTheDocument();
+    expect(await screen.findByText("Metre")).toBeInTheDocument();
+    expect(await screen.findByText("m")).toBeInTheDocument();
+  });
 });
