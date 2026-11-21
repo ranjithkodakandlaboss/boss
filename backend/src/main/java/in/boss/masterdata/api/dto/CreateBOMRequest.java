@@ -7,6 +7,7 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.math.BigDecimal;
 import java.util.List;
 
 @Data
@@ -14,6 +15,10 @@ import java.util.List;
 @NoArgsConstructor
 @AllArgsConstructor
 public class CreateBOMRequest {
+    private BigDecimal labourCostPerUnit;
+    private BigDecimal machineCostPerUnit;
+    private BigDecimal otherCostPerUnit;
+
     @NotEmpty(message = "lines cannot be empty")
     @Valid
     private List<CreateBOMLineRequest> lines;

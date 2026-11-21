@@ -72,6 +72,81 @@ public class CompanyLocationService {
         return store;
     }
 
+    @Transactional
+    public Map<String, Object> updateSite(UUID siteId, String name, String code, String siteType, String addressLine, String city, String state) {
+        BossContext context = requireOwner();
+        String siteName = required(name, "Site name and code are required");
+        String siteCode = required(code, "Site name and code are required");
+        String type = approved(siteType, "factory", SITE_TYPES, "Site type is not an approved value");
+        Integer duplicate = jdbc.queryForObject(
+                "SELECT count(*) FROM physical_sites WHERE tenant_id = ? AND lower(code) = lower(?) AND id <> ?",
+                Integer.class, context.tenantId(), siteCode, siteId);
+        rejectExisting(duplicate, "A site with this code already exists");
+        String addressJson = "{\"line1\":\"" + escape(addressLine != null ? addressLine : "")
+                + "\",\"city\":\"" + escape(city != null ? city : "")
+                + "\",\"state\":\"" + escape(state != null ? state : "") + "\"}";
+        int updated = jdbc.update(
+                "UPDATE physical_sites SET name = ?, code = ?, site_type = ?, address = ?::jsonb, updated_at = NOW() WHERE tenant_id = ? AND id = ?",
+                siteName, siteCode, type, addressJson, context.tenantId(), siteId);
+        if (updated == 0) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Site was not found");
+        audit.record("physical_sites", siteId, "UPDATE", null, "{\"code\":\"" + escape(siteCode) + "\"}");
+        Map<String, Object> site = new LinkedHashMap<>();
+        site.put("id", siteId);
+        site.put("name", siteName);
+        site.put("code", siteCode);
+        site.put("siteType", type);
+        site.put("addressLine", addressLine);
+        site.put("city", city);
+        site.put("state", state);
+        return site;
+    }
+
+    @Transactional
+    public Map<String, Object> updateStore(UUID storeId, String name, String code, String storeType) {
+        BossContext context = requireOwner();
+        String storeName = required(name, "Store name and code are required");
+        String storeCode = required(code, "Store name and code are required");
+        String type = approved(storeType, "raw_material", STORE_TYPES, "Store type is not an approved value");
+        List<UUID> siteIds = jdbc.query(
+                "SELECT site_id FROM stores WHERE tenant_id = ? AND id = ?",
+                (rs, row) -> rs.getObject(1, UUID.class), context.tenantId(), storeId);
+        if (siteIds.isEmpty()) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Store was not found");
+        UUID siteId = siteIds.get(0);
+        Integer duplicate = jdbc.queryForObject(
+                "SELECT count(*) FROM stores WHERE tenant_id = ? AND site_id = ? AND lower(code) = lower(?) AND id <> ?",
+                Integer.class, context.tenantId(), siteId, storeCode, storeId);
+        rejectExisting(duplicate, "A store with this code already exists at the site");
+        jdbc.update(
+                "UPDATE stores SET name = ?, code = ?, store_type = ? WHERE tenant_id = ? AND id = ?",
+                storeName, storeCode, type, context.tenantId(), storeId);
+        audit.record("stores", storeId, "UPDATE", null, "{\"code\":\"" + escape(storeCode) + "\"}");
+        Map<String, Object> store = new LinkedHashMap<>();
+        store.put("id", storeId);
+        store.put("siteId", siteId);
+        store.put("name", storeName);
+        store.put("code", storeCode);
+        store.put("storeType", type);
+        return store;
+    }
+
+    @Transactional
+    public void deleteStore(UUID storeId) {
+        BossContext context = requireOwner();
+        int updated = jdbc.update("DELETE FROM stores WHERE tenant_id = ? AND id = ?", context.tenantId(), storeId);
+        if (updated == 0) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Store was not found");
+        audit.record("stores", storeId, "DELETE", null, "{}");
+    }
+
+    public List<Map<String, Object>> listSites() {
+        BossContext context = BossContextHolder.get();
+        if (context == null || context.tenantId() == null) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Sign-in is required");
+        }
+        return jdbc.queryForList(
+                "SELECT id, name, code FROM physical_sites WHERE tenant_id = ? ORDER BY name",
+                context.tenantId());
+    }
+
     private UUID legalEntity(UUID tenantId) {
         List<UUID> ids = jdbc.query(
                 "SELECT id FROM legal_entities WHERE tenant_id = ? ORDER BY created_at LIMIT 1",

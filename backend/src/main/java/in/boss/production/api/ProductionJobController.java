@@ -1,6 +1,7 @@
 package in.boss.production.api;
 
 import in.boss.production.api.ProductionApiDtos.AddCostRequest;
+import in.boss.production.api.ProductionApiDtos.OverridePriceRequest;
 import in.boss.production.api.ProductionApiDtos.BusinessMetrics;
 import in.boss.production.api.ProductionApiDtos.ConcessionRequest;
 import in.boss.production.api.ProductionApiDtos.CostEntryResponse;
@@ -12,21 +13,25 @@ import in.boss.production.api.ProductionApiDtos.InspectionResultRequest;
 import in.boss.production.api.ProductionApiDtos.IssueMaterialRequest;
 import in.boss.production.api.ProductionApiDtos.MaterialMovementResponse;
 import in.boss.production.api.ProductionApiDtos.PageResponse;
+import in.boss.production.api.ProductionApiDtos.PlanPreviewResponse;
 import in.boss.production.api.ProductionApiDtos.ProductionJobResponse;
 import in.boss.production.api.ProductionApiDtos.ReasonRequest;
 import in.boss.production.api.ProductionApiDtos.ReturnMaterialRequest;
 import in.boss.production.api.ProductionApiDtos.ReviseRoutingTemplateRequest;
 import in.boss.production.api.ProductionApiDtos.RoutingTemplateOption;
 import in.boss.production.api.ProductionApiDtos.RoutingTemplateDetail;
+import in.boss.production.api.ProductionApiDtos.SavePlanRequest;
 import in.boss.production.api.ProductionApiDtos.StageActionRequest;
 import in.boss.production.domain.JobCostingService;
 import in.boss.production.domain.JobInspectionService;
 import in.boss.production.domain.JobMaterialService;
+import in.boss.production.domain.JobPlanService;
 import in.boss.production.domain.JobStageService;
 import in.boss.production.domain.ProductionJobService;
 import in.boss.production.domain.ProductionQueryService;
 import in.boss.shared.security.BossPermissions;
 import jakarta.validation.Valid;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -38,6 +43,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -53,16 +59,19 @@ public class ProductionJobController {
     private final JobMaterialService materials;
     private final JobCostingService costing;
     private final JobInspectionService inspections;
+    private final JobPlanService plan;
 
     public ProductionJobController(ProductionQueryService query, ProductionJobService jobs,
                                    JobStageService stages, JobMaterialService materials,
-                                   JobCostingService costing, JobInspectionService inspections) {
+                                   JobCostingService costing, JobInspectionService inspections,
+                                   JobPlanService plan) {
         this.query = query;
         this.jobs = jobs;
         this.stages = stages;
         this.materials = materials;
         this.costing = costing;
         this.inspections = inspections;
+        this.plan = plan;
     }
 
     @GetMapping
@@ -77,6 +86,11 @@ public class ProductionJobController {
     @GetMapping("/eligible-cpos")
     public List<EligibleCpoLine> eligible() {
         return query.eligibleLines();
+    }
+
+    @GetMapping("/operators")
+    public List<Map<String, Object>> operators() {
+        return query.listOperators();
     }
 
     @GetMapping("/routing-templates")
@@ -126,6 +140,27 @@ public class ProductionJobController {
         return query.get(jobId);
     }
 
+    @GetMapping("/routing-plan-preview")
+    public PlanPreviewResponse routingPlanPreview(
+            @RequestParam UUID routingTemplateId,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate deliveryDate) {
+        return plan.previewForTemplate(routingTemplateId, deliveryDate);
+    }
+
+    @GetMapping("/{jobId}/plan-preview")
+    public PlanPreviewResponse planPreview(
+            @PathVariable UUID jobId,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate deliveryDate) {
+        return plan.preview(jobId, deliveryDate);
+    }
+
+    @PostMapping("/{jobId}/plan")
+    @PreAuthorize(BossPermissions.PRODUCTION_WRITE)
+    public ProductionJobResponse savePlan(@PathVariable UUID jobId,
+                                          @Valid @RequestBody SavePlanRequest request) {
+        return plan.save(jobId, request);
+    }
+
     @PostMapping("/{jobId}/hold")
     @PreAuthorize(BossPermissions.PRODUCTION_WRITE)
     public ProductionJobResponse hold(@PathVariable UUID jobId, @Valid @RequestBody ReasonRequest request) {
@@ -164,6 +199,13 @@ public class ProductionJobController {
         return stages.complete(jobId, stageId, request);
     }
 
+    @PostMapping("/{jobId}/stages/{stageId}/progress")
+    @PreAuthorize(BossPermissions.PRODUCTION_EXECUTE)
+    public ProductionJobResponse progress(@PathVariable UUID jobId, @PathVariable UUID stageId,
+                                          @RequestBody(required = false) StageActionRequest request) {
+        return stages.progress(jobId, stageId, request);
+    }
+
     @PostMapping("/{jobId}/stages/{stageId}/skip")
     @PreAuthorize(BossPermissions.OWNER_OR_OPS)
     public ProductionJobResponse skip(@PathVariable UUID jobId, @PathVariable UUID stageId,
@@ -185,6 +227,13 @@ public class ProductionJobController {
     public MaterialMovementResponse returnMaterial(@PathVariable UUID jobId,
                                                    @Valid @RequestBody ReturnMaterialRequest request) {
         return materials.returnMaterial(jobId, request);
+    }
+
+    @PostMapping("/{jobId}/materials/issues/{issueId}/price-override")
+    @PreAuthorize(BossPermissions.COSTING_WRITE)
+    public MaterialMovementResponse overridePrice(@PathVariable UUID jobId, @PathVariable UUID issueId,
+                                                  @Valid @RequestBody OverridePriceRequest request) {
+        return materials.overridePrice(jobId, issueId, request);
     }
 
     @GetMapping("/{jobId}/costing")

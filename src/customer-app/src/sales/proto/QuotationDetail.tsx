@@ -1,8 +1,9 @@
 // @ts-nocheck
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useParams, useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, CheckCircle, XCircle, FileText, Send, RotateCcw, Copy, AlertTriangle, Layers, Pencil } from 'lucide-react';
 import { useStore } from './runtime';
+import { api } from '../../auth/api';
 import StatusChip from '../../components/shared/StatusChip';
 import type { CustomerPO, CustomerQuotation, CustomerQuotationLine, POLine } from './types';
 import DocumentActions from './workflow/DocumentActions';
@@ -43,6 +44,59 @@ export default function QuotationDetail() {
   const { goBack, originUrl } = useReturnNavigation('/sales?tab=quotations');
 
   const lines = useMemo(() => quotationLines.filter(l => l.quotationId === id), [quotationLines, id]);
+
+  const [bomBreakups, setBomBreakups] = useState<Record<string, {
+    rawCost: number;
+    consCost: number;
+    labourCost: number;
+    machineCost: number;
+    otherCost: number;
+    totalCost: number;
+  }>>({});
+  const [expandedBom, setExpandedBom] = useState<Record<string, boolean>>({});
+
+  useEffect(() => {
+    lines.forEach(async (l) => {
+      const itemId = l.productId || (l as any).itemId;
+      if (!itemId || bomBreakups[l.id]) return;
+      try {
+        const bom = await api<any>(`/api/v1/items/${itemId}/bom`);
+        if (bom) {
+          let rawCost = 0;
+          let consCost = 0;
+          (bom.lines || []).forEach((bLine: any) => {
+            const qty = Number(bLine.qty) || 0;
+            const unitCost = Number(bLine.unitCost) || 0;
+            const scrap = Number(bLine.scrapFactor) || 0;
+            const lineTotal = qty * unitCost * (1 + scrap / 100);
+            if (bLine.componentItemType === 'CONSUMABLE') {
+              consCost += lineTotal;
+            } else {
+              rawCost += lineTotal;
+            }
+          });
+          const labourCost = Number(bom.labourCostPerUnit) || 0;
+          const machineCost = Number(bom.machineCostPerUnit) || 0;
+          const otherCost = Number(bom.otherCostPerUnit) || 0;
+          const totalCost = Math.round((rawCost + consCost + labourCost + machineCost + otherCost) * 100) / 100;
+
+          setBomBreakups(prev => ({
+            ...prev,
+            [l.id]: {
+              rawCost: Math.round(rawCost * 100) / 100,
+              consCost: Math.round(consCost * 100) / 100,
+              labourCost,
+              machineCost,
+              otherCost,
+              totalCost,
+            }
+          }));
+        }
+      } catch {
+        // no BOM configured
+      }
+    });
+  }, [lines]);
 
   if (!quotation) return (
     <div className="p-8 text-center text-sm text-[var(--text-2)]">
@@ -201,19 +255,7 @@ export default function QuotationDetail() {
             {canEditDraft && (
               <button
                 type="button"
-                onClick={() => {
-                  setEditDiscount(String(quotation.discountAmount ?? 0));
-                  setEditNotes(quotation.notes ?? '');
-                  setEditPaymentTerms(quotation.paymentTerms ?? 'Net 30 days');
-                  setEditDeliveryTerms(quotation.deliveryTerms ?? 'Ex-Works / By Road · 2-3 weeks');
-                  setEditTaxRatePct(quotation.taxRatePct ?? 18);
-                  const validUntilDate = quotation.validUntil ? new Date(quotation.validUntil) : null;
-                  const todayDate = new Date();
-                  const diffDays = validUntilDate ? Math.round((validUntilDate.getTime() - todayDate.getTime()) / (1000 * 60 * 60 * 24)) : 30;
-                  setEditValidDays(String(Math.max(1, diffDays)));
-                  setEditLines(lines.map(l => ({ id: l.id, productName: l.productName, drawingNumber: l.drawingNumber ?? '', drawingRevision: l.drawingRevision ?? 'A', requiredDate: l.requiredDate ?? '', uom: l.uom, orderedQty: String(l.orderedQty), unitPrice: String(l.unitPrice) })));
-                  setEditDraftModal(true);
-                }}
+                onClick={() => navigate(`/sales/quotation/new?edit=${quotation.id}`, { state: { from: originUrl } })}
                 className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-semibold border border-[var(--brand)] text-[var(--brand)] hover:bg-[var(--surface-2)]"
               >
                 <Pencil size={14} /> Edit Quote
@@ -236,7 +278,11 @@ export default function QuotationDetail() {
               </>
             )}
             {canRevise && (
-              <button onClick={() => { setReviseDiscount(String(quotation.discountAmount ?? 0)); setReviseNotes(quotation.notes ?? ''); setEditPaymentTerms(quotation.paymentTerms ?? 'Net 30 days'); setEditDeliveryTerms(quotation.deliveryTerms ?? 'Ex-Works / By Road · 2-3 weeks'); setEditTaxRatePct(quotation.taxRatePct ?? 18); setReviseLines(lines.map(l => ({ id: l.id, productName: l.productName, drawingNumber: l.drawingNumber ?? '', drawingRevision: l.drawingRevision ?? 'A', requiredDate: l.requiredDate ?? '', uom: l.uom, orderedQty: String(l.orderedQty), unitPrice: String(l.unitPrice) }))); setReviseModal(true); }} className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-semibold border border-[var(--border)] text-[var(--text)] hover:bg-[var(--surface-2)]">
+              <button
+                type="button"
+                onClick={() => navigate(`/sales/quotation/new?revise=${quotation.id}`, { state: { from: originUrl } })}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-semibold border border-[var(--border)] text-[var(--text)] hover:bg-[var(--surface-2)]"
+              >
                 <Copy size={14} /> Revise Quotation
               </button>
             )}
@@ -500,17 +546,85 @@ export default function QuotationDetail() {
             </thead>
             <tbody>
               {lines.map((l, i) => (
-                <tr key={l.id}>
-                  <td className="font-mono text-xs text-[var(--text-3)]">{i + 1}</td>
-                  <td className="font-mono text-xs font-semibold text-[var(--brand)]">{l.drawingNumber}</td>
-                  <td className="font-mono text-xs">{l.drawingRevision}</td>
-                  <td className="text-sm text-[var(--text)]">{l.productName}</td>
-                  <td className="font-mono text-sm text-left">{l.orderedQty}</td>
-                  <td className="text-xs text-[var(--text-2)]">{l.uom}</td>
-                  <td className="font-mono text-sm text-right">{fmtMoney(l.unitPrice)}</td>
-                  <td className="font-mono text-sm text-right font-semibold">{fmtMoney(l.value)}</td>
-                  <td className="font-mono text-xs whitespace-nowrap text-[var(--text-2)]">{fmt(l.requiredDate)}</td>
-                </tr>
+                <React.Fragment key={l.id}>
+                  <tr>
+                    <td className="font-mono text-xs text-[var(--text-3)]">{i + 1}</td>
+                    <td className="font-mono text-xs font-semibold text-[var(--brand)]">{l.drawingNumber}</td>
+                    <td className="font-mono text-xs">{l.drawingRevision}</td>
+                    <td className="text-sm text-[var(--text)]">
+                      <div className="font-medium">{l.productName}</div>
+                      {bomBreakups[l.id] && (() => {
+                        const b = bomBreakups[l.id];
+                        const quoted = l.unitPrice ?? 0;
+                        const marginPct = quoted > 0 ? ((quoted - b.totalCost) / quoted) * 100 : (quoted === b.totalCost ? 0 : -100);
+                        const isLineZero = Math.abs(quoted - b.totalCost) < 0.01;
+                        return (
+                          <div className="flex flex-wrap items-center gap-1.5 mt-1 text-[11px]">
+                            <span className="text-[var(--text-3)]">BOM: ₹{b.totalCost.toLocaleString('en-IN')}</span>
+                            <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold border ${
+                              isLineZero
+                                ? 'bg-gray-100 text-gray-700 border-gray-300'
+                                : marginPct > 0
+                                ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                : 'bg-rose-50 text-rose-700 border-rose-200'
+                            }`}>
+                              {isLineZero ? '0.0% margin' : `${marginPct > 0 ? '+' : ''}${marginPct.toFixed(1)}% margin`}
+                            </span>
+                            <span className="text-[var(--text-3)]">
+                              Est. Profit: {quoted - b.totalCost >= 0 ? '+' : ''}₹{((quoted - b.totalCost) * l.orderedQty).toLocaleString('en-IN')}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => setExpandedBom(prev => ({ ...prev, [l.id]: !prev[l.id] }))}
+                              className="text-[10px] text-[var(--brand)] hover:underline ml-1 font-semibold"
+                            >
+                              {expandedBom[l.id] ? '▾ Hide BOM Cost Breakup' : '▸ View BOM Cost Breakup'}
+                            </button>
+                          </div>
+                        );
+                      })()}
+                    </td>
+                    <td className="font-mono text-sm text-left">{l.orderedQty}</td>
+                    <td className="text-xs text-[var(--text-2)]">{l.uom}</td>
+                    <td className="font-mono text-sm text-right">{fmtMoney(l.unitPrice)}</td>
+                    <td className="font-mono text-sm text-right font-semibold">{fmtMoney(l.value)}</td>
+                    <td className="font-mono text-xs whitespace-nowrap text-[var(--text-2)]">{fmt(l.requiredDate)}</td>
+                  </tr>
+                  {expandedBom[l.id] && bomBreakups[l.id] && (
+                    <tr>
+                      <td colSpan={9} className="p-3 bg-[var(--surface-2)]">
+                        <div className="p-3 rounded-lg border bg-[var(--surface)] text-xs space-y-2" style={{ borderColor: 'var(--border)' }}>
+                          <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 font-mono">
+                            <div>
+                              <span className="text-[10px] text-[var(--text-3)] block uppercase">Raw Materials</span>
+                              <span className="font-semibold">₹{bomBreakups[l.id].rawCost.toLocaleString('en-IN')}</span>
+                            </div>
+                            <div>
+                              <span className="text-[10px] text-[var(--text-3)] block uppercase">Consumables</span>
+                              <span className="font-semibold">₹{bomBreakups[l.id].consCost.toLocaleString('en-IN')}</span>
+                            </div>
+                            <div>
+                              <span className="text-[10px] text-[var(--text-3)] block uppercase">Labour / Unit</span>
+                              <span className="font-semibold">₹{bomBreakups[l.id].labourCost.toLocaleString('en-IN')}</span>
+                            </div>
+                            <div>
+                              <span className="text-[10px] text-[var(--text-3)] block uppercase">Machine / Unit</span>
+                              <span className="font-semibold">₹{bomBreakups[l.id].machineCost.toLocaleString('en-IN')}</span>
+                            </div>
+                            <div>
+                              <span className="text-[10px] text-[var(--text-3)] block uppercase">Other Mfg / Unit</span>
+                              <span className="font-semibold">₹{bomBreakups[l.id].otherCost.toLocaleString('en-IN')}</span>
+                            </div>
+                          </div>
+                          <div className="pt-2 border-t flex justify-between items-center font-bold text-xs" style={{ borderColor: 'var(--border)' }}>
+                            <span>Total Estimated Manufacturing Cost / Unit:</span>
+                            <span className="font-mono text-sm text-[var(--brand)]">₹{bomBreakups[l.id].totalCost.toLocaleString('en-IN')}</span>
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </React.Fragment>
               ))}
             </tbody>
             <tfoot>
@@ -544,72 +658,112 @@ export default function QuotationDetail() {
           </table>
         </div>
 
-        {/* Persisted server-side costing snapshot */}
-        <div className="mt-4 rounded-xl border p-4 space-y-3" style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}>
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div>
-              <h4 className="text-xs font-bold uppercase tracking-wider text-[var(--text)] flex items-center gap-1.5">
-                <Layers size={14} className="text-blue-500" /> Estimated Cost and Gross Margin
-              </h4>
-              <p className="text-[11px] text-[var(--text-3)]">
-                {quotation.costing?.available
-                  ? `Saved estimate · ${quotation.costing.valuationBasis}`
-                  : 'Cost estimate unavailable; an approved BOM and valued inventory are required before submission.'}
-              </p>
-            </div>
-            {quotation.costing?.available ? (
-              <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold border ${
-                quotation.costing.requiresApproval ? 'bg-amber-100 text-amber-900 border-amber-300' : 'bg-emerald-100 text-emerald-900 border-emerald-300'
-              }`}>
-                {quotation.costing.grossMarginPct?.toFixed(2) ?? '—'}% Gross Margin
-              </span>
-            ) : null}
-          </div>
+        {/* Estimated Cost & Gross Margin (Derived from BOM, matching Add Quotation) */}
+        {(() => {
+          const hasBomBreakups = Object.keys(bomBreakups).length > 0;
+          const totalBomFromBreakups = lines.reduce((sum, l) => {
+            const b = bomBreakups[l.id];
+            return sum + (b ? b.totalCost * (l.orderedQty || 1) : 0);
+          }, 0);
 
-          {quotation.costing?.available && (
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 p-3 rounded-xl bg-[var(--surface-2)] text-xs">
-              {[
-                ['Net Revenue', quotation.costing.netRevenue],
-                ['Material', quotation.costing.materialCost],
-                ['Labour', quotation.costing.labourCost],
-                ['Machine', quotation.costing.machineCost],
-                ['Overhead', quotation.costing.overheadCost],
-                ['Consumables', quotation.costing.consumablesCost],
-                ['Packaging', quotation.costing.packagingCost],
-                ['Transport', quotation.costing.transportCost],
-                ['Estimated Total Cost', quotation.costing.totalCost],
-                ['Gross Profit', quotation.costing.grossProfit],
-              ].map(([label, amount]) => (
-                <div key={label as string}>
-                  <span className="text-[10px] text-[var(--text-3)] uppercase tracking-wider block">{label}</span>
-                  <span className="font-mono font-bold text-sm text-[var(--text)]">{fmtMoney(amount as number)}</span>
+          const totalEstimatedBomCost = hasBomBreakups
+            ? totalBomFromBreakups
+            : (quotation.costing?.totalCost ?? 0);
+
+          const taxableRevenue = quotation.subtotal != null
+            ? Math.max(0, quotation.subtotal - (quotation.discountAmount || 0))
+            : (quotation.costing?.netRevenue ?? quotation.totalValue);
+
+          const estGrossProfit = !hasBomBreakups && quotation.costing?.grossProfit != null
+            ? quotation.costing.grossProfit
+            : (taxableRevenue - totalEstimatedBomCost);
+
+          const grossMarginPct = taxableRevenue > 0
+            ? (estGrossProfit / taxableRevenue) * 100
+            : (quotation.costing?.grossMarginPct ?? 0);
+
+          const isZeroMargin = Math.abs(grossMarginPct) < 0.01;
+          const isProfitable = grossMarginPct > 0;
+
+          return (
+            <div className="mt-4 rounded-xl border p-4 space-y-4" style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <h4 className="text-xs font-bold uppercase tracking-wider text-[var(--text)] flex items-center gap-1.5">
+                    <Layers size={14} className="text-blue-500" /> Estimated Cost & Gross Margin
+                  </h4>
+                  <p className="text-[11px] text-[var(--text-3)] mt-0.5">
+                    Derived directly from the approved BOM per finished unit and quoted prices. When quoted price matches BOM cost, margin is 0%.
+                  </p>
                 </div>
-              ))}
-              <div>
-                <span className="text-[10px] text-[var(--text-3)] uppercase tracking-wider block">Target Margin</span>
-                <span className="font-mono font-bold text-sm text-[var(--text)]">{quotation.costing.targetMarginPct}%</span>
+                <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold border ${
+                  isProfitable
+                    ? 'bg-emerald-100 text-emerald-900 border-emerald-300'
+                    : isZeroMargin
+                    ? 'bg-gray-100 text-gray-700 border-gray-300'
+                    : 'bg-rose-100 text-rose-900 border-rose-300'
+                }`}>
+                  {isZeroMargin ? '0.0%' : `${grossMarginPct > 0 ? '+' : ''}${grossMarginPct.toFixed(1)}%`} Gross Margin
+                </span>
               </div>
-            </div>
-          )}
 
-          {quotation.costing?.unavailableReasons.map((reason) => (
-            <p key={reason} className="text-xs text-amber-700">{reason}</p>
-          ))}
-          {quotation.costing?.requiresApproval && (
-            <div className="p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-900 text-xs flex items-center gap-2">
-              <AlertTriangle size={15} className="text-amber-600 flex-shrink-0" />
-              <span>
-                Margin is below the configured approval threshold. An owner or operations manager must provide a reason to submit.
-              </span>
-            </div>
-          )}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                <div className="p-3 rounded-xl border bg-[var(--surface-2)]" style={{ borderColor: 'var(--border)' }}>
+                  <span className="text-[10px] text-[var(--text-3)] block uppercase tracking-wider font-medium">Quoted Revenue (Ex. Tax)</span>
+                  <span className="text-base font-bold font-mono text-[var(--text)] mt-1 block">{fmtMoney(Math.round(taxableRevenue))}</span>
+                  <span className="text-[10px] text-[var(--text-3)] mt-0.5 block">Subtotal less discount</span>
+                </div>
+                <div className="p-3 rounded-xl border bg-[var(--surface-2)]" style={{ borderColor: 'var(--border)' }}>
+                  <span className="text-[10px] text-[var(--text-3)] block uppercase tracking-wider font-medium">Estimated BOM Cost</span>
+                  <span className="text-base font-bold font-mono text-[var(--text)] mt-1 block">{fmtMoney(Math.round(totalEstimatedBomCost))}</span>
+                  <span className="text-[10px] text-[var(--text-3)] mt-0.5 block">Standard BOM manufacturing cost</span>
+                </div>
+                <div className="p-3 rounded-xl border bg-[var(--surface-2)]" style={{ borderColor: 'var(--border)' }}>
+                  <span className="text-[10px] text-[var(--text-3)] block uppercase tracking-wider font-medium">Estimated Gross Profit</span>
+                  <span className="text-base font-bold font-mono mt-1 block" style={{ color: isProfitable ? 'var(--success, #16a34a)' : isZeroMargin ? 'var(--text-2)' : 'var(--error, #dc2626)' }}>
+                    {estGrossProfit >= 0 ? '+' : ''}{fmtMoney(Math.round(estGrossProfit))}
+                  </span>
+                  <span className="text-[10px] text-[var(--text-3)] mt-0.5 block">Revenue − BOM cost</span>
+                </div>
+                <div className="p-3 rounded-xl border bg-[var(--surface-2)]" style={{ borderColor: 'var(--border)' }}>
+                  <span className="text-[10px] text-[var(--text-3)] block uppercase tracking-wider font-medium">Gross Margin</span>
+                  <div className="flex items-center gap-2 mt-1">
+                    <span className="text-base font-bold font-mono" style={{ color: isProfitable ? 'var(--success, #16a34a)' : isZeroMargin ? 'var(--text-2)' : 'var(--error, #dc2626)' }}>
+                      {isZeroMargin ? '0.0%' : `${grossMarginPct > 0 ? '+' : ''}${grossMarginPct.toFixed(1)}%`}
+                    </span>
+                    <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${
+                      isProfitable
+                        ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                        : isZeroMargin
+                        ? 'bg-gray-100 text-gray-700 border-gray-300'
+                        : 'bg-rose-50 text-rose-700 border-rose-200'
+                    }`}>
+                      {isProfitable ? 'Profitable' : isZeroMargin ? '0% Margin (At Cost)' : 'Below Cost'}
+                    </span>
+                  </div>
+                  <span className="text-[10px] text-[var(--text-3)] mt-0.5 block">
+                    {isZeroMargin ? 'Quoted at standard BOM cost' : `${grossMarginPct > 0 ? '+' : ''}${grossMarginPct.toFixed(1)}% margin`}
+                  </span>
+                </div>
+              </div>
 
-          {quotation.costOverrideReason && (
-            <p className="text-xs text-[var(--text-2)] border-t pt-2" style={{ borderColor: 'var(--border)' }}>
-              Approved override: {quotation.costOverrideReason}
-            </p>
-          )}
-        </div>
+              {(quotation.costing?.requiresApproval || grossMarginPct < 0) && (
+                <div className="p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-900 text-xs flex items-center gap-2">
+                  <AlertTriangle size={15} className="text-amber-600 flex-shrink-0" />
+                  <span>
+                    Margin is below the configured approval threshold. An owner or operations manager must provide a reason to submit.
+                  </span>
+                </div>
+              )}
+
+              {quotation.costOverrideReason && (
+                <p className="text-xs text-[var(--text-2)] border-t pt-2" style={{ borderColor: 'var(--border)' }}>
+                  Approved override: {quotation.costOverrideReason}
+                </p>
+              )}
+            </div>
+          );
+        })()}
 
         <div className="mt-4">
           <LinkedDocumentsSection entityType="Quotation" entityId={quotation.id} entityRef={quotation.quotationNumber} readOnly={!customerActive || quotation.status === 'cancelled' || !['owner', 'sales'].includes(currentUser.role)} />

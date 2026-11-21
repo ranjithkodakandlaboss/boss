@@ -35,4 +35,7 @@ public class CreateBOMLineRequest {
 
     @Size(max = 256, message = "quantityFormula must be at most 256 characters")
     private String quantityFormula;
+
+    @DecimalMin(value = "0.0", message = "unitCost must be non-negative")
+    private BigDecimal unitCost;
 }

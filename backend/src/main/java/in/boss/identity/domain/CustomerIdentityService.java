@@ -25,6 +25,7 @@ import java.util.UUID;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.server.ResponseStatusException;
@@ -186,6 +187,74 @@ public class CustomerIdentityService {
                 "SELECT id FROM app_users ORDER BY created_at",
                 (rs, row) -> loadUser(rs.getObject("id", UUID.class)));
         return Map.of("content", users, "page", 0, "size", users.size(), "totalElements", users.size(), "totalPages", 1);
+    }
+
+    @Transactional
+    public UserResponse createUser(String email, String displayName, String role, String phone) {
+        BossContext context = requireOwner();
+        if (email == null || email.isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Email is required");
+        }
+        String cleanEmail = email.trim().toLowerCase();
+        String cleanName = displayName != null && !displayName.isBlank() ? displayName.trim() : cleanEmail.split("@")[0];
+        String cleanRole = role != null && !role.isBlank() ? role.trim().toUpperCase() : BossRoles.OWNER;
+        if (!BossRoles.TENANT_ROLES.contains(cleanRole)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid tenant role: " + cleanRole);
+        }
+        Integer exists = jdbc.queryForObject(
+                "SELECT count(*) FROM app_users WHERE tenant_id = ? AND lower(email) = ?",
+                Integer.class, context.tenantId(), cleanEmail);
+        if (exists != null && exists > 0) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "A user with this email already exists");
+        }
+        String uid = "user-" + UUID.randomUUID();
+        UUID userId = jdbc.queryForObject(
+                "INSERT INTO app_users(tenant_id, firebase_uid, email, display_name, phone_wa, status) "
+                        + "VALUES (?, ?, ?, ?, ?, 'active') RETURNING id",
+                UUID.class, context.tenantId(), uid, cleanEmail, cleanName, blankToNull(phone));
+        jdbc.update("INSERT INTO user_roles(tenant_id, user_id, role) VALUES (?, ?, ?)",
+                context.tenantId(), userId, cleanRole);
+        audit.record("app_users", userId, "user.created", null,
+                "{\"email\":\"" + json(cleanEmail) + "\",\"role\":\"" + cleanRole + "\"}");
+        return loadUser(userId);
+    }
+
+    @Transactional
+    public UserResponse updateUser(UUID userId, String displayName, String role, String phone, String status) {
+        BossContext context = requireOwner();
+        String cleanName = blankToNull(displayName);
+        String cleanPhone = blankToNull(phone);
+        String cleanStatus = blankToNull(status);
+        if (cleanStatus != null && !Set.of("active", "suspended", "deactivated").contains(cleanStatus)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid user status: " + cleanStatus);
+        }
+        int updated = jdbc.update(
+                "UPDATE app_users SET display_name = COALESCE(?, display_name), "
+                        + "phone_wa = COALESCE(?, phone_wa), status = COALESCE(?, status), updated_at = NOW() "
+                        + "WHERE tenant_id = ? AND id = ?",
+                cleanName, cleanPhone, cleanStatus, context.tenantId(), userId);
+        if (updated == 0) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "User was not found");
+        if (role != null && !role.isBlank()) {
+            String cleanRole = role.trim().toUpperCase();
+            if (!BossRoles.TENANT_ROLES.contains(cleanRole)) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid tenant role: " + cleanRole);
+            }
+            jdbc.update("DELETE FROM user_roles WHERE tenant_id = ? AND user_id = ?", context.tenantId(), userId);
+            jdbc.update("INSERT INTO user_roles(tenant_id, user_id, role) VALUES (?, ?, ?)",
+                    context.tenantId(), userId, cleanRole);
+        }
+        audit.record("app_users", userId, "user.updated", null, "{}");
+        return loadUser(userId);
+    }
+
+    @Transactional
+    public void deleteUser(UUID userId) {
+        BossContext context = requireOwner();
+        int updated = jdbc.update(
+                "UPDATE app_users SET status = 'deactivated', updated_at = NOW() WHERE tenant_id = ? AND id = ?",
+                context.tenantId(), userId);
+        if (updated == 0) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "User was not found");
+        audit.record("app_users", userId, "user.deactivated", null, "{}");
     }
 
     private UserResponse accept(InviteRow invite, String uid, String displayName) {

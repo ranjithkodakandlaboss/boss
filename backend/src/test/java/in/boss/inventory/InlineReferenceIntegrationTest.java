@@ -116,6 +116,40 @@ class InlineReferenceIntegrationTest extends BaseMasterDataIntegrationTest {
                 .andExpect(status().isForbidden());
     }
 
+    @Test
+    void companyLocationCrudAndListing() {
+        UUID tenantId = provisionTenant("location-crud");
+        setTenantContext(tenantId, "OWNER");
+        insert("""
+                INSERT INTO legal_entities (tenant_id, name, legal_name)
+                VALUES (?, 'Location Entity', 'Location Entity Ltd') RETURNING id
+                """, tenantId);
+
+        var site = company.addSite("Main Site", "MS1", "factory");
+        UUID siteId = (UUID) site.get("id");
+        var store = company.addStore("MS1", "Raw Storage", "RS1", "raw_material");
+        UUID storeId = (UUID) store.get("id");
+
+        var sites = company.listSites();
+        assertThat(sites).isNotEmpty();
+
+        var updatedSite = company.updateSite(siteId, "Updated Site", "MS2", "warehouse", "Street 1", "City A", "State B");
+        assertThat(updatedSite.get("name")).isEqualTo("Updated Site");
+        assertThat(updatedSite.get("code")).isEqualTo("MS2");
+
+        var updatedStore = company.updateStore(storeId, "Updated Store", "RS2", "consumable");
+        assertThat(updatedStore.get("name")).isEqualTo("Updated Store");
+        assertThat(updatedStore.get("code")).isEqualTo("RS2");
+
+        company.deleteStore(storeId);
+        assertThatThrownBy(() -> company.updateStore(storeId, "Deleted", "DEL", "raw_material"))
+                .isInstanceOf(ResponseStatusException.class);
+        assertThatThrownBy(() -> company.deleteStore(storeId))
+                .isInstanceOf(ResponseStatusException.class);
+        assertThatThrownBy(() -> company.updateSite(UUID.randomUUID(), "Nonexistent", "NE1", "factory", null, null, null))
+                .isInstanceOf(ResponseStatusException.class);
+    }
+
     private UUID insert(String sql, Object... args) {
         return jdbc.queryForObject(sql, UUID.class, args);
     }

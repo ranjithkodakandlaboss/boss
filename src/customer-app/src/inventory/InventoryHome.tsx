@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { ArrowRightLeft, ExternalLink, Plus, ShieldAlert, SlidersHorizontal, Trash2 } from "lucide-react";
+import { ArrowRightLeft, Plus, ShieldAlert, SlidersHorizontal, Trash2 } from "lucide-react";
 import ErrorState from "../components/shared/ErrorState";
 import LoadingState from "../components/shared/LoadingState";
 import RecordSheet from "../components/shared/RecordSheet";
@@ -127,14 +127,44 @@ export default function InventoryHome() {
   }, [visible]);
 
   const columns: RecordColumn<StockRow>[] = [
-    { key: "itemCode", label: "Code", value: (row) => row.itemCode, render: (row) => <span className="font-semibold text-[var(--brand)]">{row.itemCode}</span> },
     {
-      key: "itemName", label: "Material / Specification", value: (row) => row.itemName, render: (row) => (
+      key: "itemCode",
+      label: "Code",
+      value: (row) => row.itemCode,
+      render: (row) => (
+        <Link
+          to={`/inventory/item/${row.itemId}`}
+          className="font-semibold text-[var(--brand)] hover:underline"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {row.itemCode}
+        </Link>
+      ),
+    },
+    {
+      key: "itemName",
+      label: "Material / Specification",
+      value: (row) => row.itemName,
+      render: (row) => (
         <div>
-          <div>{row.itemName}</div>
-          {row.lotCount > 0 && <div className="mt-0.5 text-[11px] text-[var(--text-3)]">{row.lotCount} lot{row.lotCount === 1 ? "" : "s"}</div>}
+          <Link
+            to={`/inventory/item/${row.itemId}`}
+            className="hover:underline font-medium text-[var(--text)]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {row.itemName}
+          </Link>
+          {row.lotCount > 0 && (
+            <Link
+              to={`/inventory/item/${row.itemId}#lots`}
+              className="mt-0.5 text-[11px] text-[var(--brand)] hover:underline block"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {row.lotCount} lot{row.lotCount === 1 ? "" : "s"} · View lots
+            </Link>
+          )}
         </div>
-      )
+      ),
     },
     { key: "storeName", label: "Location", value: (row) => row.storeName, render: (row) => row.storeName },
     { key: "totalQty", label: "On Hand", align: "right", value: (row) => row.totalQty, render: (row) => quantity(row.totalQty, row.uomSymbol) },
@@ -225,12 +255,18 @@ function RowActions({ row, rows, onAdjust }: { row: StockRow; rows: StockRow[]; 
   const pr = new URLSearchParams({ code: row.itemCode, materialId: row.itemId, name: row.itemName, uom: row.uomSymbol, qty: String(qty) });
   return (
     <div className="flex items-center justify-end gap-2">
-      <button type="button" title="Adjust stock" className="text-[var(--text-3)] hover:text-[var(--text)]" onClick={(event) => { event.stopPropagation(); onAdjust(); }}>
+      <Link
+        to={`/inventory/item/${row.itemId}`}
+        title="View stock and lot details"
+        className="rounded-lg border px-2.5 py-1 text-xs font-semibold hover:bg-[var(--surface-2)]"
+        style={{ borderColor: "var(--border)", color: "var(--text)" }}
+        onClick={(event) => event.stopPropagation()}
+      >
+        View
+      </Link>
+      <button type="button" title="Adjust stock quantity/value" className="text-[var(--text-3)] hover:text-[var(--text)] p-1 rounded" onClick={(event) => { event.stopPropagation(); onAdjust(); }}>
         <SlidersHorizontal size={13} />
       </button>
-      <Link to={`/inventory/item/${row.itemId}`} className="text-[var(--text-3)] hover:text-[var(--text)]" title="View item" onClick={(event) => event.stopPropagation()}>
-        <ExternalLink size={13} />
-      </Link>
       <Link to={`/procurement/pr/new?${pr}`} className="rounded-lg px-2 py-1 text-xs font-semibold text-white" style={{ background: "var(--brand-fill)" }} onClick={(event) => event.stopPropagation()}>Create PR</Link>
       {source && (
         <Link to={`/inventory/transfer?from=${encodeURIComponent(source.storeName)}&to=${encodeURIComponent(row.storeName)}&material=${encodeURIComponent(row.itemCode)}&qty=${encodeURIComponent(String(Math.min(source.availableQty, qty)))}`} className="text-xs font-semibold text-[var(--brand)]" onClick={(event) => event.stopPropagation()}>Move stock</Link>

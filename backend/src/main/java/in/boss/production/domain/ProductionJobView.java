@@ -108,9 +108,18 @@ class ProductionJobView {
         return jdbc.query("""
                 SELECT s.id, s.seq_no, s.name, s.stage_code, s.stage_config_option_id, s.stage_label_snapshot,
                        s.status, s.requires_inspection, s.is_optional, s.work_centre, s.asset_id,
-                       a.asset_number, s.actual_start, s.actual_end, s.completed_by
+                       a.asset_number, s.actual_start, s.actual_end, s.completed_by,
+                       s.planned_start, s.planned_end, s.completed_qty, s.blocked_qty,
+                       COALESCE(NULLIF(s.estimated_duration_min, 0), NULLIF(rts.estimated_duration_min, 0), COALESCE(rts.setup_time_min, 0) + COALESCE(rts.run_time_min, 0), 0) AS estimated_duration_min,
+                       s.operator_id, u.display_name AS operator_name
                 FROM job_stages s
                 LEFT JOIN assets a ON a.id = s.asset_id AND a.tenant_id = s.tenant_id
+                LEFT JOIN routing_template_stages rts
+                  ON rts.tenant_id = s.tenant_id
+                  AND rts.routing_id = (SELECT routing_id FROM production_jobs
+                                        WHERE tenant_id = s.tenant_id AND id = s.job_id)
+                  AND rts.seq_no = s.seq_no
+                LEFT JOIN app_users u ON u.id = s.operator_id AND u.tenant_id = s.tenant_id
                 WHERE s.tenant_id = ? AND s.job_id = ? ORDER BY s.seq_no
                 """, (rs, row) -> stage(tenantId, jobId, rs), tenantId, jobId);
     }
@@ -122,13 +131,18 @@ class ProductionJobView {
         if (label == null || label.isBlank()) {
             label = rs.getString("name");
         }
+        int estMin = rs.getInt("estimated_duration_min");
+        Integer estimatedDuration = rs.wasNull() || estMin == 0 ? null : estMin;
         return new JobStageResponse(stageId, rs.getInt("seq_no"), label, rs.getString("stage_code"),
                 rs.getObject("stage_config_option_id", UUID.class), rs.getString("status"), required,
                 inspectionStatus(tenantId, stageId, required), rs.getBoolean("is_optional"), rs.getBoolean("is_optional"),
                 rs.getString("work_centre"), instant(rs, "actual_start"), instant(rs, "actual_end"),
                 rs.getObject("completed_by", UUID.class), rs.getObject("asset_id", UUID.class),
                 rs.getString("asset_number"),
-                maintenance.machineBlocker(tenantId, jobId, stageId, rs.getString("work_centre")));
+                maintenance.machineBlocker(tenantId, jobId, stageId, rs.getString("work_centre")),
+                date(rs, "planned_start"), date(rs, "planned_end"), estimatedDuration,
+                rs.getBigDecimal("completed_qty"), rs.getBigDecimal("blocked_qty"),
+                rs.getObject("operator_id", UUID.class), rs.getString("operator_name"));
     }
 
     private String inspectionStatus(UUID tenantId, UUID stageId, boolean required) {
@@ -162,7 +176,14 @@ class ProductionJobView {
 
     private List<MaterialRequirementResponse> materials(UUID tenantId, UUID jobId) {
         return jdbc.query("""
-                SELECT r.id, r.item_id, i.code, i.name, r.required_qty, r.issued_qty, r.returned_qty, u.symbol
+                SELECT r.id, r.item_id, i.code, i.name, i.std_cost,
+                       r.required_qty, r.issued_qty, r.returned_qty, u.symbol,
+                       CASE WHEN r.issued_qty - r.returned_qty > 0
+                            THEN (SELECT SUM(m.quantity * m.unit_cost) / NULLIF(SUM(m.quantity), 0)
+                                  FROM job_material_issues m
+                                  WHERE m.tenant_id = r.tenant_id AND m.requirement_id = r.id
+                                    AND m.issue_type = 'issue' AND m.unit_cost IS NOT NULL)
+                            ELSE NULL END AS actual_unit_cost
                 FROM job_material_requirements r
                 JOIN items i ON i.id = r.item_id AND i.tenant_id = r.tenant_id
                 JOIN units_of_measure u ON u.id = r.uom_id
@@ -172,9 +193,17 @@ class ProductionJobView {
             BigDecimal issued = rs.getBigDecimal("issued_qty");
             BigDecimal returned = rs.getBigDecimal("returned_qty");
             BigDecimal net = issued.subtract(returned);
-            return new MaterialRequirementResponse(rs.getObject("id", UUID.class), rs.getObject("item_id", UUID.class),
-                    rs.getString("code"), rs.getString("name"), required, issued, returned, net,
-                    rs.getString("symbol"), ProductionMaterialReadiness.line(net, required));
+            BigDecimal stdCost = rs.getBigDecimal("std_cost");
+            BigDecimal estUnitCost = stdCost;
+            BigDecimal estTotalCost = stdCost != null ? stdCost.multiply(required) : null;
+            BigDecimal actUnitCost = rs.getBigDecimal("actual_unit_cost");
+            BigDecimal actTotalCost = actUnitCost != null && net.signum() > 0
+                    ? actUnitCost.multiply(net) : null;
+            return new MaterialRequirementResponse(rs.getObject("id", UUID.class),
+                    rs.getObject("item_id", UUID.class), rs.getString("code"), rs.getString("name"),
+                    required, issued, returned, net, rs.getString("symbol"),
+                    ProductionMaterialReadiness.line(net, required),
+                    estUnitCost, estTotalCost, actUnitCost, actTotalCost);
         }, tenantId, jobId);
     }
 

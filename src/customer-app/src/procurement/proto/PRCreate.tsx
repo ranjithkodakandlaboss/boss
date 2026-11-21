@@ -31,7 +31,7 @@ export default function PRCreate() {
   const { id: editId } = useParams<{ id: string }>();
   const [searchParams] = useSearchParams();
   const prefillName = searchParams.get('name') ?? '';
-  const { currentUser, purchaseReqs, materials, sites, storeLocations, addPurchaseReq, updatePurchaseReq, showToast, uoms } = useStore();
+  const { currentUser, purchaseReqs = [], materials = [], sites = [], storeLocations = [], addPurchaseReq, updatePurchaseReq, showToast, uoms = [] } = useStore();
 
   const editingPr = editId ? purchaseReqs.find(p => p.id === editId) : undefined;
   const isEditing = Boolean(editId && editingPr);

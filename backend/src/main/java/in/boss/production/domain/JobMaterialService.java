@@ -10,6 +10,7 @@ import in.boss.inventory.domain.InvalidLotTransitionException;
 import in.boss.inventory.domain.LotNotFoundException;
 import in.boss.production.api.ProductionApiDtos.IssueMaterialRequest;
 import in.boss.production.api.ProductionApiDtos.MaterialMovementResponse;
+import in.boss.production.api.ProductionApiDtos.OverridePriceRequest;
 import in.boss.production.api.ProductionApiDtos.ReturnMaterialRequest;
 import in.boss.shared.audit.AuditService;
 import in.boss.shared.context.BossContext;
@@ -23,6 +24,7 @@ import java.math.BigDecimal;
 import java.util.List;
 import java.util.UUID;
 
+import static in.boss.shared.security.BossPermissions.COSTING_WRITE;
 import static in.boss.shared.security.BossPermissions.PRODUCTION_WRITE;
 
 @Service
@@ -61,6 +63,42 @@ public class JobMaterialService {
         return move("return", call -> returnStock(jobId, request, call));
     }
 
+    @PreAuthorize(COSTING_WRITE)
+    public MaterialMovementResponse overridePrice(UUID jobId, UUID issueId, OverridePriceRequest request) {
+        BossContext context = support.requireContext();
+        support.denyForeignJob(jdbc, jobId);
+        IssueRow issue = jdbc.query("""
+                SELECT id, requirement_id, lot_id, quantity, unit_cost, issue_type
+                FROM job_material_issues
+                WHERE tenant_id = ? AND job_id = ? AND id = ? AND issue_type = 'issue'
+                FOR UPDATE
+                """, rs -> rs.next() ? new IssueRow(rs.getObject("id", UUID.class),
+                rs.getObject("requirement_id", UUID.class), rs.getObject("lot_id", UUID.class),
+                rs.getBigDecimal("quantity"), rs.getBigDecimal("unit_cost"),
+                rs.getString("issue_type")) : null, context.tenantId(), jobId, issueId);
+        if (issue == null) {
+            throw ProductionSupport.badRequest("Material issue not found on this job");
+        }
+        BigDecimal originalCost = issue.unitCost();
+        BigDecimal newUnitCost = request.unitCost();
+        jdbc.update("""
+                UPDATE job_material_issues
+                SET unit_cost = ?,
+                    price_override_amount = ?,
+                    price_override_reason = ?,
+                    price_override_by = ?,
+                    price_override_at = NOW()
+                WHERE tenant_id = ? AND id = ?
+                """, newUnitCost, originalCost, request.reason().trim(),
+                context.userId(), context.tenantId(), issueId);
+        costing.refresh(context.tenantId(), jobId);
+        audit.record("job_material_issue", issueId, "PRICE_OVERRIDE",
+                "{\"unitCost\":\"" + originalCost + "\"}",
+                "{\"unitCost\":\"" + newUnitCost + "\",\"reason\":\"" + request.reason().trim().replace("\"", "\\\"") + "\"}");
+        return new MaterialMovementResponse(issueId, null, issue.requirementId(), null, issue.lotId(),
+                issue.type(), issue.quantity(), newUnitCost, java.time.Instant.now());
+    }
+
     private MaterialMovementResponse move(String type, MovementWork work) {
         boolean[] inventoryCall = {false};
         try {
@@ -90,10 +128,6 @@ public class JobMaterialService {
         rejectClosed(job.status());
         Requirement requirement = lockRequirement(context.tenantId(), jobId, request.requirementId());
         BigDecimal qty = ProductionSupport.quantity(request.qty());
-        BigDecimal remaining = requirement.required().subtract(requirement.issued()).add(requirement.returned());
-        if (qty.compareTo(remaining) > 0) {
-            throw ProductionSupport.badRequest("Issue quantity exceeds the remaining requirement");
-        }
         MaterialLotResponse lot = usableLot(request.lotId(), requirement.itemId(), job, qty);
         ensureIssueReservation(job, lot, qty);
         UUID issueId = UUID.randomUUID();
@@ -161,10 +195,6 @@ public class JobMaterialService {
         BigDecimal fromAvailable = needed.subtract(fromCpo);
 
         if (fromAvailable.signum() > 0) {
-            if (hasActiveJobReservation(job.id())) {
-                throw ProductionSupport.badRequest(
-                        "Active job reservations do not cover the issue quantity for this lot");
-            }
             var reservation = inventory.reserveForJob(new ReservationRequest(job.id(), List.of(
                     new ReservationRequirement(lot.itemId(), lot.storeId(), fromAvailable))), false);
             if (!"FULLY_RESERVED".equals(reservation.status()) || !coversLot(reservation, lot.id(), fromAvailable)) {
@@ -314,12 +344,11 @@ public class JobMaterialService {
         if (!JobStatusMachine.PLANNED.equals(job.status())) {
             return;
         }
-        Integer incomplete = jdbc.queryForObject("""
+        Integer unfulfilled = jdbc.queryForObject("""
                 SELECT COUNT(*) FROM job_material_requirements
-                WHERE tenant_id = ? AND job_id = ?
-                  AND issued_qty - returned_qty < required_qty
+                WHERE tenant_id = ? AND job_id = ? AND (issued_qty - returned_qty) < required_qty
                 """, Integer.class, tenantId, job.id());
-        if (incomplete != null && incomplete > 0) {
+        if (unfulfilled != null && unfulfilled > 0) {
             return;
         }
         JobStatusMachine.assertTransition(job.status(), JobStatusMachine.RELEASED);

@@ -25,7 +25,7 @@ export default function RecordSheet({
   children: ReactNode;
   primary?: Action;
   secondary?: Action;
-  width?: "md" | "lg";
+  width?: "md" | "lg" | "xl";
   pinnedFooter?: boolean;
   danger?: boolean;
 }) {
@@ -35,7 +35,7 @@ export default function RecordSheet({
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  const panel = width === "lg" ? "md:w-[min(760px,92vw)]" : "md:w-[min(520px,92vw)]";
+  const panel = width === "xl" ? "md:w-[min(960px,96vw)]" : width === "lg" ? "md:w-[min(760px,92vw)]" : "md:w-[min(520px,92vw)]";
   const primaryBg = danger ? "var(--error, #DC2626)" : "var(--brand-fill)";
   const footer = (primary || secondary) ? (
     <footer className="flex-shrink-0 px-4 py-3 border-t flex items-center gap-2" style={{ borderColor: "var(--border)", background: "var(--surface)" }}>

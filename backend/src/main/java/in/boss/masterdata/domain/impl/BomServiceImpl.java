@@ -222,6 +222,9 @@ public class BomServiceImpl implements BomService {
                 .bomType("production")
                 .isDefault(true)
                 .status("approved")
+                .labourCostPerUnit(request.getLabourCostPerUnit())
+                .machineCostPerUnit(request.getMachineCostPerUnit())
+                .otherCostPerUnit(request.getOtherCostPerUnit())
                 .createdAt(now)
                 .updatedAt(now)
                 .build();
@@ -231,6 +234,11 @@ public class BomServiceImpl implements BomService {
         List<BomLineEntity> savedLines = new ArrayList<>();
         int seq = 1;
         for (CreateBOMLineRequest lineReq : request.getLines()) {
+            ItemEntity compItem = itemRepository.findByIdAndTenantId(lineReq.getComponentItemId(), tenantId).orElse(null);
+            BigDecimal lineUnitCost = lineReq.getUnitCost() != null
+                    ? lineReq.getUnitCost()
+                    : (compItem != null ? compItem.getStdCost() : null);
+
             BomLineEntity lineEntity = BomLineEntity.builder()
                     .id(UUID.randomUUID())
                     .tenantId(tenantId)
@@ -241,6 +249,7 @@ public class BomServiceImpl implements BomService {
                     .level(lineReq.getLevel() != null ? lineReq.getLevel() : 1)
                     .scrapPercent(lineReq.getScrapFactor() != null ? lineReq.getScrapFactor() : BigDecimal.ZERO)
                     .quantityFormula(blankToNull(lineReq.getQuantityFormula()))
+                    .unitCost(lineUnitCost)
                     .isOptional(false)
                     .createdAt(now)
                     .build();
@@ -324,18 +333,25 @@ public class BomServiceImpl implements BomService {
             ItemEntity comp = componentItems.get(line.getComponentItemId());
             UnitOfMeasureEntity uom = uoms.get(line.getUomId());
 
+            BigDecimal unitCost = line.getUnitCost() != null ? line.getUnitCost() : (comp != null ? comp.getStdCost() : null);
+            BigDecimal totalCost = calculateLineCost(unitCost, line.getQuantity(), line.getScrapPercent());
+            String itemType = resolveComponentType(comp);
+
             lineDtos.add(BOMLineDto.builder()
                     .id(line.getId())
                     .seq(seq++)
                     .componentItemId(line.getComponentItemId())
                     .componentItemCode(comp != null ? comp.getCode() : null)
                     .componentItemName(comp != null ? comp.getName() : null)
+                    .componentItemType(itemType)
                     .qty(line.getQuantity())
                     .uomId(line.getUomId())
                     .uomSymbol(uom != null ? uom.getSymbol() : null)
                     .scrapFactor(line.getScrapPercent())
                     .level(line.getLevel())
                     .quantityFormula(line.getQuantityFormula())
+                    .unitCost(unitCost)
+                    .totalCost(totalCost)
                     .build());
         }
 
@@ -354,8 +370,34 @@ public class BomServiceImpl implements BomService {
                 .itemName(item != null ? item.getName() : null)
                 .version(versionInt)
                 .status(header.getStatus())
+                .labourCostPerUnit(header.getLabourCostPerUnit())
+                .machineCostPerUnit(header.getMachineCostPerUnit())
+                .otherCostPerUnit(header.getOtherCostPerUnit())
                 .lines(lineDtos)
                 .build();
+    }
+
+    private BigDecimal calculateLineCost(BigDecimal unitCost, BigDecimal quantity, BigDecimal scrapPercent) {
+        if (unitCost == null || quantity == null) {
+            return null;
+        }
+        BigDecimal scrapMultiplier = BigDecimal.ONE.add(
+                (scrapPercent != null ? scrapPercent : BigDecimal.ZERO)
+                        .divide(BigDecimal.valueOf(100), 4, java.math.RoundingMode.HALF_UP));
+        return quantity.multiply(scrapMultiplier).multiply(unitCost).setScale(2, java.math.RoundingMode.HALF_UP);
+    }
+
+    private String resolveComponentType(ItemEntity comp) {
+        if (comp == null || comp.getItemType() == null) {
+            return null;
+        }
+        return switch (comp.getItemType().toLowerCase()) {
+            case "raw_material" -> "RAW_MATERIAL";
+            case "consumable" -> "CONSUMABLE";
+            case "semi_finished" -> "SEMI_FINISHED";
+            case "finished_goods" -> "FINISHED_GOOD";
+            default -> comp.getItemType();
+        };
     }
 
     private String toJson(Object obj) {

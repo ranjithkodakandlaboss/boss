@@ -11,11 +11,13 @@ import in.boss.production.api.ProductionApiDtos.CreateRoutingTemplateRequest;
 import in.boss.production.api.ProductionApiDtos.CreateJobRequest;
 import in.boss.production.api.ProductionApiDtos.InspectionResultRequest;
 import in.boss.production.api.ProductionApiDtos.IssueMaterialRequest;
+import in.boss.production.api.ProductionApiDtos.OverridePriceRequest;
 import in.boss.production.api.ProductionApiDtos.ProductionJobResponse;
 import in.boss.production.api.ProductionApiDtos.ReasonRequest;
 import in.boss.production.api.ProductionApiDtos.ReturnMaterialRequest;
 import in.boss.production.api.ProductionApiDtos.ReviseRoutingTemplateRequest;
 import in.boss.production.api.ProductionApiDtos.RoutingStageRequest;
+import in.boss.production.api.ProductionApiDtos.StageActionRequest;
 import in.boss.production.domain.JobCostingService;
 import in.boss.production.domain.JobInspectionService;
 import in.boss.production.domain.JobMaterialService;
@@ -78,6 +80,7 @@ class ProductionLifecycleIntegrationTest extends BaseMasterDataIntegrationTest {
 
     private UUID tenantId;
     private UUID siteId;
+    private UUID customerId;
     private UUID finishedItemId;
     private UUID materialItemId;
     private UUID cpoId;
@@ -105,7 +108,7 @@ class ProductionLifecycleIntegrationTest extends BaseMasterDataIntegrationTest {
                 INSERT INTO units_of_measure (tenant_id, name, symbol, is_base)
                 VALUES (?, 'Each', 'ea', TRUE) RETURNING id
                 """, tenantId);
-        UUID customerId = insert("""
+        customerId = insert("""
                 INSERT INTO customers (tenant_id, code, name)
                 VALUES (?, ?, 'North Works') RETURNING id
                 """, tenantId, "CUST-" + UUID.randomUUID().toString().substring(0, 6));
@@ -957,6 +960,31 @@ class ProductionLifecycleIntegrationTest extends BaseMasterDataIntegrationTest {
         assertThat(jdbc.queryForObject(
                 "SELECT COUNT(*) FROM production_jobs WHERE tenant_id = ? AND cpo_line_id = ?",
                 Integer.class, tenantId, lineId)).isEqualTo(1);
+    }
+
+    @Test
+    void standaloneJobCreationAndStageProgressAndPriceOverride() {
+        ProductionJobResponse standalone = jobs.create(new CreateJobRequest(
+                null, null, customerId, finishedItemId, siteId, "standalone job",
+                routingId, null, LocalDate.now().plusDays(7), "high", BigDecimal.valueOf(5)
+        ));
+        assertThat(standalone).isNotNull();
+        assertThat(standalone.status()).isEqualTo("planned");
+        assertThat(standalone.stages()).isNotEmpty();
+
+        ProductionJobResponse regularJob = jobs.create(new CreateJobRequest(cpoId, lineId, routingId, null, null, null));
+        UUID jobId = regularJob.id();
+        UUID reqId = regularJob.materials().get(0).id();
+        var issueResp = materials.issue(jobId, new IssueMaterialRequest(reqId, lotId, BigDecimal.valueOf(20), "regular issue"));
+        var overrideResp = materials.overridePrice(jobId, issueResp.id(), new OverridePriceRequest(BigDecimal.valueOf(150), "special price override"));
+        assertThat(overrideResp).isNotNull();
+
+        UUID firstStageId = regularJob.stages().get(0).id();
+        var progressResp = stages.progress(jobId, firstStageId, new StageActionRequest("in progress note", BigDecimal.valueOf(2), BigDecimal.ZERO));
+        assertThat(progressResp.stages().get(0).status()).isEqualTo("in_progress");
+
+        assertThatThrownBy(() -> stages.finish(jobId))
+                .isInstanceOf(ResponseStatusException.class);
     }
 
     private void issueConcurrent(BossContext boss, CountDownLatch start, UUID jobId, UUID requirement, AtomicInteger wins) {

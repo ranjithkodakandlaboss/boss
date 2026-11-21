@@ -35,7 +35,7 @@ public class InventoryReservationRepository {
 
     public Optional<ProductionJobSnapshot> lockProductionJobSnapshot(UUID tenantId, UUID jobId) {
         List<ProductionJobSnapshot> rows = jdbc.query("""
-                SELECT site_id, finished_item_id, quantity, status
+                SELECT site_id, finished_item_id, quantity, status, cpo_id
                   FROM production_jobs
                  WHERE tenant_id = ? AND id = ?
                  FOR UPDATE
@@ -43,7 +43,8 @@ public class InventoryReservationRepository {
                 rs.getObject("site_id", UUID.class),
                 rs.getObject("finished_item_id", UUID.class),
                 rs.getBigDecimal("quantity"),
-                rs.getString("status")), tenantId, jobId);
+                rs.getString("status"),
+                rs.getObject("cpo_id", UUID.class)), tenantId, jobId);
         return rows.stream().findFirst();
     }
 
@@ -315,13 +316,26 @@ public class InventoryReservationRepository {
                 rs.getBigDecimal("reserved_qty")), args.toArray());
     }
 
+    public int transferCpoReservationsToJob(UUID tenantId, UUID cpoId, UUID jobId) {
+        return jdbc.update("""
+                UPDATE stock_reservation_records
+                   SET reference_type = 'production_job', reference_id = ?, cpo_line_id = NULL
+                 WHERE tenant_id = ? AND reference_type = 'cpo' AND reference_id = ?
+                   AND status = 'active'
+                """, jobId, tenantId, cpoId);
+    }
+
     public List<ActiveLotReservation> activeProductionLotReservations(UUID tenantId, UUID jobId, UUID siteId) {
         String sql = """
-                SELECT r.reference_id AS job_id, r.lot_id, r.item_id, r.reserved_qty
+                SELECT j.id AS job_id, r.lot_id, r.item_id, r.reserved_qty
                   FROM stock_reservation_records r
-                  JOIN production_jobs j ON j.id = r.reference_id AND j.tenant_id = r.tenant_id
-                 WHERE r.tenant_id = ? AND r.reference_type = 'production_job' AND r.status = 'active'
-                   AND r.reference_id = ?
+                  JOIN production_jobs j ON j.tenant_id = r.tenant_id
+                 WHERE r.tenant_id = ? AND r.status = 'active'
+                   AND j.id = ?
+                   AND (
+                     (r.reference_type = 'production_job' AND r.reference_id = j.id)
+                     OR (r.reference_type = 'cpo' AND j.cpo_id IS NOT NULL AND r.reference_id = j.cpo_id)
+                   )
                 """ + (siteId == null ? "" : " AND j.site_id = ? ") + """
                  ORDER BY r.lot_id
                 """;
@@ -393,7 +407,7 @@ public class InventoryReservationRepository {
 
     public record JobMaterialNeed(UUID itemId, BigDecimal remainingQty) {}
 
-    public record ProductionJobSnapshot(UUID siteId, UUID finishedItemId, BigDecimal quantity, String status) {}
+    public record ProductionJobSnapshot(UUID siteId, UUID finishedItemId, BigDecimal quantity, String status, UUID cpoId) {}
 
     public record JobMaterialSnapshotLine(UUID itemId, BigDecimal requiredQty, UUID uomId) {}
 

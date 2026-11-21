@@ -17,16 +17,30 @@ export default function StageUpdatePage() {
   const [enabled, setEnabled] = useState(true);
   const [action, setAction] = useState<"continue" | "hold" | "complete" | null>(null);
   const [notes, setNotes] = useState("");
+  const [completedQty, setCompletedQty] = useState("");
+  const [blockedQty, setBlockedQty] = useState("");
+  const [blockedReason, setBlockedReason] = useState("");
   const [error, setError] = useState("");
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
     Promise.all([getJob(id), featureFlags()])
-      .then(([next, flags]) => { setJob(next); setEnabled(flags["production.stage.transition"] !== false); })
+      .then(([next, flags]) => {
+        setJob(next);
+        setEnabled(flags["production.stage.transition"] !== false);
+        // Pre-fill qty from job total
+        const totalQty = Number(next.qty ?? 0);
+        if (totalQty > 0) setCompletedQty(String(totalQty));
+      })
       .catch((cause) => setError(cause instanceof ApiError ? cause.message : "Stage not found"));
   }, [id]);
 
   const stage = job?.stages?.find((row) => row.id === stageId);
+  const totalQty = Number(job?.qty ?? 0);
+  const doneQty = Number(completedQty) || 0;
+  const badQty = Number(blockedQty) || 0;
+  const inProgressQty = Math.max(0, totalQty - doneQty - badQty);
+
   if (error && !job) return <p role="alert" className="p-6 text-sm">{error}</p>;
   if (!job || !stage) return <p role="status" className="p-6 text-sm">Loading stage</p>;
   const activeJob = job;
@@ -50,11 +64,22 @@ export default function StageUpdatePage() {
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
-    if (!enabled || !actionOptions.find((option) => option.value === selectedAction)?.available) return;
+    if (!job || !stage || !enabled) return;
+    // Quantity validation for complete action
+    if (doneQty + badQty > totalQty) {
+      setError(`Completed + blocked quantity (${doneQty + badQty}) cannot exceed the job quantity (${totalQty}).`);
+      return;
+    }
+    setError("");
     try {
-      if (selectedAction === "continue") await startStage(activeJob.id, activeStage.id, notes);
-      if (selectedAction === "hold") await holdJob(activeJob.id, notes || "Held from the stage update");
-      if (selectedAction === "complete") await completeStage(activeJob.id, activeStage.id, notes);
+      const noteText = [notes, blockedQty && Number(blockedQty) > 0 && blockedReason ? `Blockage: ${blockedReason}` : ""].filter(Boolean).join(" | ");
+      if (selectedAction === "continue") await startStage(activeJob.id, activeStage.id, noteText);
+      if (selectedAction === "hold") await holdJob(activeJob.id, noteText || "Held from the stage update");
+      if (selectedAction === "complete") await completeStage(
+        activeJob.id, activeStage.id, noteText,
+        doneQty > 0 ? doneQty : undefined,
+        badQty > 0 ? badQty : undefined,
+      );
       setSaved(true);
     } catch (cause) {
       setError(cause instanceof ApiError ? cause.message : "The stage was not updated");
@@ -73,21 +98,50 @@ export default function StageUpdatePage() {
           <p className="text-sm" style={{ color: "var(--text-2)" }}>{activeJob.jobNumber} · {activeStage.stageName}</p>
         </div>
       </div>
+
+      {/* Stage context */}
       <div className="rounded-xl border p-4 mb-5 text-sm grid grid-cols-2 gap-2" style={{ background: "var(--surface-2)", borderColor: "var(--border)" }}>
         <div><span className="text-xs" style={{ color: "var(--text-3)" }}>Work Centre</span><div>{activeStage.workCentre || "—"}</div></div>
         <div><span className="text-xs" style={{ color: "var(--text-3)" }}>Job Qty</span><div>{activeJob.qty} {activeJob.uomSymbol}</div></div>
-        <div><span className="text-xs" style={{ color: "var(--text-3)" }}>Stage</span><div>{activeStage.status}</div></div>
+        <div><span className="text-xs" style={{ color: "var(--text-3)" }}>Stage Status</span><div>{activeStage.status}</div></div>
         <div><span className="text-xs" style={{ color: "var(--text-3)" }}>Inspection</span><div>{activeStage.inspectionStatus}</div></div>
+        {activeStage.plannedStart && <div><span className="text-xs" style={{ color: "var(--text-3)" }}>Planned Start</span><div>{activeStage.plannedStart}</div></div>}
+        {activeStage.plannedEnd && <div><span className="text-xs" style={{ color: "var(--text-3)" }}>Planned End</span><div>{activeStage.plannedEnd}</div></div>}
+        {activeStage.estimatedDurationMin != null && <div><span className="text-xs" style={{ color: "var(--text-3)" }}>Est. Duration</span><div>{(activeStage.estimatedDurationMin / 60).toFixed(1)}h</div></div>}
       </div>
+
       <form onSubmit={(event) => void submit(event)} className="space-y-4 rounded-xl border p-4" style={{ background: "var(--surface)", borderColor: "var(--border)" }}>
         <div>
           <label className="block text-xs font-semibold mb-2">Action</label>
           <div className="grid grid-cols-3 gap-2">
             {actionOptions.map(({ value, available }) => (
-              <button key={value} type="button" disabled={!available} aria-pressed={selectedAction === value} onClick={() => setAction(value)} className="py-2 rounded-lg border text-sm font-medium capitalize disabled:opacity-50" style={{ background: selectedAction === value ? "var(--brand-fill)" : "transparent", color: selectedAction === value ? "#fff" : "var(--text-2)", borderColor: selectedAction === value ? "var(--brand)" : "var(--border)" }}>{value}</button>
+              <button key={value} type="button" disabled={!available} aria-pressed={selectedAction === value} onClick={() => setAction(value)} className="py-2 rounded-lg border text-sm font-medium capitalize disabled:opacity-50" style={{ background: selectedAction === value ? "var(--brand-fill)" : "transparent", color: selectedAction === value ? "#fff" : "var(--text-2)", borderColor: selectedAction === value ? "var(--brand)" : "var(--border)" }}>{value === "continue" ? "Start / Continue" : value}</button>
             ))}
           </div>
         </div>
+
+        {/* Quantity tracking – always shown so progress can be recorded at any action */}
+        {totalQty > 0 && (
+          <div className="space-y-3 rounded-xl border p-3" style={{ background: "var(--surface-2)", borderColor: "var(--border)" }}>
+            <div className="text-xs font-semibold">{action === "complete" ? "Final Quantities" : "Progress Snapshot"}</div>
+            <div className="grid grid-cols-2 gap-3">
+              <label className="text-xs">Completed Qty<input className="eoss-input w-full mt-1" aria-label="Completed quantity" inputMode="decimal" value={completedQty} onChange={(e) => setCompletedQty(e.target.value)} /></label>
+              <label className="text-xs">Blocked Qty<input className="eoss-input w-full mt-1" aria-label="Blocked quantity" inputMode="decimal" value={blockedQty} onChange={(e) => setBlockedQty(e.target.value)} /></label>
+            </div>
+            {totalQty > 0 && (
+              <div className="text-xs flex gap-3" style={{ color: "var(--text-3)" }}>
+                <span>Total: <strong>{totalQty}</strong></span>
+                <span>Done: <strong>{doneQty}</strong></span>
+                {badQty > 0 && <span style={{ color: "var(--warning)" }}>Blocked: <strong>{badQty}</strong></span>}
+                {inProgressQty > 0 && <span>In Progress: <strong>{inProgressQty}</strong></span>}
+              </div>
+            )}
+            {Number(blockedQty) > 0 && (
+              <label className="text-xs">Blockage reason<input className="eoss-input w-full mt-1" aria-label="Blockage reason" value={blockedReason} onChange={(e) => setBlockedReason(e.target.value)} placeholder="Describe what is blocking this quantity…" /></label>
+            )}
+          </div>
+        )}
+
         <label className="block text-xs font-semibold">Notes / Observations<textarea rows={3} value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Any issues, deviations or notes…" className="w-full mt-1 px-3 py-2 rounded-lg border text-sm" style={{ borderColor: "var(--border)", background: "var(--surface)" }} /></label>
         <div className="flex items-center gap-3 p-3 border border-dashed rounded-lg text-sm" style={{ borderColor: "var(--border)", color: "var(--text-3)" }}><Camera size={18} /> Photo capture is not stored with the stage record.</div>
         {error && <p role="alert" className="text-xs" style={{ color: "var(--error)" }}>{error}</p>}

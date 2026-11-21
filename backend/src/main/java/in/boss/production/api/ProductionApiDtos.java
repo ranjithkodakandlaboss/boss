@@ -19,23 +19,85 @@ public final class ProductionApiDtos {
     private ProductionApiDtos() {}
 
     public record CreateJobRequest(
-            @NotNull UUID cpoId,
-            @NotNull UUID cpoLineId,
-            @NotNull UUID routingTemplateId,
+            // Mode A — from Customer PO (cpoId + cpoLineId required together)
+            UUID cpoId,
+            UUID cpoLineId,
+            // Mode B — standalone (customerId + itemId + siteId required together)
+            UUID customerId,
+            UUID itemId,
+            UUID siteId,
+            String description,
+            // common
+            UUID routingTemplateId,
             LocalDate scheduledStart,
             LocalDate scheduledEnd,
             @Pattern(regexp = "low|normal|high|urgent") String priority,
             @DecimalMin("0.001") BigDecimal quantity
     ) {
+        /** Legacy 6-arg compact constructor */
         public CreateJobRequest(UUID cpoId, UUID cpoLineId, UUID routingTemplateId,
                                  LocalDate scheduledStart, LocalDate scheduledEnd, String priority) {
-            this(cpoId, cpoLineId, routingTemplateId, scheduledStart, scheduledEnd, priority, null);
+            this(cpoId, cpoLineId, null, null, null, null,
+                 routingTemplateId, scheduledStart, scheduledEnd, priority, null);
+        }
+        /** Legacy 7-arg compact constructor (adds explicit quantity) */
+        public CreateJobRequest(UUID cpoId, UUID cpoLineId, UUID routingTemplateId,
+                                 LocalDate scheduledStart, LocalDate scheduledEnd,
+                                 String priority, BigDecimal quantity) {
+            this(cpoId, cpoLineId, null, null, null, null,
+                 routingTemplateId, scheduledStart, scheduledEnd, priority, quantity);
+        }
+        public boolean isStandalone() {
+            return cpoId == null && cpoLineId == null;
         }
     }
 
+    public record StagePlanEntry(
+            @NotNull UUID stageId,
+            @NotNull LocalDate plannedStart,
+            @NotNull LocalDate plannedEnd,
+            UUID operatorId,
+            String workCentre,
+            Integer estimatedDurationMin
+    ) {
+        public StagePlanEntry(UUID stageId, LocalDate plannedStart, LocalDate plannedEnd) {
+            this(stageId, plannedStart, plannedEnd, null, null, null);
+        }
+        public StagePlanEntry(UUID stageId, LocalDate plannedStart, LocalDate plannedEnd, UUID operatorId) {
+            this(stageId, plannedStart, plannedEnd, operatorId, null, null);
+        }
+    }
+
+    public record SavePlanRequest(
+            @NotNull @NotEmpty List<@jakarta.validation.Valid StagePlanEntry> stages
+    ) {}
+
+    public record PlanPreviewStage(
+            UUID stageId,
+            String stageName,
+            int seqNo,
+            int estimatedDurationMin,
+            LocalDate plannedStart,
+            LocalDate plannedEnd,
+            String workCentre
+    ) {
+        public PlanPreviewStage(UUID stageId, String stageName, int seqNo, int estimatedDurationMin, LocalDate plannedStart, LocalDate plannedEnd) {
+            this(stageId, stageName, seqNo, estimatedDurationMin, plannedStart, plannedEnd, null);
+        }
+    }
+
+    public record PlanPreviewResponse(List<PlanPreviewStage> stages) {}
+
     public record ReasonRequest(@NotBlank String reason) {}
 
-    public record StageActionRequest(String note) {}
+    public record StageActionRequest(String note, BigDecimal completedQty, BigDecimal blockedQty, UUID operatorId) {
+        public StageActionRequest(String note) {
+            this(note, null, null, null);
+        }
+        public StageActionRequest(String note, BigDecimal completedQty, BigDecimal blockedQty) {
+            this(note, completedQty, blockedQty, null);
+        }
+    }
 
     public record IssueMaterialRequest(
             @NotNull UUID requirementId,
@@ -87,8 +149,41 @@ public final class ProductionApiDtos {
             UUID completedBy,
             UUID assetId,
             String assetCode,
-            String blockerReason
-    ) {}
+            String blockerReason,
+            // plan columns (null when no plan has been set)
+            LocalDate plannedStart,
+            LocalDate plannedEnd,
+            Integer estimatedDurationMin,
+            BigDecimal completedQty,
+            BigDecimal blockedQty,
+            UUID operatorId,
+            String assignedOperator
+    ) {
+        /** 21-arg constructor for callers without operator */
+        public JobStageResponse(UUID id, int seqNo, String stageName, String stageCode,
+                UUID stageConfigOptionId, String status, boolean requiresInspection,
+                String inspectionStatus, boolean isOptional, boolean canSkip, String workCentre,
+                Instant actualStartAt, Instant actualEndAt, UUID completedBy, UUID assetId,
+                String assetCode, String blockerReason,
+                LocalDate plannedStart, LocalDate plannedEnd, Integer estimatedDurationMin,
+                BigDecimal completedQty, BigDecimal blockedQty) {
+            this(id, seqNo, stageName, stageCode, stageConfigOptionId, status, requiresInspection,
+                 inspectionStatus, isOptional, canSkip, workCentre, actualStartAt, actualEndAt,
+                 completedBy, assetId, assetCode, blockerReason, plannedStart, plannedEnd,
+                 estimatedDurationMin, completedQty, blockedQty, null, null);
+        }
+
+        /** Legacy compact constructor — keeps existing callers compiling */
+        public JobStageResponse(UUID id, int seqNo, String stageName, String stageCode,
+                UUID stageConfigOptionId, String status, boolean requiresInspection,
+                String inspectionStatus, boolean isOptional, boolean canSkip, String workCentre,
+                Instant actualStartAt, Instant actualEndAt, UUID completedBy, UUID assetId,
+                String assetCode, String blockerReason) {
+            this(id, seqNo, stageName, stageCode, stageConfigOptionId, status, requiresInspection,
+                 inspectionStatus, isOptional, canSkip, workCentre, actualStartAt, actualEndAt,
+                 completedBy, assetId, assetCode, blockerReason, null, null, null, null, null, null, null);
+        }
+    }
 
     public record MaterialRequirementResponse(
             UUID id,
@@ -100,8 +195,19 @@ public final class ProductionApiDtos {
             BigDecimal returnedQty,
             BigDecimal netIssuedQty,
             String uomSymbol,
-            String readiness
-    ) {}
+            String readiness,
+            BigDecimal estimatedUnitCost,
+            BigDecimal estimatedTotalCost,
+            BigDecimal actualUnitCost,
+            BigDecimal actualTotalCost
+    ) {
+        public MaterialRequirementResponse(UUID id, UUID itemId, String itemCode, String itemName,
+                BigDecimal requiredQty, BigDecimal issuedQty, BigDecimal returnedQty, BigDecimal netIssuedQty,
+                String uomSymbol, String readiness) {
+            this(id, itemId, itemCode, itemName, requiredQty, issuedQty, returnedQty, netIssuedQty,
+                 uomSymbol, readiness, null, null, null, null);
+        }
+    }
 
     public record MaterialMovementResponse(
             UUID id,
@@ -259,7 +365,7 @@ public final class ProductionApiDtos {
             UUID inspectionTemplateId,
             Boolean requiresInspection,
             Boolean isOptional,
-            @Pattern(regexp = "production|inspection|rework|hold") String stageType,
+            String stageType,
             @Min(0) Integer setupTimeMin,
             @Min(0) Integer runTimeMin
     ) {
@@ -290,6 +396,11 @@ public final class ProductionApiDtos {
 
     public record ReviseRoutingTemplateRequest(
             @NotEmpty List<@jakarta.validation.Valid RoutingStageRequest> stages
+    ) {}
+
+    public record OverridePriceRequest(
+            @NotNull @DecimalMin("0.001") BigDecimal unitCost,
+            @NotBlank String reason
     ) {}
 
     public record PageResponse<T>(List<T> content, int page, int size, long totalElements) {}

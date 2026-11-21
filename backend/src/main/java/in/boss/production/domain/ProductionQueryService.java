@@ -394,4 +394,20 @@ public class ProductionQueryService {
             throw ProductionSupport.badRequest("Page size must be between 1 and " + MAX_PAGE);
         }
     }
+
+    public List<Map<String, Object>> listOperators() {
+        BossContext context = support.requireContext();
+        return jdbc.query("""
+                SELECT id, display_name, email FROM app_users
+                WHERE tenant_id = ? AND status = 'active'
+                ORDER BY display_name, email
+                """, (rs, row) -> {
+            String name = rs.getString("display_name");
+            String email = rs.getString("email");
+            return Map.of(
+                    "id", rs.getObject("id", UUID.class).toString(),
+                    "name", (name != null && !name.isBlank()) ? name : email,
+                    "email", email);
+        }, context.tenantId());
+    }
 }

@@ -18,7 +18,37 @@ export type JobStage = {
   blockerReason?: string;
   actualStartAt?: string;
   actualEndAt?: string;
+  // Planning and execution (new – nullable for historical jobs)
+  plannedStart?: string;
+  plannedEnd?: string;
+  estimatedDurationMin?: number;
+  completedQty?: number;
+  blockedQty?: number;
+  assignedOperator?: string;
+  assignedOperatorId?: string;
+  operatorId?: string;
+  variancePct?: number;
 };
+
+export type StagePlanEntry = {
+  seqNo: number;
+  stageName: string;
+  workCentre?: string;
+  estimatedDurationMin: number;
+  plannedStart: string;
+  plannedEnd: string;
+};
+
+export type PlanPreview = {
+  estimatedStartDate: string;
+  expectedCompletionDate: string;
+  deliveryRisk: string;
+  deliveryRiskReason?: string;
+  stages: StagePlanEntry[];
+};
+
+export type CustomerOption = { id: string; name: string; code?: string };
+export type ItemOption = { id: string; name: string; code?: string; uomId?: string; uomSymbol?: string };
 
 export type MaterialRequirement = {
   id: string;
@@ -31,6 +61,10 @@ export type MaterialRequirement = {
   netIssuedQty: number;
   uomSymbol?: string;
   readiness: string;
+  estimatedUnitCost?: number;
+  estimatedTotalCost?: number;
+  actualUnitCost?: number;
+  actualTotalCost?: number;
 };
 
 export type MaterialMovement = {
@@ -220,6 +254,10 @@ function post<T>(path: string, body: unknown) {
   });
 }
 
+function del<T>(path: string) {
+  return api<T>(path, { method: "DELETE" });
+}
+
 export function listJobs() {
   return api<Page<ProductionJob>>("/api/v1/jobs?page=0&size=200");
 }
@@ -252,8 +290,12 @@ export function createRoutingTemplate(name: string, stageName: string, stages?: 
 }
 
 export function createJob(body: {
-  cpoId: string;
-  cpoLineId: string;
+  cpoId?: string;
+  cpoLineId?: string;
+  customerId?: string;
+  itemId?: string;
+  uomId?: string;
+  siteId?: string;
   routingTemplateId: string;
   scheduledStart?: string;
   scheduledEnd?: string;
@@ -261,6 +303,94 @@ export function createJob(body: {
   quantity?: number;
 }) {
   return post<ProductionJob>("/api/v1/jobs", body);
+}
+
+export function previewPlan(body: {
+  routingTemplateId: string;
+  quantity: number;
+  deliveryDate: string;
+}): Promise<PlanPreview> {
+  return api<{ stages: Array<{ stageId: string; stageName: string; seqNo: number; estimatedDurationMin: number; plannedStart: string; plannedEnd: string }> }>(
+    `/api/v1/jobs/routing-plan-preview?routingTemplateId=${encodeURIComponent(body.routingTemplateId)}&deliveryDate=${encodeURIComponent(body.deliveryDate)}`
+  ).then((r) => {
+    const stages = r.stages ?? [];
+    const first = stages[0];
+    const last = stages[stages.length - 1];
+    const startDate = first?.plannedStart ?? body.deliveryDate;
+    const endDate = last?.plannedEnd ?? body.deliveryDate;
+    const today = new Date();
+    const daysToStart = Math.round((new Date(startDate).getTime() - today.getTime()) / 86400000);
+    const risk = daysToStart < -1 ? "delayed" : daysToStart < 2 ? "at_risk" : "on_track";
+    return {
+      estimatedStartDate: startDate,
+      expectedCompletionDate: endDate,
+      deliveryRisk: risk,
+      deliveryRiskReason: risk === "delayed" ? "Production cannot start in time to meet the delivery date"
+        : risk === "at_risk" ? "Very little buffer before production must start"
+        : undefined,
+      stages: stages.map((s) => ({
+        seqNo: s.seqNo,
+        stageName: s.stageName,
+        estimatedDurationMin: s.estimatedDurationMin,
+        plannedStart: s.plannedStart,
+        plannedEnd: s.plannedEnd,
+      })),
+    };
+  });
+}
+
+export function listCustomers(): Promise<CustomerOption[]> {
+  return api<{ content?: CustomerOption[] }>("/api/v1/customers?size=200")
+    .then((page) => page.content ?? [])
+    .catch(() => []);
+}
+
+export function listItems(): Promise<ItemOption[]> {
+  return api<{ content?: ItemOption[] }>("/api/v1/items?size=200&itemType=finished_goods")
+    .then((page) => page.content ?? [])
+    .catch(() => []);
+}
+
+export function listSites(): Promise<{ id: string; name: string }[]> {
+  return api<{ id: string; name: string }[]>("/api/v1/sites")
+    .catch(() => []);
+}
+
+export function savePlan(jobId: string, stages: Array<{
+  stageId: string;
+  plannedStart: string;
+  plannedEnd: string;
+  operatorId?: string;
+  workCentre?: string;
+  estimatedDurationMin?: number;
+}>) {
+  return post<ProductionJob>(`/api/v1/jobs/${jobId}/plan`, { stages });
+}
+
+export function allocateJobMaterials(jobId: string, partial = true) {
+  return post<{ jobId: string; status: string; lines?: Array<{ itemId: string; requested: number; reserved: number; shortfall: number }> }>(
+    `/api/v1/inventory/reservations/${encodeURIComponent(jobId)}/requirements?partial=${partial}`,
+    {}
+  );
+}
+
+export function releaseJobMaterials(jobId: string) {
+  return del<void>(`/api/v1/inventory/reservations/${encodeURIComponent(jobId)}`);
+}
+
+export type BackendPlanPreviewStage = {
+  stageId: string;
+  stageName: string;
+  seqNo: number;
+  estimatedDurationMin: number;
+  plannedStart: string;
+  plannedEnd: string;
+};
+
+export function previewPlanForJob(jobId: string, deliveryDate: string): Promise<BackendPlanPreviewStage[]> {
+  return api<{ stages: BackendPlanPreviewStage[] }>(
+    `/api/v1/jobs/${jobId}/plan-preview?deliveryDate=${deliveryDate}`
+  ).then((r) => r.stages ?? []);
 }
 
 export function cancelJob(id: string, reason: string) {
@@ -279,8 +409,43 @@ export function startStage(jobId: string, stageId: string, note: string) {
   return post<ProductionJob>(`/api/v1/jobs/${jobId}/stages/${stageId}/start`, { note });
 }
 
-export function completeStage(jobId: string, stageId: string, note: string) {
-  return post<ProductionJob>(`/api/v1/jobs/${jobId}/stages/${stageId}/complete`, { note });
+export type OperatorOption = { id: string; name: string; email: string };
+export function loadOperators(): Promise<OperatorOption[]> {
+  return api<OperatorOption[]>("/api/v1/jobs/operators")
+    .then((res) => (Array.isArray(res) ? res : []))
+    .catch(() => []);
+}
+
+export function progressStage(
+  jobId: string,
+  stageId: string,
+  note: string,
+  completedQty?: number,
+  blockedQty?: number,
+  operatorId?: string,
+) {
+  return post<ProductionJob>(`/api/v1/jobs/${jobId}/stages/${stageId}/progress`, {
+    note: note || null,
+    completedQty: completedQty ?? null,
+    blockedQty: blockedQty ?? null,
+    operatorId: operatorId || null,
+  });
+}
+
+export function completeStage(
+  jobId: string,
+  stageId: string,
+  note: string,
+  completedQty?: number,
+  blockedQty?: number,
+  operatorId?: string,
+) {
+  return post<ProductionJob>(`/api/v1/jobs/${jobId}/stages/${stageId}/complete`, {
+    note: note || null,
+    completedQty: completedQty ?? null,
+    blockedQty: blockedQty ?? null,
+    operatorId: operatorId || null,
+  });
 }
 
 export function skipStage(jobId: string, stageId: string, reason: string) {
@@ -297,6 +462,10 @@ export function issueMaterial(jobId: string, requirementId: string, lotId: strin
 
 export function returnMaterial(jobId: string, sourceIssueId: string, qty: number, note: string) {
   return post<MaterialMovement>(`/api/v1/jobs/${jobId}/materials/returns`, { sourceIssueId, qty, note });
+}
+
+export function overrideMaterialPrice(jobId: string, issueId: string, unitCost: number, reason: string) {
+  return post<MaterialMovement>(`/api/v1/jobs/${jobId}/materials/issues/${issueId}/price-override`, { unitCost, reason });
 }
 
 export function openInspection(jobId: string, stageId: string) {

@@ -8,7 +8,7 @@ import ErrorState from "../components/shared/ErrorState";
 import LoadingState from "../components/shared/LoadingState";
 import RecordSheet from "../components/shared/RecordSheet";
 import RecordTable, { type RecordColumn } from "../components/shared/RecordTable";
-import { allPages, categoryName, mutate, type Category, type Item, type Uom } from "./api";
+import { allPages, mutate, type Item, type Uom } from "./api";
 import StockNav from "./stockNav";
 
 const TYPES = ["RAW_MATERIAL", "SEMI_FINISHED", "FINISHED_GOOD", "CONSUMABLE", "SPARE_PART", "SERVICE"];
@@ -25,6 +25,7 @@ export default function ItemMaster({ embedded = false }: { embedded?: boolean })
   const [error, setError] = useState("");
   const [open, setOpen] = useState(false);
   const [editItem, setEditItem] = useState<Item | null>(null);
+  const [viewItem, setViewItem] = useState<Item | null>(null);
 
   function reload() {
     setLoading(true);
@@ -41,7 +42,7 @@ export default function ItemMaster({ embedded = false }: { embedded?: boolean })
   const rows = useMemo(() => {
     const term = query.trim().toLowerCase();
     return items.filter((item) => {
-      const text = !term || `${item.code} ${item.name} ${item.categoryLabel ?? ""}`.toLowerCase().includes(term);
+      const text = !term || `${item.code} ${item.name} ${item.itemType ?? ""}`.toLowerCase().includes(term);
       const state = (item.status ?? "active").toLowerCase();
       return text && (status === "all" || state === status);
     });
@@ -50,9 +51,9 @@ export default function ItemMaster({ embedded = false }: { embedded?: boolean })
   const columns: RecordColumn<Item>[] = [
     { key: "code", label: "Item code", value: (row) => row.code, render: (row) => <span className="font-mono text-xs font-bold text-[var(--brand)]">{row.code}</span> },
     { key: "name", label: "Item name", value: (row) => row.name, render: (row) => row.name },
-    { key: "category", label: "Category", value: (row) => row.categoryLabel ?? "", render: (row) => row.categoryLabel || "—" },
     { key: "type", label: "Type", value: (row) => row.itemType ?? "", render: (row) => (row.itemType ?? "").replaceAll("_", " ").toLowerCase() },
     { key: "uom", label: "UOM", value: (row) => row.uomSymbol ?? "", render: (row) => row.uomSymbol || "—" },
+    { key: "cost", label: "Std cost", value: (row) => row.standardCost != null ? `₹${row.standardCost}` : "—", render: (row) => row.standardCost != null ? `₹${Number(row.standardCost).toFixed(2)}` : "—" },
     { key: "status", label: "Status", value: (row) => row.status ?? "", render: (row) => row.status === "inactive" ? "Inactive" : "Active" },
     { key: "edit", label: "", value: () => "", render: (row) => canWrite ? <button type="button" className="text-xs font-semibold text-[var(--brand)]" onClick={(event) => { event.stopPropagation(); setEditItem(row); }}>Edit</button> : null },
   ];
@@ -76,12 +77,77 @@ export default function ItemMaster({ embedded = false }: { embedded?: boolean })
       </header>
       <div className="min-h-0 flex-1 overflow-auto">
         {loading ? <LoadingState label="Loading item master" /> : error ? <ErrorState body={error} /> : (
-          <RecordTable rows={rows} columns={columns} empty="No item master records match this filter." onRow={(row) => navigate(`/inventory/item/${row.id}`)} />
+          <RecordTable
+            rows={rows}
+            columns={columns}
+            empty="No item master records match this filter."
+            onRow={(row) => {
+              if (embedded) {
+                setViewItem(row);
+              } else {
+                navigate(`/inventory/item/${row.id}`);
+              }
+            }}
+          />
         )}
       </div>
-      <p className="px-5 py-3 text-xs text-[var(--text-3)]">Item identity, code, category, UOM and lifecycle only. Use Stock on Hand for site, lot and quantity. Use Site Need for demand and shortages.</p>
+      <p className="px-5 py-3 text-xs text-[var(--text-3)]">Item identity, code, type, UOM and lifecycle only. Use Stock on Hand for site, lot and quantity. Use Site Need for demand and shortages.</p>
       {open && <ItemForm onClose={() => setOpen(false)} onSaved={() => { setOpen(false); reload(); }} />}
       {editItem && <ItemForm item={editItem} onClose={() => setEditItem(null)} onSaved={() => { setEditItem(null); reload(); }} />}
+      {viewItem && (
+        <RecordSheet
+          title={`${viewItem.code} · ${viewItem.name}`}
+          subtitle="Master Data Configuration"
+          onClose={() => setViewItem(null)}
+          primary={canWrite ? { label: "Edit item", onClick: () => { const target = viewItem; setViewItem(null); setEditItem(target); } } : undefined}
+          secondary={{ label: "Close", onClick: () => setViewItem(null) }}
+          width="md"
+        >
+          <div className="space-y-4 text-sm">
+            <div className="rounded-xl border p-4 space-y-3" style={{ borderColor: "var(--border)", background: "var(--surface-2)" }}>
+              <div className="grid grid-cols-2 gap-3">
+                <div><span className="text-xs font-medium" style={{ color: "var(--text-3)" }}>Item Code</span><div className="font-mono font-bold text-[var(--brand)]">{viewItem.code}</div></div>
+                <div><span className="text-xs font-medium" style={{ color: "var(--text-3)" }}>Item Name</span><div className="font-semibold">{viewItem.name}</div></div>
+                <div><span className="text-xs font-medium" style={{ color: "var(--text-3)" }}>Type</span><div className="capitalize">{(viewItem.itemType ?? "").replaceAll("_", " ").toLowerCase()}</div></div>
+                <div><span className="text-xs font-medium" style={{ color: "var(--text-3)" }}>Unit of Measure</span><div>{viewItem.uomSymbol || "—"}</div></div>
+                <div><span className="text-xs font-medium" style={{ color: "var(--text-3)" }}>Standard Cost / Price</span><div className="font-semibold">{viewItem.standardCost != null ? `₹${Number(viewItem.standardCost).toFixed(2)}` : "—"}</div></div>
+                <div><span className="text-xs font-medium" style={{ color: "var(--text-3)" }}>Reorder Level</span><div>{viewItem.reorderPoint != null ? String(viewItem.reorderPoint) : "—"}</div></div>
+                <div><span className="text-xs font-medium" style={{ color: "var(--text-3)" }}>Status</span><div className="capitalize">{viewItem.status || "active"}</div></div>
+              </div>
+            </div>
+
+            {viewItem.itemType === "FINISHED_GOOD" && (
+              <fieldset className="rounded-xl border p-4 text-sm space-y-3" style={{ borderColor: "var(--border)" }}>
+                <legend className="px-1 text-sm font-semibold">Product kind &amp; specifications</legend>
+                <div>
+                  <span className="text-xs font-medium" style={{ color: "var(--text-3)" }}>Product Kind</span>
+                  <div className="font-semibold">{viewItem.productKind || "Not specified"}</div>
+                </div>
+                {(viewItem.specifications ?? []).length > 0 ? (
+                  <table className="w-full text-xs text-left">
+                    <thead><tr className="border-b" style={{ borderColor: "var(--border)", color: "var(--text-3)" }}><th>Key</th><th>Label</th><th>Min</th><th>Default</th><th>Max</th></tr></thead>
+                    <tbody>
+                      {(viewItem.specifications ?? []).map((s) => (
+                        <tr key={s.key} className="border-b" style={{ borderColor: "var(--border)" }}>
+                          <td className="py-1 font-mono">{s.key}</td>
+                          <td>{s.label}</td>
+                          <td>{s.minValue != null ? String(s.minValue) : "—"}</td>
+                          <td>{s.defaultValue != null ? String(s.defaultValue) : "—"}</td>
+                          <td>{s.maxValue != null ? String(s.maxValue) : "—"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                ) : (
+                  <p className="text-xs" style={{ color: "var(--text-3)" }}>No product specifications configured.</p>
+                )}
+              </fieldset>
+            )}
+
+            <p className="text-xs" style={{ color: "var(--text-3)" }}>This view displays purely the configured master attributes for this item. Operational stock levels, lot allocations, and BOM where-used linkages are tracked in operational modules.</p>
+          </div>
+        </RecordSheet>
+      )}
     </div>
   );
 }
@@ -90,13 +156,12 @@ export function ItemForm({ item, onClose, onSaved, embedded = false }: { item?: 
   const { user } = useCustomer();
   const canCreateReference = roleAllowed(user?.roles, ["OWNER", "OPS_MANAGER"]);
   const [uoms, setUoms] = useState<Uom[]>([]);
-  const [categories, setCategories] = useState<Category[]>([]);
   const [code, setCode] = useState(item?.code ?? "");
   const [name, setName] = useState(item?.name ?? "");
   const [itemType, setItemType] = useState(item?.itemType ?? "RAW_MATERIAL");
-  const [categoryId, setCategoryId] = useState(item?.categoryId ?? "");
   const [uomId, setUomId] = useState(item?.uomId ?? "");
   const [reorderPoint, setReorderPoint] = useState(item?.reorderPoint == null ? "" : String(item.reorderPoint));
+  const [standardCost, setStandardCost] = useState(item?.standardCost == null ? "" : String(item.standardCost));
   const [productKind, setProductKind] = useState((item as { productKind?: string })?.productKind ?? "");
   const [specifications, setSpecifications] = useState<SpecificationDraft[]>(
     (item?.specifications ?? []).map((s) => ({
@@ -109,22 +174,16 @@ export function ItemForm({ item, onClose, onSaved, embedded = false }: { item?: 
     }))
   );
   const [error, setError] = useState("");
-  const [categoryError, setCategoryError] = useState("");
   const [uomError, setUomError] = useState("");
   const [saving, setSaving] = useState(false);
 
   function loadReferences() {
-    setCategoryError("");
     setUomError("");
     api<Uom[] | { content?: Uom[] }>("/api/v1/uoms").then((units) => {
       const list = Array.isArray(units) ? units : units.content ?? [];
       setUoms(list);
       setUomId((current) => current || list[0]?.id || "");
     }).catch((reason: unknown) => setUomError(reason instanceof Error ? reason.message : "Units of measure could not be loaded."));
-    api<Category[] | { content?: Category[] }>("/api/v1/item-categories").then((cats) => {
-      const list = Array.isArray(cats) ? cats : cats.content ?? [];
-      setCategories(list.filter((category) => category.id));
-    }).catch((reason: unknown) => setCategoryError(reason instanceof Error ? reason.message : "Categories could not be loaded."));
   }
 
   useEffect(() => { loadReferences(); }, []);
@@ -136,14 +195,12 @@ export function ItemForm({ item, onClose, onSaved, embedded = false }: { item?: 
     }
     setSaving(true);
     setError("");
-    const category = categories.find((row) => row.id === categoryId);
     try {
       const specs = specifications.filter((s) => s.key.trim() && s.label.trim());
       const saved = item
         ? await mutate<Item>(`/api/v1/items/${item.id}`, "PATCH", {
           name: name.trim(),
-          categoryId: categoryId || null,
-          categoryLabel: category ? categoryName(category) : undefined,
+          standardCost: standardCost === "" ? null : Number(standardCost),
           reorderPoint: reorderPoint === "" ? null : Number(reorderPoint),
           ...(item.itemType === "FINISHED_GOOD" ? { productKind: productKind || null, specifications: specs.map((s) => ({ key: s.key.trim(), label: s.label.trim(), uomId: s.uomId || null, minValue: s.minValue === "" ? null : Number(s.minValue), maxValue: s.maxValue === "" ? null : Number(s.maxValue), defaultValue: s.defaultValue === "" ? null : Number(s.defaultValue) })) } : {}),
         })
@@ -151,9 +208,8 @@ export function ItemForm({ item, onClose, onSaved, embedded = false }: { item?: 
           code: code.trim(),
           name: name.trim(),
           itemType,
-          categoryId: categoryId || null,
-          categoryLabel: category ? categoryName(category) : undefined,
           uomId,
+          standardCost: standardCost === "" ? null : Number(standardCost),
           reorderPoint: reorderPoint === "" ? null : Number(reorderPoint),
           ...(itemType === "FINISHED_GOOD" ? { productKind: productKind || null, specifications: specs.map((s) => ({ key: s.key.trim(), label: s.label.trim(), uomId: s.uomId || null, minValue: s.minValue === "" ? null : Number(s.minValue), maxValue: s.maxValue === "" ? null : Number(s.maxValue), defaultValue: s.defaultValue === "" ? null : Number(s.defaultValue) })) } : {}),
         });
@@ -176,22 +232,16 @@ export function ItemForm({ item, onClose, onSaved, embedded = false }: { item?: 
           Item name *
           <input aria-label="Item name *" className="eoss-input w-full font-normal" placeholder="e.g. Hot Rolled Steel Sheet" value={name} onChange={(event) => setName(event.target.value)} />
         </label>
-        {!item && (
-          <label className="flex flex-col gap-1 text-sm font-medium text-[var(--text)]">
-            Type
+        <label className="flex flex-col gap-1 text-sm font-medium text-[var(--text)]">
+          Type
+          {item ? (
+            <input className="eoss-input w-full font-normal capitalize" disabled value={(item.itemType ?? "").replaceAll("_", " ").toLowerCase()} />
+          ) : (
             <select aria-label="Item type" className="eoss-input w-full font-normal" value={itemType} onChange={(event) => setItemType(event.target.value)}>
               {TYPES.map((type) => <option key={type} value={type}>{type.replaceAll("_", " ")}</option>)}
             </select>
-          </label>
-        )}
-        <div className="flex flex-col gap-1 text-sm font-medium text-[var(--text)]">
-          Category
-          <CreatableSelect label="category" ariaLabel="Category" value={categoryId} onChange={setCategoryId} placeholder="No category" error={categoryError} onRetry={loadReferences} creatable={canCreateReference} options={categories.map((category) => ({ id: category.id, label: categoryName(category) || "Unnamed category" }))} fields={[{ name: "code", label: "Code", required: true }, { name: "name", label: "Name", required: true }]} unique={(values) => categories.some((category) => (category.code ?? "").toLowerCase() === values.code.toLowerCase()) ? "This value already exists." : null} onCreate={async (values) => {
-            const created = await mutate<Category>("/api/v1/item-categories", "POST", { code: values.code, name: values.name });
-            setCategories((current) => [...current.filter((category) => category.id !== created.id), { ...created, label: created.name }]);
-            return { id: created.id, label: created.name || values.name };
-          }} />
-        </div>
+          )}
+        </label>
         <div className="flex flex-col gap-1 text-sm font-medium text-[var(--text)]">
           Unit of measure *
           <CreatableSelect label="unit of measure" ariaLabel="Unit of measure" value={uomId} onChange={setUomId} disabled={!!item} error={uomError} onRetry={loadReferences} creatable={canCreateReference && !item} options={uoms.map((uom) => ({ id: uom.id, label: `${uom.symbol} · ${uom.name}` }))} fields={[{ name: "name", label: "Name", required: true }, { name: "symbol", label: "Symbol", required: true }, { name: "uomType", label: "Type (quantity / weight / volume / length / area / time)", options: [{ id: "quantity", label: "Quantity" }, { id: "weight", label: "Weight" }, { id: "volume", label: "Volume" }, { id: "length", label: "Length" }, { id: "area", label: "Area" }, { id: "time", label: "Time" }, { id: "energy", label: "Energy" }, { id: "other", label: "Other" }], required: true }]} unique={(values) => uoms.some((uom) => uom.symbol.toLowerCase() === values.symbol.toLowerCase()) ? "This value already exists." : null} onCreate={async (values) => {
@@ -200,6 +250,10 @@ export function ItemForm({ item, onClose, onSaved, embedded = false }: { item?: 
             return { id: created.id, label: `${created.symbol} · ${created.name}` };
           }} />
         </div>
+        <label className="flex flex-col gap-1 text-sm font-medium text-[var(--text)]">
+          Standard cost / price (₹)
+          <input className="eoss-input w-full font-normal" type="number" min="0" step="0.01" placeholder="e.g. 150.00" value={standardCost} onChange={(event) => setStandardCost(event.target.value)} />
+        </label>
         <label className="flex flex-col gap-1 text-sm font-medium text-[var(--text)]">
           Reorder level
           <input className="eoss-input w-full font-normal" type="number" min="0" placeholder="e.g. 100" value={reorderPoint} onChange={(event) => setReorderPoint(event.target.value)} />

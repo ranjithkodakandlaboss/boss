@@ -8,11 +8,27 @@ import RecordSheet from "../components/shared/RecordSheet";
 import SortableHeader from "../components/shared/SortableHeader";
 import StatusChip from "../components/shared/StatusChip";
 import {
-  cancelJob, createJob, createRoutingTemplate, displayDate, eligibleLines, featureFlags, listJobs, readinessLabel, routingTemplates,
-  type EligibleLine, type ProductionJob, type RoutingTemplate,
+  cancelJob, createJob, createRoutingTemplate, displayDate, eligibleLines, featureFlags, listJobs, listCustomers, listItems, listSites, previewPlan, readinessLabel, routingTemplates,
+  type CustomerOption, type EligibleLine, type ItemOption, type PlanPreview, type ProductionJob, type RoutingTemplate,
 } from "./api";
 
-type SortKey = "number" | "customer" | "stage" | "status" | "plannedEnd" | "projected" | "material";
+type SortKey = "number" | "customer" | "stage" | "status" | "plannedEnd" | "projected" | "material" | "health";
+
+function healthColor(job: ProductionJob): "green" | "amber" | "red" {
+  if (job.status === "cancelled") return "green";
+  if (job.status === "completed") return "green";
+  if (job.status === "on_hold" || job.risk === "blocked") return "red";
+  if (job.risk === "delayed" || (job.daysRemaining != null && job.daysRemaining < 0)) return "red";
+  if (job.risk === "at_risk" || job.risk === "awaiting_material") return "amber";
+  return "green";
+}
+
+function HealthDot({ job }: { job: ProductionJob }) {
+  const color = healthColor(job);
+  const style = { background: color === "green" ? "var(--success)" : color === "amber" ? "var(--warning)" : "var(--error)" };
+  const label = color === "green" ? "On Track" : color === "amber" ? "Needs Attention" : "Delayed / Blocked";
+  return <span className="inline-flex items-center gap-1.5 text-xs"><span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={style} />{label}</span>;
+}
 
 const ACTIVE = new Set(["planned", "released", "in_progress"]);
 const RISK_CHIPS = [
@@ -106,7 +122,7 @@ export default function JobsPage() {
     const value = (job: ProductionJob) => ({
       number: job.jobNumber, customer: job.customerName ?? "", stage: job.currentStage ?? "",
       status: job.status, plannedEnd: job.plannedEnd ?? "", projected: job.projectedCompletion ?? "",
-      material: job.materialReadiness ?? "",
+      material: job.materialReadiness ?? "", health: healthColor(job),
     })[sortKey];
     const compared = String(value(left)).localeCompare(String(value(right)));
     return sortDir === "asc" ? compared : -compared;
@@ -188,7 +204,7 @@ export default function JobsPage() {
             <table className="w-full text-sm border-separate border-spacing-0" style={{ minWidth: 900 }}>
               <thead style={{ position: "sticky", top: 0, zIndex: 5 }}>
                 <tr style={{ background: "var(--surface-2)" }}>
-                  {([["Job #", "number"], ["Material Readiness", "material"], ["Customer", "customer"], ["Current Stage", "stage"], ["Job Status", "status"], ["Target Completion", "plannedEnd"], ["Projected", "projected"]] as [string, SortKey][]).map(([label, key]) => (
+                  {([["Job #", "number"], ["Health", "health"], ["Material Readiness", "material"], ["Customer", "customer"], ["Current Stage", "stage"], ["Job Status", "status"], ["Target Completion", "plannedEnd"], ["Projected", "projected"]] as [string, SortKey][]).map(([label, key]) => (
                     <SortableHeader key={label} label={label} active={sortKey === key} direction={sortDir} onSort={() => { if (sortKey === key) setSortDir((dir) => dir === "asc" ? "desc" : "asc"); else { setSortKey(key); setSortDir("asc"); } }} className="text-left px-4 py-2.5 text-xs font-semibold" style={{ color: "var(--text-3)", borderBottom: "1px solid var(--border)" }} />
                   ))}
                   <th />
@@ -198,6 +214,7 @@ export default function JobsPage() {
                 {sorted.map((job) => (
                   <tr key={job.id} className="cursor-pointer" style={{ background: "var(--surface)" }} onClick={() => open(`/jobs/${job.id}`)}>
                     <td className="px-4 py-3 font-mono text-xs font-bold" style={{ color: "var(--brand)" }}>{job.jobNumber}{isLate(job) && <span className="ml-1.5 text-[10px] font-bold px-1.5 py-0.5 rounded-full" style={{ color: "var(--error)" }}>Late</span>}</td>
+                    <td className="px-4 py-3"><HealthDot job={job} /></td>
                     <td className="px-4 py-3"><StatusChip status={job.materialReadiness ?? "pending"} label={readinessLabel(job.materialReadiness)} size="sm" /></td>
                     <td className="px-4 py-3">{job.customerName}<div className="text-[11px]" style={{ color: "var(--text-3)" }}>{job.siteName}</div></td>
                     <td className="px-4 py-3 text-xs">{job.currentStage}</td>
@@ -222,7 +239,7 @@ export default function JobsPage() {
         </>
       )}
       {cancelTarget && <CancelJob job={cancelTarget} onClose={() => setCancelTarget(null)} onDone={() => { setCancelTarget(null); void load(); }} />}
-      {showNew && <NewJob onClose={() => setShowNew(false)} onCreated={(job) => navigate(`/jobs/${job.id}`)} />}
+      {showNew && <NewJob onClose={() => setShowNew(false)} onCreated={(job) => navigate(`/jobs/${job.id}?tab=Plan`)} />}
     </div>
   );
 }
@@ -254,17 +271,35 @@ function CancelJob({ job, onClose, onDone }: { job: ProductionJob; onClose: () =
 function NewJob({ onClose, onCreated }: { onClose: () => void; onCreated: (job: ProductionJob) => void }) {
   const { user } = useCustomer();
   const canCreateTemplate = roleAllowed(user?.roles, ["OWNER", "OPS_MANAGER", "PRODUCTION_SUPERVISOR"]);
+  const [mode, setMode] = useState<"po" | "standalone">("po");
+  const [step, setStep] = useState<"form" | "plan">("form");
+  const [plan, setPlan] = useState<PlanPreview | null>(null);
+
+  // PO mode state
   const [lines, setLines] = useState<EligibleLine[]>([]);
-  const [templates, setTemplates] = useState<RoutingTemplate[]>([]);
+  const [linesLoading, setLinesLoading] = useState(true);
   const [lineId, setLineId] = useState("");
+
+  // Standalone mode state
+  const [customers, setCustomers] = useState<CustomerOption[]>([]);
+  const [items, setItems] = useState<ItemOption[]>([]);
+  const [sites, setSites] = useState<{ id: string; name: string }[]>([]);
+  const [customerId, setCustomerId] = useState("");
+  const [itemId, setItemId] = useState("");
+  const [siteId, setSiteId] = useState("");
+
+  // Shared state
+  const [templates, setTemplates] = useState<RoutingTemplate[]>([]);
   const [templateId, setTemplateId] = useState("");
   const [plannedEnd, setPlannedEnd] = useState("");
   const [priority, setPriority] = useState("normal");
   const [quantity, setQuantity] = useState("");
-  const [linesLoading, setLinesLoading] = useState(true);
   const [error, setError] = useState("");
   const [templateError, setTemplateError] = useState("");
+  const [planLoading, setPlanLoading] = useState(false);
+
   const line = lines.find((row) => row.cpoLineId === lineId);
+  const selectedItem = items.find((i) => i.id === itemId);
 
   function loadLines() {
     setLinesLoading(true);
@@ -273,66 +308,189 @@ function NewJob({ onClose, onCreated }: { onClose: () => void; onCreated: (job: 
       .finally(() => setLinesLoading(false));
   }
 
-  function loadTemplates(itemId: string) {
+  function loadTemplates(forItemId?: string) {
     setTemplateError("");
-    routingTemplates(itemId).then((rows) => { setTemplates(rows); setTemplateId((current) => current || rows[0]?.id || ""); }).catch((cause) => setTemplateError(cause instanceof ApiError ? cause.message : "Routing templates could not be loaded"));
+    const id = forItemId ?? "";
+    routingTemplates(id).then((rows) => { setTemplates(rows); setTemplateId((current) => current || rows[0]?.id || ""); }).catch((cause) => setTemplateError(cause instanceof ApiError ? cause.message : "Routing templates could not be loaded"));
   }
 
-  useEffect(() => { loadLines(); }, []);
   useEffect(() => {
-    if (!line) { setTemplates([]); setTemplateId(""); return; }
-    setQuantity(String(line.remainingQty ?? line.qty ?? ""));
-    setTemplateId("");
-    loadTemplates(line.itemId);
-  }, [line]);
+    loadLines();
+    listCustomers().then(setCustomers).catch(() => {});
+    listItems().then(setItems).catch(() => {});
+    listSites().then(setSites).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (mode === "po") {
+      if (!line) { setTemplates([]); setTemplateId(""); return; }
+      setQuantity(String(line.remainingQty ?? line.qty ?? ""));
+      setTemplateId("");
+      loadTemplates(line.itemId);
+    } else {
+      if (!itemId) { setTemplates([]); setTemplateId(""); return; }
+      setQuantity((current) => current || "1");
+      setTemplateId("");
+      loadTemplates(itemId);
+    }
+  }, [line, mode, itemId]);
+
+  async function previewPlanStep() {
+    const qty = Number(quantity);
+    if (!templateId) {
+      setError("Please select a production workflow (routing template).");
+      return;
+    }
+    if (!(qty > 0)) {
+      setError("Please enter a valid production quantity (greater than 0).");
+      return;
+    }
+    if (!plannedEnd) {
+      setError("Please select a planned delivery date.");
+      return;
+    }
+    setError("");
+    setPlanLoading(true);
+    try {
+      const result = await previewPlan({ routingTemplateId: templateId, quantity: qty, deliveryDate: plannedEnd });
+      setPlan(result);
+      setStep("plan");
+    } catch {
+      setError("Could not compute the production plan. Check the workflow and delivery date.");
+    } finally {
+      setPlanLoading(false);
+    }
+  }
 
   async function save() {
     const jobQty = Number(quantity);
-    const remaining = Number(line?.remainingQty ?? line?.qty ?? 0);
-    if (!line || !templateId || !plannedEnd || !(jobQty > 0)) {
-      setError("Customer PO line, job quantity, production workflow and planned end are required.");
-      return;
-    }
-    if (jobQty > remaining) {
-      setError(`Job quantity cannot exceed the remaining Customer PO quantity of ${remaining}.`);
-      return;
-    }
     try {
-      const job = await createJob({ cpoId: line.cpoId, cpoLineId: line.cpoLineId, routingTemplateId: templateId, scheduledEnd: plannedEnd, priority, quantity: jobQty });
-      onCreated(job);
+      if (mode === "po") {
+        const remaining = Number(line?.remainingQty ?? line?.qty ?? 0);
+        if (!line || !templateId || !plannedEnd || !(jobQty > 0)) { setError("Customer PO line, job quantity, production workflow and planned end are required."); return; }
+        if (jobQty > remaining) { setError(`Job quantity cannot exceed the remaining Customer PO quantity of ${remaining}.`); return; }
+        const job = await createJob({ cpoId: line.cpoId, cpoLineId: line.cpoLineId, routingTemplateId: templateId, scheduledEnd: plannedEnd, priority, quantity: jobQty });
+        onCreated(job);
+      } else {
+        if (!customerId || !itemId || !siteId || !templateId || !plannedEnd || !(jobQty > 0)) { setError("Customer, item, site, quantity, production workflow and planned delivery date are required."); return; }
+        const job = await createJob({ customerId, itemId, siteId, routingTemplateId: templateId, scheduledEnd: plannedEnd, priority, quantity: jobQty });
+        onCreated(job);
+      }
     } catch (cause) {
       setError(cause instanceof ApiError ? cause.message : "The job was not created");
     }
   }
 
-  return (
-    <RecordSheet title="New job" subtitle="Opens from an eligible Customer PO" onClose={onClose} secondary={{ label: "Cancel", onClick: onClose }} primary={{ label: "Create job", onClick: () => void save(), disabled: !line || !templateId }}>
-      <div className="space-y-3">
-        <label className="block text-xs font-medium">Customer PO *<select className="eoss-input w-full mt-1" aria-label="Customer PO" value={lineId} onChange={(event) => setLineId(event.target.value)} disabled={linesLoading}><option value="">{linesLoading ? "Loading eligible order lines…" : "Select an eligible order line…"}</option>{lines.map((row) => <option key={row.cpoLineId} value={row.cpoLineId}>{row.cpoNumber} — Line {row.lineNo} — {row.customerName} — {row.itemCode ? `${row.itemCode} ` : ""}{row.itemName} — {row.remainingQty ?? row.qty} remaining</option>)}</select></label>
-        {!linesLoading && !error && lines.length === 0 && <p className="text-xs" style={{ color: "var(--text-3)" }}>No eligible order lines. Only active finished goods with remaining quantity and an active production workflow can be selected.</p>}
-        {error && <p role="alert" className="text-xs" style={{ color: "var(--error)" }}>{error} <button type="button" className="font-semibold underline" onClick={loadLines}>Retry</button></p>}
-        {line && (
-          <div className="rounded-xl border p-3 text-xs space-y-1" style={{ background: "var(--surface-2)", borderColor: "var(--border)" }}>
-            <div>Customer: <strong>{line.customerName}</strong></div>
-            <div>Site: <strong>{line.siteName}</strong></div>
-            <div>Item: <strong>{line.itemName}</strong> · Ordered <strong>{line.qty}</strong> · Remaining <strong>{line.remainingQty ?? line.qty}</strong></div>
-            <div>Selling price: <strong>{line.sellingPrice ?? line.unitPrice}</strong></div>
-            <p style={{ color: "var(--text-3)" }}>Selling price stays on the Customer PO. Production costing does not change it.</p>
+  const riskColor = plan?.deliveryRisk === "delayed" ? "var(--error)" : plan?.deliveryRisk === "at_risk" ? "var(--warning)" : "var(--success)";
+  const riskLabel = plan?.deliveryRisk === "delayed" ? "Delayed — cannot meet delivery date" : plan?.deliveryRisk === "at_risk" ? "At Risk — very tight timeline" : "On Track";
+
+  if (step === "plan" && plan) {
+    return (
+      <RecordSheet title="Production Plan Preview" subtitle="Review before creating the job" onClose={onClose} secondary={{ label: "Back", onClick: () => setStep("form") }} primary={{ label: "Confirm and Create Job", onClick: () => void save() }}>
+        <div className="space-y-4">
+          <div className="rounded-xl border p-4 space-y-2 text-xs" style={{ background: "var(--surface-2)", borderColor: "var(--border)" }}>
+            <div className="flex items-center gap-2">
+              <span className="w-2.5 h-2.5 rounded-full" style={{ background: riskColor }} />
+              <strong style={{ color: riskColor }}>{riskLabel}</strong>
+            </div>
+            {plan.deliveryRiskReason && <p style={{ color: "var(--text-2)" }}>{plan.deliveryRiskReason}</p>}
+            <div className="grid grid-cols-2 gap-2 mt-2">
+              <div><span style={{ color: "var(--text-3)" }}>Estimated start</span><div className="font-semibold">{plan.estimatedStartDate}</div></div>
+              <div><span style={{ color: "var(--text-3)" }}>Expected completion</span><div className="font-semibold">{plan.expectedCompletionDate}</div></div>
+            </div>
           </div>
+          <div>
+            <div className="text-xs font-semibold mb-2" style={{ color: "var(--text-2)" }}>Stage Schedule</div>
+            <table className="w-full text-xs">
+              <thead><tr style={{ color: "var(--text-3)" }}><th className="text-left py-1">Stage</th><th className="text-left">Work Centre</th><th className="text-left">Planned Start</th><th className="text-left">Planned End</th><th className="text-right">Est. hrs</th></tr></thead>
+              <tbody>
+                {plan.stages.map((stage) => (
+                  <tr key={stage.seqNo} className="border-t" style={{ borderColor: "var(--border)" }}>
+                    <td className="py-1.5 font-medium">{stage.seqNo}. {stage.stageName}</td>
+                    <td style={{ color: "var(--text-3)" }}>{stage.workCentre || "—"}</td>
+                    <td>{stage.plannedStart}</td>
+                    <td>{stage.plannedEnd}</td>
+                    <td className="text-right">{(stage.estimatedDurationMin / 60).toFixed(1)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="text-[11px]" style={{ color: "var(--text-3)" }}>Stage durations are based on the manufacturing route. Planned dates will be saved on the job and can be adjusted from the job workspace.</p>
+          {error && <p role="alert" className="text-xs" style={{ color: "var(--error)" }}>{error}</p>}
+        </div>
+      </RecordSheet>
+    );
+  }
+
+  return (
+    <RecordSheet title="New Job" onClose={onClose} secondary={{ label: "Cancel", onClick: onClose }} primary={{ label: "Preview Plan →", onClick: () => void previewPlanStep(), disabled: planLoading }}>
+      <div className="space-y-4">
+        {/* Mode selector */}
+        <div>
+          <div className="text-xs font-semibold mb-2">Job type</div>
+          <div className="grid grid-cols-2 gap-2">
+            {(["po", "standalone"] as const).map((m) => (
+              <button key={m} type="button" onClick={() => { setMode(m); setError(""); setLineId(""); setCustomerId(""); setItemId(""); setSiteId(""); setTemplateId(""); setQuantity(""); }} className="py-2 rounded-lg border text-xs font-medium" style={{ background: mode === m ? "var(--brand-fill)" : "transparent", color: mode === m ? "#fff" : "var(--text-2)", borderColor: mode === m ? "var(--brand)" : "var(--border)" }}>
+                {m === "po" ? "From Customer PO" : "Standalone Job"}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {mode === "po" ? (
+          <>
+            <label className="block text-xs font-medium">Customer PO *<select className="eoss-input w-full mt-1" aria-label="Customer PO" value={lineId} onChange={(event) => setLineId(event.target.value)} disabled={linesLoading}><option value="">{linesLoading ? "Loading eligible order lines…" : "Select an eligible order line…"}</option>{lines.map((row) => <option key={row.cpoLineId} value={row.cpoLineId}>{row.cpoNumber} — Line {row.lineNo} — {row.customerName} — {row.itemCode ? `${row.itemCode} ` : ""}{row.itemName} — {row.remainingQty ?? row.qty} remaining</option>)}</select></label>
+            {!linesLoading && !error && lines.length === 0 && <p className="text-xs" style={{ color: "var(--text-3)" }}>No eligible order lines found.</p>}
+            {line && (
+              <div className="rounded-xl border p-3 text-xs space-y-1" style={{ background: "var(--surface-2)", borderColor: "var(--border)" }}>
+                <div>Customer: <strong>{line.customerName}</strong></div>
+                <div>Site: <strong>{line.siteName}</strong></div>
+                <div>Item: <strong>{line.itemName}</strong> · Ordered <strong>{line.qty}</strong> · Remaining <strong>{line.remainingQty ?? line.qty}</strong></div>
+                <div>Selling price: <strong>{line.sellingPrice ?? line.unitPrice}</strong></div>
+                <p style={{ color: "var(--text-3)" }}>Selling price stays on the Customer PO. Production costing does not change it.</p>
+              </div>
+            )}
+          </>
+        ) : (
+          <>
+            <label className="block text-xs font-medium">Customer *
+              <select className="eoss-input w-full mt-1" aria-label="Customer" value={customerId} onChange={(e) => setCustomerId(e.target.value)}>
+                <option value="">Select customer…</option>
+                {customers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            </label>
+            <label className="block text-xs font-medium">Product *
+              <select className="eoss-input w-full mt-1" aria-label="Product" value={itemId} onChange={(e) => setItemId(e.target.value)}>
+                <option value="">Select product…</option>
+                {items.map((i) => <option key={i.id} value={i.id}>{i.code ? `${i.code} — ` : ""}{i.name}</option>)}
+              </select>
+            </label>
+            {selectedItem && <p className="text-[11px]" style={{ color: "var(--text-3)" }}>UOM: {selectedItem.uomSymbol || "—"}</p>}
+            <label className="block text-xs font-medium">Manufacturing Site *
+              <select className="eoss-input w-full mt-1" aria-label="Manufacturing Site" value={siteId} onChange={(e) => setSiteId(e.target.value)}>
+                <option value="">Select site…</option>
+                {sites.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+            </label>
+          </>
         )}
+
         <div className="block text-xs font-medium">Production workflow *
-          <CreatableSelect label="workflow" ariaLabel="Production workflow" value={templateId} onChange={setTemplateId} error={templateError} onRetry={() => line && loadTemplates(line.itemId)} creatable={canCreateTemplate && !!line} options={templates.map((template) => ({ id: template.id, label: `${template.name} · ${template.version || "unversioned"} · ${template.stageCount} stages` }))} fields={[{ name: "name", label: "Workflow name", required: true }, { name: "stageName", label: "Stages in order, separated by commas", required: true }]} unique={(values) => templates.some((template) => template.name.toLowerCase() === values.name.toLowerCase()) ? "This value already exists." : null} onCreate={async (values) => {
+          <CreatableSelect label="workflow" ariaLabel="Production workflow" value={templateId} onChange={setTemplateId} error={templateError} onRetry={() => loadTemplates(mode === "po" ? line?.itemId : itemId)} creatable={canCreateTemplate && (mode === "po" ? !!line : !!itemId)} options={templates.map((template) => ({ id: template.id, label: `${template.name} · ${template.version || "unversioned"} · ${template.stageCount} stages` }))} fields={[{ name: "name", label: "Workflow name", required: true }, { name: "stageName", label: "Stages in order, separated by commas", required: true }]} unique={(values) => templates.some((template) => template.name.toLowerCase() === values.name.toLowerCase()) ? "This value already exists." : null} onCreate={async (values) => {
             const created = await createRoutingTemplate(values.name, values.stageName);
             setTemplates((current) => [...current.filter((template) => template.id !== created.id), created]);
             return { id: created.id, label: `${created.name} · ${created.version || "unversioned"} · ${created.stageCount} stages` };
           }} />
           <p className="text-[11px] mt-1" style={{ color: "var(--text-3)" }}>The selected stage sequence is copied to the job and will not change if the template changes later.</p>
         </div>
+
         <label className="block text-xs font-medium">Job quantity *<input className="eoss-input w-full mt-1 text-left" aria-label="Job quantity" inputMode="decimal" value={quantity} onChange={(event) => setQuantity(event.target.value)} /></label>
         <div className="grid grid-cols-2 gap-3">
-          <label className="text-xs font-medium">Planned End *<input type="date" className="eoss-input w-full mt-1" aria-label="Planned End" value={plannedEnd} onChange={(event) => setPlannedEnd(event.target.value)} /></label>
+          <label className="text-xs font-medium">Delivery Date *<input type="date" className="eoss-input w-full mt-1" aria-label="Delivery Date" value={plannedEnd} onChange={(event) => setPlannedEnd(event.target.value)} /></label>
           <label className="text-xs font-medium">Priority<select className="eoss-input w-full mt-1" aria-label="Priority" value={priority} onChange={(event) => setPriority(event.target.value)}>{["normal", "high", "urgent", "low"].map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
         </div>
+        {error && <p role="alert" className="text-xs" style={{ color: "var(--error)" }}>{error}</p>}
       </div>
     </RecordSheet>
   );

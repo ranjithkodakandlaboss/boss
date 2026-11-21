@@ -18,10 +18,13 @@ public class BOMLineDto {
     private UUID componentItemId;
     private String componentItemCode;
     private String componentItemName;
+    private String componentItemType;
     private BigDecimal qty;
     private UUID uomId;
     private String uomSymbol;
     private BigDecimal scrapFactor;
     private Integer level;
     private String quantityFormula;
+    private BigDecimal unitCost;
+    private BigDecimal totalCost;
 }

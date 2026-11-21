@@ -67,12 +67,13 @@ public class JobStageService {
         StageStatusMachine.assertTransition(stage.status(), StageStatusMachine.IN_PROGRESS);
         requirePriorClosed(context.tenantId(), jobId, stage.seq());
         requireMachineAvailable(context.tenantId(), jobId, stageId);
+        UUID operator = (request != null && request.operatorId() != null) ? request.operatorId() : context.userId();
         jdbc.update("""
                 UPDATE job_stages
                 SET status = 'in_progress', actual_start = COALESCE(actual_start, NOW()),
-                    operator_id = ?, notes = COALESCE(?, notes)
+                    operator_id = COALESCE(?, operator_id), notes = COALESCE(?, notes)
                 WHERE tenant_id = ? AND id = ?
-                """, context.userId(), note(request), context.tenantId(), stageId);
+                """, operator, note(request), context.tenantId(), stageId);
         moveJobToProgress(context.tenantId(), jobId, jobStatus);
         audit.record("job_stage", stageId, "START", null, "{\"status\":\"in_progress\"}");
         return query.get(jobId);
@@ -91,12 +92,21 @@ public class JobStageService {
         requirePriorClosed(context.tenantId(), jobId, stage.seq());
         enforceInspection(context.tenantId(), stage);
         Instant started = stage.started() == null ? Instant.now() : stage.started();
+        UUID completedBy = (request != null && request.operatorId() != null) ? request.operatorId() : context.userId();
         jdbc.update("""
                 UPDATE job_stages
                 SET status = 'completed', actual_start = COALESCE(actual_start, NOW()),
-                    actual_end = NOW(), completed_by = ?, notes = COALESCE(?, notes)
+                    actual_end = NOW(), completed_by = ?,
+                    operator_id = COALESCE(?, operator_id),
+                    completed_qty = COALESCE(?, completed_qty),
+                    blocked_qty   = COALESCE(?, blocked_qty),
+                    notes = COALESCE(?, notes)
                 WHERE tenant_id = ? AND id = ?
-                """, context.userId(), note(request), context.tenantId(), stageId);
+                """, completedBy,
+                completedBy,
+                request != null ? request.completedQty() : null,
+                request != null ? request.blockedQty() : null,
+                note(request), context.tenantId(), stageId);
         moveJobToProgress(context.tenantId(), jobId, jobStatus);
         finishJobIfDone(context.tenantId(), jobId);
         audit.record("job_stage", stageId, "COMPLETE", null, "{\"status\":\"completed\"}");
@@ -106,6 +116,41 @@ public class JobStageService {
             metrics.stageOutcome("completed");
             metrics.stageDuration(Duration.between(started, Instant.now()));
         });
+        return query.get(jobId);
+    }
+
+    @PreAuthorize(PRODUCTION_EXECUTE)
+    public ProductionJobResponse progress(UUID jobId, UUID stageId, StageActionRequest request) {
+        BossContext context = support.requireContext();
+        support.denyForeignJob(jdbc, jobId);
+        flags.require(context.tenantId(), ProductionFeatureFlags.STAGE_TRANSITION);
+        StageRow stage = lockStage(context.tenantId(), jobId, stageId);
+        String jobStatus = lockJobStatus(context.tenantId(), jobId);
+        requireRunnable(jobStatus);
+        // Allow progress on pending (auto-starts) or in_progress stages
+        if (!StageStatusMachine.IN_PROGRESS.equals(stage.status())
+                && !StageStatusMachine.PENDING.equals(stage.status())) {
+            throw ProductionSupport.conflict("Stage status " + stage.status() + " does not accept progress updates");
+        }
+        requirePriorClosed(context.tenantId(), jobId, stage.seq());
+        if (StageStatusMachine.PENDING.equals(stage.status())) {
+            requireMachineAvailable(context.tenantId(), jobId, stageId);
+        }
+        UUID progressOperator = (request != null && request.operatorId() != null) ? request.operatorId() : context.userId();
+        jdbc.update("""
+                UPDATE job_stages
+                SET status = 'in_progress', actual_start = COALESCE(actual_start, NOW()),
+                    operator_id = COALESCE(?, operator_id),
+                    completed_qty = COALESCE(?, completed_qty),
+                    blocked_qty   = COALESCE(?, blocked_qty),
+                    notes = COALESCE(?, notes)
+                WHERE tenant_id = ? AND id = ?
+                """, progressOperator,
+                request != null ? request.completedQty() : null,
+                request != null ? request.blockedQty() : null,
+                note(request), context.tenantId(), stageId);
+        moveJobToProgress(context.tenantId(), jobId, jobStatus);
+        audit.record("job_stage", stageId, "PROGRESS", null, "{\"status\":\"in_progress\"}");
         return query.get(jobId);
     }
 
@@ -209,16 +254,18 @@ public class JobStageService {
     }
 
     private void moveJobToProgress(UUID tenantId, UUID jobId, String status) {
-        if (!JobStatusMachine.RELEASED.equals(status)) {
+        if (JobStatusMachine.IN_PROGRESS.equals(status)) {
             return;
         }
-        JobStatusMachine.assertTransition(status, JobStatusMachine.IN_PROGRESS);
-        jdbc.update("""
-                UPDATE production_jobs
-                SET status = 'in_progress', actual_start = COALESCE(actual_start, NOW()), updated_at = NOW()
-                WHERE tenant_id = ? AND id = ?
-                """, tenantId, jobId);
-        metrics.afterCommit(() -> metrics.jobTransition(JobStatusMachine.RELEASED, JobStatusMachine.IN_PROGRESS));
+        if (JobStatusMachine.PLANNED.equals(status) || JobStatusMachine.RELEASED.equals(status)) {
+            JobStatusMachine.assertTransition(status, JobStatusMachine.IN_PROGRESS);
+            jdbc.update("""
+                    UPDATE production_jobs
+                    SET status = 'in_progress', actual_start = COALESCE(actual_start, NOW()), updated_at = NOW()
+                    WHERE tenant_id = ? AND id = ?
+                    """, tenantId, jobId);
+            metrics.afterCommit(() -> metrics.jobTransition(status, JobStatusMachine.IN_PROGRESS));
+        }
     }
 
     private void finishJobIfDone(UUID tenantId, UUID jobId) {
@@ -259,14 +306,13 @@ public class JobStageService {
     }
 
     private void requireMaterialsIssued(UUID tenantId, UUID jobId, String action) {
-        Integer incomplete = jdbc.queryForObject("""
+        Integer unfulfilled = jdbc.queryForObject("""
                 SELECT COUNT(*) FROM job_material_requirements
-                WHERE tenant_id = ? AND job_id = ?
-                  AND issued_qty - returned_qty < required_qty
+                WHERE tenant_id = ? AND job_id = ? AND (issued_qty - returned_qty) < required_qty
                 """, Integer.class, tenantId, jobId);
-        if (incomplete != null && incomplete > 0) {
+        if (unfulfilled != null && unfulfilled > 0) {
             throw ProductionSupport.conflict(
-                    "All required job materials must be issued before a stage can " + action);
+                    "Job materials must be issued before a stage can " + action);
         }
     }
 
@@ -334,18 +380,21 @@ public class JobStageService {
         inventory.createProductionOutputLot(new CreateLotRequest(output.itemId(), storeId, output.quantity(), null,
                 "Production " + output.jobNumber(), null, "available", null),
                 "FG-" + output.jobNumber(), jobId);
-        int updated = jdbc.update("""
-                UPDATE cpo_lines
-                SET produced_qty = produced_qty + ?
-                WHERE tenant_id = ? AND id = ? AND produced_qty + ? <= quantity
-                """, output.quantity(), tenantId, output.cpoLineId(), output.quantity());
-        if (updated != 1) {
-            throw ProductionSupport.conflict("Production quantity exceeds the remaining Customer PO line quantity");
+        // Only update CPO produced_qty for PO-linked jobs
+        if (output.cpoLineId() != null) {
+            int updated = jdbc.update("""
+                    UPDATE cpo_lines
+                    SET produced_qty = produced_qty + ?
+                    WHERE tenant_id = ? AND id = ? AND produced_qty + ? <= quantity
+                    """, output.quantity(), tenantId, output.cpoLineId(), output.quantity());
+            if (updated != 1) {
+                throw ProductionSupport.conflict("Production quantity exceeds the remaining Customer PO line quantity");
+            }
         }
     }
 
     private static void requireRunnable(String status) {
-        if (JobStatusMachine.RELEASED.equals(status) || JobStatusMachine.IN_PROGRESS.equals(status)) {
+        if (JobStatusMachine.PLANNED.equals(status) || JobStatusMachine.RELEASED.equals(status) || JobStatusMachine.IN_PROGRESS.equals(status)) {
             return;
         }
         throw ProductionSupport.conflict("Job status " + status + " cannot execute a stage");

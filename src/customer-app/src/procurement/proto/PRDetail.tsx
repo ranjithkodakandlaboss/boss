@@ -376,10 +376,10 @@ export default function PRDetail() {
                       <td>
                         <StatusChip status={inv.status} />
                         <div className="text-[11px] text-[var(--text-3)] mt-1">Email: {deliveryLabel(inv.deliveryStatus)}</div>
-                        {inv.deliveryError && <div className="text-[11px] text-[var(--danger)]">{inv.deliveryError}</div>}
+                        {inv.deliveryError && !inv.quotationId && <div className="text-[11px] text-[var(--danger)]">{inv.deliveryError}</div>}
                       </td>
                       <td className="text-right space-x-1.5">
-                        {inv.deliveryStatus === 'failed' && (
+                        {inv.deliveryStatus === 'failed' && !inv.quotationId && (
                           <button type="button" onClick={() => retryQuotationDelivery(inv.id)} className="text-xs px-2 py-1 rounded-lg border border-[var(--border)]">
                             Retry email
                           </button>

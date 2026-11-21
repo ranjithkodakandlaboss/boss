@@ -52,9 +52,6 @@ export default function LoginPage() {
 
     try {
       const session = await firebaseSignIn(email, password);
-      // Validate tenant membership with the backend BEFORE storing the session.
-      // Firebase authentication alone is not sufficient — the user must have an
-      // active BOSS account associated with this workspace.
       await validateBossAccount(session.idToken);
       signIn(session.idToken, session.refreshToken, session.expiresIn);
       navigate("/");
