@@ -66,6 +66,17 @@ public class TenantContextResolver {
     }
 
     /**
+     * Returns the tenant_id for the given slug, or null if not found/active.
+     * Used by FirebaseJwtFilter to enforce host-based tenant isolation.
+     */
+    public UUID tenantIdForSlug(String slug) {
+        List<UUID> rows = jdbc.query(
+                "SELECT id FROM tenant_registry WHERE slug = ? AND status = 'active'",
+                (rs, i) -> rs.getObject("id", UUID.class), slug);
+        return rows.isEmpty() ? null : rows.get(0);
+    }
+
+    /**
      * True when this Firebase UID belongs to a user who is not active.
      * An unknown UID returns false so the caller can treat it as signed-out.
      */
