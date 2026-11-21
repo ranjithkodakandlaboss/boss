@@ -254,16 +254,18 @@ public class JobStageService {
     }
 
     private void moveJobToProgress(UUID tenantId, UUID jobId, String status) {
-        if (!JobStatusMachine.RELEASED.equals(status)) {
+        if (JobStatusMachine.IN_PROGRESS.equals(status)) {
             return;
         }
-        JobStatusMachine.assertTransition(status, JobStatusMachine.IN_PROGRESS);
-        jdbc.update("""
-                UPDATE production_jobs
-                SET status = 'in_progress', actual_start = COALESCE(actual_start, NOW()), updated_at = NOW()
-                WHERE tenant_id = ? AND id = ?
-                """, tenantId, jobId);
-        metrics.afterCommit(() -> metrics.jobTransition(JobStatusMachine.RELEASED, JobStatusMachine.IN_PROGRESS));
+        if (JobStatusMachine.PLANNED.equals(status) || JobStatusMachine.RELEASED.equals(status)) {
+            JobStatusMachine.assertTransition(status, JobStatusMachine.IN_PROGRESS);
+            jdbc.update("""
+                    UPDATE production_jobs
+                    SET status = 'in_progress', actual_start = COALESCE(actual_start, NOW()), updated_at = NOW()
+                    WHERE tenant_id = ? AND id = ?
+                    """, tenantId, jobId);
+            metrics.afterCommit(() -> metrics.jobTransition(status, JobStatusMachine.IN_PROGRESS));
+        }
     }
 
     private void finishJobIfDone(UUID tenantId, UUID jobId) {
@@ -304,14 +306,13 @@ public class JobStageService {
     }
 
     private void requireMaterialsIssued(UUID tenantId, UUID jobId, String action) {
-        Integer incomplete = jdbc.queryForObject("""
+        Integer unfulfilled = jdbc.queryForObject("""
                 SELECT COUNT(*) FROM job_material_requirements
-                WHERE tenant_id = ? AND job_id = ?
-                  AND issued_qty - returned_qty < required_qty
+                WHERE tenant_id = ? AND job_id = ? AND (issued_qty - returned_qty) < required_qty
                 """, Integer.class, tenantId, jobId);
-        if (incomplete != null && incomplete > 0) {
+        if (unfulfilled != null && unfulfilled > 0) {
             throw ProductionSupport.conflict(
-                    "All required job materials must be issued before a stage can " + action);
+                    "Job materials must be issued before a stage can " + action);
         }
     }
 
@@ -393,7 +394,7 @@ public class JobStageService {
     }
 
     private static void requireRunnable(String status) {
-        if (JobStatusMachine.RELEASED.equals(status) || JobStatusMachine.IN_PROGRESS.equals(status)) {
+        if (JobStatusMachine.PLANNED.equals(status) || JobStatusMachine.RELEASED.equals(status) || JobStatusMachine.IN_PROGRESS.equals(status)) {
             return;
         }
         throw ProductionSupport.conflict("Job status " + status + " cannot execute a stage");

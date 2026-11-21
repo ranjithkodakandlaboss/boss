@@ -115,10 +115,25 @@ export default function JobWorkspacePage() {
   }
 
   useEffect(() => { void load(); }, [id]);
+  const initialHandledRef = useRef(false);
   useEffect(() => {
-    if (searchParams.get("update") === "1" && job) setTab("Stages");
-    else if (searchParams.get("tab") === "Plan" && job) setTab("Plan");
-  }, [searchParams, job]);
+    if (!initialHandledRef.current) {
+      if (searchParams.get("update") === "1") {
+        setTab("Stages");
+        initialHandledRef.current = true;
+      } else if (searchParams.get("tab") && TABS.includes(searchParams.get("tab")!)) {
+        setTab(searchParams.get("tab")!);
+        initialHandledRef.current = true;
+      }
+    }
+  }, [searchParams]);
+
+  const selectTab = (nextTab: string) => {
+    setTab(nextTab);
+    if (searchParams.get("tab") || searchParams.get("update")) {
+      navigate(`/jobs/${id}`, { replace: true });
+    }
+  };
 
   if (error && !job) return <p role="alert" className="p-8 text-sm">{error}</p>;
   if (!job) return <p role="status" className="p-8 text-sm">Loading job</p>;
@@ -161,7 +176,7 @@ export default function JobWorkspacePage() {
       {notice && <p role="status" className="text-sm" style={{ color: "var(--success)" }}>{notice}</p>}
       {error && <p role="alert" className="text-sm" style={{ color: "var(--error)" }}>{error}</p>}
       <div className="flex gap-2 overflow-x-auto border-b" style={{ borderColor: "var(--border)" }}>
-        {TABS.map((name) => <button key={name} type="button" onClick={() => setTab(name)} className="px-3 py-2 text-xs font-semibold whitespace-nowrap" style={{ color: tab === name ? "var(--brand)" : "var(--text-2)", borderBottom: tab === name ? "2px solid var(--brand)" : "2px solid transparent" }}>{name}</button>)}
+        {TABS.map((name) => <button key={name} type="button" onClick={() => selectTab(name)} className="px-3 py-2 text-xs font-semibold whitespace-nowrap" style={{ color: tab === name ? "var(--brand)" : "var(--text-2)", borderBottom: tab === name ? "2px solid var(--brand)" : "2px solid transparent" }}>{name}</button>)}
       </div>
       {tab === "Overview" && <Overview job={job} onUpdate={(stageId) => setUpdateStageId(stageId)} />}
       {tab === "Stages" && <Stages job={job} canWrite={canWrite && flags["production.stage.transition"] !== false} onSkip={(stageId, reason) => act(() => skipStage(job.id, stageId, reason), "Stage skipped")} onUpdate={(stageId) => setUpdateStageId(stageId)} />}
@@ -989,28 +1004,56 @@ function MaterialRow({ job, row, canIssue, onIssue }: { job: ProductionJob; row:
   const [lotsLoading, setLotsLoading] = useState(false);
   const [lotReload, setLotReload] = useState(0);
   const [lotId, setLotId] = useState("");
-  const [qty, setQty] = useState(String(Math.max(row.requiredQty - row.netIssuedQty, 0)));
+  const remaining = Math.max(0, row.requiredQty - row.netIssuedQty);
+  const [qty, setQty] = useState(String(remaining > 0 ? remaining : 1));
+  const issueMovements = (job.movements ?? []).filter((m) => m.issueType === "issue" && m.requirementId === row.id);
+  const timesIssued = issueMovements.length;
+
   useEffect(() => {
     if (!canIssue) return;
     setLotError("");
     setLotsLoading(true);
-    usableLots(row.itemId, job.id).then((page) => setLots((page.content ?? []).filter((lot) => {
-      if (job.siteId && lot.siteId && lot.siteId !== job.siteId) return false;
-      const status = (lot.status || "").toLowerCase();
-      if (["quarantine", "rejected", "hold", "qc_hold"].includes(status)) return false;
-      const available = Number(lot.availableQty ?? lot.qty ?? 0);
-      return available > 0 || status === "reserved";
-    })))
+    usableLots(row.itemId, job.id).then((page) => {
+      const filtered = (page.content ?? []).filter((lot) => {
+        if (job.siteId && lot.siteId && lot.siteId !== job.siteId) return false;
+        const status = (lot.status || "").toLowerCase();
+        if (["quarantine", "rejected", "hold", "qc_hold"].includes(status)) return false;
+        const available = Number(lot.availableQty ?? lot.qty ?? 0);
+        return available > 0 || status === "reserved";
+      });
+      setLots(filtered);
+      if (filtered.length === 1 && !lotId) {
+        setLotId(filtered[0].id);
+      }
+    })
       .catch((cause: unknown) => {
         setLots([]);
         setLotError(cause instanceof Error ? cause.message : "Lots could not be loaded.");
       })
       .finally(() => setLotsLoading(false));
   }, [canIssue, row.itemId, job.siteId, job.id, lotReload]);
+
   return (
     <div className="rounded-xl border p-3" style={{ borderColor: "var(--border)" }}>
-      <div className="flex justify-between text-sm"><strong>{row.itemCode} {row.itemName}</strong><StatusChip status={row.readiness} label={readinessLabel(row.readiness)} size="sm" /></div>
-      <p className="text-xs mt-1" style={{ color: "var(--text-2)" }}>Required {row.requiredQty} · Issued {row.issuedQty} · Returned {row.returnedQty} {row.uomSymbol}</p>
+      <div className="flex justify-between text-sm">
+        <strong>{row.itemCode} {row.itemName}</strong>
+        <div className="flex items-center gap-2">
+          {timesIssued > 0 && (
+            <span className="text-[11px] px-2 py-0.5 rounded font-medium bg-[var(--surface-2)] text-[var(--text-2)] border" style={{ borderColor: "var(--border)" }}>
+              Issued {timesIssued} time{timesIssued === 1 ? "" : "s"}
+            </span>
+          )}
+          <StatusChip status={row.readiness} label={readinessLabel(row.readiness)} size="sm" />
+        </div>
+      </div>
+      <p className="text-xs mt-1" style={{ color: "var(--text-2)" }}>
+        Quoted/Required: <strong>{row.requiredQty}</strong> · Total Issued: <strong>{row.issuedQty}</strong> · Returned: <strong>{row.returnedQty}</strong> {row.uomSymbol}
+        {row.netIssuedQty > row.requiredQty && (
+          <span className="ml-2 font-semibold text-[var(--error)]">
+            (+{row.netIssuedQty - row.requiredQty} {row.uomSymbol} variance over quoted)
+          </span>
+        )}
+      </p>
       {(row.estimatedUnitCost != null || row.actualUnitCost != null) && (
         <div className="mt-1 grid grid-cols-2 gap-x-4 text-xs" style={{ color: "var(--text-3)" }}>
           {row.estimatedUnitCost != null && <span>Est. unit cost: <strong style={{ color: "var(--text)" }}>{money(row.estimatedUnitCost)}</strong></span>}
@@ -1019,20 +1062,33 @@ function MaterialRow({ job, row, canIssue, onIssue }: { job: ProductionJob; row:
           {row.actualTotalCost != null && <span>Actual total: <strong style={{ color: "var(--text)" }}>{money(row.actualTotalCost)}</strong></span>}
         </div>
       )}
-      {canIssue && row.netIssuedQty < row.requiredQty && (
-        <div className="mt-2 flex flex-wrap gap-2 items-end">
-          <div className="text-xs">Lot
+      {canIssue && (
+        <div className="mt-2 flex flex-wrap gap-2 items-end pt-2 border-t" style={{ borderColor: "var(--border)" }}>
+          <div className="text-xs">
+            <span className="block mb-1 font-semibold">Select Lot</span>
             <CreatableSelect label="lot" ariaLabel={`Lot for ${row.itemCode}`} value={lotId} onChange={setLotId} placeholder="Select lot" error={lotError} onRetry={() => setLotReload((current) => current + 1)} creatable={canCreateLot} options={lots.map((lot) => ({ id: lot.id, label: lotChoice(lot) }))} prepare={() => lotFields({ itemId: row.itemId, siteId: job.siteId })} onCreate={async (values) => {
               const created = await createLot(values, { itemId: row.itemId });
               const option: LotOption = { id: created.id, itemId: created.itemId, lotNumber: created.lotNumber, batchRef: created.batchRef, qty: created.qty, reservedQty: created.reservedQty, availableQty: created.availableQty, uomSymbol: created.uomSymbol, status: created.status, siteId: created.siteId, storeName: created.storeName };
               setLots((current) => [...current.filter((lot) => lot.id !== option.id), option]);
+              setLotId(created.id);
               return { id: created.id, label: lotChoice(option) };
             }} />
           </div>
-          {lotsLoading && <p role="status" className="text-xs">Loading usable lots…</p>}
-          {!lotsLoading && !lotError && lots.length === 0 && <p className="text-xs" style={{ color: "var(--text-3)" }}>No usable lots found. Quarantined and held lots are excluded.</p>}
-          <label className="text-xs">Qty<input className="eoss-input mt-1 w-24" aria-label={`Issue quantity for ${row.itemCode}`} value={qty} onChange={(event) => setQty(event.target.value)} /></label>
-          <button type="button" className="px-3 py-1.5 rounded-lg text-xs font-semibold text-white" style={{ background: "var(--brand-fill)" }} disabled={!lotId || Number(qty) <= 0} onClick={() => onIssue(row.id, lotId, Number(qty), "Issued to job")}>Issue</button>
+          {lotsLoading && <p role="status" className="text-xs self-center">Loading usable lots…</p>}
+          {!lotsLoading && !lotError && lots.length === 0 && <p className="text-xs self-center" style={{ color: "var(--text-3)" }}>No usable lots found. Quarantined and held lots are excluded.</p>}
+          <label className="text-xs font-semibold">
+            Qty
+            <input className="eoss-input mt-1 w-24" aria-label={`Issue quantity for ${row.itemCode}`} value={qty} onChange={(event) => setQty(event.target.value)} />
+          </label>
+          <button
+            type="button"
+            className="px-3.5 py-1.5 rounded-lg text-xs font-semibold text-white"
+            style={{ background: remaining === 0 ? "var(--warning)" : "var(--brand-fill)", color: remaining === 0 ? "#000" : "#fff" }}
+            disabled={!lotId || Number(qty) <= 0}
+            onClick={() => onIssue(row.id, lotId, Number(qty), remaining === 0 ? "Additional material issued (variance)" : "Issued to job")}
+          >
+            Issue
+          </button>
         </div>
       )}
       {lotError && <p role="alert" className="mt-2 text-xs text-[var(--error)]">{lotError}</p>}

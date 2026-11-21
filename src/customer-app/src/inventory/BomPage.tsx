@@ -1,4 +1,5 @@
 import { FormEvent, useEffect, useState } from "react";
+import { Plus } from "lucide-react";
 import { api, safeRandomUUID } from "../auth/api";
 import { useCustomer } from "../auth/CustomerState";
 import ErrorState from "../components/shared/ErrorState";
@@ -565,7 +566,14 @@ function BomForm({ items, uoms, onClose, onSaved }: { items: Item[]; uoms: Uom[]
             </tbody>
           </table>
         </div>
-        <button type="button" className="text-xs font-semibold text-[var(--brand)] hover:underline mt-2 inline-flex items-center gap-1" onClick={() => setLines((current) => [...current, { componentItemId: "", qty: "", uomId: uoms[0]?.id ?? "", scrapFactor: 0, unitCost: "" }])}>+ Add component</button>
+        <button
+          type="button"
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-semibold text-[var(--brand)] bg-[var(--surface)] hover:bg-[var(--surface-2)] mt-3"
+          style={{ borderColor: "var(--brand)" }}
+          onClick={() => setLines((current) => [...current, { componentItemId: "", qty: "", uomId: uoms[0]?.id ?? "", scrapFactor: 0, unitCost: "" }])}
+        >
+          <Plus size={14} /> Add Another Material / Consumable Row
+        </button>
       </div>
     </RecordSheet>
   );

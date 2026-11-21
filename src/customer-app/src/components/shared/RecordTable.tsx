@@ -70,7 +70,7 @@ export default function RecordTable<T extends { id: string }>({
               style={{ borderBottom: "1px solid var(--border)", background: selected ? "var(--surface-2)" : "var(--surface)", borderLeft: selected ? "3px solid var(--brand)" : "3px solid transparent" }}
             >
               {columns.map((column) => (
-                <td key={column.key} className={`px-4 py-3 ${column.align === "right" ? "text-right" : column.align === "center" ? "text-center" : ""}`}>
+                <td key={column.key} className={`px-4 py-3 whitespace-nowrap ${column.align === "right" ? "text-right" : column.align === "center" ? "text-center" : ""}`}>
                   {column.render(row)}
                 </td>
               ))}

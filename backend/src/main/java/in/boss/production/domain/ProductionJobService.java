@@ -369,7 +369,7 @@ public class ProductionJobService {
             return jdbc.query("""
                     SELECT s.seq_no, s.name, s.requires_inspection, s.inspection_template_id, s.is_optional,
                            s.stage_config_id, s.work_centre, s.asset_id, o.code, o.label,
-                           COALESCE(s.estimated_duration_min, 0) AS estimated_duration_min
+                           COALESCE(NULLIF(s.estimated_duration_min, 0), COALESCE(s.setup_time_min, 0) + COALESCE(s.run_time_min, 0), 0) AS estimated_duration_min
                     FROM routing_template_stages s
                     LEFT JOIN tenant_config_options o
                       ON o.id = s.stage_config_id AND o.tenant_id = s.tenant_id
@@ -565,17 +565,19 @@ public class ProductionJobService {
                             "Inspection template was not found or is inactive for this tenant");
                 }
             }
+            int setupMin = stage.setupTimeMin() == null ? 0 : stage.setupTimeMin();
+            int runMin = stage.runTimeMin() == null ? 0 : stage.runTimeMin();
+            int estDuration = setupMin + runMin;
             jdbc.update("""
                     INSERT INTO routing_template_stages
                       (tenant_id, routing_id, stage_config_id, seq_no, name, stage_type, work_centre,
-                       asset_id, requires_inspection, inspection_template_id, is_optional, setup_time_min, run_time_min)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                       asset_id, requires_inspection, inspection_template_id, is_optional, setup_time_min, run_time_min, estimated_duration_min)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, tenantId, routingId, option.id(), seq++, option.label(),
                     stage.stageType() == null ? "production" : stage.stageType(), stage.workCentre(),
                     stage.assetId(), Boolean.TRUE.equals(stage.requiresInspection()) || stage.inspectionTemplateId() != null,
                     stage.inspectionTemplateId(), Boolean.TRUE.equals(stage.isOptional()),
-                    stage.setupTimeMin() == null ? 0 : stage.setupTimeMin(),
-                    stage.runTimeMin() == null ? 0 : stage.runTimeMin());
+                    setupMin, runMin, estDuration);
         }
     }
 

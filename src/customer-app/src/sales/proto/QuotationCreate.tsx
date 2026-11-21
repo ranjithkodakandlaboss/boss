@@ -8,6 +8,7 @@ import AddIfEmpty from './AddIfEmpty';
 import { newCustomer, saveCatalogItem, saveUnit } from './quickMasters';
 import type { CustomerQuotation, CustomerQuotationLine } from './types';
 import { salesApi, type QuotationCostingConfig } from '../api';
+import { api } from '../../auth/api';
 import CostingConfigEditor from '../../config/CostingConfigEditor';
 
 const DEMO_NOW = new Date().toISOString().slice(0, 10);
@@ -77,7 +78,71 @@ export default function QuotationCreate() {
   const [lines, setLines] = useState<QLine[]>(
     rfqLines.length > 0 ? rfqLines.map((l, i) => newLine(i + 1, l)) : [newLine(1)]
   );
+  const [bomBreakups, setBomBreakups] = useState<Record<string, {
+    rawCost: number;
+    consCost: number;
+    labourCost: number;
+    machineCost: number;
+    otherCost: number;
+    totalCost: number;
+  }>>({});
+  const [expandedBom, setExpandedBom] = useState<Record<string, boolean>>({});
   const canConfigureCosting = ['owner', 'OWNER'].includes(currentUser.role);
+
+  const loadBomForLine = async (lineId: string, itemId: string) => {
+    if (!itemId) return;
+    try {
+      const bom = await api<any>(`/api/v1/items/${itemId}/bom`);
+      if (bom) {
+        let rawCost = 0;
+        let consCost = 0;
+        (bom.lines || []).forEach((bLine: any) => {
+          const qty = Number(bLine.qty) || 0;
+          const unitCost = Number(bLine.unitCost) || 0;
+          const scrap = Number(bLine.scrapFactor) || 0;
+          const lineTotal = qty * unitCost * (1 + scrap / 100);
+          if (bLine.componentItemType === 'CONSUMABLE') {
+            consCost += lineTotal;
+          } else {
+            rawCost += lineTotal;
+          }
+        });
+        const labourCost = Number(bom.labourCostPerUnit) || 0;
+        const machineCost = Number(bom.machineCostPerUnit) || 0;
+        const otherCost = Number(bom.otherCostPerUnit) || 0;
+        const totalCost = Math.round((rawCost + consCost + labourCost + machineCost + otherCost) * 100) / 100;
+
+        setBomBreakups(prev => ({
+          ...prev,
+          [lineId]: {
+            rawCost: Math.round(rawCost * 100) / 100,
+            consCost: Math.round(consCost * 100) / 100,
+            labourCost,
+            machineCost,
+            otherCost,
+            totalCost,
+          }
+        }));
+
+        setLines(current => current.map(l => {
+          if (l.id === lineId && (l.unitPrice === undefined || l.unitPrice === null || l.unitPrice === 0)) {
+            return { ...l, unitPrice: totalCost };
+          }
+          return l;
+        }));
+      }
+    } catch {
+      // No BOM configured for this item
+    }
+  };
+
+  useEffect(() => {
+    lines.forEach(l => {
+      if (l.itemId && !bomBreakups[l.id]) {
+        void loadBomForLine(l.id, l.itemId);
+      }
+    });
+  }, [lines]);
 
   useEffect(() => {
     salesApi.quotationCostingConfig().then((config) => {
@@ -316,12 +381,16 @@ export default function QuotationCreate() {
                 <div className="grid md:grid-cols-3 gap-3">
                   <Field label="Item *" className="md:col-span-3">
                     <select value={l.itemId} onChange={e => {
-                      const item = catalog.find(entry => entry.id === e.target.value);
-                      updateLine(l.id, 'itemId', e.target.value);
+                      const selectedId = e.target.value;
+                      const item = catalog.find(entry => entry.id === selectedId);
+                      updateLine(l.id, 'itemId', selectedId);
                       if (item) {
                         if (!l.productName) updateLine(l.id, 'productName', item.name);
                         if (item.uomSymbol) updateLine(l.id, 'uom', item.uomSymbol);
                         if (item.gstRate != null) updateLine(l.id, 'gstRate', Number(item.gstRate));
+                      }
+                      if (selectedId) {
+                        void loadBomForLine(l.id, selectedId);
                       }
                     }} className="eoss-input">
                       <option value="">{catalog.length ? 'Select an item…' : 'No items in the item master'}</option>
@@ -355,6 +424,57 @@ export default function QuotationCreate() {
                   <Field label="Line Value">
                     <input value={l.unitPrice != null ? fmtMoney(l.orderedQty * l.unitPrice) : '—'} disabled className="eoss-input opacity-60 cursor-not-allowed font-mono" />
                   </Field>
+                  {bomBreakups[l.id] && (
+                    <div className="md:col-span-3 mt-1 pt-1">
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setExpandedBom(prev => ({ ...prev, [l.id]: !prev[l.id] }))}
+                          className="text-xs font-semibold text-[var(--brand)] hover:underline inline-flex items-center gap-1"
+                        >
+                          {expandedBom[l.id] ? '▾ Hide BOM Cost Breakup' : '▸ View BOM Cost Breakup'}
+                          <span className="font-normal text-[var(--text-3)]">(BOM Est: ₹{bomBreakups[l.id].totalCost.toLocaleString('en-IN')})</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => updateLine(l.id, 'unitPrice', bomBreakups[l.id].totalCost)}
+                          className="text-[11px] px-2 py-0.5 rounded border bg-[var(--surface-2)] text-[var(--text-2)] hover:bg-[var(--surface-3)]"
+                        >
+                          Apply BOM Price
+                        </button>
+                      </div>
+                      {expandedBom[l.id] && (
+                        <div className="mt-2 p-3 rounded-lg border bg-[var(--surface-2)] text-xs space-y-2" style={{ borderColor: 'var(--border)' }}>
+                          <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 font-mono">
+                            <div>
+                              <span className="text-[10px] text-[var(--text-3)] block uppercase">Raw Materials</span>
+                              <span className="font-semibold">₹{bomBreakups[l.id].rawCost.toLocaleString('en-IN')}</span>
+                            </div>
+                            <div>
+                              <span className="text-[10px] text-[var(--text-3)] block uppercase">Consumables</span>
+                              <span className="font-semibold">₹{bomBreakups[l.id].consCost.toLocaleString('en-IN')}</span>
+                            </div>
+                            <div>
+                              <span className="text-[10px] text-[var(--text-3)] block uppercase">Labour / Unit</span>
+                              <span className="font-semibold">₹{bomBreakups[l.id].labourCost.toLocaleString('en-IN')}</span>
+                            </div>
+                            <div>
+                              <span className="text-[10px] text-[var(--text-3)] block uppercase">Machine / Unit</span>
+                              <span className="font-semibold">₹{bomBreakups[l.id].machineCost.toLocaleString('en-IN')}</span>
+                            </div>
+                            <div>
+                              <span className="text-[10px] text-[var(--text-3)] block uppercase">Other Mfg / Unit</span>
+                              <span className="font-semibold">₹{bomBreakups[l.id].otherCost.toLocaleString('en-IN')}</span>
+                            </div>
+                          </div>
+                          <div className="pt-2 border-t flex justify-between items-center font-bold text-xs" style={{ borderColor: 'var(--border)' }}>
+                            <span>Total Estimated Manufacturing Cost / Unit:</span>
+                            <span className="font-mono text-sm text-[var(--brand)]">₹{bomBreakups[l.id].totalCost.toLocaleString('en-IN')}</span>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
                 {(costingConfig?.labourRates.length || costingConfig?.machineRates.length) ? (
                   <div className="grid md:grid-cols-2 gap-3 mt-3">

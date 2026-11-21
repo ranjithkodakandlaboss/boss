@@ -18,13 +18,17 @@ export default function SortableHeader({
   className?: string;
   style?: CSSProperties;
 }) {
-  if (!onSort) return <th className={className} style={style}>{label}</th>;
+  const isRight = className.includes("text-right");
+  const isCenter = className.includes("text-center");
+  const alignClass = isRight ? "justify-end text-right" : isCenter ? "justify-center text-center" : "justify-start text-left";
+
+  if (!onSort) return <th className={`whitespace-nowrap ${className}`} style={style}>{label}</th>;
   return (
-    <th className={className} style={style} aria-sort={active ? (direction === "asc" ? "ascending" : "descending") : "none"}>
+    <th className={`whitespace-nowrap ${className}`} style={style} aria-sort={active ? (direction === "asc" ? "ascending" : "descending") : "none"}>
       <button
         type="button"
         onClick={onSort}
-        className="inline-flex items-center gap-1 text-left hover:opacity-70 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)] rounded"
+        className={`w-full inline-flex items-center gap-1 ${alignClass} hover:opacity-70 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)] rounded`}
         title={`Sort by ${label}`}
       >
         {label}

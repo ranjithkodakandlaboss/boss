@@ -128,10 +128,6 @@ public class JobMaterialService {
         rejectClosed(job.status());
         Requirement requirement = lockRequirement(context.tenantId(), jobId, request.requirementId());
         BigDecimal qty = ProductionSupport.quantity(request.qty());
-        BigDecimal remaining = requirement.required().subtract(requirement.issued()).add(requirement.returned());
-        if (qty.compareTo(remaining) > 0) {
-            throw ProductionSupport.badRequest("Issue quantity exceeds the remaining requirement");
-        }
         MaterialLotResponse lot = usableLot(request.lotId(), requirement.itemId(), job, qty);
         ensureIssueReservation(job, lot, qty);
         UUID issueId = UUID.randomUUID();
@@ -199,10 +195,6 @@ public class JobMaterialService {
         BigDecimal fromAvailable = needed.subtract(fromCpo);
 
         if (fromAvailable.signum() > 0) {
-            if (hasActiveJobReservation(job.id())) {
-                throw ProductionSupport.badRequest(
-                        "Active job reservations do not cover the issue quantity for this lot");
-            }
             var reservation = inventory.reserveForJob(new ReservationRequest(job.id(), List.of(
                     new ReservationRequirement(lot.itemId(), lot.storeId(), fromAvailable))), false);
             if (!"FULLY_RESERVED".equals(reservation.status()) || !coversLot(reservation, lot.id(), fromAvailable)) {
@@ -352,12 +344,11 @@ public class JobMaterialService {
         if (!JobStatusMachine.PLANNED.equals(job.status())) {
             return;
         }
-        Integer incomplete = jdbc.queryForObject("""
+        Integer unfulfilled = jdbc.queryForObject("""
                 SELECT COUNT(*) FROM job_material_requirements
-                WHERE tenant_id = ? AND job_id = ?
-                  AND issued_qty - returned_qty < required_qty
+                WHERE tenant_id = ? AND job_id = ? AND (issued_qty - returned_qty) < required_qty
                 """, Integer.class, tenantId, job.id());
-        if (incomplete != null && incomplete > 0) {
+        if (unfulfilled != null && unfulfilled > 0) {
             return;
         }
         JobStatusMachine.assertTransition(job.status(), JobStatusMachine.RELEASED);

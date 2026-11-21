@@ -26,7 +26,7 @@ public final class JobStatusMachine {
 
     public static boolean allowed(String from, String to) {
         return switch (from) {
-            case PLANNED -> RELEASED.equals(to) || CANCELLED.equals(to);
+            case PLANNED -> RELEASED.equals(to) || IN_PROGRESS.equals(to) || CANCELLED.equals(to);
             case RELEASED -> IN_PROGRESS.equals(to) || CANCELLED.equals(to);
             case IN_PROGRESS -> ON_HOLD.equals(to) || COMPLETED.equals(to);
             case ON_HOLD -> IN_PROGRESS.equals(to) || CANCELLED.equals(to);

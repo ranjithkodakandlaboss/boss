@@ -59,7 +59,7 @@ public class JobPlanService {
 
         List<StageDuration> stageDurations = jdbc.query("""
                 SELECT id, seq_no, name AS stage_name,
-                       estimated_duration_min
+                       COALESCE(NULLIF(estimated_duration_min, 0), COALESCE(setup_time_min, 0) + COALESCE(run_time_min, 0), 0) AS estimated_duration_min
                 FROM routing_template_stages
                 WHERE tenant_id = ? AND routing_id = ?
                 ORDER BY seq_no
@@ -91,8 +91,7 @@ public class JobPlanService {
                     SET planned_start = ?, planned_end = ?,
                         operator_id = COALESCE(?, operator_id),
                         work_centre = COALESCE(?, work_centre),
-                        estimated_duration_min = COALESCE(?, estimated_duration_min),
-                        updated_at = NOW()
+                        estimated_duration_min = COALESCE(?, estimated_duration_min)
                     WHERE tenant_id = ? AND job_id = ? AND id = ?
                     """, entry.plannedStart(), entry.plannedEnd(), entry.operatorId(),
                     entry.workCentre(), entry.estimatedDurationMin(),
@@ -112,7 +111,7 @@ public class JobPlanService {
     private List<StageDuration> loadStageDurations(UUID tenantId, UUID jobId) {
         return jdbc.query("""
                 SELECT s.id, s.seq_no, s.name AS stage_name,
-                       COALESCE(NULLIF(s.estimated_duration_min, 0), rts.estimated_duration_min, 0) AS estimated_duration_min
+                       COALESCE(NULLIF(s.estimated_duration_min, 0), NULLIF(rts.estimated_duration_min, 0), COALESCE(rts.setup_time_min, 0) + COALESCE(rts.run_time_min, 0), 0) AS estimated_duration_min
                 FROM job_stages s
                 LEFT JOIN routing_template_stages rts
                   ON rts.tenant_id = s.tenant_id
