@@ -919,6 +919,7 @@ export function ProcurementProvider({ children }: { children?: ReactNode }) {
         if (!input.storeLocationId) return { error: "Choose the receiving store." };
         try {
           const signature = input.lines.map((line) => `${line.spoLineId}:${line.receivedQty}`).join("|");
+          const grnSigHash = `${input.deliveryChallan}:${signature}`.split('').reduce((h, c) => ((h << 5) - h + c.charCodeAt(0)) | 0, 5381).toString(16).replace('-', '');
           const saved = await procurementApi.createGrn({
             spoId: input.spoId,
             receivedDate: input.receivedDate,
@@ -938,7 +939,7 @@ export function ProcurementProvider({ children }: { children?: ReactNode }) {
                 supplierLotRef: lot.supplierLotRef || null,
               })),
             })),
-          }, `grn:${input.spoId}:${input.deliveryChallan}:${signature}`);
+          }, `grn:${input.spoId}:${grnSigHash}`);
           await reload();
           return { grn: { id: saved.id, grnNumber: saved.grnNumber } };
         } catch (error) {
@@ -948,11 +949,12 @@ export function ProcurementProvider({ children }: { children?: ReactNode }) {
       recordSupplierReturn: async (input: { grnId: string; reason: string; lines: Array<{ grnLineId: string; lotId: string; quantity: number }> }) => {
         try {
           const signature = input.lines.map((line) => `${line.lotId}:${line.quantity}`).join("|");
+          const retSigHash = signature.split('').reduce((h, c) => ((h << 5) - h + c.charCodeAt(0)) | 0, 5381).toString(16).replace('-', '');
           const saved = await procurementApi.createSupplierReturn({
             grnId: input.grnId,
             reason: input.reason,
             lines: input.lines,
-          }, `return:${input.grnId}:${signature}`);
+          }, `return:${input.grnId}:${retSigHash}`);
           await reload();
           return saved;
         } catch (error) {

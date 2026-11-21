@@ -837,6 +837,7 @@ export function SalesProvider({ children }: { children?: ReactNode }) {
             return { itemId: catalogItem.id, qty, uomId: uom.id, requiredDate: po.requiredByDate || undefined, notes: `BOM shortage for ${po.poNumber}` };
           });
           const signature = lines.map((l) => `${l.itemId}:${l.qty}`).sort().join("|");
+          const sigHash = signature.split('').reduce((h, c) => ((h << 5) - h + c.charCodeAt(0)) | 0, 5381).toString(16).replace('-', '');
           const saved = await procurementApi.createPr({
             originType: "customer_po",
             customerPoId: po.id,
@@ -845,7 +846,7 @@ export function SalesProvider({ children }: { children?: ReactNode }) {
             priority: "high",
             notes: `BOM material shortage cover for CPO ${po.poNumber}`,
             lines,
-          }, `cpo-bom-shortage:${po.id}:${signature}`);
+          }, `cpo-bom-shortage:${po.id}:${sigHash}`);
           await reload();
           return {
             status: availabilityStatus,
