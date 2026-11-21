@@ -73,9 +73,17 @@ class ProductionJobView {
                 SELECT s.id, s.seq_no, s.name, s.stage_code, s.stage_config_option_id, s.stage_label_snapshot,
                        s.status, s.requires_inspection, s.is_optional, s.work_centre, s.asset_id,
                        a.asset_number, s.actual_start, s.actual_end, s.completed_by,
-                       s.planned_start, s.planned_end, s.completed_qty, s.blocked_qty
+                       s.planned_start, s.planned_end, s.completed_qty, s.blocked_qty,
+                       COALESCE(rts.estimated_duration_min, 0) AS estimated_duration_min,
+                       s.operator_id, u.display_name AS operator_name
                 FROM job_stages s
                 LEFT JOIN assets a ON a.id = s.asset_id AND a.tenant_id = s.tenant_id
+                LEFT JOIN routing_template_stages rts
+                  ON rts.tenant_id = s.tenant_id
+                  AND rts.routing_id = (SELECT routing_id FROM production_jobs
+                                        WHERE tenant_id = s.tenant_id AND id = s.job_id)
+                  AND rts.seq_no = s.seq_no
+                LEFT JOIN app_users u ON u.id = s.operator_id AND u.tenant_id = s.tenant_id
                 WHERE s.tenant_id = ? AND s.job_id = ? ORDER BY s.seq_no
                 """, (rs, row) -> stage(tenantId, jobId, rs), tenantId, jobId);
     }
@@ -87,6 +95,8 @@ class ProductionJobView {
         if (label == null || label.isBlank()) {
             label = rs.getString("name");
         }
+        int estMin = rs.getInt("estimated_duration_min");
+        Integer estimatedDuration = rs.wasNull() || estMin == 0 ? null : estMin;
         return new JobStageResponse(stageId, rs.getInt("seq_no"), label, rs.getString("stage_code"),
                 rs.getObject("stage_config_option_id", UUID.class), rs.getString("status"), required,
                 inspectionStatus(tenantId, stageId, required), rs.getBoolean("is_optional"), rs.getBoolean("is_optional"),
@@ -94,8 +104,9 @@ class ProductionJobView {
                 rs.getObject("completed_by", UUID.class), rs.getObject("asset_id", UUID.class),
                 rs.getString("asset_number"),
                 maintenance.machineBlocker(tenantId, jobId, stageId, rs.getString("work_centre")),
-                date(rs, "planned_start"), date(rs, "planned_end"), null,
-                rs.getBigDecimal("completed_qty"), rs.getBigDecimal("blocked_qty"));
+                date(rs, "planned_start"), date(rs, "planned_end"), estimatedDuration,
+                rs.getBigDecimal("completed_qty"), rs.getBigDecimal("blocked_qty"),
+                rs.getObject("operator_id", UUID.class), rs.getString("operator_name"));
     }
 
     private String inspectionStatus(UUID tenantId, UUID stageId, boolean required) {

@@ -22,5 +22,6 @@ public class BOMHeaderDto {
     private String status;
     private BigDecimal labourCostPerUnit;
     private BigDecimal machineCostPerUnit;
+    private BigDecimal otherCostPerUnit;
     private List<BOMLineDto> lines;
 }

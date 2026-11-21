@@ -55,8 +55,13 @@ public final class ProductionApiDtos {
     public record StagePlanEntry(
             @NotNull UUID stageId,
             @NotNull LocalDate plannedStart,
-            @NotNull LocalDate plannedEnd
-    ) {}
+            @NotNull LocalDate plannedEnd,
+            UUID operatorId
+    ) {
+        public StagePlanEntry(UUID stageId, LocalDate plannedStart, LocalDate plannedEnd) {
+            this(stageId, plannedStart, plannedEnd, null);
+        }
+    }
 
     public record SavePlanRequest(
             @NotNull @NotEmpty List<@jakarta.validation.Valid StagePlanEntry> stages
@@ -75,9 +80,12 @@ public final class ProductionApiDtos {
 
     public record ReasonRequest(@NotBlank String reason) {}
 
-    public record StageActionRequest(String note, BigDecimal completedQty, BigDecimal blockedQty) {
+    public record StageActionRequest(String note, BigDecimal completedQty, BigDecimal blockedQty, UUID operatorId) {
         public StageActionRequest(String note) {
-            this(note, null, null);
+            this(note, null, null, null);
+        }
+        public StageActionRequest(String note, BigDecimal completedQty, BigDecimal blockedQty) {
+            this(note, completedQty, blockedQty, null);
         }
     }
 
@@ -137,8 +145,24 @@ public final class ProductionApiDtos {
             LocalDate plannedEnd,
             Integer estimatedDurationMin,
             BigDecimal completedQty,
-            BigDecimal blockedQty
+            BigDecimal blockedQty,
+            UUID operatorId,
+            String assignedOperator
     ) {
+        /** 21-arg constructor for callers without operator */
+        public JobStageResponse(UUID id, int seqNo, String stageName, String stageCode,
+                UUID stageConfigOptionId, String status, boolean requiresInspection,
+                String inspectionStatus, boolean isOptional, boolean canSkip, String workCentre,
+                Instant actualStartAt, Instant actualEndAt, UUID completedBy, UUID assetId,
+                String assetCode, String blockerReason,
+                LocalDate plannedStart, LocalDate plannedEnd, Integer estimatedDurationMin,
+                BigDecimal completedQty, BigDecimal blockedQty) {
+            this(id, seqNo, stageName, stageCode, stageConfigOptionId, status, requiresInspection,
+                 inspectionStatus, isOptional, canSkip, workCentre, actualStartAt, actualEndAt,
+                 completedBy, assetId, assetCode, blockerReason, plannedStart, plannedEnd,
+                 estimatedDurationMin, completedQty, blockedQty, null, null);
+        }
+
         /** Legacy compact constructor — keeps existing callers compiling */
         public JobStageResponse(UUID id, int seqNo, String stageName, String stageCode,
                 UUID stageConfigOptionId, String status, boolean requiresInspection,
@@ -147,7 +171,7 @@ public final class ProductionApiDtos {
                 String assetCode, String blockerReason) {
             this(id, seqNo, stageName, stageCode, stageConfigOptionId, status, requiresInspection,
                  inspectionStatus, isOptional, canSkip, workCentre, actualStartAt, actualEndAt,
-                 completedBy, assetId, assetCode, blockerReason, null, null, null, null, null);
+                 completedBy, assetId, assetCode, blockerReason, null, null, null, null, null, null, null);
         }
     }
 

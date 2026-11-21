@@ -88,6 +88,11 @@ public class ProductionJobController {
         return query.eligibleLines();
     }
 
+    @GetMapping("/operators")
+    public List<Map<String, Object>> operators() {
+        return query.listOperators();
+    }
+
     @GetMapping("/routing-templates")
     public List<RoutingTemplateOption> routingTemplates(@RequestParam(required = false) UUID itemId) {
         return query.routingTemplates(itemId);

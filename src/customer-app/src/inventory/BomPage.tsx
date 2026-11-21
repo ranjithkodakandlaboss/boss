@@ -11,11 +11,14 @@ type BomLine = {
   componentItemId: string;
   componentItemCode?: string;
   componentItemName?: string;
+  componentItemType?: string;
   qty: number | string;
   uomId?: string;
   uomSymbol?: string;
   scrapFactor?: number | string;
   quantityFormula?: string;
+  unitCost?: number | string;
+  totalCost?: number | string;
 };
 
 type Bom = {
@@ -26,6 +29,9 @@ type Bom = {
   version?: number | string;
   status?: string;
   isDefault?: boolean;
+  labourCostPerUnit?: number | null;
+  machineCostPerUnit?: number | null;
+  otherCostPerUnit?: number | null;
   lines?: BomLine[];
 };
 
@@ -52,6 +58,10 @@ export default function BomPage({ embedded = false }: { embedded?: boolean }) {
         setItems(catalogue.filter((item) => (item.status ?? "active") !== "inactive"));
         setUoms(units);
         setError("");
+        if (selected) {
+          const fresh = rows.find((b) => b.id === selected.id);
+          if (fresh) setSelected(fresh);
+        }
       })
       .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "Bills of materials could not be loaded."))
       .finally(() => setLoading(false));
@@ -59,55 +69,159 @@ export default function BomPage({ embedded = false }: { embedded?: boolean }) {
 
   useEffect(() => { load(); }, []);
 
+  // Split lines into raw materials and consumables
+  const lines = selected?.lines ?? [];
+  const rawMaterials = lines.filter((l) => (l.componentItemType ?? "").toUpperCase() !== "CONSUMABLE");
+  const consumables = lines.filter((l) => (l.componentItemType ?? "").toUpperCase() === "CONSUMABLE");
+
+  function lineCost(l: BomLine): number {
+    if (l.totalCost != null) return Number(l.totalCost);
+    const q = Number(l.qty) || 0;
+    const scrap = Number(l.scrapFactor) || 0;
+    const u = Number(l.unitCost) || 0;
+    return Math.round(q * (1 + scrap / 100) * u * 100) / 100;
+  }
+
+  const rawSubtotal = rawMaterials.reduce((sum, l) => sum + lineCost(l), 0);
+  const consumableSubtotal = consumables.reduce((sum, l) => sum + lineCost(l), 0);
+  const labourUnit = Number(selected?.labourCostPerUnit || 0);
+  const machineUnit = Number(selected?.machineCostPerUnit || 0);
+  const otherUnit = Number(selected?.otherCostPerUnit || 0);
+  const totalUnitCost = Math.round((rawSubtotal + consumableSubtotal + labourUnit + machineUnit + otherUnit) * 100) / 100;
+
   return (
     <div className={embedded ? "flex flex-col" : "flex min-h-[calc(100vh-var(--topbar-h))] flex-col"}>
       {!embedded && <StockNav />}
       <header className="flex flex-wrap items-center gap-3 px-5 py-3">
         <div>
           <h1 className="text-lg font-bold">Bills of materials</h1>
-          <p className="text-xs text-[var(--text-2)]">Saving a BOM approves it immediately and makes it available for production jobs.</p>
+          <p className="text-xs text-[var(--text-2)]">Defines materials, consumables, and standard manufacturing costs required to produce each product.</p>
         </div>
         <div className="flex-1" />
         {canWrite && <button type="button" className="rounded-lg px-3 py-1.5 text-xs font-semibold text-white" style={{ background: "var(--brand-fill)" }} onClick={() => setCreating(true)}>Create BOM</button>}
       </header>
       {loading ? <LoadingState label="Loading bills of materials" /> : error ? <ErrorState body={error} /> : (
-        <div className="grid gap-4 p-5 lg:grid-cols-[1fr_1fr]">
-          <table className="w-full text-left text-sm">
-            <thead><tr className="text-xs text-[var(--text-3)]"><th>Finished item</th><th>Version</th><th>Status</th><th /></tr></thead>
-            <tbody>
-              {boms.length === 0 && <tr><td colSpan={4} className="py-6 text-[var(--text-3)]">No bills of materials yet. Create one before opening a production job.</td></tr>}
-              {boms.map((bom) => (
-                <tr key={bom.id} className="cursor-pointer border-t border-[var(--border)]" onClick={() => setSelected(bom)}>
-                  <td className="py-2">{bom.itemCode} {bom.itemName}</td>
-                  <td>v{bom.version}</td>
-                  <td>{bom.status === "approved" ? "Approved" : bom.status}</td>
-                  <td className="py-2 text-right" onClick={e => e.stopPropagation()}>
-                    <button type="button" className="text-xs px-2 py-1 rounded-lg font-semibold text-white" style={{ background: 'var(--brand-fill)' }} onClick={() => setSelected(bom)}>View</button>
-                  </td>
+        <div className="grid gap-4 p-5 lg:grid-cols-[1fr_1.3fr]">
+          <div className="rounded-xl border border-[var(--border)] overflow-hidden">
+            <table className="w-full text-left text-sm">
+              <thead style={{ background: "var(--surface-2)" }}>
+                <tr className="text-xs text-[var(--text-3)]">
+                  <th className="px-3 py-2">Finished item</th>
+                  <th className="px-3 py-2">Version</th>
+                  <th className="px-3 py-2">Status</th>
+                  <th className="px-3 py-2" />
                 </tr>
-              ))}
-            </tbody>
-          </table>
-          {selected && (
-            <section className="rounded-xl border border-[var(--border)] p-4">
-              <h2 className="font-semibold">{selected.itemCode} — {selected.itemName}</h2>
-              <p className="text-xs text-[var(--text-2)]">Version {selected.version} · {selected.status === "approved" ? "Approved" : selected.status}</p>
-              <table className="mt-3 w-full text-left text-sm">
-                <thead><tr className="text-xs text-[var(--text-3)]"><th>Component</th><th>Qty</th><th>UOM</th><th>Scrap %</th><th>Formula</th></tr></thead>
-                <tbody>
-                  {(selected.lines ?? []).map((line, index) => (
-                    <tr key={`${line.componentItemId}-${index}`} className="border-t border-[var(--border)]">
-                      <td className="py-1">{line.componentItemCode} {line.componentItemName}</td>
-                      <td>{line.qty}</td>
-                      <td>{line.uomSymbol}</td>
-                      <td>{line.scrapFactor ?? 0}</td>
-                      <td>{line.quantityFormula || "Fixed"}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              <BomCalculator key={selected.id} bom={selected} />
+              </thead>
+              <tbody>
+                {boms.length === 0 && <tr><td colSpan={4} className="py-6 text-center text-xs text-[var(--text-3)]">No bills of materials yet. Create one before opening a production job.</td></tr>}
+                {boms.map((bom) => (
+                  <tr key={bom.id} className={`cursor-pointer border-t border-[var(--border)] hover:bg-[var(--surface-2)] ${selected?.id === bom.id ? "bg-[var(--surface-2)]" : ""}`} onClick={() => setSelected(bom)}>
+                    <td className="px-3 py-2.5 font-medium">{bom.itemCode} {bom.itemName}</td>
+                    <td className="px-3 py-2.5 text-xs">v{bom.version}</td>
+                    <td className="px-3 py-2.5 text-xs">{bom.status === "approved" ? "Approved" : bom.status}</td>
+                    <td className="px-3 py-2.5 text-right" onClick={(e) => e.stopPropagation()}>
+                      <button type="button" className="text-xs px-2.5 py-1 rounded font-semibold text-white" style={{ background: "var(--brand-fill)" }} onClick={() => setSelected(bom)}>View</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {selected ? (
+            <section className="rounded-xl border border-[var(--border)] p-4 space-y-4">
+              <div className="flex items-center justify-between pb-3 border-b border-[var(--border)]">
+                <div>
+                  <h2 className="font-bold text-base">{selected.itemCode} — {selected.itemName}</h2>
+                  <p className="text-xs text-[var(--text-2)]">BOM Version {selected.version} · {selected.status === "approved" ? "Approved" : selected.status}</p>
+                </div>
+                <div className="text-right">
+                  <span className="text-xs text-[var(--text-3)]">Est. Mfg Cost / Unit</span>
+                  <div className="text-base font-bold text-[var(--brand)]">₹{totalUnitCost.toFixed(2)}</div>
+                </div>
+              </div>
+
+              {/* Standard Manufacturing Cost Summary */}
+              <div className="rounded-lg p-3 border border-[var(--border)] text-xs grid grid-cols-2 sm:grid-cols-3 gap-3" style={{ background: "var(--surface-2)" }}>
+                <div><span style={{ color: "var(--text-3)" }}>Raw Materials Cost</span><div className="font-semibold">₹{rawSubtotal.toFixed(2)}</div></div>
+                <div><span style={{ color: "var(--text-3)" }}>Consumables Cost</span><div className="font-semibold">₹{consumableSubtotal.toFixed(2)}</div></div>
+                <div><span style={{ color: "var(--text-3)" }}>Labour Cost / Unit</span><div className="font-semibold">{labourUnit > 0 ? `₹${labourUnit.toFixed(2)}` : "—"}</div></div>
+                <div><span style={{ color: "var(--text-3)" }}>Machine Cost / Unit</span><div className="font-semibold">{machineUnit > 0 ? `₹${machineUnit.toFixed(2)}` : "—"}</div></div>
+                <div><span style={{ color: "var(--text-3)" }}>Other Mfg Cost / Unit</span><div className="font-semibold">{otherUnit > 0 ? `₹${otherUnit.toFixed(2)}` : "—"}</div></div>
+                <div><span style={{ color: "var(--text-3)" }}>Total Unit Cost</span><div className="font-bold text-[var(--brand)]">₹{totalUnitCost.toFixed(2)}</div></div>
+              </div>
+
+              {/* Raw Materials Section */}
+              <div className="space-y-1">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-[var(--text-2)]">Raw Materials ({rawMaterials.length})</h3>
+                  <span className="text-xs font-semibold text-[var(--text-3)]">Subtotal: ₹{rawSubtotal.toFixed(2)}</span>
+                </div>
+                {rawMaterials.length === 0 ? (
+                  <p className="text-xs text-[var(--text-3)] py-1">No raw materials defined.</p>
+                ) : (
+                  <div className="overflow-x-auto rounded border border-[var(--border)]">
+                    <table className="w-full text-left text-xs">
+                      <thead style={{ background: "var(--surface-2)" }}>
+                        <tr className="text-[var(--text-3)]"><th className="px-2 py-1.5">Component</th><th className="px-2 py-1.5">Qty</th><th className="px-2 py-1.5">UOM</th><th className="px-2 py-1.5">Unit Cost</th><th className="px-2 py-1.5">Scrap %</th><th className="px-2 py-1.5">Line Cost</th><th className="px-2 py-1.5">Formula</th></tr>
+                      </thead>
+                      <tbody>
+                        {rawMaterials.map((line, idx) => (
+                          <tr key={`${line.componentItemId}-${idx}`} className="border-t border-[var(--border)]">
+                            <td className="px-2 py-1.5 font-medium">{line.componentItemCode} {line.componentItemName}</td>
+                            <td className="px-2 py-1.5">{line.qty}</td>
+                            <td className="px-2 py-1.5">{line.uomSymbol}</td>
+                            <td className="px-2 py-1.5">{line.unitCost != null ? `₹${Number(line.unitCost).toFixed(2)}` : "—"}</td>
+                            <td className="px-2 py-1.5">{line.scrapFactor ?? 0}%</td>
+                            <td className="px-2 py-1.5 font-mono font-semibold">₹{lineCost(line).toFixed(2)}</td>
+                            <td className="px-2 py-1.5 text-[var(--text-3)]">{line.quantityFormula || "Fixed"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+
+              {/* Consumables Section */}
+              <div className="space-y-1">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-[var(--text-2)]">Consumables ({consumables.length})</h3>
+                  <span className="text-xs font-semibold text-[var(--text-3)]">Subtotal: ₹{consumableSubtotal.toFixed(2)}</span>
+                </div>
+                {consumables.length === 0 ? (
+                  <p className="text-xs text-[var(--text-3)] py-1">No consumables defined in this BOM.</p>
+                ) : (
+                  <div className="overflow-x-auto rounded border border-[var(--border)]">
+                    <table className="w-full text-left text-xs">
+                      <thead style={{ background: "var(--surface-2)" }}>
+                        <tr className="text-[var(--text-3)]"><th className="px-2 py-1.5">Consumable</th><th className="px-2 py-1.5">Qty</th><th className="px-2 py-1.5">UOM</th><th className="px-2 py-1.5">Unit Cost</th><th className="px-2 py-1.5">Scrap %</th><th className="px-2 py-1.5">Line Cost</th><th className="px-2 py-1.5">Formula</th></tr>
+                      </thead>
+                      <tbody>
+                        {consumables.map((line, idx) => (
+                          <tr key={`${line.componentItemId}-${idx}`} className="border-t border-[var(--border)]">
+                            <td className="px-2 py-1.5 font-medium">{line.componentItemCode} {line.componentItemName}</td>
+                            <td className="px-2 py-1.5">{line.qty}</td>
+                            <td className="px-2 py-1.5">{line.uomSymbol}</td>
+                            <td className="px-2 py-1.5">{line.unitCost != null ? `₹${Number(line.unitCost).toFixed(2)}` : "—"}</td>
+                            <td className="px-2 py-1.5">{line.scrapFactor ?? 0}%</td>
+                            <td className="px-2 py-1.5 font-mono font-semibold">₹{lineCost(line).toFixed(2)}</td>
+                            <td className="px-2 py-1.5 text-[var(--text-3)]">{line.quantityFormula || "Fixed"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+
+              {/* Manufacturing Cost Estimator Calculator */}
+              <BomCalculator key={selected.id} bom={selected} items={items} />
             </section>
+          ) : (
+            <div className="rounded-xl border border-dashed border-[var(--border)] p-8 text-center text-xs text-[var(--text-3)]">
+              Select a BOM from the list to view components, standard costs, and run production cost calculations.
+            </div>
           )}
         </div>
       )}
@@ -138,7 +252,7 @@ function consolidateMaterials(materials: FlatMaterial[]): FlatMaterial[] {
   return Array.from(map.values());
 }
 
-function BomCalculator({ bom }: { bom: Bom }) {
+function BomCalculator({ bom, items }: { bom: Bom; items: Item[] }) {
   const [quantity, setQuantity] = useState("1");
   const [specifications, setSpecifications] = useState<Record<string, string>>({});
   const [explosion, setExplosion] = useState<Explosion | null>(null);
@@ -154,8 +268,7 @@ function BomCalculator({ bom }: { bom: Bom }) {
     }
     api<string[]>(`/api/v1/items/${bom.itemId}/bom/specifications`)
       .then(setNames)
-      .catch((reason: unknown) => setError(reason instanceof Error
-        ? reason.message : "BOM specification fields could not be loaded."))
+      .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "BOM specification fields could not be loaded."))
       .finally(() => setLoadingNames(false));
   }, [bom.itemId]);
 
@@ -185,12 +298,40 @@ function BomCalculator({ bom }: { bom: Bom }) {
     }
   }
 
+  // Cost calculation based on exploded materials and configured rates
+  const runQty = Number(quantity) || 1;
+  const materialsWithCost = (explosion?.flatMaterials ?? []).map((m) => {
+    const bomLine = bom.lines?.find((l) => l.componentItemId === m.itemId);
+    const itemMaster = items.find((i) => i.id === m.itemId);
+    const unitCost = bomLine?.unitCost != null ? Number(bomLine.unitCost) : (itemMaster?.standardCost != null ? Number(itemMaster.standardCost) : 0);
+    const itemType = bomLine?.componentItemType || itemMaster?.itemType || "RAW_MATERIAL";
+    const totalLineCost = Math.round(m.qty * unitCost * 100) / 100;
+    return { ...m, unitCost, itemType, totalLineCost };
+  });
+
+  const explodedRawTotal = materialsWithCost
+    .filter((m) => (m.itemType ?? "").toUpperCase() !== "CONSUMABLE")
+    .reduce((sum, m) => sum + m.totalLineCost, 0);
+
+  const explodedConsumableTotal = materialsWithCost
+    .filter((m) => (m.itemType ?? "").toUpperCase() === "CONSUMABLE")
+    .reduce((sum, m) => sum + m.totalLineCost, 0);
+
+  const labourTotal = Math.round(Number(bom.labourCostPerUnit || 0) * runQty * 100) / 100;
+  const machineTotal = Math.round(Number(bom.machineCostPerUnit || 0) * runQty * 100) / 100;
+  const otherTotal = Math.round(Number(bom.otherCostPerUnit || 0) * runQty * 100) / 100;
+  const totalManufacturingCost = Math.round((explodedRawTotal + explodedConsumableTotal + labourTotal + machineTotal + otherTotal) * 100) / 100;
+  const estimatedCostPerUnit = runQty > 0 ? Math.round((totalManufacturingCost / runQty) * 100) / 100 : 0;
+
   return (
-    <div className="mt-5 border-t border-[var(--border)] pt-4">
-      <h3 className="font-semibold">Calculate material requirements</h3>
-      <p className="mt-1 text-xs text-[var(--text-2)]">Specification values are numeric; use the unit convention agreed for the formula variables.</p>
-      <div className="mt-3 grid gap-2 md:grid-cols-3">
-        <label className="text-xs font-medium">Product quantity
+    <div className="mt-4 border-t border-[var(--border)] pt-4 space-y-3">
+      <div>
+        <h3 className="font-semibold text-sm">Calculate Estimated Manufacturing Costs</h3>
+        <p className="text-xs text-[var(--text-2)]">Calculate material requirements and total manufacturing costs based on production quantity.</p>
+      </div>
+
+      <div className="grid gap-2 md:grid-cols-3">
+        <label className="text-xs font-medium">Production quantity
           <input aria-label="Product quantity" className="eoss-input mt-1 w-full" type="number" min="0.001" step="0.001" value={quantity} onChange={(event) => setQuantity(event.target.value)} />
         </label>
         {names.map((name) => (
@@ -199,21 +340,50 @@ function BomCalculator({ bom }: { bom: Bom }) {
           </label>
         ))}
       </div>
-      <button type="button" className="mt-3 rounded-lg px-3 py-1.5 text-xs font-semibold text-white" style={{ background: "var(--brand-fill)" }} disabled={calculating || loadingNames || !Number.isFinite(Number(quantity)) || Number(quantity) <= 0} onClick={() => void calculate()}>{calculating ? "Calculating…" : "Calculate"}</button>
+
+      <button type="button" aria-label="Calculate" className="rounded-lg px-3 py-1.5 text-xs font-semibold text-white" style={{ background: "var(--brand-fill)" }} disabled={calculating || loadingNames || !Number.isFinite(Number(quantity)) || Number(quantity) <= 0} onClick={() => void calculate()}>{calculating ? "Calculating…" : "Calculate"}</button>
       {error && <p role="alert" className="mt-2 text-sm text-[var(--error)]">{error}</p>}
+
       {explosion && (
-        <div className="mt-3">
-          <p className="text-xs text-[var(--text-2)]">Calculated from BOM version {explosion.bomVersion ?? "—"}. Materials with the same item and UOM are consolidated.</p>
-          <table className="mt-2 w-full text-left text-sm">
-            <thead><tr className="text-xs text-[var(--text-3)]"><th>Material</th><th>Required quantity</th><th>UOM</th></tr></thead>
-            <tbody>{consolidateMaterials(explosion.flatMaterials ?? []).map((material) => (
-              <tr key={`${material.itemId}-${material.uomSymbol}`} className="border-t border-[var(--border)]">
-                <td className="py-1">{material.itemCode} {material.itemName}</td>
-                <td>{Math.round(material.qty * 1000) / 1000}</td>
-                <td>{material.uomSymbol}</td>
-              </tr>
-            ))}</tbody>
-          </table>
+        <div className="space-y-3 mt-3">
+          {/* Estimated Cost Breakdown for Production Quantity */}
+          <div className="rounded-lg p-3 border border-[var(--brand)] text-xs space-y-2" style={{ background: "var(--surface-2)" }}>
+            <div className="flex items-center justify-between pb-1.5 border-b border-[var(--border)]">
+              <span className="font-bold text-xs">Estimated Manufacturing Cost ({runQty} units)</span>
+              <span className="font-bold text-sm text-[var(--brand)]">Total: ₹{totalManufacturingCost.toFixed(2)} (₹{estimatedCostPerUnit.toFixed(2)}/unit)</span>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+              <div><span style={{ color: "var(--text-3)" }}>Raw Materials Cost</span><div className="font-semibold">₹{explodedRawTotal.toFixed(2)}</div></div>
+              <div><span style={{ color: "var(--text-3)" }}>Consumables Cost</span><div className="font-semibold">₹{explodedConsumableTotal.toFixed(2)}</div></div>
+              <div><span style={{ color: "var(--text-3)" }}>Labour Cost</span><div className="font-semibold">₹{labourTotal.toFixed(2)}</div></div>
+              <div><span style={{ color: "var(--text-3)" }}>Machine Cost</span><div className="font-semibold">₹{machineTotal.toFixed(2)}</div></div>
+              <div><span style={{ color: "var(--text-3)" }}>Other Manufacturing Cost</span><div className="font-semibold">₹{otherTotal.toFixed(2)}</div></div>
+              <div><span style={{ color: "var(--text-3)" }}>Est. Unit Cost</span><div className="font-bold text-[var(--brand)]">₹{estimatedCostPerUnit.toFixed(2)}</div></div>
+            </div>
+          </div>
+
+          <div>
+            <p className="text-xs text-[var(--text-2)] mb-1">Calculated from BOM version {explosion.bomVersion ? (explosion.bomVersion.startsWith("v") ? explosion.bomVersion : `v${explosion.bomVersion}`) : "—"}:</p>
+            <div className="overflow-x-auto rounded border border-[var(--border)]">
+              <table className="w-full text-left text-xs">
+                <thead style={{ background: "var(--surface-2)" }}>
+                  <tr className="text-[var(--text-3)]"><th className="px-2 py-1.5">Material</th><th className="px-2 py-1.5">Type</th><th className="px-2 py-1.5">Req. Qty</th><th className="px-2 py-1.5">UOM</th><th className="px-2 py-1.5">Unit Cost</th><th className="px-2 py-1.5">Total Cost</th></tr>
+                </thead>
+                <tbody>
+                  {consolidateMaterials(materialsWithCost).map((material) => (
+                    <tr key={`${material.itemId}-${material.uomSymbol}`} className="border-t border-[var(--border)]">
+                      <td className="px-2 py-1.5 font-medium">{material.itemCode} {material.itemName}</td>
+                      <td className="px-2 py-1.5 capitalize text-[var(--text-3)]">{(material as { itemType?: string }).itemType?.toLowerCase().replace(/_/g, " ")}</td>
+                      <td className="px-2 py-1.5 font-semibold">{Math.round(material.qty * 1000) / 1000}</td>
+                      <td className="px-2 py-1.5">{material.uomSymbol}</td>
+                      <td className="px-2 py-1.5">{(material as { unitCost?: number }).unitCost ? `₹${(material as { unitCost?: number }).unitCost!.toFixed(2)}` : "—"}</td>
+                      <td className="px-2 py-1.5 font-mono font-semibold">{(material as { totalLineCost?: number }).totalLineCost ? `₹${(material as { totalLineCost?: number }).totalLineCost!.toFixed(2)}` : "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
         </div>
       )}
     </div>
@@ -224,7 +394,6 @@ function isBomParent(item: Item) {
   const t = (item.itemType ?? "").toLowerCase();
   const isFinishedOrSemi = t === "finished_goods" || t === "finished_good" || t === "semi_finished";
   if (!isFinishedOrSemi) return false;
-  // Exclude traded finished goods — only manufactured items can have a BOM
   const kind = (item as { productKind?: string }).productKind;
   if (kind === "TRADED") return false;
   return true;
@@ -232,7 +401,6 @@ function isBomParent(item: Item) {
 
 function isBomComponent(itemType?: string) {
   const t = (itemType ?? "").toLowerCase();
-  // Exclude finished goods, services and spare parts from being BOM components
   return t !== "finished_goods" && t !== "finished_good" && t !== "service" && t !== "spare_part" && t !== "other";
 }
 
@@ -241,7 +409,8 @@ function BomForm({ items, uoms, onClose, onSaved }: { items: Item[]; uoms: Uom[]
   const [itemId, setItemId] = useState("");
   const [labourCostPerUnit, setLabourCostPerUnit] = useState("");
   const [machineCostPerUnit, setMachineCostPerUnit] = useState("");
-  const [lines, setLines] = useState<BomLine[]>([{ componentItemId: "", qty: "", uomId: uoms[0]?.id ?? "", scrapFactor: 0 }]);
+  const [otherCostPerUnit, setOtherCostPerUnit] = useState("");
+  const [lines, setLines] = useState<BomLine[]>([{ componentItemId: "", qty: "", uomId: uoms[0]?.id ?? "", scrapFactor: 0, unitCost: "" }]);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -252,7 +421,9 @@ function BomForm({ items, uoms, onClose, onSaved }: { items: Item[]; uoms: Uom[]
   function pickComponent(index: number, componentItemId: string) {
     const item = items.find((item) => item.id === componentItemId);
     const defaultUomId = item?.uomId ?? uoms[0]?.id ?? "";
-    update(index, { componentItemId, uomId: defaultUomId });
+    const stdCost = item?.standardCost != null ? String(item.standardCost) : "";
+    const itemType = (item?.itemType ?? "").toUpperCase() === "CONSUMABLE" ? "CONSUMABLE" : "RAW_MATERIAL";
+    update(index, { componentItemId, uomId: defaultUomId, unitCost: stdCost, componentItemType: itemType });
   }
 
   async function submit(event: FormEvent) {
@@ -276,12 +447,14 @@ function BomForm({ items, uoms, onClose, onSaved }: { items: Item[]; uoms: Uom[]
         body: JSON.stringify({
           labourCostPerUnit: labourCostPerUnit !== "" ? Number(labourCostPerUnit) : null,
           machineCostPerUnit: machineCostPerUnit !== "" ? Number(machineCostPerUnit) : null,
+          otherCostPerUnit: otherCostPerUnit !== "" ? Number(otherCostPerUnit) : null,
           lines: lines.map((line) => ({
             componentItemId: line.componentItemId,
             qty: line.quantityFormula?.trim() ? (Number(line.qty) || 1) : Number(line.qty),
             uomId: line.uomId,
             scrapFactor: Number(line.scrapFactor || 0),
             quantityFormula: line.quantityFormula?.trim() || null,
+            unitCost: line.unitCost !== "" && line.unitCost != null ? Number(line.unitCost) : null,
           })),
         }),
       });
@@ -295,7 +468,7 @@ function BomForm({ items, uoms, onClose, onSaved }: { items: Item[]; uoms: Uom[]
   return (
     <RecordSheet
       title="Create bill of materials"
-      subtitle="The saved BOM is approved and can be selected when a production job is created."
+      subtitle="Define required raw materials, consumables, and manufacturing costs per finished unit."
       onClose={onClose}
       primary={{ label: saving ? "Saving…" : "Save and approve", onClick: () => void submit({ preventDefault: () => {} } as FormEvent), disabled: saving }}
       secondary={{ label: "Cancel", onClick: onClose }}
@@ -310,34 +483,55 @@ function BomForm({ items, uoms, onClose, onSaved }: { items: Item[]; uoms: Uom[]
         </select>
         {parents.length === 0 && <p className="mt-1 text-xs text-[var(--error)]">No manufactured finished goods or semi-finished items found. Add items in the Items catalogue first.</p>}
       </label>
-      <div className="mt-4 grid grid-cols-2 gap-3">
+
+      <div className="mt-4 grid grid-cols-3 gap-3">
         <label className="flex flex-col gap-1 text-sm font-medium text-[var(--text)]">
-          Labour cost per unit (₹)
-          <input aria-label="Labour cost per unit" className="eoss-input w-full font-normal" type="number" min="0" step="0.01" value={labourCostPerUnit} onChange={(event) => setLabourCostPerUnit(event.target.value)} placeholder="Optional" />
+          Labour cost / unit (₹)
+          <input aria-label="Labour cost per unit" className="eoss-input w-full font-normal" type="number" min="0" step="0.01" value={labourCostPerUnit} onChange={(event) => setLabourCostPerUnit(event.target.value)} placeholder="0.00" />
         </label>
         <label className="flex flex-col gap-1 text-sm font-medium text-[var(--text)]">
-          Machine cost per unit (₹)
-          <input aria-label="Machine cost per unit" className="eoss-input w-full font-normal" type="number" min="0" step="0.01" value={machineCostPerUnit} onChange={(event) => setMachineCostPerUnit(event.target.value)} placeholder="Optional" />
+          Machine cost / unit (₹)
+          <input aria-label="Machine cost per unit" className="eoss-input w-full font-normal" type="number" min="0" step="0.01" value={machineCostPerUnit} onChange={(event) => setMachineCostPerUnit(event.target.value)} placeholder="0.00" />
+        </label>
+        <label className="flex flex-col gap-1 text-sm font-medium text-[var(--text)]">
+          Other standard cost / unit (₹)
+          <input aria-label="Other cost per unit" className="eoss-input w-full font-normal" type="number" min="0" step="0.01" value={otherCostPerUnit} onChange={(event) => setOtherCostPerUnit(event.target.value)} placeholder="0.00" />
         </label>
       </div>
+
       <div className="mt-4 space-y-2">
-        <p className="text-xs font-medium text-[var(--text-2)]">Components</p>
+        <div className="flex items-center justify-between">
+          <p className="text-xs font-semibold text-[var(--text-2)] uppercase tracking-wider">Required Materials &amp; Consumables</p>
+          <span className="text-xs text-[var(--text-3)]">Items categorized as Consumable appear under consumables</span>
+        </div>
         {lines.map((line, index) => (
-          <div key={index} className="grid gap-2 sm:grid-cols-[2fr_1fr_1fr_1fr_2fr_auto]">
-            <select aria-label={`Component ${index + 1}`} className="eoss-input" value={line.componentItemId} onChange={(event) => pickComponent(index, event.target.value)}>
-              <option value="">Select component</option>
-              {items.filter((item) => item.id !== itemId && isBomComponent(item.itemType)).map((item) => <option key={item.id} value={item.id}>{item.code} — {item.name}</option>)}
-            </select>
-            <input aria-label={`Quantity ${index + 1}`} className="eoss-input" inputMode="decimal" value={line.qty} onChange={(event) => update(index, { qty: event.target.value })} placeholder="Fixed qty" />
-            <select aria-label={`Unit ${index + 1}`} className="eoss-input" value={line.uomId} onChange={(event) => update(index, { uomId: event.target.value })}>
+          <div key={index} className="grid gap-2 sm:grid-cols-[2.2fr_1fr_1fr_1.1fr_1fr_1.8fr_auto] items-center rounded-lg border border-[var(--border)] p-2">
+            <div>
+              <select aria-label={`Component ${index + 1}`} className="eoss-input w-full text-xs" value={line.componentItemId} onChange={(event) => pickComponent(index, event.target.value)}>
+                <option value="">Select component</option>
+                {items.filter((item) => item.id !== itemId && isBomComponent(item.itemType)).map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.code} — {item.name}
+                  </option>
+                ))}
+              </select>
+              {line.componentItemType && (
+                <span className="mt-1 inline-block text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded" style={{ background: line.componentItemType === "CONSUMABLE" ? "var(--warning)" : "var(--brand)", color: "#fff" }}>
+                  {line.componentItemType === "CONSUMABLE" ? "Consumable" : "Raw Material"}
+                </span>
+              )}
+            </div>
+            <input aria-label={`Quantity ${index + 1}`} className="eoss-input text-xs" inputMode="decimal" value={line.qty} onChange={(event) => update(index, { qty: event.target.value })} placeholder="Fixed qty" />
+            <select aria-label={`Unit ${index + 1}`} className="eoss-input text-xs" value={line.uomId} onChange={(event) => update(index, { uomId: event.target.value })}>
               {uoms.map((uom) => <option key={uom.id} value={uom.id}>{uom.symbol}</option>)}
             </select>
-            <input aria-label={`Scrap % ${index + 1}`} className="eoss-input" inputMode="decimal" value={line.scrapFactor} onChange={(event) => update(index, { scrapFactor: event.target.value })} placeholder="Scrap %" />
-            <input aria-label={`Formula ${index + 1}`} className="eoss-input" value={line.quantityFormula ?? ""} onChange={(event) => update(index, { quantityFormula: event.target.value })} placeholder="Optional formula: length * width" />
-            <button type="button" className="text-[var(--error)] font-bold px-1" onClick={() => setLines((current) => current.filter((_, i) => i !== index))}>✕</button>
+            <input aria-label={`Unit cost ${index + 1}`} className="eoss-input text-xs" inputMode="decimal" value={line.unitCost ?? ""} onChange={(event) => update(index, { unitCost: event.target.value })} placeholder="Unit cost ₹" />
+            <input aria-label={`Scrap % ${index + 1}`} className="eoss-input text-xs" inputMode="decimal" value={line.scrapFactor} onChange={(event) => update(index, { scrapFactor: event.target.value })} placeholder="Scrap %" />
+            <input aria-label={`Formula ${index + 1}`} className="eoss-input text-xs" value={line.quantityFormula ?? ""} onChange={(event) => update(index, { quantityFormula: event.target.value })} placeholder="Formula: length * width" />
+            <button type="button" className="text-[var(--error)] font-bold px-1.5" onClick={() => setLines((current) => current.filter((_, i) => i !== index))}>✕</button>
           </div>
         ))}
-        <button type="button" className="text-xs font-semibold text-[var(--brand)]" onClick={() => setLines((current) => [...current, { componentItemId: "", qty: "", uomId: uoms[0]?.id ?? "", scrapFactor: 0 }])}>+ Add component</button>
+        <button type="button" className="text-xs font-semibold text-[var(--brand)]" onClick={() => setLines((current) => [...current, { componentItemId: "", qty: "", uomId: uoms[0]?.id ?? "", scrapFactor: 0, unitCost: "" }])}>+ Add component</button>
       </div>
     </RecordSheet>
   );

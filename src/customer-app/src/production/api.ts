@@ -26,6 +26,7 @@ export type JobStage = {
   blockedQty?: number;
   assignedOperator?: string;
   assignedOperatorId?: string;
+  operatorId?: string;
   variancePct?: number;
 };
 
@@ -350,7 +351,7 @@ export function listSites(): Promise<{ id: string; name: string }[]> {
     .catch(() => []);
 }
 
-export function savePlan(jobId: string, stages: Array<{ stageId: string; plannedStart: string; plannedEnd: string }>) {
+export function savePlan(jobId: string, stages: Array<{ stageId: string; plannedStart: string; plannedEnd: string; operatorId?: string }>) {
   return post<ProductionJob>(`/api/v1/jobs/${jobId}/plan`, { stages });
 }
 
@@ -385,17 +386,26 @@ export function startStage(jobId: string, stageId: string, note: string) {
   return post<ProductionJob>(`/api/v1/jobs/${jobId}/stages/${stageId}/start`, { note });
 }
 
+export type OperatorOption = { id: string; name: string; email: string };
+export function loadOperators(): Promise<OperatorOption[]> {
+  return api<OperatorOption[]>("/api/v1/jobs/operators")
+    .then((res) => (Array.isArray(res) ? res : []))
+    .catch(() => []);
+}
+
 export function progressStage(
   jobId: string,
   stageId: string,
   note: string,
   completedQty?: number,
   blockedQty?: number,
+  operatorId?: string,
 ) {
   return post<ProductionJob>(`/api/v1/jobs/${jobId}/stages/${stageId}/progress`, {
     note: note || null,
     completedQty: completedQty ?? null,
     blockedQty: blockedQty ?? null,
+    operatorId: operatorId || null,
   });
 }
 
@@ -405,11 +415,13 @@ export function completeStage(
   note: string,
   completedQty?: number,
   blockedQty?: number,
+  operatorId?: string,
 ) {
   return post<ProductionJob>(`/api/v1/jobs/${jobId}/stages/${stageId}/complete`, {
     note: note || null,
     completedQty: completedQty ?? null,
     blockedQty: blockedQty ?? null,
+    operatorId: operatorId || null,
   });
 }
 

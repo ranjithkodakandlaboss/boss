@@ -67,12 +67,13 @@ public class JobStageService {
         StageStatusMachine.assertTransition(stage.status(), StageStatusMachine.IN_PROGRESS);
         requirePriorClosed(context.tenantId(), jobId, stage.seq());
         requireMachineAvailable(context.tenantId(), jobId, stageId);
+        UUID operator = (request != null && request.operatorId() != null) ? request.operatorId() : context.userId();
         jdbc.update("""
                 UPDATE job_stages
                 SET status = 'in_progress', actual_start = COALESCE(actual_start, NOW()),
-                    operator_id = ?, notes = COALESCE(?, notes)
+                    operator_id = COALESCE(?, operator_id), notes = COALESCE(?, notes)
                 WHERE tenant_id = ? AND id = ?
-                """, context.userId(), note(request), context.tenantId(), stageId);
+                """, operator, note(request), context.tenantId(), stageId);
         moveJobToProgress(context.tenantId(), jobId, jobStatus);
         audit.record("job_stage", stageId, "START", null, "{\"status\":\"in_progress\"}");
         return query.get(jobId);
@@ -91,15 +92,18 @@ public class JobStageService {
         requirePriorClosed(context.tenantId(), jobId, stage.seq());
         enforceInspection(context.tenantId(), stage);
         Instant started = stage.started() == null ? Instant.now() : stage.started();
+        UUID completedBy = (request != null && request.operatorId() != null) ? request.operatorId() : context.userId();
         jdbc.update("""
                 UPDATE job_stages
                 SET status = 'completed', actual_start = COALESCE(actual_start, NOW()),
                     actual_end = NOW(), completed_by = ?,
+                    operator_id = COALESCE(?, operator_id),
                     completed_qty = COALESCE(?, completed_qty),
                     blocked_qty   = COALESCE(?, blocked_qty),
                     notes = COALESCE(?, notes)
                 WHERE tenant_id = ? AND id = ?
-                """, context.userId(),
+                """, completedBy,
+                completedBy,
                 request != null ? request.completedQty() : null,
                 request != null ? request.blockedQty() : null,
                 note(request), context.tenantId(), stageId);
@@ -132,15 +136,16 @@ public class JobStageService {
         if (StageStatusMachine.PENDING.equals(stage.status())) {
             requireMachineAvailable(context.tenantId(), jobId, stageId);
         }
+        UUID progressOperator = (request != null && request.operatorId() != null) ? request.operatorId() : context.userId();
         jdbc.update("""
                 UPDATE job_stages
                 SET status = 'in_progress', actual_start = COALESCE(actual_start, NOW()),
-                    operator_id = COALESCE(operator_id, ?),
+                    operator_id = COALESCE(?, operator_id),
                     completed_qty = COALESCE(?, completed_qty),
                     blocked_qty   = COALESCE(?, blocked_qty),
                     notes = COALESCE(?, notes)
                 WHERE tenant_id = ? AND id = ?
-                """, context.userId(),
+                """, progressOperator,
                 request != null ? request.completedQty() : null,
                 request != null ? request.blockedQty() : null,
                 note(request), context.tenantId(), stageId);

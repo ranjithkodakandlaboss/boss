@@ -17,6 +17,7 @@ import java.util.List;
 public class CreateBOMRequest {
     private BigDecimal labourCostPerUnit;
     private BigDecimal machineCostPerUnit;
+    private BigDecimal otherCostPerUnit;
 
     @NotEmpty(message = "lines cannot be empty")
     @Valid

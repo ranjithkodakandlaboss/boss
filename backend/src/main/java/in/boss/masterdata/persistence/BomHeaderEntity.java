@@ -58,6 +58,9 @@ public class BomHeaderEntity {
     @Column(name = "machine_cost_per_unit")
     private BigDecimal machineCostPerUnit;
 
+    @Column(name = "other_cost_per_unit")
+    private BigDecimal otherCostPerUnit;
+
     @Column(name = "created_by")
     private UUID createdBy;
 

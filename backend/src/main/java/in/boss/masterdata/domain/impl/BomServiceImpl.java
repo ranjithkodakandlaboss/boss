@@ -224,6 +224,7 @@ public class BomServiceImpl implements BomService {
                 .status("approved")
                 .labourCostPerUnit(request.getLabourCostPerUnit())
                 .machineCostPerUnit(request.getMachineCostPerUnit())
+                .otherCostPerUnit(request.getOtherCostPerUnit())
                 .createdAt(now)
                 .updatedAt(now)
                 .build();
@@ -233,6 +234,11 @@ public class BomServiceImpl implements BomService {
         List<BomLineEntity> savedLines = new ArrayList<>();
         int seq = 1;
         for (CreateBOMLineRequest lineReq : request.getLines()) {
+            ItemEntity compItem = itemRepository.findByIdAndTenantId(lineReq.getComponentItemId(), tenantId).orElse(null);
+            BigDecimal lineUnitCost = lineReq.getUnitCost() != null
+                    ? lineReq.getUnitCost()
+                    : (compItem != null ? compItem.getStdCost() : null);
+
             BomLineEntity lineEntity = BomLineEntity.builder()
                     .id(UUID.randomUUID())
                     .tenantId(tenantId)
@@ -243,6 +249,7 @@ public class BomServiceImpl implements BomService {
                     .level(lineReq.getLevel() != null ? lineReq.getLevel() : 1)
                     .scrapPercent(lineReq.getScrapFactor() != null ? lineReq.getScrapFactor() : BigDecimal.ZERO)
                     .quantityFormula(blankToNull(lineReq.getQuantityFormula()))
+                    .unitCost(lineUnitCost)
                     .isOptional(false)
                     .createdAt(now)
                     .build();
@@ -326,18 +333,36 @@ public class BomServiceImpl implements BomService {
             ItemEntity comp = componentItems.get(line.getComponentItemId());
             UnitOfMeasureEntity uom = uoms.get(line.getUomId());
 
+            BigDecimal unitCost = line.getUnitCost() != null ? line.getUnitCost() : (comp != null ? comp.getStdCost() : null);
+            BigDecimal totalCost = null;
+            if (unitCost != null && line.getQuantity() != null) {
+                BigDecimal scrapMultiplier = BigDecimal.ONE.add(
+                        (line.getScrapPercent() != null ? line.getScrapPercent() : BigDecimal.ZERO)
+                                .divide(BigDecimal.valueOf(100), 4, java.math.RoundingMode.HALF_UP));
+                totalCost = line.getQuantity().multiply(scrapMultiplier).multiply(unitCost).setScale(2, java.math.RoundingMode.HALF_UP);
+            }
+
+            String itemType = comp != null ? comp.getItemType() : null;
+            if ("raw_material".equalsIgnoreCase(itemType)) itemType = "RAW_MATERIAL";
+            else if ("consumable".equalsIgnoreCase(itemType)) itemType = "CONSUMABLE";
+            else if ("semi_finished".equalsIgnoreCase(itemType)) itemType = "SEMI_FINISHED";
+            else if ("finished_goods".equalsIgnoreCase(itemType)) itemType = "FINISHED_GOOD";
+
             lineDtos.add(BOMLineDto.builder()
                     .id(line.getId())
                     .seq(seq++)
                     .componentItemId(line.getComponentItemId())
                     .componentItemCode(comp != null ? comp.getCode() : null)
                     .componentItemName(comp != null ? comp.getName() : null)
+                    .componentItemType(itemType)
                     .qty(line.getQuantity())
                     .uomId(line.getUomId())
                     .uomSymbol(uom != null ? uom.getSymbol() : null)
                     .scrapFactor(line.getScrapPercent())
                     .level(line.getLevel())
                     .quantityFormula(line.getQuantityFormula())
+                    .unitCost(unitCost)
+                    .totalCost(totalCost)
                     .build());
         }
 
@@ -358,6 +383,7 @@ public class BomServiceImpl implements BomService {
                 .status(header.getStatus())
                 .labourCostPerUnit(header.getLabourCostPerUnit())
                 .machineCostPerUnit(header.getMachineCostPerUnit())
+                .otherCostPerUnit(header.getOtherCostPerUnit())
                 .lines(lineDtos)
                 .build();
     }

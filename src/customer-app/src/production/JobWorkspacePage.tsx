@@ -9,12 +9,21 @@ import StatusChip from "../components/shared/StatusChip";
 import { createLot, lotFields } from "../inventory/inlineCreate";
 import { createInspection as createQualityInspection, recordResult as recordQualityInspectionResult } from "../quality/api";
 import {
-  addCost, cancelJob, completeJob, completeStage, concede, displayDate, featureFlags, getJob, getJobCosting, holdJob, issueMaterial, money, openInspection, overrideMaterialPrice, previewPlanForJob,
+  addCost, cancelJob, completeJob, completeStage, concede, displayDate, featureFlags, getJob, getJobCosting, holdJob, issueMaterial, loadOperators, money, openInspection, overrideMaterialPrice, previewPlanForJob,
   progressStage, readinessLabel, recordInspection, releaseHold, returnMaterial, savePlan, skipStage, usableLots,
-  type JobCosting, type LotOption, type ProductionJob,
+  type JobCosting, type LotOption, type OperatorOption, type ProductionJob,
 } from "./api";
 
 const TABS = ["Overview", "Stages", "Plan", "Materials", "Quality", "NCR / Rework", "Updates", "Blockers", "Costing", "History"];
+
+function stageActualDuration(stage: { actualStartAt?: string; actualEndAt?: string }): string {
+  if (!stage.actualStartAt) return "—";
+  const start = new Date(stage.actualStartAt).getTime();
+  const end = stage.actualEndAt ? new Date(stage.actualEndAt).getTime() : Date.now();
+  const min = Math.max(0, Math.round((end - start) / 60000));
+  if (min < 60) return `${min}m`;
+  return `${(min / 60).toFixed(1)}h`;
+}
 
 function healthColor(job: ProductionJob): "green" | "amber" | "red" {
   if (job.status === "cancelled" || job.status === "completed") return "green";
@@ -154,7 +163,7 @@ export default function JobWorkspacePage() {
       <div className="flex gap-2 overflow-x-auto border-b" style={{ borderColor: "var(--border)" }}>
         {TABS.map((name) => <button key={name} type="button" onClick={() => setTab(name)} className="px-3 py-2 text-xs font-semibold whitespace-nowrap" style={{ color: tab === name ? "var(--brand)" : "var(--text-2)", borderBottom: tab === name ? "2px solid var(--brand)" : "2px solid transparent" }}>{name}</button>)}
       </div>
-      {tab === "Overview" && <Overview job={job} />}
+      {tab === "Overview" && <Overview job={job} onUpdate={(stageId) => setUpdateStageId(stageId)} />}
       {tab === "Stages" && <Stages job={job} canWrite={canWrite && flags["production.stage.transition"] !== false} onSkip={(stageId, reason) => act(() => skipStage(job.id, stageId, reason), "Stage skipped")} onUpdate={(stageId) => setUpdateStageId(stageId)} />}
       {tab === "Plan" && <PlanTab job={job} canWrite={canWrite} onSaved={() => { setNotice("Production plan saved"); void load(); }} />}
       {tab === "Materials" && <Materials job={job} canIssue={canWrite && flags["production.material.issue"] !== false} canReturn={canWrite && flags["production.material.return"] !== false} canEditCost={canEditCost} onIssue={(requirementId, lotId, qty, note) => act(() => issueMaterial(job.id, requirementId, lotId, qty, note), "Material issued")} onReturn={(issueId, qty, note) => act(() => returnMaterial(job.id, issueId, qty, note), "Material returned")} onPriceOverride={(issueId, unitCost, reason) => act(() => overrideMaterialPrice(job.id, issueId, unitCost, reason), "Price overridden")} />}
@@ -259,17 +268,24 @@ function currentStage(job: ProductionJob) {
     ?? job.stages?.find((stage) => stage.status === "pending");
 }
 
-function Overview({ job }: { job: ProductionJob }) {
+function Overview({ job, onUpdate }: { job: ProductionJob; onUpdate?: (stageId: string) => void }) {
   const hColor = healthColor(job);
   const hStyle = { color: hColor === "green" ? "var(--success)" : hColor === "amber" ? "var(--warning)" : "var(--error)" };
   const hLabel = hColor === "green" ? "On Track" : hColor === "amber" ? "Needs Attention" : "Delayed / Blocked";
   const stages = job.stages ?? [];
   const completedStages = stages.filter((s) => s.status === "completed" || s.status === "skipped").length;
   const totalStages = stages.length;
-  const progressPct = totalStages > 0 ? Math.round((completedStages / totalStages) * 100) : 0;
   const totalQty = Number(job.qty ?? 0);
-  const maxCompletedQty = stages.reduce((max, s) => Math.max(max, Number(s.completedQty ?? 0)), 0);
-  const qtyProgressPct = totalQty > 0 ? Math.min(100, Math.round((maxCompletedQty / totalQty) * 100)) : 0;
+
+  // Overall job progress based on actual production completion
+  const lastStage = stages.length > 0 ? stages[stages.length - 1] : null;
+  const overallCompletedQty = job.status === "completed"
+    ? totalQty
+    : lastStage != null
+      ? (Number(lastStage.completedQty) || (lastStage.status === "completed" ? totalQty : 0))
+      : 0;
+  const overallPendingQty = Math.max(0, totalQty - overallCompletedQty);
+  const overallProgressPct = totalQty > 0 ? Math.min(100, Math.round((overallCompletedQty / totalQty) * 100)) : 0;
 
   // Determine health reason
   const reasons: string[] = [];
@@ -281,66 +297,158 @@ function Overview({ job }: { job: ProductionJob }) {
 
   return (
     <div className="space-y-4">
-      {/* Job Health Card */}
-      <section className="rounded-xl border p-4 space-y-3" style={{ borderColor: hColor === "green" ? "var(--border)" : hColor === "amber" ? "var(--warning)" : "var(--error)" }}>
-        <div className="flex items-center justify-between">
-          <h2 className="text-sm font-bold">Job Health</h2>
-          <span className="text-sm font-bold" style={hStyle}>{hLabel}</span>
+      {/* Overall Production Progress & Health Card */}
+      <section className="rounded-xl border p-4 space-y-4" style={{ borderColor: hColor === "green" ? "var(--border)" : hColor === "amber" ? "var(--warning)" : "var(--error)" }}>
+        <div className="flex items-center justify-between pb-2 border-b border-[var(--border)]">
+          <div>
+            <h2 className="text-sm font-bold">Production Execution Progress</h2>
+            <p className="text-xs text-[var(--text-2)]">Overall completion based on actual finished units</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <HealthDot color={hColor} />
+            <span className="text-sm font-bold" style={hStyle}>{hLabel}</span>
+          </div>
         </div>
+
         {reasons.length > 0 && (
           <ul className="text-xs space-y-0.5" style={{ color: hColor === "amber" ? "var(--warning)" : "var(--error)" }}>
             {reasons.map((r) => <li key={r}>· {r}</li>)}
           </ul>
         )}
-        <div>
-          <div className="flex justify-between text-xs mb-1" style={{ color: "var(--text-3)" }}>
-            <span>Stage progress</span>
-            <span>{completedStages} / {totalStages} stages · {progressPct}%</span>
+
+        {/* Quantities summary cards */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+          <div className="rounded-lg border p-2.5" style={{ background: "var(--surface-2)", borderColor: "var(--border)" }}>
+            <span style={{ color: "var(--text-3)" }}>Total Production Qty</span>
+            <div className="text-base font-bold">{totalQty} {job.uomSymbol}</div>
           </div>
-          <div className="h-2 rounded-full overflow-hidden" style={{ background: "var(--surface-2)" }}>
-            <div className="h-full rounded-full" style={{ width: `${progressPct}%`, background: hColor === "green" ? "var(--success)" : hColor === "amber" ? "var(--warning)" : "var(--error)" }} />
+          <div className="rounded-lg border p-2.5" style={{ background: "var(--surface-2)", borderColor: "var(--border)" }}>
+            <span style={{ color: "var(--text-3)" }}>Overall Completed</span>
+            <div className="text-base font-bold text-[var(--success)]">{overallCompletedQty} {job.uomSymbol}</div>
+          </div>
+          <div className="rounded-lg border p-2.5" style={{ background: "var(--surface-2)", borderColor: "var(--border)" }}>
+            <span style={{ color: "var(--text-3)" }}>Overall Pending</span>
+            <div className="text-base font-bold text-[var(--warning)]">{overallPendingQty} {job.uomSymbol}</div>
+          </div>
+          <div className="rounded-lg border p-2.5" style={{ background: "var(--surface-2)", borderColor: "var(--border)" }}>
+            <span style={{ color: "var(--text-3)" }}>Overall Completion</span>
+            <div className="text-base font-bold text-[var(--brand)]">{overallProgressPct}%</div>
           </div>
         </div>
-        {totalQty > 0 && maxCompletedQty > 0 && (
-          <div>
-            <div className="flex justify-between text-xs mb-1" style={{ color: "var(--text-3)" }}>
-              <span>Units completed</span>
-              <span>{maxCompletedQty} / {totalQty} {job.uomSymbol} · {qtyProgressPct}%</span>
-            </div>
-            <div className="h-2 rounded-full overflow-hidden" style={{ background: "var(--surface-2)" }}>
-              <div className="h-full rounded-full" style={{ width: `${qtyProgressPct}%`, background: "var(--success)" }} />
-            </div>
+
+        {/* Progress bar */}
+        <div>
+          <div className="flex justify-between text-xs mb-1" style={{ color: "var(--text-3)" }}>
+            <span>Job completion: <strong>{overallCompletedQty} / {totalQty} {job.uomSymbol}</strong></span>
+            <span>{overallProgressPct}% · {completedStages}/{totalStages} stages closed</span>
           </div>
-        )}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
-          <div><span style={{ color: "var(--text-3)" }}>Total qty</span><div className="font-semibold">{job.qty} {job.uomSymbol}</div></div>
+          <div className="h-2.5 rounded-full overflow-hidden" style={{ background: "var(--surface-2)" }}>
+            <div className="h-full rounded-full transition-all" style={{ width: `${overallProgressPct}%`, background: "var(--brand-fill)" }} />
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs pt-1 border-t border-[var(--border)]">
           <div><span style={{ color: "var(--text-3)" }}>Delivery date</span><div className="font-semibold" style={job.daysRemaining != null && job.daysRemaining < 0 ? { color: "var(--error)" } : {}}>{displayDate(job.plannedEnd)}</div></div>
-          <div><span style={{ color: "var(--text-3)" }}>Material</span><div className="font-semibold">{readinessLabel(job.materialReadiness)}</div></div>
-          <div><span style={{ color: "var(--text-3)" }}>Risk</span><div className="font-semibold">{job.risk ? job.risk.replace(/_/g, " ") : "on track"}</div></div>
+          <div><span style={{ color: "var(--text-3)" }}>Material readiness</span><div className="font-semibold">{readinessLabel(job.materialReadiness)}</div></div>
+          <div><span style={{ color: "var(--text-3)" }}>Current stage</span><div className="font-semibold">{job.currentStage || "—"}</div></div>
+          <div><span style={{ color: "var(--text-3)" }}>Risk status</span><div className="font-semibold capitalize">{job.risk ? job.risk.replace(/_/g, " ") : "on track"}</div></div>
         </div>
       </section>
 
+      {/* Stage-Wise Execution Progress Table */}
+      <section className="rounded-xl border overflow-hidden" style={{ borderColor: "var(--border)" }}>
+        <div className="px-4 py-3 border-b flex items-center justify-between" style={{ borderColor: "var(--border)", background: "var(--surface-2)" }}>
+          <div>
+            <h3 className="text-sm font-bold">Stage-Wise Execution Progress</h3>
+            <p className="text-xs text-[var(--text-2)]">Track progress, durations, quantities, and operators across all manufacturing stages</p>
+          </div>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs text-left">
+            <thead style={{ background: "var(--surface-2)" }}>
+              <tr className="text-[var(--text-3)]">
+                <th className="px-3 py-2">Stage</th>
+                <th className="px-3 py-2">Planned Duration</th>
+                <th className="px-3 py-2">Actual Duration</th>
+                <th className="px-3 py-2">Completed Qty</th>
+                <th className="px-3 py-2">Pending Qty</th>
+                <th className="px-3 py-2">Progress</th>
+                <th className="px-3 py-2">Assigned Operator</th>
+                <th className="px-3 py-2">Status</th>
+                <th className="px-3 py-2 text-right">Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {stages.map((stage) => {
+                const stageDone = stage.completedQty != null ? Number(stage.completedQty) : (stage.status === "completed" ? totalQty : 0);
+                const stagePending = Math.max(0, totalQty - stageDone - Number(stage.blockedQty || 0));
+                const stagePct = totalQty > 0 ? Math.min(100, Math.round((stageDone / totalQty) * 100)) : 0;
+                const plannedDur = stage.estimatedDurationMin != null ? `${(stage.estimatedDurationMin / 60).toFixed(1)}h` : "—";
+                const actualDur = stageActualDuration(stage);
+                const v = stageVariance(stage);
+
+                return (
+                  <tr key={stage.id} className="border-t hover:bg-[var(--surface-2)]" style={{ borderColor: "var(--border)" }}>
+                    <td className="px-3 py-2.5 font-medium whitespace-nowrap">
+                      <span className="flex items-center gap-1.5">
+                        {stageHealth(stage) && <HealthDot color={stageHealth(stage)!} />}
+                        {stage.seqNo}. {stage.stageName}
+                      </span>
+                      {stage.workCentre && <span className="text-[10px] block text-[var(--text-3)]">{stage.workCentre}</span>}
+                    </td>
+                    <td className="px-3 py-2.5 whitespace-nowrap">{plannedDur}</td>
+                    <td className="px-3 py-2.5 whitespace-nowrap">
+                      <span>{actualDur}</span>
+                      {v != null && <span className={`ml-1 font-mono text-[11px] ${varianceClass(v)}`}>({v > 0 ? "+" : ""}{v}%)</span>}
+                    </td>
+                    <td className="px-3 py-2.5 font-semibold text-[var(--success)]">{stageDone}</td>
+                    <td className="px-3 py-2.5 text-[var(--text-2)]">
+                      {stagePending}
+                      {stage.blockedQty != null && Number(stage.blockedQty) > 0 && (
+                        <span className="ml-1 text-[var(--warning)]" title={`Blocked: ${stage.blockedQty}`}>({stage.blockedQty} blk)</span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2.5 whitespace-nowrap">
+                      <div className="flex items-center gap-1.5">
+                        <div className="w-12 h-1.5 rounded-full overflow-hidden bg-[var(--surface-2)]">
+                          <div className="h-full rounded-full" style={{ width: `${stagePct}%`, background: stagePct === 100 ? "var(--success)" : "var(--brand)" }} />
+                        </div>
+                        <span className="font-mono text-[11px]">{stagePct}%</span>
+                      </div>
+                    </td>
+                    <td className="px-3 py-2.5 whitespace-nowrap">{stage.assignedOperator || <span className="text-[var(--text-3)]">Unassigned</span>}</td>
+                    <td className="px-3 py-2.5 whitespace-nowrap"><StatusChip status={stage.status} size="sm" /></td>
+                    <td className="px-3 py-2.5 text-right whitespace-nowrap">
+                      {stage.status !== "completed" && stage.status !== "skipped" && onUpdate && (
+                        <button type="button" className="text-xs font-semibold px-2 py-0.5 rounded text-[var(--brand)] hover:underline" onClick={() => onUpdate(stage.id)}>
+                          Update
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      {/* Job Details & CPO Traceability */}
       <div className="grid md:grid-cols-2 gap-4">
         <section className="rounded-xl border p-4 space-y-2" style={{ borderColor: "var(--border)" }}>
-          <h2 className="text-sm font-bold">Job Details</h2>
-          <p className="text-sm">{job.itemName} · {job.qty} {job.uomSymbol}</p>
-          <p className="text-xs" style={{ color: "var(--text-2)" }}>Workflow: {job.routingTemplateName} {job.routingTemplateVersion}</p>
-          {job.projectionBasis && <p className="text-xs" style={{ color: "var(--text-3)" }}>{job.projectionBasis}</p>}
+          <h2 className="text-sm font-bold">Job &amp; Product Specification</h2>
+          <p className="text-sm font-medium">{job.itemName} · {job.qty} {job.uomSymbol}</p>
+          <p className="text-xs text-[var(--text-2)]">Manufacturing Route: {job.routingTemplateName} (Version {job.routingTemplateVersion})</p>
+          <p className="text-xs text-[var(--text-2)]">Target Site: {job.siteName || "—"}</p>
+          {job.priority && <p className="text-xs text-[var(--text-2)]">Priority: <strong className="capitalize">{job.priority}</strong></p>}
+          {job.projectionBasis && <p className="text-xs text-[var(--text-3)]">{job.projectionBasis}</p>}
         </section>
-        <section className="rounded-xl border p-4" style={{ borderColor: "var(--border)" }}>
-          <h2 className="text-sm font-bold mb-3">Stage Progress</h2>
-          <ol className="space-y-2">
-            {stages.map((stage) => {
-              const v = stageVariance(stage);
-              return (
-                <li key={stage.id} className="flex items-center justify-between text-xs">
-                  <span className="flex-1">{stage.seqNo}. {stage.stageName}</span>
-                  {v != null && <span className={`mr-2 font-mono ${varianceClass(v)}`}>{v > 0 ? "+" : ""}{v}%</span>}
-                  <StatusChip status={stage.status} size="sm" />
-                </li>
-              );
-            })}
-          </ol>
+        <section className="rounded-xl border p-4 space-y-2" style={{ borderColor: "var(--border)" }}>
+          <h2 className="text-sm font-bold">Traceability &amp; Commercial Reference</h2>
+          <p className="text-sm font-medium">Customer: {job.customerName}</p>
+          <p className="text-xs text-[var(--text-2)]">Originating Order: {job.cpoNumber || "Standalone Job"}</p>
+          <p className="text-xs text-[var(--text-2)]">Selling Value: {money(job.actualCost?.sellingPrice)}</p>
+          <p className="text-xs text-[var(--text-2)]">Job Number: <span className="font-mono">{job.jobNumber}</span></p>
         </section>
       </div>
     </div>
@@ -397,22 +505,43 @@ function Stages({ job, canWrite, onSkip, onUpdate }: { job: ProductionJob; canWr
   );
 }
 
-type PlanRow = { stageId: string; stageName: string; workCentre?: string; estimatedDurationMin?: number; plannedStart: string; plannedEnd: string };
+type PlanRow = {
+  stageId: string;
+  stageName: string;
+  workCentre?: string;
+  estimatedDurationMin?: number;
+  plannedStart: string;
+  plannedEnd: string;
+  operatorId?: string;
+};
 
 function PlanTab({ job, canWrite, onSaved }: { job: ProductionJob; canWrite: boolean; onSaved: () => void }) {
   const stages = job.stages ?? [];
   const hasPlanning = stages.some((s) => s.plannedStart);
   const [editing, setEditing] = useState(!hasPlanning);
   const [deliveryDate, setDeliveryDate] = useState(job.plannedEnd?.split("T")[0] ?? "");
+  const [operators, setOperators] = useState<OperatorOption[]>([]);
   const [rows, setRows] = useState<PlanRow[]>(() =>
     hasPlanning
-      ? stages.map((s) => ({ stageId: s.id, stageName: s.stageName, workCentre: s.workCentre, estimatedDurationMin: s.estimatedDurationMin, plannedStart: s.plannedStart ?? "", plannedEnd: s.plannedEnd ?? "" }))
+      ? stages.map((s) => ({
+          stageId: s.id,
+          stageName: s.stageName,
+          workCentre: s.workCentre,
+          estimatedDurationMin: s.estimatedDurationMin,
+          plannedStart: s.plannedStart ?? "",
+          plannedEnd: s.plannedEnd ?? "",
+          operatorId: s.operatorId,
+        }))
       : []
   );
   const [generating, setGenerating] = useState(false);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
   const generatedRef = useRef(false);
+
+  useEffect(() => {
+    void loadOperators().then((res) => setOperators(Array.isArray(res) ? res : [])).catch(() => setOperators([]));
+  }, []);
 
   // Auto-generate schedule when redirected from job creation (no plan yet)
   useEffect(() => {
@@ -435,6 +564,7 @@ function PlanTab({ job, canWrite, onSaved }: { job: ProductionJob; canWrite: boo
         estimatedDurationMin: s.estimatedDurationMin,
         plannedStart: s.plannedStart,
         plannedEnd: s.plannedEnd,
+        operatorId: stages.find((st) => st.id === s.stageId)?.operatorId,
       })));
     } catch (cause) {
       setErr(cause instanceof Error ? cause.message : "Could not generate schedule");
@@ -443,7 +573,7 @@ function PlanTab({ job, canWrite, onSaved }: { job: ProductionJob; canWrite: boo
     }
   }
 
-  function updateRow(idx: number, field: "plannedStart" | "plannedEnd", value: string) {
+  function updateRow(idx: number, field: "plannedStart" | "plannedEnd" | "operatorId", value: string | undefined) {
     setRows((prev) => prev.map((r, i) => i === idx ? { ...r, [field]: value } : r));
   }
 
@@ -473,7 +603,7 @@ function PlanTab({ job, canWrite, onSaved }: { job: ProductionJob; canWrite: boo
         <div className="rounded-xl border overflow-x-auto" style={{ borderColor: "var(--border)" }}>
           <table className="w-full text-xs">
             <thead style={{ background: "var(--surface-2)" }}>
-              <tr>{["Stage", "Work Centre", "Planned Start", "Planned End", "Est. Duration", "Actual Start", "Actual End", "Schedule", "Effort %", "Status"].map((h) => (
+              <tr>{["Stage", "Work Centre", "Assigned Operator", "Planned Start", "Planned End", "Est. Duration", "Actual Start", "Actual End", "Schedule", "Effort %", "Status"].map((h) => (
                 <th key={h} className="text-left px-3 py-2 font-semibold whitespace-nowrap" style={{ color: "var(--text-3)" }}>{h}</th>
               ))}</tr>
             </thead>
@@ -491,6 +621,7 @@ function PlanTab({ job, canWrite, onSaved }: { job: ProductionJob; canWrite: boo
                       </span>
                     </td>
                     <td className="px-3 py-2" style={{ color: "var(--text-3)" }}>{stage.workCentre || "—"}</td>
+                    <td className="px-3 py-2 whitespace-nowrap">{stage.assignedOperator || <span style={{ color: "var(--text-3)" }}>Unassigned</span>}</td>
                     <td className="px-3 py-2 whitespace-nowrap">{displayDate(stage.plannedStart) || "—"}</td>
                     <td className="px-3 py-2 whitespace-nowrap">{displayDate(stage.plannedEnd) || "—"}</td>
                     <td className="px-3 py-2 whitespace-nowrap">{stage.estimatedDurationMin != null ? `${(stage.estimatedDurationMin / 60).toFixed(1)}h` : "—"}</td>
@@ -513,12 +644,12 @@ function PlanTab({ job, canWrite, onSaved }: { job: ProductionJob; canWrite: boo
 
   // ── Edit / Create mode ────────────────────────────────────────────────────────
   return (
-    <div className="space-y-4 max-w-3xl">
+    <div className="space-y-4 max-w-4xl">
       {/* Prompt banner for new plan */}
       {!hasPlanning && (
         <div className="rounded-xl border-2 p-4" style={{ borderColor: "var(--brand)", background: "var(--surface-2)" }}>
           <p className="text-sm font-semibold mb-1">Set up the production plan</p>
-          <p className="text-xs" style={{ color: "var(--text-3)" }}>Enter the delivery date and generate a backward-scheduled stage plan. You can adjust individual dates before saving.</p>
+          <p className="text-xs" style={{ color: "var(--text-3)" }}>Enter the delivery date and generate a backward-scheduled stage plan. You can assign operators and adjust dates before saving.</p>
         </div>
       )}
 
@@ -539,7 +670,7 @@ function PlanTab({ job, canWrite, onSaved }: { job: ProductionJob; canWrite: boo
           <table className="w-full text-xs">
             <thead style={{ background: "var(--surface-2)" }}>
               <tr>
-                {["Stage", "Work Centre", "Est. Duration", "Planned Start", "Planned End"].map((h) => (
+                {["Stage", "Work Centre", "Est. Duration", "Assigned Operator", "Planned Start", "Planned End"].map((h) => (
                   <th key={h} className="text-left px-3 py-2 font-semibold" style={{ color: "var(--text-3)" }}>{h}</th>
                 ))}
               </tr>
@@ -550,6 +681,18 @@ function PlanTab({ job, canWrite, onSaved }: { job: ProductionJob; canWrite: boo
                   <td className="px-3 py-2 font-medium">{idx + 1}. {row.stageName}</td>
                   <td className="px-3 py-2" style={{ color: "var(--text-3)" }}>{row.workCentre || "—"}</td>
                   <td className="px-3 py-2">{row.estimatedDurationMin != null ? `${(row.estimatedDurationMin / 60).toFixed(1)}h` : "—"}</td>
+                  <td className="px-2 py-1.5">
+                    <select
+                      className="eoss-input w-full"
+                      value={row.operatorId ?? ""}
+                      onChange={(e) => updateRow(idx, "operatorId", e.target.value || undefined)}
+                    >
+                      <option value="">-- Unassigned --</option>
+                      {(Array.isArray(operators) ? operators : []).map((op) => (
+                        <option key={op.id} value={op.id}>{op.name || op.email}</option>
+                      ))}
+                    </select>
+                  </td>
                   <td className="px-2 py-1.5"><input type="date" className="eoss-input w-full" value={row.plannedStart} onChange={(e) => updateRow(idx, "plannedStart", e.target.value)} /></td>
                   <td className="px-2 py-1.5"><input type="date" className="eoss-input w-full" value={row.plannedEnd} onChange={(e) => updateRow(idx, "plannedEnd", e.target.value)} /></td>
                 </tr>
@@ -982,6 +1125,8 @@ function StageUpdateSheet({ job, stageId, enabled, canExecute, canHold, canCompl
   const stage = job.stages?.find((s) => s.id === stageId) ?? null;
   const [action, setAction] = useState<"continue" | "hold" | "complete">("continue");
   const [notes, setNotes] = useState("");
+  const [operators, setOperators] = useState<OperatorOption[]>([]);
+  const [operatorId, setOperatorId] = useState(stage?.operatorId ?? "");
   const [completedQty, setCompletedQty] = useState(() => {
     const totalQty = Number(job.qty ?? 0);
     return totalQty > 0 ? String(totalQty) : "";
@@ -990,6 +1135,10 @@ function StageUpdateSheet({ job, stageId, enabled, canExecute, canHold, canCompl
   const [blockedReason, setBlockedReason] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+
+  useEffect(() => {
+    void loadOperators().then((res) => setOperators(Array.isArray(res) ? res : [])).catch(() => setOperators([]));
+  }, []);
 
   if (!stage) return null;
 
@@ -1011,9 +1160,9 @@ function StageUpdateSheet({ job, stageId, enabled, canExecute, canHold, canCompl
     const stageId = stage.id;
     try {
       const noteText = [notes, badQty > 0 && blockedReason ? `Blockage: ${blockedReason}` : ""].filter(Boolean).join(" | ");
-      if (action === "continue") await progressStage(job.id, stageId, noteText, doneQty > 0 ? doneQty : undefined, badQty > 0 ? badQty : undefined);
+      if (action === "continue") await progressStage(job.id, stageId, noteText, doneQty > 0 ? doneQty : undefined, badQty > 0 ? badQty : undefined, operatorId || undefined);
       if (action === "hold") await holdJob(job.id, noteText || "Held from the stage update");
-      if (action === "complete") await completeStage(job.id, stageId, noteText, doneQty > 0 ? doneQty : undefined, badQty > 0 ? badQty : undefined);
+      if (action === "complete") await completeStage(job.id, stageId, noteText, doneQty > 0 ? doneQty : undefined, badQty > 0 ? badQty : undefined, operatorId || undefined);
       onDone();
     } catch (cause) {
       setError(cause instanceof ApiError ? cause.message : "The stage was not updated");
@@ -1050,6 +1199,21 @@ function StageUpdateSheet({ job, stageId, enabled, canExecute, canHold, canCompl
             ))}
           </div>
         </div>
+
+        {/* Operator selector */}
+        <label className="block text-xs font-semibold">
+          Assigned Operator / Team Member
+          <select
+            className="eoss-input w-full mt-1"
+            value={operatorId}
+            onChange={(e) => setOperatorId(e.target.value)}
+          >
+            <option value="">-- {stage.assignedOperator ? `${stage.assignedOperator} (keep current)` : "Unassigned"} --</option>
+            {(Array.isArray(operators) ? operators : []).map((op) => (
+              <option key={op.id} value={op.id}>{op.name || op.email}</option>
+            ))}
+          </select>
+        </label>
 
         {/* Quantity tracking */}
         {totalQty > 0 && (

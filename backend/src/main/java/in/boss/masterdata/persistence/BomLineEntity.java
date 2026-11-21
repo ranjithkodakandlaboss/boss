@@ -63,6 +63,9 @@ public class BomLineEntity {
     @Column(name = "quantity_formula")
     private String quantityFormula;
 
+    @Column(name = "unit_cost")
+    private BigDecimal unitCost;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 }

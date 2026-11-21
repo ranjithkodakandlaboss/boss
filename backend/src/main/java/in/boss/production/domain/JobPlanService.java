@@ -88,9 +88,11 @@ public class JobPlanService {
         for (var entry : request.stages()) {
             int updated = jdbc.update("""
                     UPDATE job_stages
-                    SET planned_start = ?, planned_end = ?, updated_at = NOW()
+                    SET planned_start = ?, planned_end = ?,
+                        operator_id = COALESCE(?, operator_id),
+                        updated_at = NOW()
                     WHERE tenant_id = ? AND job_id = ? AND id = ?
-                    """, entry.plannedStart(), entry.plannedEnd(),
+                    """, entry.plannedStart(), entry.plannedEnd(), entry.operatorId(),
                     context.tenantId(), jobId, entry.stageId());
             if (updated == 0) {
                 throw ProductionSupport.badRequest("Stage " + entry.stageId() + " not found on this job");

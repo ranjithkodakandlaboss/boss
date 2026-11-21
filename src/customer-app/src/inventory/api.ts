@@ -62,6 +62,7 @@ export type Item = {
   categoryLabel?: string | null;
   uomId?: string;
   uomSymbol?: string;
+  standardCost?: number | null;
   reorderPoint?: number | null;
   status?: string;
   productKind?: "MANUFACTURED" | "TRADED" | null;
