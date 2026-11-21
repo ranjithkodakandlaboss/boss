@@ -73,13 +73,13 @@ public class FirebaseJwtFilter extends OncePerRequestFilter {
                     }
                     BossContext ctx = tenantContextResolver.resolve(uid);
 
-                    // Enforce host-based tenant isolation: the subdomain must match the user's tenant.
+                    // Enforce tenant isolation: the slug from the request must match the user's tenant.
                     if (ctx != null) {
                         String slug = extractTenantSlug(request);
                         if (slug != null) {
                             UUID expectedTenant = tenantContextResolver.tenantIdForSlug(slug);
-                            if (expectedTenant != null && !expectedTenant.equals(ctx.tenantId())) {
-                                log.warn("SECURITY: firebase_uid {} (tenant {}) attempted access on slug '{}' (tenant {}) — denied",
+                            if (expectedTenant == null || !expectedTenant.equals(ctx.tenantId())) {
+                                log.warn("SECURITY: firebase_uid {} (tenant {}) denied on slug '{}' (resolved tenant: {})",
                                         uid, ctx.tenantId(), slug, expectedTenant);
                                 response.setStatus(HttpServletResponse.SC_FORBIDDEN);
                                 response.setContentType("application/json");
@@ -144,17 +144,22 @@ public class FirebaseJwtFilter extends OncePerRequestFilter {
     }
 
     /**
-     * Extracts the tenant slug from the Host header subdomain.
-     * e.g. "acme.34.54.120.120.nip.io" → "acme", "localhost" → null (no isolation in dev).
+     * Extracts the tenant slug. Reads X-Boss-Tenant header first (set by the
+     * frontend from window.location.hostname), then falls back to parsing the
+     * Host/X-Forwarded-Host header. Returns null in local dev (no isolation).
      */
     private String extractTenantSlug(HttpServletRequest request) {
+        // Preferred: client-sent slug derived from window.location.hostname
+        String clientSlug = request.getHeader("X-Boss-Tenant");
+        if (clientSlug != null && !clientSlug.isBlank()) {
+            return clientSlug.trim().toLowerCase();
+        }
+        // Fallback: parse host header (may be rewritten by proxies)
         String host = request.getHeader("X-Forwarded-Host");
         if (host == null || host.isBlank()) host = request.getServerName();
         if (host == null) return null;
-        // Strip port if present
         int colon = host.indexOf(':');
         if (colon != -1) host = host.substring(0, colon);
-        // Skip isolation for plain localhost / 127.x (dev)
         if (host.equals("localhost") || host.startsWith("127.")) return null;
         int dot = host.indexOf('.');
         if (dot <= 0) return null;

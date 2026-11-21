@@ -8,6 +8,14 @@ import {
 
 const base = import.meta.env.VITE_CUSTOMER_API_URL ?? (import.meta.env.DEV ? "http://127.0.0.1:8080" : "");
 const TOKEN_REFRESH_WINDOW_MS = 5 * 60 * 1000;
+
+function tenantSlug(): string | null {
+  if (typeof window === "undefined") return null;
+  const host = window.location.hostname;
+  if (host === "localhost" || host.startsWith("127.")) return null;
+  const dot = host.indexOf(".");
+  return dot > 0 ? host.substring(0, dot) : null;
+}
 let refreshInProgress: { refreshToken: string; promise: Promise<string> } | null = null;
 
 export class ApiError extends Error {
@@ -102,6 +110,8 @@ export async function authorizedFetch(input: RequestInfo | URL, init: RequestIni
     });
   }
   if (token) headers.set("Authorization", `Bearer ${token}`);
+  const slug = tenantSlug();
+  if (slug) headers.set("X-Boss-Tenant", slug);
 
   const request = { ...init, headers };
   const response = await fetch(input, request);
