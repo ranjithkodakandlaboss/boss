@@ -1104,13 +1104,10 @@ public class SalesService {
         List<UUID> sites = jdbc.query(
                 "SELECT id FROM physical_sites WHERE tenant_id = ? AND status = 'active' ORDER BY created_at, id",
                 (rs, rowNum) -> rs.getObject("id", UUID.class), context.tenantId());
-        if (sites.size() == 1) {
-            return sites.get(0);
-        }
         if (sites.isEmpty()) {
             throw badRequest("Add an active site before creating a sales document");
         }
-        throw badRequest("Select a site before creating a sales document");
+        return sites.get(0);
     }
 
     private BossContext requireContext() {
