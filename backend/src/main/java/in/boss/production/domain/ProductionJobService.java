@@ -190,6 +190,33 @@ public class ProductionJobService {
     }
 
     private ProductionJobResponse insertStandaloneJob(BossContext context, CreateJobRequest request) {
+        UUID uomId = validateStandaloneCustomerAndItem(context, request);
+        RoutingWithStages resolved = validateStandaloneRouting(context.tenantId(), request.routingTemplateId());
+        UUID jobId = UUID.randomUUID();
+        String jobNumber = "JOB-" + LocalDate.now() + "-" + jobId.toString().substring(0, 8).toUpperCase();
+        String priority = request.priority() == null ? "normal" : request.priority();
+        jdbc.update("""
+                INSERT INTO production_jobs
+                  (id, tenant_id, job_number, customer_id, finished_item_id, routing_id,
+                   routing_version, site_id, quantity, uom_id, status, planned_end,
+                   priority, created_by)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'planned', ?, ?, ?)
+                """, jobId, context.tenantId(), jobNumber, request.customerId(), request.itemId(),
+                resolved.routing().id(), resolved.routing().version(), request.siteId(), request.quantity(), uomId,
+                request.scheduledEnd(), priority, context.userId());
+        insertStages(context.tenantId(), jobId, resolved.stages());
+        MaterialEstimate estimated = tryInsertMaterials(context, jobId, request.itemId(), request.quantity());
+        BomRates bomRates = loadBomRates(context.tenantId(), request.itemId());
+        insertCostHeader(context.tenantId(), jobId, estimated, BigDecimal.ZERO, request.quantity(), bomRates);
+        audit.record("production_job", jobId, "CREATE", null, "{\"status\":\"planned\",\"mode\":\"standalone\"}");
+        outbox.publish("production_job", jobId, "production.job.created",
+                "{\"jobId\":\"" + jobId + "\",\"status\":\"planned\"}");
+        return query.get(jobId);
+    }
+
+    private record RoutingWithStages(RoutingTemplate routing, List<StageSeed> stages) {}
+
+    private UUID validateStandaloneCustomerAndItem(BossContext context, CreateJobRequest request) {
         if (request.customerId() == null || request.itemId() == null
                 || request.quantity() == null || request.siteId() == null) {
             throw ProductionSupport.badRequest(
@@ -198,7 +225,6 @@ public class ProductionJobService {
         if (!context.canAccessSite(request.siteId())) {
             throw ProductionSupport.badRequest("Site not accessible for this user");
         }
-        // Verify customer exists for this tenant
         Boolean customerExists = jdbc.query("""
                 SELECT TRUE FROM customers WHERE tenant_id = ? AND id = ?
                 """, rs -> rs.next() ? rs.getBoolean(1) : null,
@@ -206,60 +232,35 @@ public class ProductionJobService {
         if (!Boolean.TRUE.equals(customerExists)) {
             throw ProductionSupport.badRequest("Customer not found for this tenant");
         }
-        // Verify item exists for this tenant
-        Boolean itemExists = jdbc.query("""
-                SELECT TRUE FROM items WHERE tenant_id = ? AND id = ? AND is_active = TRUE
-                """, rs -> rs.next() ? rs.getBoolean(1) : null,
+        UUID uomId = jdbc.query("""
+                SELECT base_uom_id FROM items WHERE tenant_id = ? AND id = ? AND is_active = TRUE
+                """, rs -> rs.next() ? rs.getObject("base_uom_id", UUID.class) : null,
                 context.tenantId(), request.itemId());
-        if (!Boolean.TRUE.equals(itemExists)) {
+        if (uomId == null) {
             throw ProductionSupport.badRequest("Item not found or inactive for this tenant");
         }
-        // Resolve routing (item match optional for standalone)
+        return uomId;
+    }
+
+    private RoutingWithStages validateStandaloneRouting(UUID tenantId, UUID routingTemplateId) {
         RoutingTemplate routing = jdbc.query("""
                 SELECT id, version, status, finished_item_id
                 FROM routing_templates WHERE tenant_id = ? AND id = ?
                 """, rs -> rs.next() ? new RoutingTemplate(rs.getObject("id", UUID.class),
                 rs.getString("version"), rs.getString("status"),
                 rs.getObject("finished_item_id", UUID.class)) : null,
-                context.tenantId(), request.routingTemplateId());
+                tenantId, routingTemplateId);
         if (routing == null || !"active".equals(routing.status())) {
             throw ProductionSupport.badRequest("Active routing template was not found");
         }
-        List<StageSeed> stages = loadStages(context.tenantId(), routing.id());
+        List<StageSeed> stages = loadStages(tenantId, routing.id());
         if (stages.isEmpty()) {
             throw ProductionSupport.badRequest("Routing template has no stages");
         }
         for (StageSeed stage : stages) {
-            requireAssetCapability(context.tenantId(), stage.assetId(), stage.configId());
+            requireAssetCapability(tenantId, stage.assetId(), stage.configId());
         }
-        UUID jobId = UUID.randomUUID();
-        String jobNumber = "JOB-" + LocalDate.now() + "-" + jobId.toString().substring(0, 8).toUpperCase();
-        String priority = request.priority() == null ? "normal" : request.priority();
-        // Look up site name and uom for the item
-        UUID uomId = jdbc.query("""
-                SELECT base_uom_id FROM items WHERE tenant_id = ? AND id = ?
-                """, rs -> rs.next() ? rs.getObject("base_uom_id", UUID.class) : null,
-                context.tenantId(), request.itemId());
-        if (uomId == null) {
-            throw ProductionSupport.badRequest("Item UOM not found");
-        }
-        jdbc.update("""
-                INSERT INTO production_jobs
-                  (id, tenant_id, job_number, customer_id, finished_item_id, routing_id,
-                   routing_version, site_id, quantity, uom_id, status, planned_end,
-                   priority, created_by)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'planned', ?, ?, ?)
-                """, jobId, context.tenantId(), jobNumber, request.customerId(), request.itemId(),
-                routing.id(), routing.version(), request.siteId(), request.quantity(), uomId,
-                request.scheduledEnd(), priority, context.userId());
-        insertStages(context.tenantId(), jobId, stages);
-        MaterialEstimate estimated = tryInsertMaterials(context, jobId, request.itemId(), request.quantity());
-        BomRates bomRates = loadBomRates(context.tenantId(), request.itemId());
-        insertCostHeader(context.tenantId(), jobId, estimated, BigDecimal.ZERO, request.quantity(), bomRates);
-        audit.record("production_job", jobId, "CREATE", null, "{\"status\":\"planned\",\"mode\":\"standalone\"}");
-        outbox.publish("production_job", jobId, "production.job.created",
-                "{\"jobId\":\"" + jobId + "\",\"status\":\"planned\"}");
-        return query.get(jobId);
+        return new RoutingWithStages(routing, stages);
     }
 
     private ProductionJobResponse insertJob(BossContext context, CreateJobRequest request) {

@@ -14,6 +14,7 @@ customer-api	src/main/java/in/boss/maintenance/domain/MaintenanceService.java	To
 customer-api	src/main/java/in/boss/masterdata/domain/impl/BomExplosionServiceImpl.java	GodClass	1
 customer-api	src/main/java/in/boss/masterdata/domain/impl/BomServiceImpl.java	CognitiveComplexity	1
 customer-api	src/main/java/in/boss/masterdata/domain/impl/BomServiceImpl.java	CyclomaticComplexity	1
+customer-api	src/main/java/in/boss/masterdata/domain/impl/BomServiceImpl.java	GodClass	1
 customer-api	src/main/java/in/boss/masterdata/domain/impl/CustomerServiceImpl.java	CyclomaticComplexity	1
 customer-api	src/main/java/in/boss/masterdata/domain/impl/CustomerServiceImpl.java	GodClass	1
 customer-api	src/main/java/in/boss/masterdata/domain/impl/ItemServiceImpl.java	CognitiveComplexity	2
@@ -31,6 +32,8 @@ customer-api	src/main/java/in/boss/procurement/domain/SpoAmendmentFileService.ja
 customer-api	src/main/java/in/boss/procurement/domain/SpoService.java	GodClass	1
 customer-api	src/main/java/in/boss/procurement/domain/SupplierQuotationService.java	GodClass	1
 customer-api	src/main/java/in/boss/production/domain/JobCostingService.java	CyclomaticComplexity	1
+customer-api	src/main/java/in/boss/production/domain/ProductionJobService.java	CyclomaticComplexity	1
+customer-api	src/main/java/in/boss/production/domain/ProductionQueryService.java	GodClass	1
 customer-api	src/main/java/in/boss/quality/domain/QualityService.java	CyclomaticComplexity	1
 customer-api	src/main/java/in/boss/quality/domain/QualityService.java	TooManyMethods	1
 customer-api	src/main/java/in/boss/sales/domain/CustomerPoService.java	CyclomaticComplexity	1

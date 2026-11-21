@@ -334,19 +334,8 @@ public class BomServiceImpl implements BomService {
             UnitOfMeasureEntity uom = uoms.get(line.getUomId());
 
             BigDecimal unitCost = line.getUnitCost() != null ? line.getUnitCost() : (comp != null ? comp.getStdCost() : null);
-            BigDecimal totalCost = null;
-            if (unitCost != null && line.getQuantity() != null) {
-                BigDecimal scrapMultiplier = BigDecimal.ONE.add(
-                        (line.getScrapPercent() != null ? line.getScrapPercent() : BigDecimal.ZERO)
-                                .divide(BigDecimal.valueOf(100), 4, java.math.RoundingMode.HALF_UP));
-                totalCost = line.getQuantity().multiply(scrapMultiplier).multiply(unitCost).setScale(2, java.math.RoundingMode.HALF_UP);
-            }
-
-            String itemType = comp != null ? comp.getItemType() : null;
-            if ("raw_material".equalsIgnoreCase(itemType)) itemType = "RAW_MATERIAL";
-            else if ("consumable".equalsIgnoreCase(itemType)) itemType = "CONSUMABLE";
-            else if ("semi_finished".equalsIgnoreCase(itemType)) itemType = "SEMI_FINISHED";
-            else if ("finished_goods".equalsIgnoreCase(itemType)) itemType = "FINISHED_GOOD";
+            BigDecimal totalCost = calculateLineCost(unitCost, line.getQuantity(), line.getScrapPercent());
+            String itemType = resolveComponentType(comp);
 
             lineDtos.add(BOMLineDto.builder()
                     .id(line.getId())
@@ -386,6 +375,29 @@ public class BomServiceImpl implements BomService {
                 .otherCostPerUnit(header.getOtherCostPerUnit())
                 .lines(lineDtos)
                 .build();
+    }
+
+    private BigDecimal calculateLineCost(BigDecimal unitCost, BigDecimal quantity, BigDecimal scrapPercent) {
+        if (unitCost == null || quantity == null) {
+            return null;
+        }
+        BigDecimal scrapMultiplier = BigDecimal.ONE.add(
+                (scrapPercent != null ? scrapPercent : BigDecimal.ZERO)
+                        .divide(BigDecimal.valueOf(100), 4, java.math.RoundingMode.HALF_UP));
+        return quantity.multiply(scrapMultiplier).multiply(unitCost).setScale(2, java.math.RoundingMode.HALF_UP);
+    }
+
+    private String resolveComponentType(ItemEntity comp) {
+        if (comp == null || comp.getItemType() == null) {
+            return null;
+        }
+        return switch (comp.getItemType().toLowerCase()) {
+            case "raw_material" -> "RAW_MATERIAL";
+            case "consumable" -> "CONSUMABLE";
+            case "semi_finished" -> "SEMI_FINISHED";
+            case "finished_goods" -> "FINISHED_GOOD";
+            default -> comp.getItemType();
+        };
     }
 
     private String toJson(Object obj) {
