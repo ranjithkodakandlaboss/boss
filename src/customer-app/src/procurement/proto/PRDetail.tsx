@@ -470,7 +470,7 @@ export default function PRDetail() {
                   <Scale size={13} /> {showCompare ? 'Hide Comparison' : 'Compare Quotations'}
                 </button>
               )}
-              {!linkedSpo && !['cancelled', 'rejected'].includes(pr.status) && (
+              {!linkedSpo && !['cancelled', 'rejected', 'approved', 'converted'].includes(pr.status) && (
                 <Link to={`/procurement/supplier-rfq/new?prId=${pr.id}`} className="btn-primary text-xs inline-flex items-center gap-1">
                   <Plus size={13} /> Add Quotation
                 </Link>

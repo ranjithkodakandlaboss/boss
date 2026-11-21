@@ -523,7 +523,7 @@ export default function QuotationDetail() {
               )}
               {quotation.taxAmount != null && quotation.taxAmount > 0 && (
                 <tr>
-                  <td colSpan={7} className="text-right text-xs text-[var(--text-2)] pr-4">GST</td>
+                  <td colSpan={7} className="text-right text-xs text-[var(--text-2)] pr-4">GST{quotation.taxRatePct ? ` (${quotation.taxRatePct}%)` : ''}</td>
                   <td className="font-mono text-sm text-[var(--text)]">{fmtMoney(quotation.taxAmount)}</td>
                   <td />
                 </tr>
