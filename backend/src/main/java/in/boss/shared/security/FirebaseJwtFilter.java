@@ -73,6 +73,24 @@ public class FirebaseJwtFilter extends OncePerRequestFilter {
                     }
                     BossContext ctx = tenantContextResolver.resolve(uid);
 
+                    // Enforce tenant isolation: the slug from the request must match the user's tenant.
+                    if (ctx != null) {
+                        String slug = extractTenantSlug(request);
+                        if (slug != null) {
+                            UUID expectedTenant = tenantContextResolver.tenantIdForSlug(slug);
+                            if (expectedTenant == null || !expectedTenant.equals(ctx.tenantId())) {
+                                log.warn("SECURITY: firebase_uid {} (tenant {}) denied on slug '{}' (resolved tenant: {})",
+                                        uid, ctx.tenantId(), slug, expectedTenant);
+                                response.setStatus(HttpServletResponse.SC_FORBIDDEN);
+                                response.setContentType("application/json");
+                                response.getWriter().write(
+                                        "{\"title\":\"Forbidden\",\"status\":403,"
+                                        + "\"detail\":\"Your account does not belong to this organisation\"}");
+                                return;
+                            }
+                        }
+                    }
+
                     if (ctx != null) {
                         BossContextHolder.set(ctx);
                         List<SimpleGrantedAuthority> authorities = ctx.roles().stream()
@@ -123,5 +141,28 @@ public class FirebaseJwtFilter extends OncePerRequestFilter {
             return header.substring(7);
         }
         return null;
+    }
+
+    /**
+     * Extracts the tenant slug. Reads X-Boss-Tenant header first (set by the
+     * frontend from window.location.hostname), then falls back to parsing the
+     * Host/X-Forwarded-Host header. Returns null in local dev (no isolation).
+     */
+    private String extractTenantSlug(HttpServletRequest request) {
+        // Preferred: client-sent slug derived from window.location.hostname
+        String clientSlug = request.getHeader("X-Boss-Tenant");
+        if (clientSlug != null && !clientSlug.isBlank()) {
+            return clientSlug.trim().toLowerCase();
+        }
+        // Fallback: parse host header (may be rewritten by proxies)
+        String host = request.getHeader("X-Forwarded-Host");
+        if (host == null || host.isBlank()) host = request.getServerName();
+        if (host == null) return null;
+        int colon = host.indexOf(':');
+        if (colon != -1) host = host.substring(0, colon);
+        if (host.equals("localhost") || host.startsWith("127.")) return null;
+        int dot = host.indexOf('.');
+        if (dot <= 0) return null;
+        return host.substring(0, dot);
     }
 }

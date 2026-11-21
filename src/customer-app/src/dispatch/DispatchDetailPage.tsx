@@ -383,7 +383,7 @@ export default function DispatchDetailPage() {
                 <button
                   disabled={updating || isQCGateBlocked}
                   onClick={async () => {
-                    const base = import.meta.env.VITE_CUSTOMER_API_URL ?? "http://127.0.0.1:8080";
+                    const base = import.meta.env.VITE_CUSTOMER_API_URL ?? (import.meta.env.DEV ? "http://127.0.0.1:8080" : "");
                     const resp = await authorizedFetch(`${base}/api/v1/dispatches/${dispatch.id}/challan`);
                     if (!resp.ok) return;
                     const blob = await resp.blob();

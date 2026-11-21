@@ -461,14 +461,6 @@ public class SalesService {
 
     private QuotationCostingSnapshot validateQuotationSubmission(BossContext context, UUID tenantId,
                                              UUID quotationId, String note, QuotationResponse draft) {
-        Integer missingDrawing = jdbc.queryForObject("""
-                SELECT COUNT(*) FROM quotation_lines
-                WHERE tenant_id = ? AND quotation_id = ?
-                  AND (drawing_number IS NULL OR btrim(drawing_number) = '')
-                """, Integer.class, tenantId, quotationId);
-        if (missingDrawing != null && missingDrawing > 0) {
-            throw badRequest("Drawing number is required on every line before the quotation is submitted");
-        }
         QuotationCostingSnapshot costing = draft.costing();
         boolean refresh = costing == null || !costing.available();
         if (refresh) {
@@ -478,25 +470,24 @@ public class SalesService {
             costing = quotationCostingService.calculate(tenantId, loadCostingInputs(tenantId, quotationId),
                     draft.discountAmount());
         }
-        if (!costing.available()) {
-            throw conflict("A complete quotation cost estimate is required before submission: "
-                    + String.join("; ", costing.unavailableReasons()));
-        }
-        if (costing.requiresApproval()) {
-            validateMarginOverride(context, note);
-        }
-        if (refresh) {
-            for (int i = 0; i < draft.lines().size(); i++) {
-                var line = draft.lines().get(i);
-                jdbc.update("""
-                        UPDATE quotation_lines SET estimated_material_cost_per_unit = ?
-                        WHERE tenant_id = ? AND quotation_id = ? AND id = ?
-                        """, costing.lines().get(i).materialCost().divide(line.qty(), 2, RoundingMode.HALF_UP),
-                        tenantId, quotationId, line.id());
+        // Costing unavailable is a warning only — submission is allowed without a complete cost estimate.
+        if (costing.available()) {
+            if (costing.requiresApproval()) {
+                validateMarginOverride(context, note);
             }
-            jdbc.update("UPDATE quotations SET estimated_material_cost = ? WHERE tenant_id = ? AND id = ?",
-                    costing.materialCost(), tenantId, quotationId);
-            persistCostingSnapshot(tenantId, quotationId, costing);
+            if (refresh) {
+                for (int i = 0; i < draft.lines().size(); i++) {
+                    var line = draft.lines().get(i);
+                    jdbc.update("""
+                            UPDATE quotation_lines SET estimated_material_cost_per_unit = ?
+                            WHERE tenant_id = ? AND quotation_id = ? AND id = ?
+                            """, costing.lines().get(i).materialCost().divide(line.qty(), 2, RoundingMode.HALF_UP),
+                            tenantId, quotationId, line.id());
+                }
+                jdbc.update("UPDATE quotations SET estimated_material_cost = ? WHERE tenant_id = ? AND id = ?",
+                        costing.materialCost(), tenantId, quotationId);
+                persistCostingSnapshot(tenantId, quotationId, costing);
+            }
         }
         return costing;
     }

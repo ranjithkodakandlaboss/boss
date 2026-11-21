@@ -11,6 +11,8 @@ const LOCAL_USERS = [
   { role: "Operations Manager", email: "ops-manager@boss.local.test", token: "local-seed-ops-manager" },
 ];
 
+const isLocalEnv = import.meta.env.DEV;
+
 export default function LoginPage() {
   const navigate = useNavigate();
   const [expired] = useState(() => {
@@ -70,29 +72,31 @@ export default function LoginPage() {
             Your session has expired. Please sign in again.
           </p>
         )}
-        <p className="text-sm text-[var(--text-2)]">Use your account or a local demo account below.</p>
-        <TextField label="Email" name="email" type="email" required defaultValue="owner@boss.local.test" />
-        <TextField label="Password" name="password" type="password" required defaultValue="password" />
+        <p className="text-sm text-[var(--text-2)]">Sign in with your BOSS account credentials.</p>
+        <TextField label="Email" name="email" type="email" required defaultValue={isLocalEnv ? "owner@boss.local.test" : ""} />
+        <TextField label="Password" name="password" type="password" required defaultValue={isLocalEnv ? "password" : ""} />
         {error && <p role="alert" className="text-sm text-[var(--error)]">{error}</p>}
         <Button type="submit" disabled={pending}>{pending ? "Signing in" : "Sign in"}</Button>
 
-        <div className="pt-3 border-t space-y-2" style={{ borderColor: "var(--border)" }}>
-          <p className="text-xs font-semibold text-[var(--text-3)] uppercase tracking-wider">Quick Sign-in (Local Demo)</p>
-          <div className="flex flex-col gap-1.5">
-            {LOCAL_USERS.map((u) => (
-              <button
-                key={u.token}
-                type="button"
-                onClick={() => loginWithToken(u.token)}
-                className="w-full text-left px-3 py-2 rounded-lg border text-xs flex justify-between items-center hover:bg-[var(--surface-2)] transition-colors cursor-pointer"
-                style={{ borderColor: "var(--border)" }}
-              >
-                <span className="font-medium text-[var(--text)]">{u.role}</span>
-                <span className="font-mono text-[11px] text-[var(--text-3)]">{u.email}</span>
-              </button>
-            ))}
+        {isLocalEnv && (
+          <div className="pt-3 border-t space-y-2" style={{ borderColor: "var(--border)" }}>
+            <p className="text-xs font-semibold text-[var(--text-3)] uppercase tracking-wider">Quick Sign-in (Local Demo)</p>
+            <div className="flex flex-col gap-1.5">
+              {LOCAL_USERS.map((u) => (
+                <button
+                  key={u.token}
+                  type="button"
+                  onClick={() => loginWithToken(u.token)}
+                  className="w-full text-left px-3 py-2 rounded-lg border text-xs flex justify-between items-center hover:bg-[var(--surface-2)] transition-colors cursor-pointer"
+                  style={{ borderColor: "var(--border)" }}
+                >
+                  <span className="font-medium text-[var(--text)]">{u.role}</span>
+                  <span className="font-mono text-[11px] text-[var(--text-3)]">{u.email}</span>
+                </button>
+              ))}
+            </div>
           </div>
-        </div>
+        )}
 
         <p className="text-center text-xs text-[var(--text-3)] pt-2">
           New to BOSS? Contact your workspace administrator to be invited.

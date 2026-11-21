@@ -274,14 +274,18 @@ export default function PRDetail() {
                   state: { from: originUrl },
                 }]
               : []),
-            ...prInvitations.slice(0, 3).map(inv => ({
-              relationship: 'Downstream' as const,
-              typeLabel: 'Supplier Invitation',
-              reference: inv.supplierName,
-              to: inv.quotationId ? `/procurement/quote/${inv.quotationId}` : `/procurement/supplier-rfq/new?invitationId=${inv.id}`,
-              status: inv.status,
-              state: { from: originUrl },
-            })),
+            ...prInvitations.slice(0, 3).map(inv => {
+              const linkedQuote = inv.quotationId ? prQuotations.find(q => q.id === inv.quotationId) : null;
+              const effectiveStatus = linkedQuote ? linkedQuote.status : inv.status;
+              return {
+                relationship: 'Downstream' as const,
+                typeLabel: 'Supplier Invitation',
+                reference: inv.supplierName,
+                to: inv.quotationId ? `/procurement/quote/${inv.quotationId}` : `/procurement/supplier-rfq/new?invitationId=${inv.id}`,
+                status: effectiveStatus,
+                state: { from: originUrl },
+              };
+            }),
             ...prQuotations.map(q => ({
               relationship: 'Downstream' as const,
               typeLabel: 'Supplier Quote',
@@ -380,7 +384,7 @@ export default function PRDetail() {
                             Retry email
                           </button>
                         )}
-                        {!isPrBlocked && !inv.quotationId && ['sent', 'awaiting_quotation'].includes(inv.status) && (
+                        {!isPrBlocked && !inv.quotationId && !selectedQuotation && ['sent', 'awaiting_quotation'].includes(inv.status) && (
                           <>
                             <button
                               type="button"
@@ -466,7 +470,7 @@ export default function PRDetail() {
                   <Scale size={13} /> {showCompare ? 'Hide Comparison' : 'Compare Quotations'}
                 </button>
               )}
-              {!linkedSpo && !['cancelled', 'rejected'].includes(pr.status) && (
+              {!linkedSpo && !['cancelled', 'rejected', 'approved', 'converted'].includes(pr.status) && (
                 <Link to={`/procurement/supplier-rfq/new?prId=${pr.id}`} className="btn-primary text-xs inline-flex items-center gap-1">
                   <Plus size={13} /> Add Quotation
                 </Link>
@@ -661,87 +665,6 @@ export default function PRDetail() {
               )}
             </div>
           )}
-        </section>
-
-        {/* 3. End-to-End Traceability Chain: Selected Quote → Supplier PO → GRNs */}
-        <section className="grid md:grid-cols-3 gap-4">
-          <div className="rounded-xl border p-4 bg-[var(--surface)] border-[var(--border)] space-y-2">
-            <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-[var(--text-3)]">
-              <Award size={13} className="text-[var(--brand)]" /> Selected Quotation
-            </div>
-            {selectedQuotation ? (
-              <div className="space-y-1 text-xs">
-                <Link to={`/procurement/quote/${selectedQuotation.id}`} className="font-mono font-bold text-sm text-[var(--brand)] hover:underline">
-                  {selectedQuotation.quoteNumber}
-                </Link>
-                <div className="font-semibold text-[var(--text)]">
-                  {selectedQuotation.supplierId
-                    ? <Link to={`/suppliers/${selectedQuotation.supplierId}`} state={{ from: originUrl }} className="text-[var(--brand)] hover:underline">{selectedQuotation.supplierName}</Link>
-                    : selectedQuotation.supplierName}
-                </div>
-                <div className="text-[var(--text-2)]">Landed Value: {fmtMoney(quoteTotal(selectedQuotation))} · Lead: {selectedQuotation.deliveryDays}d</div>
-                {!linkedSpo && canApprove && (
-                  <button
-                    type="button"
-                    onClick={() => handleGenerateSpo(selectedQuotation.id)}
-                    className="mt-2 w-full py-1.5 rounded-lg text-xs font-semibold text-white"
-                    style={{ background: 'var(--success)' }}
-                  >
-                    Generate Supplier PO
-                  </button>
-                )}
-              </div>
-            ) : (
-              <p className="text-xs text-[var(--text-3)]">No winning quotation finalized yet.</p>
-            )}
-          </div>
-
-          <div className="rounded-xl border p-4 bg-[var(--surface)] border-[var(--border)] space-y-2">
-            <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-[var(--text-3)]">
-              <FileText size={13} className="text-[var(--brand)]" /> Supplier Purchase Order
-            </div>
-            {linkedSpo ? (
-              <div className="space-y-1 text-xs">
-                <div className="flex items-center justify-between">
-                  <Link to={`/procurement/spo/${linkedSpo.id}`} className="font-mono font-bold text-sm text-[var(--brand)] hover:underline">
-                    {linkedSpo.poNumber}
-                  </Link>
-                  <StatusChip status={linkedSpo.status} size="sm" />
-                </div>
-                <div className="font-semibold text-[var(--text)]">
-                  {linkedSpo.supplierId
-                    ? <Link to={`/suppliers/${linkedSpo.supplierId}`} state={{ from: originUrl }} className="text-[var(--brand)] hover:underline">{linkedSpo.supplierName}</Link>
-                    : linkedSpo.supplierName}
-                </div>
-                <div className="text-[var(--text-2)]">Value: {fmtMoney(linkedSpo.totalValue)} · Due: {fmt(linkedSpo.committedDate)}</div>
-              </div>
-            ) : (
-              <p className="text-xs text-[var(--text-3)]">Finalize one quotation to issue a single Supplier PO.</p>
-            )}
-          </div>
-
-          <div className="rounded-xl border p-4 bg-[var(--surface)] border-[var(--border)] space-y-2">
-            <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-[var(--text-3)]">
-              <Truck size={13} className="text-[var(--brand)]" /> Linked GRNs ({linkedGrns.length})
-            </div>
-            {linkedGrns.length > 0 ? (
-              <div className="space-y-1.5">
-                {linkedGrns.map(g => (
-                  <div key={g.id} className="flex items-center justify-between text-xs border-b border-[var(--border)]/60 pb-1 last:border-b-0">
-                    <Link to={`/procurement/grn/${g.id}`} className="font-mono font-bold text-[var(--brand)] hover:underline">
-                      {g.grnNumber}
-                    </Link>
-                    <span className="text-[var(--text-2)]">{fmt(g.receivedDate)}</span>
-                    <StatusChip status={g.status} size="sm" />
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <p className="text-xs text-[var(--text-3)]">
-                {linkedSpo ? 'No receipts recorded yet against this PO.' : 'Available once Supplier PO is issued.'}
-              </p>
-            )}
-          </div>
         </section>
 
         {/* 4. Notes & Attachments */}

@@ -1,7 +1,7 @@
 import { api, authorizedFetch, safeRandomUUID } from "../auth/api";
 
 async function downloadSalesPdf(path: string, fallbackName: string, failure: string) {
-  const base = import.meta.env.VITE_CUSTOMER_API_URL ?? "http://127.0.0.1:8080";
+  const base = import.meta.env.VITE_CUSTOMER_API_URL ?? (import.meta.env.DEV ? "http://127.0.0.1:8080" : "");
   const response = await authorizedFetch(`${base}${path}`);
   if (!response.ok) {
     const body = await response.json().catch(() => null);

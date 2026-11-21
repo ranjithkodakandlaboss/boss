@@ -67,7 +67,7 @@ jobs:
             python3 - << 'PY'
           from pathlib import Path
           text = "\n".join(path.read_text() for path in Path("dist/static").glob("*.js"))
-          if "127.0.0.1" in text or "localhost" in text:
+          if "127.0.0.1" in text or "http://localhost" in text or "localhost:" in text:
               raise SystemExit("The Customer App bundle still points at a local API")
           if "identitytoolkit.googleapis.com" not in text:
               raise SystemExit("The Customer App bundle has no Firebase sign-in")

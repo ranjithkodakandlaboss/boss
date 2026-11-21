@@ -1,6 +1,8 @@
 package in.boss.shared.security;
 
 import in.boss.shared.context.BossContext;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
@@ -15,6 +17,8 @@ import java.util.*;
  */
 @Component
 public class TenantContextResolver {
+
+    private static final Logger log = LoggerFactory.getLogger(TenantContextResolver.class);
 
     private final JdbcTemplate jdbc;
 
@@ -36,6 +40,16 @@ public class TenantContextResolver {
         UUID userId = UUID.fromString(first.get("out_user_id").toString());
         UUID tenantId = UUID.fromString(first.get("out_tenant_id").toString());
 
+        // Guard against the same firebase_uid appearing in multiple tenants (data integrity violation).
+        // V125 migration adds a unique index to prevent this, but we defend here as a safety net.
+        for (var row : rows) {
+            Object rowTenant = row.get("out_tenant_id");
+            if (rowTenant != null && !tenantId.equals(UUID.fromString(rowTenant.toString()))) {
+                log.error("SECURITY: firebase_uid {} maps to multiple tenants — denying access until data is corrected", firebaseUid);
+                return null;
+            }
+        }
+
         Set<String> roles = new HashSet<>();
         UUID siteId = null;
         for (var row : rows) {
@@ -49,6 +63,17 @@ public class TenantContextResolver {
 
         return new BossContext(tenantId, userId, Collections.unmodifiableSet(roles),
                 siteId, firebaseUid);
+    }
+
+    /**
+     * Returns the tenant_id for the given slug, or null if not found/active.
+     * Used by FirebaseJwtFilter to enforce host-based tenant isolation.
+     */
+    public UUID tenantIdForSlug(String slug) {
+        List<UUID> rows = jdbc.query(
+                "SELECT id FROM tenant_registry WHERE slug = ? AND status = 'active'",
+                (rs, i) -> rs.getObject("id", UUID.class), slug);
+        return rows.isEmpty() ? null : rows.get(0);
     }
 
     /**

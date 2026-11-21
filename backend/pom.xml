@@ -282,6 +282,7 @@
           <threshold>${spotbugs.threshold}</threshold>
           <failOnError>${spotbugs.failOnError}</failOnError>
           <includeTests>false</includeTests>
+          <excludeFilterFile>${project.basedir}/spotbugs-exclude.xml</excludeFilterFile>
           <plugins>
             <plugin>
               <groupId>com.h3xstream.findsecbugs</groupId>

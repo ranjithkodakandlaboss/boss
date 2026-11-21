@@ -23,13 +23,17 @@ export default function QuotationDetail() {
   const [reviseModal, setReviseModal] = useState(false);
   const [reviseDiscount, setReviseDiscount] = useState('0');
   const [reviseNotes, setReviseNotes] = useState('');
-  const [reviseLines, setReviseLines] = useState<{ id: string; productName: string; uom: string; orderedQty: string; unitPrice: string }[]>([]);
+  const [reviseLines, setReviseLines] = useState<{ id: string; productName: string; drawingNumber: string; drawingRevision: string; requiredDate: string; uom: string; orderedQty: string; unitPrice: string }[]>([]);
   const [reviseError, setReviseError] = useState('');
 
   const [editDraftModal, setEditDraftModal] = useState(false);
   const [editDiscount, setEditDiscount] = useState('0');
   const [editNotes, setEditNotes] = useState('');
-  const [editLines, setEditLines] = useState<{ id: string; productName: string; uom: string; orderedQty: string; unitPrice: string }[]>([]);
+  const [editLines, setEditLines] = useState<{ id: string; productName: string; drawingNumber: string; drawingRevision: string; requiredDate: string; uom: string; orderedQty: string; unitPrice: string }[]>([]);
+  const [editValidDays, setEditValidDays] = useState('30');
+  const [editPaymentTerms, setEditPaymentTerms] = useState('Net 30 days');
+  const [editDeliveryTerms, setEditDeliveryTerms] = useState('Ex-Works / By Road · 2-3 weeks');
+  const [editTaxRatePct, setEditTaxRatePct] = useState(18);
 
   const [overrideReason, setOverrideReason] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -65,15 +69,19 @@ export default function QuotationDetail() {
     }
     setReviseError('');
     const disc = Number(reviseDiscount) || 0;
+    const taxRate = Number(editTaxRatePct) || 0;
     const revisedLines: CustomerQuotationLine[] = lines.map(l => {
       const edit = reviseLines.find(r => r.id === l.id);
       if (!edit) return l;
       const qty = Number(edit.orderedQty) || l.orderedQty;
       const price = Number(edit.unitPrice) ?? l.unitPrice;
-      return { ...l, orderedQty: qty, unitPrice: price, value: qty * price };
+      return { ...l, orderedQty: qty, unitPrice: price, value: qty * price, drawingNumber: edit.drawingNumber, drawingRevision: edit.drawingRevision, requiredDate: edit.requiredDate };
     });
-    const totalValue = revisedLines.reduce((s, l) => s + l.value, 0) - disc;
-    const nextQ: CustomerQuotation = { ...quotation, discountAmount: disc, notes: reviseNotes.trim(), status: 'draft', totalValue };
+    const subtotal = revisedLines.reduce((s, l) => s + l.value, 0);
+    const taxable = Math.max(0, subtotal - disc);
+    const taxAmount = Math.round(taxable * taxRate / 100);
+    const totalValue = Math.round(taxable + taxAmount);
+    const nextQ: CustomerQuotation = { ...quotation, discountAmount: disc, taxRatePct: taxRate, taxAmount, notes: reviseNotes.trim(), status: 'draft', totalValue, paymentTerms: editPaymentTerms, deliveryTerms: editDeliveryTerms };
     const saved = await reviseQuotation(quotation.id, nextQ, revisedLines);
     setReviseModal(false);
     if (saved) navigate(`/sales/quotation/${saved.id}`, { state: { from: originUrl } });
@@ -81,20 +89,33 @@ export default function QuotationDetail() {
 
   const handleSaveDraft = async () => {
     const disc = Number(editDiscount) || 0;
+    const taxRate = Number(editTaxRatePct) || 0;
     const updatedLines: CustomerQuotationLine[] = lines.map(l => {
       const edit = editLines.find(r => r.id === l.id);
       if (!edit) return l;
       const qty = Number(edit.orderedQty) || l.orderedQty;
       const price = Number(edit.unitPrice) ?? l.unitPrice;
-      return { ...l, orderedQty: qty, unitPrice: price, value: qty * price };
+      return { ...l, orderedQty: qty, unitPrice: price, value: qty * price, drawingNumber: edit.drawingNumber, drawingRevision: edit.drawingRevision, requiredDate: edit.requiredDate };
     });
-    const totalValue = updatedLines.reduce((s, l) => s + l.value, 0) - disc;
+    const subtotal = updatedLines.reduce((s, l) => s + l.value, 0);
+    const taxable = Math.max(0, subtotal - disc);
+    const taxAmount = Math.round(taxable * taxRate / 100);
+    const totalValue = Math.round(taxable + taxAmount);
+    const today = new Date().toISOString().slice(0, 10);
+    const validUntilDate = new Date(today);
+    validUntilDate.setDate(validUntilDate.getDate() + (parseInt(editValidDays) || 30));
+    const validUntil = validUntilDate.toISOString().slice(0, 10);
     await updateQuotation(quotation.id, {
       ...quotation,
       discountAmount: disc,
+      taxRatePct: taxRate,
+      taxAmount,
+      totalValue,
+      validUntil,
+      paymentTerms: editPaymentTerms,
+      deliveryTerms: editDeliveryTerms,
       notes: editNotes.trim() || quotation.notes,
       lines: updatedLines,
-      totalValue,
     } as any);
     setEditDraftModal(false);
   };
@@ -183,7 +204,14 @@ export default function QuotationDetail() {
                 onClick={() => {
                   setEditDiscount(String(quotation.discountAmount ?? 0));
                   setEditNotes(quotation.notes ?? '');
-                  setEditLines(lines.map(l => ({ id: l.id, productName: l.productName, uom: l.uom, orderedQty: String(l.orderedQty), unitPrice: String(l.unitPrice) })));
+                  setEditPaymentTerms(quotation.paymentTerms ?? 'Net 30 days');
+                  setEditDeliveryTerms(quotation.deliveryTerms ?? 'Ex-Works / By Road · 2-3 weeks');
+                  setEditTaxRatePct(quotation.taxRatePct ?? 18);
+                  const validUntilDate = quotation.validUntil ? new Date(quotation.validUntil) : null;
+                  const todayDate = new Date();
+                  const diffDays = validUntilDate ? Math.round((validUntilDate.getTime() - todayDate.getTime()) / (1000 * 60 * 60 * 24)) : 30;
+                  setEditValidDays(String(Math.max(1, diffDays)));
+                  setEditLines(lines.map(l => ({ id: l.id, productName: l.productName, drawingNumber: l.drawingNumber ?? '', drawingRevision: l.drawingRevision ?? 'A', requiredDate: l.requiredDate ?? '', uom: l.uom, orderedQty: String(l.orderedQty), unitPrice: String(l.unitPrice) })));
                   setEditDraftModal(true);
                 }}
                 className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-semibold border border-[var(--brand)] text-[var(--brand)] hover:bg-[var(--surface-2)]"
@@ -208,7 +236,7 @@ export default function QuotationDetail() {
               </>
             )}
             {canRevise && (
-              <button onClick={() => { setReviseDiscount(String(quotation.discountAmount ?? 0)); setReviseNotes(quotation.notes ?? ''); setReviseLines(lines.map(l => ({ id: l.id, productName: l.productName, uom: l.uom, orderedQty: String(l.orderedQty), unitPrice: String(l.unitPrice) }))); setReviseModal(true); }} className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-semibold border border-[var(--border)] text-[var(--text)] hover:bg-[var(--surface-2)]">
+              <button onClick={() => { setReviseDiscount(String(quotation.discountAmount ?? 0)); setReviseNotes(quotation.notes ?? ''); setEditPaymentTerms(quotation.paymentTerms ?? 'Net 30 days'); setEditDeliveryTerms(quotation.deliveryTerms ?? 'Ex-Works / By Road · 2-3 weeks'); setEditTaxRatePct(quotation.taxRatePct ?? 18); setReviseLines(lines.map(l => ({ id: l.id, productName: l.productName, drawingNumber: l.drawingNumber ?? '', drawingRevision: l.drawingRevision ?? 'A', requiredDate: l.requiredDate ?? '', uom: l.uom, orderedQty: String(l.orderedQty), unitPrice: String(l.unitPrice) }))); setReviseModal(true); }} className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-semibold border border-[var(--border)] text-[var(--text)] hover:bg-[var(--surface-2)]">
                 <Copy size={14} /> Revise Quotation
               </button>
             )}
@@ -239,13 +267,41 @@ export default function QuotationDetail() {
         </div>
 
         {editDraftModal && (
-          <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4 overflow-y-auto">
-            <div className="bg-[var(--surface)] rounded-2xl border p-6 max-w-2xl w-full shadow-2xl space-y-4 border-[var(--border)] my-auto">
+          <div className="fixed inset-0 bg-black/40 z-50 flex items-start justify-center p-4 overflow-y-auto">
+            <div className="bg-[var(--surface)] rounded-2xl border p-6 max-w-4xl w-full shadow-2xl space-y-5 border-[var(--border)] my-6">
               <div className="flex items-center justify-between">
                 <h3 className="text-base font-bold text-[var(--text)]">Edit Draft Quote — {quotation.quotationNumber}</h3>
-                <span className="text-[11px] text-[var(--text-3)]">Draft Mode</span>
+                <span className="text-[11px] px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 border border-blue-200">Draft</span>
               </div>
-              <p className="text-xs text-[var(--text-2)]">Update quantities, unit prices, discount, or notes on this draft quotation.</p>
+              {/* Quotation Details */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-[var(--text-2)] mb-1">Valid For (Days)</label>
+                  <input type="number" min={1} className="eoss-input w-full font-mono" value={editValidDays} onChange={e => setEditValidDays(e.target.value)} />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-[var(--text-2)] mb-1">Tax Rate (%)</label>
+                  <input type="number" min={0} max={100} step={0.01} className="eoss-input w-full font-mono" value={editTaxRatePct} onChange={e => setEditTaxRatePct(Number(e.target.value))} />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-[var(--text-2)] mb-1">Discount (₹)</label>
+                  <input type="number" min={0} className="eoss-input w-full font-mono" value={editDiscount} onChange={e => setEditDiscount(e.target.value)} />
+                </div>
+                <div className="flex items-end pb-0.5">
+                  <div className="text-xs text-[var(--text-2)]">Net Total: <span className="font-mono font-semibold text-[var(--text)]">₹{Math.max(0, editLines.reduce((s, r) => s + (Number(r.orderedQty) || 0) * (Number(r.unitPrice) || 0), 0) - (Number(editDiscount) || 0)).toLocaleString('en-IN')}</span></div>
+                </div>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-[var(--text-2)] mb-1">Payment Terms</label>
+                  <input type="text" className="eoss-input w-full" value={editPaymentTerms} onChange={e => setEditPaymentTerms(e.target.value)} placeholder="e.g. Net 30 days" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-[var(--text-2)] mb-1">Delivery Terms</label>
+                  <input type="text" className="eoss-input w-full" value={editDeliveryTerms} onChange={e => setEditDeliveryTerms(e.target.value)} placeholder="e.g. Ex-Works" />
+                </div>
+              </div>
+              {/* Line Items */}
               <div>
                 <div className="text-xs font-semibold text-[var(--text-2)] mb-2">Line Items</div>
                 <div className="overflow-x-auto rounded-lg border border-[var(--border)]">
@@ -254,6 +310,9 @@ export default function QuotationDetail() {
                       <tr>
                         <th className="text-left p-2 text-[var(--text-3)]">#</th>
                         <th className="text-left p-2 text-[var(--text-3)]">Product</th>
+                        <th className="text-left p-2 text-[var(--text-3)]">Drawing No.</th>
+                        <th className="text-left p-2 text-[var(--text-3)]">Rev</th>
+                        <th className="text-left p-2 text-[var(--text-3)]">Required By</th>
                         <th className="text-right p-2 text-[var(--text-3)]">Qty</th>
                         <th className="text-left p-2 text-[var(--text-3)]">UOM</th>
                         <th className="text-right p-2 text-[var(--text-3)]">Unit Price (₹)</th>
@@ -268,6 +327,15 @@ export default function QuotationDetail() {
                           <tr key={el.id} className="border-t border-[var(--border)]">
                             <td className="p-2 text-[var(--text-3)]">{i + 1}</td>
                             <td className="p-2 font-medium text-[var(--text)]">{el.productName}</td>
+                            <td className="p-2">
+                              <input type="text" className="eoss-input w-24 text-xs font-mono" value={el.drawingNumber} onChange={e => setEditLines(prev => prev.map(r => r.id === el.id ? { ...r, drawingNumber: e.target.value } : r))} />
+                            </td>
+                            <td className="p-2">
+                              <input type="text" className="eoss-input w-14 text-xs font-mono" value={el.drawingRevision} onChange={e => setEditLines(prev => prev.map(r => r.id === el.id ? { ...r, drawingRevision: e.target.value } : r))} />
+                            </td>
+                            <td className="p-2">
+                              <input type="date" className="eoss-input text-xs" value={el.requiredDate} onChange={e => setEditLines(prev => prev.map(r => r.id === el.id ? { ...r, requiredDate: e.target.value } : r))} />
+                            </td>
                             <td className="p-2 text-right">
                               <input type="number" min={0.01} step={0.01} className="eoss-input w-20 text-right font-mono text-xs" value={el.orderedQty} onChange={e => setEditLines(prev => prev.map(r => r.id === el.id ? { ...r, orderedQty: e.target.value } : r))} />
                             </td>
@@ -283,17 +351,6 @@ export default function QuotationDetail() {
                   </table>
                 </div>
               </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-medium text-[var(--text-2)] mb-1">Discount (₹)</label>
-                  <input type="number" min={0} className="eoss-input w-full font-mono" value={editDiscount} onChange={e => setEditDiscount(e.target.value)} />
-                </div>
-                <div className="flex items-end pb-0.5">
-                  <div className="text-xs text-[var(--text-2)]">
-                    Net Total: <span className="font-mono font-semibold text-[var(--text)]">₹{(editLines.reduce((s, r) => s + (Number(r.orderedQty) || 0) * (Number(r.unitPrice) || 0), 0) - (Number(editDiscount) || 0)).toLocaleString('en-IN')}</span>
-                  </div>
-                </div>
-              </div>
               <div>
                 <label className="block text-xs font-medium text-[var(--text-2)] mb-1">Notes</label>
                 <textarea className="eoss-input w-full" rows={2} value={editNotes} onChange={e => setEditNotes(e.target.value)} placeholder="Quotation terms and notes…" />
@@ -307,22 +364,49 @@ export default function QuotationDetail() {
         )}
 
         {reviseModal && (
-          <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4 overflow-y-auto">
-            <div className="bg-[var(--surface)] rounded-2xl border p-6 max-w-2xl w-full shadow-2xl space-y-4 border-[var(--border)] my-auto">
+          <div className="fixed inset-0 bg-black/40 z-50 flex items-start justify-center p-4 overflow-y-auto">
+            <div className="bg-[var(--surface)] rounded-2xl border p-6 max-w-4xl w-full shadow-2xl space-y-5 border-[var(--border)] my-6">
               <div className="flex items-center justify-between">
                 <h3 className="text-base font-bold text-[var(--text)]">Revise {quotation.quotationNumber}</h3>
                 <span className="text-[11px] text-[var(--text-3)]">Rev {quotation.revision ?? 1} → Rev {(quotation.revision ?? 1) + 1}</span>
               </div>
               <p className="text-xs text-[var(--text-2)]">Creates a new linked revision and marks {quotation.quotationNumber} as <span className="font-mono">superseded</span>.</p>
+              {/* Quotation Details */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-[var(--text-2)] mb-1">Tax Rate (%)</label>
+                  <input type="number" min={0} max={100} step={0.01} className="eoss-input w-full font-mono" value={editTaxRatePct} onChange={e => setEditTaxRatePct(Number(e.target.value))} />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-[var(--text-2)] mb-1">Discount (₹)</label>
+                  <input type="number" min={0} className="eoss-input w-full font-mono" value={reviseDiscount} onChange={e => setReviseDiscount(e.target.value)} />
+                </div>
+                <div className="flex items-end pb-0.5">
+                  <div className="text-xs text-[var(--text-2)]">Net Total: <span className="font-mono font-semibold text-[var(--text)]">₹{Math.max(0, reviseLines.reduce((s, r) => s + (Number(r.orderedQty) || 0) * (Number(r.unitPrice) || 0), 0) - (Number(reviseDiscount) || 0)).toLocaleString('en-IN')}</span></div>
+                </div>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-[var(--text-2)] mb-1">Payment Terms</label>
+                  <input type="text" className="eoss-input w-full" value={editPaymentTerms} onChange={e => setEditPaymentTerms(e.target.value)} placeholder="e.g. Net 30 days" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-[var(--text-2)] mb-1">Delivery Terms</label>
+                  <input type="text" className="eoss-input w-full" value={editDeliveryTerms} onChange={e => setEditDeliveryTerms(e.target.value)} placeholder="e.g. Ex-Works" />
+                </div>
+              </div>
               {/* Line items */}
               <div>
-                <div className="text-xs font-semibold text-[var(--text-2)] mb-2">Line Items — edit quantity or unit price</div>
+                <div className="text-xs font-semibold text-[var(--text-2)] mb-2">Line Items</div>
                 <div className="overflow-x-auto rounded-lg border border-[var(--border)]">
                   <table className="w-full text-xs">
                     <thead className="bg-[var(--surface-2)]">
                       <tr>
                         <th className="text-left p-2 text-[var(--text-3)]">#</th>
                         <th className="text-left p-2 text-[var(--text-3)]">Product</th>
+                        <th className="text-left p-2 text-[var(--text-3)]">Drawing No.</th>
+                        <th className="text-left p-2 text-[var(--text-3)]">Rev</th>
+                        <th className="text-left p-2 text-[var(--text-3)]">Required By</th>
                         <th className="text-right p-2 text-[var(--text-3)]">Qty</th>
                         <th className="text-left p-2 text-[var(--text-3)]">UOM</th>
                         <th className="text-right p-2 text-[var(--text-3)]">Unit Price (₹)</th>
@@ -337,6 +421,15 @@ export default function QuotationDetail() {
                           <tr key={rl.id} className="border-t border-[var(--border)]">
                             <td className="p-2 text-[var(--text-3)]">{i + 1}</td>
                             <td className="p-2 font-medium text-[var(--text)]">{rl.productName}</td>
+                            <td className="p-2">
+                              <input type="text" className="eoss-input w-24 text-xs font-mono" value={rl.drawingNumber} onChange={e => setReviseLines(prev => prev.map(r => r.id === rl.id ? { ...r, drawingNumber: e.target.value } : r))} />
+                            </td>
+                            <td className="p-2">
+                              <input type="text" className="eoss-input w-14 text-xs font-mono" value={rl.drawingRevision} onChange={e => setReviseLines(prev => prev.map(r => r.id === rl.id ? { ...r, drawingRevision: e.target.value } : r))} />
+                            </td>
+                            <td className="p-2">
+                              <input type="date" className="eoss-input text-xs" value={rl.requiredDate} onChange={e => setReviseLines(prev => prev.map(r => r.id === rl.id ? { ...r, requiredDate: e.target.value } : r))} />
+                            </td>
                             <td className="p-2 text-right">
                               <input type="number" min={0.01} step={0.01} className="eoss-input w-20 text-right font-mono text-xs" value={rl.orderedQty} onChange={e => setReviseLines(prev => prev.map(r => r.id === rl.id ? { ...r, orderedQty: e.target.value } : r))} />
                             </td>
@@ -350,17 +443,6 @@ export default function QuotationDetail() {
                       })}
                     </tbody>
                   </table>
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-medium text-[var(--text-2)] mb-1">Revised Discount (₹)</label>
-                  <input type="number" min={0} className="eoss-input w-full font-mono" value={reviseDiscount} onChange={e => setReviseDiscount(e.target.value)} />
-                </div>
-                <div className="flex items-end pb-0.5">
-                  <div className="text-xs text-[var(--text-2)]">
-                    Net Total: <span className="font-mono font-semibold text-[var(--text)]">₹{(reviseLines.reduce((s, r) => s + (Number(r.orderedQty) || 0) * (Number(r.unitPrice) || 0), 0) - (Number(reviseDiscount) || 0)).toLocaleString('en-IN')}</span>
-                  </div>
                 </div>
               </div>
               <div>
@@ -441,7 +523,7 @@ export default function QuotationDetail() {
               )}
               {quotation.taxAmount != null && quotation.taxAmount > 0 && (
                 <tr>
-                  <td colSpan={7} className="text-right text-xs text-[var(--text-2)] pr-4">GST</td>
+                  <td colSpan={7} className="text-right text-xs text-[var(--text-2)] pr-4">GST{quotation.taxRatePct ? ` (${quotation.taxRatePct}%)` : ''}</td>
                   <td className="font-mono text-sm text-[var(--text)]">{fmtMoney(quotation.taxAmount)}</td>
                   <td />
                 </tr>

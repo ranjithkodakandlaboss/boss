@@ -6,8 +6,16 @@ import {
   storeRefreshedToken,
 } from "./session";
 
-const base = import.meta.env.VITE_CUSTOMER_API_URL ?? "http://127.0.0.1:8080";
+const base = import.meta.env.VITE_CUSTOMER_API_URL ?? (import.meta.env.DEV ? "http://127.0.0.1:8080" : "");
 const TOKEN_REFRESH_WINDOW_MS = 5 * 60 * 1000;
+
+function tenantSlug(): string | null {
+  if (typeof window === "undefined") return null;
+  const host = window.location.hostname;
+  if (host === "localhost" || host.startsWith("127.")) return null;
+  const dot = host.indexOf(".");
+  return dot > 0 ? host.substring(0, dot) : null;
+}
 let refreshInProgress: { refreshToken: string; promise: Promise<string> } | null = null;
 
 export class ApiError extends Error {
@@ -102,6 +110,8 @@ export async function authorizedFetch(input: RequestInfo | URL, init: RequestIni
     });
   }
   if (token) headers.set("Authorization", `Bearer ${token}`);
+  const slug = tenantSlug();
+  if (slug) headers.set("X-Boss-Tenant", slug);
 
   const request = { ...init, headers };
   const response = await fetch(input, request);
@@ -159,12 +169,13 @@ async function parseApiResponse<T>(response: Response): Promise<T> {
  * Must be called BEFORE storing the session client-side.
  */
 export async function validateBossAccount(idToken: string): Promise<void> {
-  const response = await fetch(`${base}/api/v1/auth/me`, {
-    headers: {
-      "Authorization": `Bearer ${idToken}`,
-      "Content-Type": "application/json",
-    },
-  });
+  const headers: Record<string, string> = {
+    "Authorization": `Bearer ${idToken}`,
+    "Content-Type": "application/json",
+  };
+  const slug = tenantSlug();
+  if (slug) headers["X-Boss-Tenant"] = slug;
+  const response = await fetch(`${base}/api/v1/auth/me`, { headers });
   if (response.status === 401) {
     throw new ApiError(401, "This account is not registered with BOSS. Please use your invitation link to activate your account.");
   }
