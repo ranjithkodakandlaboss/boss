@@ -11,8 +11,7 @@ const LOCAL_USERS = [
   { role: "Operations Manager", email: "ops-manager@boss.local.test", token: "local-seed-ops-manager" },
 ];
 
-const isLocalEnv = typeof window !== "undefined" &&
-  (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1");
+const isLocalEnv = import.meta.env.DEV;
 
 export default function LoginPage() {
   const navigate = useNavigate();
