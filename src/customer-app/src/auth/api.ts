@@ -169,12 +169,13 @@ async function parseApiResponse<T>(response: Response): Promise<T> {
  * Must be called BEFORE storing the session client-side.
  */
 export async function validateBossAccount(idToken: string): Promise<void> {
-  const response = await fetch(`${base}/api/v1/auth/me`, {
-    headers: {
-      "Authorization": `Bearer ${idToken}`,
-      "Content-Type": "application/json",
-    },
-  });
+  const headers: Record<string, string> = {
+    "Authorization": `Bearer ${idToken}`,
+    "Content-Type": "application/json",
+  };
+  const slug = tenantSlug();
+  if (slug) headers["X-Boss-Tenant"] = slug;
+  const response = await fetch(`${base}/api/v1/auth/me`, { headers });
   if (response.status === 401) {
     throw new ApiError(401, "This account is not registered with BOSS. Please use your invitation link to activate your account.");
   }
